@@ -54,6 +54,7 @@ import type {
   RetireContributionScaffoldConfig,
   RetireContributionScaffoldResult,
   GovernedContributionScaffoldConfig,
+  CoreReadScaffoldConfig,
   GovernedContributionScaffoldResult,
   SearchProviderAccessScaffoldConfig,
   SearchProviderAccessScaffoldResult,
@@ -118,6 +119,7 @@ type GeneratorConfig =
   | ExternalHttpAdapterScaffoldConfig
   | ModuleContractScaffoldConfig
   | GovernedContributionScaffoldConfig
+  | CoreReadScaffoldConfig
   | OutboxScaffoldConfig
   | OutboxWorkerScaffoldConfig
   | PageScaffoldConfig
@@ -152,6 +154,7 @@ interface ParsedScaffoldFlags {
   readonly accessFiltering: string | undefined;
   readonly action: string | undefined;
   readonly authorizationMode: string | undefined;
+  readonly core: boolean;
   readonly kind: string | undefined;
   readonly legalEntityScope: string | undefined;
   readonly module: string | undefined;
@@ -534,14 +537,17 @@ Example:
       }),
   }),
   'module-api': defineCommand({
-    flags: ['authorization', 'name', 'permission', 'vertical'],
+    flags: ['authorization', 'core', 'module', 'name', 'permission', 'vertical'],
     generator: moduleApiGenerator,
     help: `Usage: pnpm scaffold:module-api -- --vertical <vertical> --name <name> --authorization <public|authenticated_principal|context_permission> [--permission <permission>]
+  pnpm scaffold:module-api -- --core --module <core.module> --name <name> --authorization <authenticated_principal|context_permission> [--permission <permission>]
 
 Generate one typed owner-local module API contract and generated Effect client adapter.
 
 Required flags:
-  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --vertical <vertical>  Existing generated vertical folder; required without --core
+  --core                 Core-owned governed READ; exclusive with --vertical
+  --module <core.module> Stable Core module key, required with --core
   --name <name>          API name (lower-kebab-case)
   --authorization       Explicit API authorization classification
   --permission <value>  Required only with context_permission
@@ -549,10 +555,19 @@ Required flags:
 Options:
   --help                 Show this help without writing
 `,
-    requiredFlags: ['authorization', 'name', 'vertical'],
+    requiredFlags: ['authorization', 'name'],
     toConfig: (flags) =>
       Effect.gen(function* moduleApiConfigEffect() {
         const authorization = yield* requireReadAuthorization(flags);
+        if (flags.core) {
+          if (flags.vertical !== undefined || flags.module === undefined) {
+            return yield* failScaffolding('--core requires --module and forbids --vertical');
+          }
+          return { ...authorization, core: true as const, module: flags.module, name: flags.name ?? '' };
+        }
+        if (flags.vertical === undefined || flags.module !== undefined) {
+          return yield* failScaffolding('--vertical is required and --module is valid only with --core');
+        }
         return {
           ...authorization,
           name: flags.name ?? '',
@@ -776,7 +791,7 @@ Options:
 Generate one public Effect Schema-backed ResourceRef and register its conservative descriptor.
 
 Required flags:
-  --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
+  --vertical <vertical>  Existing generated vertical folder or core for Core-owned references
   --resource <resource>  Stable resource name (lower-kebab-case)
 
 Options:
@@ -947,9 +962,15 @@ const parseFlags = (
     const definition = commandDefinitions[command];
     const allowed = new Set(definition.flags);
     const parsed = new Map<string, string>();
-    for (let index = 0; index < argumentsList.length; index += 2) {
-      const flag = argumentsList[index];
-      const value = argumentsList[index + 1];
+    const coreCount = argumentsList.filter((argument) => argument === '--core').length;
+    if (coreCount > 1) {
+      return yield* failScaffolding('flag --core may be supplied only once');
+    }
+    const core = command === 'module-api' && coreCount === 1;
+    const normalizedArguments = core ? argumentsList.filter((argument) => argument !== '--core') : argumentsList;
+    for (let index = 0; index < normalizedArguments.length; index += 2) {
+      const flag = normalizedArguments[index];
+      const value = normalizedArguments[index + 1];
       yield* parseFlagPair(command, allowed, parsed, flag, value);
     }
     for (const required of definition.requiredFlags) {
@@ -961,6 +982,7 @@ const parseFlags = (
       accessFiltering: parsed.get(ACCESS_FILTERING_FLAG),
       action: parsed.get('action'),
       authorizationMode: parsed.get('authorization'),
+      core,
       kind: parsed.get('kind'),
       legalEntityScope: parsed.get(LEGAL_ENTITY_SCOPE_FLAG),
       module: parsed.get('module'),
@@ -1009,6 +1031,7 @@ const cliFlags = {
   accessFiltering: optionalTextFlag(ACCESS_FILTERING_FLAG),
   action: optionalTextFlag('action'),
   authorization: optionalTextFlag('authorization'),
+  core: Flag.boolean('core').pipe(Flag.withDefault(false)),
   kind: optionalTextFlag('kind'),
   legalEntityScope: optionalTextFlag(LEGAL_ENTITY_SCOPE_FLAG),
   module: optionalTextFlag('module'),
@@ -1034,18 +1057,26 @@ const cliFlags = {
 const cliFlagName = (key: string): string => key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
 
 const toCliArguments = (
-  values: Readonly<Partial<Record<keyof typeof cliFlags, Option.Option<string>>>>,
+  values: Readonly<Partial<Record<Exclude<keyof typeof cliFlags, 'core'>, Option.Option<string>>>> & {
+    readonly core?: boolean;
+  },
 ): readonly string[] =>
-  Object.entries(values).flatMap(([key, value]) =>
-    value !== undefined && Option.isSome(value) ? [`--${cliFlagName(key)}`, value.value] : [],
-  );
+  Object.entries(values).flatMap(([key, value]) => {
+    if (key === 'core') {
+      return value === true ? ['--core'] : [];
+    }
+    return value !== undefined && Option.isOption(value) && Option.isSome(value)
+      ? [`--${cliFlagName(key)}`, value.value]
+      : [];
+  });
 
 const executeCliCommand =
   (command: ScaffoldCommand) =>
   ({
     forwarded,
     ...values
-  }: Readonly<Partial<Record<keyof typeof cliFlags, Option.Option<string>>>> & {
+  }: Readonly<Partial<Record<Exclude<keyof typeof cliFlags, 'core'>, Option.Option<string>>>> & {
+    readonly core?: boolean;
     readonly forwarded: readonly string[];
   }) =>
     Effect.gen(function* executeCliCommandEffect() {

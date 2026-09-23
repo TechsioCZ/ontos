@@ -31,6 +31,7 @@ import {
   microVerticalApiBaselineViolation as microVerticalApiBaselineViolationForFile,
 } from '@modern-js/code-tools/microvertical-api-boundary';
 import type { MicroVerticalApiBaselineExpectation } from '@modern-js/code-tools/microvertical-api-boundary';
+import { strictEffectRuntimeTopologyViolation as publishedRuntimeTopologyViolation } from '@modern-js/code-tools/strict-effect-runtime';
 import { moduleFederationBridgeViolation } from '../module-federation-bridge-boundary.mts';
 import { strictEffectRuntimeTopologyViolation } from '../ultramodern-api-boundary-rules.mts';
 
@@ -493,7 +494,7 @@ const TopologySchema = Schema.Struct({
         routes: Schema.Struct({
           apiReadiness: Schema.String,
           locale: Schema.optionalKey(Schema.String),
-          mfManifest: Schema.String,
+          mfManifest: Schema.optionalKey(Schema.String),
           ssr: Schema.optionalKey(Schema.String),
         }),
       }),
@@ -634,6 +635,30 @@ export const makeRuntime = () => assembleEffectBffRuntime({ api: fixtureApi, han
 const apiRuntime = makeRuntime();
 export default apiRuntime;
 `;
+
+it('published API checker accepts a type-only factory declaration but still proves its return', () => {
+  const source = `
+    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
+    import { fixtureApi } from '../shared/api.ts';
+    const groupLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers.handle('reachable', () => undefined));
+    export const makeRuntime = () => {
+      const handlers = Layer.mergeAll(groupLayer);
+      type HandlerRequirements = typeof handlers;
+      const resolvedHandlers: Layer.Layer<HandlerRequirements> = handlers.pipe(Layer.orDie);
+      return assembleEffectBffRuntime({ api: fixtureApi, handlers: resolvedHandlers });
+    };
+    const apiRuntime: unknown = makeRuntime();
+    export default apiRuntime;
+  `;
+  expect(publishedRuntimeTopologyViolation(source)).toBe(undefined);
+  expect(
+    publishedRuntimeTopologyViolation(source.replace('handlers: resolvedHandlers', 'handlers: fakeHandlers')),
+  ).not.toBe(undefined);
+  expect(
+    publishedRuntimeTopologyViolation(source.replace('export default apiRuntime;', 'export default fakeRuntime;')),
+  ).not.toBe(undefined);
+});
 
 const adversarialStrictRuntimeSources = [
   ...(
@@ -1056,6 +1081,23 @@ it('static API validation proves the imported helper call topology', () => {
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: fixtureHandlers });
   `;
   expect(strictEffectRuntimeTopologyViolation(valid)).toBe(undefined);
+  const typedRuntime = expressionRuntimeFixture.replace(
+    'const apiRuntime = makeRuntime();',
+    'const apiRuntime: EffectBffDefinition<typeof fixtureApi> & EffectBffRuntime<typeof fixtureApi> = makeRuntime();',
+  );
+  expect(strictEffectRuntimeTopologyViolation(typedRuntime)).toBe(undefined);
+  const typedHandlers = valid.replace(
+    'export default assembleEffectBffRuntime({ api: fixtureApi, handlers: fixtureHandlers });',
+    `const resolvedHandlers: Layer.Layer<never> = fixtureHandlers.pipe(Layer.orDie);
+    export default assembleEffectBffRuntime({ api: fixtureApi, handlers: resolvedHandlers });`,
+  );
+  expect(strictEffectRuntimeTopologyViolation(typedHandlers)).toBe(undefined);
+  expect(
+    strictEffectRuntimeTopologyViolation(typedHandlers.replace('fixtureHandlers.pipe(', 'fakeHandlers.pipe(')),
+  ).not.toBe(undefined);
+  expect(strictEffectRuntimeTopologyViolation(typedRuntime.replace('= makeRuntime();', '= fakeRuntime;'))).not.toBe(
+    undefined,
+  );
   const groupModule = `
     import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';

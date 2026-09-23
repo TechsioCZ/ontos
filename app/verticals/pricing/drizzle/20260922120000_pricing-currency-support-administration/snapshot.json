@@ -1,0 +1,460 @@
+{
+  "id": "ecfb7af5-0979-4cdf-bc84-a14380d2a4ee",
+  "prevIds": [
+    "56d23c2e-dbdf-4bff-964e-0da663235557"
+  ],
+  "version": "8",
+  "dialect": "postgres",
+  "ddl": [
+    {
+      "name": "pricing",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "currency_support_revisions",
+      "entityType": "tables",
+      "schema": "pricing"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "currency_support_revision_id",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "legal_entity_id",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "context_revision",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storefront_id",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "market_id",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "channel_id",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "cart_id",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "subject_fingerprint",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "generation",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "pricing_revision",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "supported_currencies",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_to",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "actor_principal_id",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "context_revision",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "storefront_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "market_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "channel_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "cart_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "subject_fingerprint",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "effective_from",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "pricing_currency_support_current_idx",
+      "entityType": "indexes",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "columns": [
+        "currency_support_revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "currency_support_revisions_pkey",
+      "schema": "pricing",
+      "table": "currency_support_revisions",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "legal_entity_id",
+        "context_revision",
+        "storefront_id",
+        "market_id",
+        "channel_id",
+        "cart_id",
+        "subject_fingerprint",
+        "generation"
+      ],
+      "nullsNotDistinct": false,
+      "name": "pricing_currency_support_scope_generation_uk",
+      "entityType": "uniques",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "pricing_currency_support_action_uk",
+      "entityType": "uniques",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "value": "\"generation\" > 0",
+      "name": "pricing_currency_support_generation_ck",
+      "entityType": "checks",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "value": "\"pricing_revision\" ~ '^pricing-currency-support:[1-9][0-9]*$'",
+      "name": "pricing_currency_support_revision_ck",
+      "entityType": "checks",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "value": "\"effective_to\" is null or \"effective_to\" > \"effective_from\"",
+      "name": "pricing_currency_support_period_ck",
+      "entityType": "checks",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "value": "jsonb_typeof(\"supported_currencies\") = 'array' and jsonb_array_length(\"supported_currencies\") > 0",
+      "name": "pricing_currency_support_currencies_ck",
+      "entityType": "checks",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 1000",
+      "name": "pricing_currency_support_reason_ck",
+      "entityType": "checks",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"pricing\".\"currency_support_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"pricing\".\"currency_support_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "pricing_currency_support_scope_select",
+      "entityType": "policies",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"pricing\".\"currency_support_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"pricing\".\"currency_support_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "pricing_currency_support_scope_insert",
+      "entityType": "policies",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"pricing\".\"currency_support_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"pricing\".\"currency_support_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": "\"pricing\".\"currency_support_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"pricing\".\"currency_support_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "name": "pricing_currency_support_scope_update",
+      "entityType": "policies",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"pricing\".\"currency_support_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and \"pricing\".\"currency_support_revisions\".\"legal_entity_id\" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "pricing_currency_support_scope_delete",
+      "entityType": "policies",
+      "schema": "pricing",
+      "table": "currency_support_revisions"
+    }
+  ],
+  "renames": []
+}

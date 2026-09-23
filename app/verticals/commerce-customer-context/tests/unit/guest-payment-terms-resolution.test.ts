@@ -1,12 +1,9 @@
-import { ConfigProvider, Effect, Predicate, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { GuestPaymentTermsResolutionRequestSchema } from '../../shared/apis/guest-payment-terms-resolution.ts';
+import { CurrentPaymentTermPolicySetSchema } from '../../shared/domain/customer-commerce-policy-administration.ts';
 import type { PaymentTermDefinitionSnapshot } from '../../shared/domain/payment-term-contracts.ts';
 import { PaymentTermsDependencyUnavailable } from '../../shared/domain/payment-term-errors.ts';
-import {
-  CustomerCommercePaymentTermsPolicyConfigurationSchema,
-  resolveCustomerCommercePaymentTermsPolicy,
-} from '../../shared/domain/payment-terms.ts';
 import {
   guestPaymentTermsResolutionEntrypoint,
   handleGuestPaymentTermsResolution,
@@ -15,10 +12,7 @@ import type {
   GuestPaymentTermsPolicyDecision,
   GuestPaymentTermsResolutionServices,
 } from '../../src/api/guest-payment-terms-resolution.read.ts';
-import {
-  CUSTOMER_COMMERCE_PAYMENT_TERMS_POLICY_CONFIG,
-  customerCommercePaymentTermsPolicyResolver,
-} from '../../src/integrations/customer-commerce-payment-terms-policy.ts';
+import { customerCommercePaymentTermsPolicyResolver } from '../../src/integrations/customer-commerce-payment-terms-policy.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -124,84 +118,52 @@ it.effect('fails closed before policy resolution without a trusted Storefront', 
   }),
 );
 
-it.effect('loads one exact Current owner-authored rule from deployment configuration', () =>
-  Effect.gen(function* configuredPolicyResolution() {
-    const configuration = Schema.decodeUnknownSync(CustomerCommercePaymentTermsPolicyConfigurationSchema)({
-      configurationRevision: 'launch-policy-config-4',
-      policySource: 'customer-commerce-policy:launch-config',
-      rules: [
-        {
-          audience: 'BOTH',
-          effectiveFrom: '2026-01-01T00:00:00.000Z',
-          eligiblePaymentTermRefs: [paymentTermRef, fallbackRef],
-          explicitlyPermittedPaymentTermRefs: [paymentTermRef],
-          fallbackPaymentTermRefs: [fallbackRef],
-          policyRevision: 'launch-policy-rule-7',
-          scope: {
-            channelId: request.purchasingContext.channelId,
-            marketId: request.purchasingContext.marketId,
-            sellingLegalEntityId: legalEntityId,
-            storefrontId: request.purchasingContext.storefrontId,
-            tenantId,
-          },
-        },
-      ],
-    });
-    const resolution = yield* customerCommercePaymentTermsPolicyResolver('GUEST', {
-      tenantId,
-      trustedStorefrontId: request.purchasingContext.storefrontId,
-    })
-      .resolve(request)
-      .pipe(
-        Effect.provideService(
-          ConfigProvider.ConfigProvider,
-          ConfigProvider.fromUnknown({
-            [CUSTOMER_COMMERCE_PAYMENT_TERMS_POLICY_CONFIG]: JSON.stringify(configuration),
-          }),
-        ),
-      );
+it.effect('loads Current owner-backed policy without environment JSON', () =>
+  Effect.gen(function* currentPolicyResolution() {
+    const resolution = yield* customerCommercePaymentTermsPolicyResolver(
+      'GUEST',
+      {
+        tenantId,
+        trustedStorefrontId: request.purchasingContext.storefrontId,
+      },
+      {
+        readCurrentPaymentTermPolicy: () =>
+          Effect.succeed(
+            Schema.decodeUnknownSync(CurrentPaymentTermPolicySetSchema)({
+              candidates: [
+                {
+                  effectiveFrom: '2026-01-01T00:00:00.000Z',
+                  effectiveTo: null,
+                  policyRevisionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+                  scope: { kind: 'SELLER', sellingLegalEntityId: legalEntityId },
+                  value: { kind: 'APPLICABLE_PAYMENT_TERM_CONSTRAINT', paymentTermRef },
+                },
+                {
+                  effectiveFrom: '2026-01-01T00:00:00.000Z',
+                  effectiveTo: null,
+                  policyRevisionId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+                  scope: { kind: 'SELLER', sellingLegalEntityId: legalEntityId },
+                  value: { enabled: true, kind: 'EXPLICIT_PAYMENT_TERM_CHOICE_POLICY' },
+                },
+              ],
+              completeness: {
+                observedAt: request.at,
+                ownerRevision: 'PAYMENT_TERM:7',
+                scope: { kind: 'EXACT_PREDICATE', predicateRef: `payment-term-policy:${tenantId}:${legalEntityId}` },
+              },
+            }),
+          ),
+      },
+    ).resolve(request);
 
     expect(resolution).toMatchObject({
-      eligiblePaymentTermRefs: [paymentTermRef, fallbackRef],
+      eligiblePaymentTermRefs: [paymentTermRef],
       explicitlyPermittedPaymentTermRefs: [paymentTermRef],
-      fallbackPaymentTermRefs: [fallbackRef],
-      policyRevision: 'launch-policy-rule-7',
+      fallbackPaymentTermRefs: [],
+      policyRevision: 'PAYMENT_TERM:7',
     });
   }),
 );
-
-it('uses the trusted Storefront to select policy and only verifies request Channel/Market claims', () => {
-  const configuration = Schema.decodeUnknownSync(CustomerCommercePaymentTermsPolicyConfigurationSchema)({
-    configurationRevision: 'launch-policy-config-4',
-    policySource: 'customer-commerce-policy:launch-config',
-    rules: [
-      {
-        audience: 'GUEST',
-        effectiveFrom: '2026-01-01T00:00:00.000Z',
-        eligiblePaymentTermRefs: [fallbackRef],
-        explicitlyPermittedPaymentTermRefs: [],
-        fallbackPaymentTermRefs: [fallbackRef],
-        policyRevision: 'launch-policy-rule-7',
-        scope: {
-          channelId: request.purchasingContext.channelId,
-          marketId: request.purchasingContext.marketId,
-          sellingLegalEntityId: legalEntityId,
-          storefrontId: request.purchasingContext.storefrontId,
-          tenantId,
-        },
-      },
-    ],
-  });
-  const outcome = resolveCustomerCommercePaymentTermsPolicy(configuration, {
-    at: request.at,
-    audience: 'GUEST',
-    purchasingContext: { ...request.purchasingContext, marketId: 'caller-selected-market' },
-    tenantId,
-    trustedStorefrontId: request.purchasingContext.storefrontId,
-  });
-
-  expect(Predicate.isTagged(outcome, 'INCONSISTENT_CONFIGURATION')).toBe(true);
-});
 
 it.effect('uses the authoritative Guest fallback with exact policy and context provenance', () =>
   Effect.gen(function* resolvesFallback() {

@@ -1,0 +1,3 @@
+ALTER TABLE "catalog"."package_content_revisions" ADD COLUMN "change_kind" text DEFAULT 'legacy_unclassified' NOT NULL;--> statement-breakpoint
+ALTER TABLE "catalog"."package_content_revisions" ADD COLUMN "prior_error_explanation" text;--> statement-breakpoint
+ALTER TABLE "catalog"."package_content_revisions" ADD CONSTRAINT "catalog_package_content_revisions_correction_ck" CHECK (("change_kind" = 'legacy_unclassified' and "prior_error_explanation" is null) or ("change_kind" = 'physical_change' and "prior_error_explanation" is null) or ("change_kind" = 'correction' and "revision" > 1 and "prior_error_explanation" is not null and "prior_error_explanation" = btrim("prior_error_explanation") and length("prior_error_explanation") between 1 and 1000));

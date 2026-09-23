@@ -46,7 +46,10 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'counterparty_invitation_claim_proofs',
   'counterparty_purchase_limit_defaults',
   'counterparty_purchasing_profiles',
+  'commerce_quantity_rule_assignments',
+  'commerce_quantity_rule_revisions',
   'customer_address_defaults',
+  'customer_commerce_policy_completeness_generations',
   'customer_group_memberships',
   'customer_group_lifecycle_periods',
   'customer_group_revisions',
@@ -54,14 +57,19 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'customer_payment_term_entitlements',
   'customer_payment_term_preferences',
   'payment_term_retirement_reservations',
+  'payment_term_policy_revisions',
   'customer_price_group_assignments',
   'customer_profile_aliases',
   'customer_profile_lifecycle_history',
   'customer_profiles',
   'customer_setting_revisions',
   'guest_retail_attributions',
+  'market_bootstrap_policy_candidate_generations',
+  'market_bootstrap_policy_candidate_revisions',
+  'market_retirement_reservations',
   'party_merge_profile_observations',
   'principal_purchase_limit_overrides',
+  'purchase_currency_policy_revisions',
   'purchase_proposal_revisions',
   'approval_hierarchies',
   'approval_routes',
@@ -76,6 +84,7 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY = [
   'retail_portal_profile_binding_history',
   'retail_portal_profile_bindings',
   'saved_addresses',
+  'market_bootstrap_policy_revisions',
 ] as const;
 
 export const commerceCustomerContextSchema = pgSchema(COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME);
@@ -154,6 +163,74 @@ const positiveRevision = (name: string, revision: AnyPgColumn) => check(name, sq
 
 const halfOpenPeriod = (name: string, table: Readonly<Record<'effectiveFrom' | 'effectiveTo', AnyPgColumn>>) =>
   check(name, sql`${table.effectiveTo} is null or ${table.effectiveTo} > ${table.effectiveFrom}`);
+
+const policyRevisionColumns = () => ({
+  policyRevisionId: uuid('policy_revision_id').defaultRandom().primaryKey(),
+  ...scopeColumns(),
+  actionInvocationId: uuid('action_invocation_id').notNull(),
+  actorPrincipalId: uuid('actor_principal_id').notNull(),
+  applicableFrom: timestamp('applicable_from', { withTimezone: true }),
+  applicableTo: timestamp('applicable_to', { withTimezone: true }),
+  channelId: text('channel_id'),
+  commerceMarketId: text('commerce_market_id'),
+  effectiveFrom: effectiveFrom(),
+  effectiveTo: effectiveTo(),
+  idempotencyKey: text('idempotency_key').notNull(),
+  lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+  reason: text('reason').notNull(),
+  recordedAt: recordedAt(),
+  scopeKind: text('scope_kind').notNull(),
+  storefrontId: text('storefront_id'),
+});
+
+const policyScopeConstraint = (
+  name: string,
+  table: Readonly<Record<'scopeKind' | 'channelId' | 'commerceMarketId' | 'storefrontId', AnyPgColumn>>,
+) =>
+  check(
+    name,
+    sql`(${table.scopeKind} = 'SELLER' and ${table.channelId} is null and ${table.commerceMarketId} is null and ${table.storefrontId} is null) or (${table.scopeKind} = 'CHANNEL_SELLER' and ${table.channelId} is not null and ${table.commerceMarketId} is null and ${table.storefrontId} is null) or (${table.scopeKind} = 'MARKET_CHANNEL_SELLER' and ${table.channelId} is not null and ${table.commerceMarketId} is not null and ${table.storefrontId} is null) or (${table.scopeKind} = 'STOREFRONT_MARKET_CHANNEL_SELLER' and ${table.channelId} is not null and ${table.commerceMarketId} is not null and ${table.storefrontId} is not null) or (${table.scopeKind} = 'STOREFRONT_CHANNEL_SELLER' and ${table.channelId} is not null and ${table.commerceMarketId} is null and ${table.storefrontId} is not null)`,
+  );
+
+const policyRevisionConstraints = (
+  prefix: string,
+  table: Readonly<
+    Record<
+      | 'tenantId'
+      | 'legalEntityId'
+      | 'policyRevisionId'
+      | 'scopeKind'
+      | 'channelId'
+      | 'commerceMarketId'
+      | 'storefrontId'
+      | 'effectiveFrom'
+      | 'effectiveTo'
+      | 'applicableFrom'
+      | 'applicableTo'
+      | 'lifecycle'
+      | 'idempotencyKey'
+      | 'reason',
+      AnyPgColumn
+    >
+  >,
+) =>
+  [
+    scopeIdentity(`${prefix}_scope_id_uk`, table, table.policyRevisionId),
+    unique(`${prefix}_idempotency_uk`).on(table.tenantId, table.legalEntityId, table.idempotencyKey),
+    policyScopeConstraint(`${prefix}_scope_ck`, table),
+    halfOpenPeriod(`${prefix}_period_ck`, table),
+    check(
+      `${prefix}_applicability_ck`,
+      sql`(${table.lifecycle} <> 'ACTIVE' or ${table.applicableFrom} is not null) and ((${table.applicableFrom} is null and ${table.applicableTo} is null) or (${table.applicableFrom} >= ${table.effectiveFrom} and (${table.effectiveTo} is null or ${table.applicableFrom} < ${table.effectiveTo}) and (${table.applicableTo} is null or (${table.applicableTo} >= ${table.applicableFrom} and (${table.effectiveTo} is null or ${table.applicableTo} <= ${table.effectiveTo})))))`,
+    ),
+    check(`${prefix}_lifecycle_ck`, sql`${table.lifecycle} in ('SCHEDULED', 'ACTIVE', 'RETIRED')`),
+    optionalTrimmed(`${prefix}_channel_ck`, table.channelId),
+    optionalTrimmed(`${prefix}_market_ck`, table.commerceMarketId),
+    optionalTrimmed(`${prefix}_storefront_ck`, table.storefrontId),
+    trimmed(`${prefix}_idempotency_ck`, table.idempotencyKey),
+    trimmed(`${prefix}_reason_ck`, table.reason),
+    ...scopedPolicies(`${prefix}_rls`, table),
+  ] as const;
 
 /** Durable Tenant-scoped correlation for one exact Commerce Portal onboarding intent. */
 export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.withRLS(
@@ -1354,6 +1431,56 @@ const paymentTermRetirementReservations = commerceCustomerContextSchema.table.wi
   ],
 );
 
+/** Durable owner evidence barrier held while Market Catalog completes one retirement transition. */
+export const marketRetirementReservations = commerceCustomerContextSchema.table.withRLS(
+  'market_retirement_reservations',
+  {
+    marketRetirementReservationId: uuid('market_retirement_reservation_id').defaultRandom().primaryKey(),
+    ...scopeColumns(),
+    assessmentDigest: text('assessment_digest').notNull(),
+    evaluatedAt: timestamp('evaluated_at', { withTimezone: true }).notNull(),
+    lastActionInvocationId: uuid('last_action_invocation_id'),
+    lastOperation: text('last_operation'),
+    lifecycle: text('lifecycle').default('RESERVED').notNull(),
+    marketResourceId: text('market_resource_id').notNull(),
+    marketRevision: integer('market_revision').notNull(),
+    reservationVersion: integer('reservation_version').default(1).notNull(),
+    sourceEvidence: jsonb('source_evidence').$type<readonly DatabaseJsonObject[]>().notNull(),
+    ...operationAttribution(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (table) => [
+    scopeIdentity('ccc_market_retirement_reservations_scope_id_uk', table, table.marketRetirementReservationId),
+    unique('ccc_market_retirement_reservations_action_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.actionInvocationId,
+    ),
+    uniqueIndex('ccc_market_retirement_reservations_active_market_uk')
+      .on(table.tenantId, table.legalEntityId, table.marketResourceId)
+      .where(sql`${table.lifecycle} in ('RESERVED', 'COMMITTED')`),
+    trimmed('ccc_market_retirement_reservations_market_ck', table.marketResourceId),
+    positiveRevision('ccc_market_retirement_reservations_market_revision_ck', table.marketRevision),
+    check('ccc_market_retirement_reservations_digest_ck', sql`${table.assessmentDigest} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'ccc_market_retirement_reservations_evidence_ck',
+      sql`jsonb_typeof(${table.sourceEvidence}) = 'array' and jsonb_array_length(${table.sourceEvidence}) > 0`,
+    ),
+    check(
+      'ccc_market_retirement_reservations_lifecycle_ck',
+      sql`${table.lifecycle} in ('RESERVED', 'COMMITTED', 'RELEASED')`,
+    ),
+    check(
+      'ccc_market_retirement_reservations_last_operation_ck',
+      sql`(${table.lastActionInvocationId} is null and ${table.lastOperation} is null) or (${table.lastActionInvocationId} is not null and ${table.lastOperation} in ('COMMIT', 'RELEASE'))`,
+    ),
+    positiveRevision('ccc_market_retirement_reservations_version_ck', table.reservationVersion),
+    trimmed('ccc_market_retirement_reservations_reason_ck', table.reason),
+    ...scopedPolicies('ccc_market_retirement_reservations_scope', table),
+  ],
+);
+
 const savedAddresses = commerceCustomerContextSchema.table.withRLS(
   'saved_addresses',
   {
@@ -1758,6 +1885,310 @@ const accessMutationJournal = commerceCustomerContextSchema.table.withRLS(
   ],
 );
 
+export const marketBootstrapPolicyRevisions = commerceCustomerContextSchema.table.withRLS(
+  'market_bootstrap_policy_revisions',
+  {
+    ...policyRevisionColumns(),
+    defaultChannelId: text('default_channel_id').notNull(),
+    defaultCommerceMarketId: text('default_commerce_market_id').notNull(),
+    defaultSellingLegalEntityId: uuid('default_selling_legal_entity_id').notNull(),
+  },
+  (table) => [
+    ...policyRevisionConstraints('ccc_market_bootstrap_policy', table),
+    check(
+      'ccc_market_bootstrap_policy_selector_ck',
+      sql`${table.scopeKind} in ('SELLER', 'CHANNEL_SELLER', 'STOREFRONT_CHANNEL_SELLER') and ${table.commerceMarketId} is null`,
+    ),
+    trimmed('ccc_market_bootstrap_policy_default_market_ck', table.defaultCommerceMarketId),
+    trimmed('ccc_market_bootstrap_policy_default_channel_ck', table.defaultChannelId),
+    check(
+      'ccc_market_bootstrap_policy_default_seller_ck',
+      sql`${table.defaultSellingLegalEntityId} = ${table.legalEntityId}`,
+    ),
+    check(
+      'ccc_market_bootstrap_policy_default_scope_ck',
+      sql`(${table.scopeKind} = 'SELLER') or (${table.scopeKind} in ('CHANNEL_SELLER', 'STOREFRONT_CHANNEL_SELLER') and ${table.defaultChannelId} = ${table.channelId})`,
+    ),
+  ],
+);
+
+/** Tenant-readable, administration-metadata-free bootstrap candidates for pre-seller discovery. */
+export const marketBootstrapPolicyCandidateRevisions = commerceCustomerContextSchema.table.withRLS(
+  'market_bootstrap_policy_candidate_revisions',
+  {
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
+    channelId: text('channel_id'),
+    defaultChannelId: text('default_channel_id').notNull(),
+    defaultCommerceMarketId: text('default_commerce_market_id').notNull(),
+    effectiveFrom: effectiveFrom(),
+    effectiveTo: effectiveTo(),
+    lifecycle: text('lifecycle').notNull(),
+    policyRevisionId: uuid('policy_revision_id').primaryKey(),
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
+    scopeKind: text('scope_kind').notNull(),
+    sellingLegalEntityId: uuid('selling_legal_entity_id').notNull(),
+    storefrontId: text('storefront_id'),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    unique('ccc_market_bootstrap_candidates_scope_id_uk').on(
+      table.tenantId,
+      table.sellingLegalEntityId,
+      table.policyRevisionId,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.sellingLegalEntityId, table.policyRevisionId],
+      foreignColumns: [
+        marketBootstrapPolicyRevisions.tenantId,
+        marketBootstrapPolicyRevisions.legalEntityId,
+        marketBootstrapPolicyRevisions.policyRevisionId,
+      ],
+      name: 'ccc_market_bootstrap_candidates_revision_fk',
+    }).onDelete('restrict'),
+    check(
+      'ccc_market_bootstrap_candidates_scope_ck',
+      sql`(${table.scopeKind} = 'SELLER' and ${table.channelId} is null and ${table.storefrontId} is null) or (${table.scopeKind} = 'CHANNEL_SELLER' and ${table.channelId} is not null and ${table.storefrontId} is null) or (${table.scopeKind} = 'STOREFRONT_CHANNEL_SELLER' and ${table.channelId} is not null and ${table.storefrontId} is not null)`,
+    ),
+    check(
+      'ccc_market_bootstrap_candidates_lifecycle_ck',
+      sql`${table.lifecycle} in ('SCHEDULED', 'ACTIVE', 'RETIRED')`,
+    ),
+    halfOpenPeriod('ccc_market_bootstrap_candidates_period_ck', table),
+    check(
+      'ccc_market_bootstrap_candidates_activation_ck',
+      sql`(${table.activatedAt} is null or (${table.activatedAt} >= ${table.effectiveFrom} and (${table.effectiveTo} is null or ${table.activatedAt} < ${table.effectiveTo}))) and (${table.retiredAt} is null or (${table.activatedAt} is not null and ${table.retiredAt} >= ${table.activatedAt} and (${table.effectiveTo} is null or ${table.retiredAt} <= ${table.effectiveTo})))`,
+    ),
+    optionalTrimmed('ccc_market_bootstrap_candidates_channel_ck', table.channelId),
+    optionalTrimmed('ccc_market_bootstrap_candidates_storefront_ck', table.storefrontId),
+    trimmed('ccc_market_bootstrap_candidates_default_channel_ck', table.defaultChannelId),
+    trimmed('ccc_market_bootstrap_candidates_default_market_ck', table.defaultCommerceMarketId),
+    check(
+      'ccc_market_bootstrap_candidates_default_scope_ck',
+      sql`(${table.scopeKind} = 'SELLER') or (${table.scopeKind} in ('CHANNEL_SELLER', 'STOREFRONT_CHANNEL_SELLER') and ${table.defaultChannelId} = ${table.channelId})`,
+    ),
+    ...tenantScopedPolicies('ccc_market_bootstrap_candidates_rls', table),
+  ],
+);
+
+/** Per-seller completeness evidence for the tenant-safe bootstrap candidate projection. */
+export const marketBootstrapPolicyCandidateGenerations = commerceCustomerContextSchema.table.withRLS(
+  'market_bootstrap_policy_candidate_generations',
+  {
+    declaredScopeRef: text('declared_scope_ref').notNull(),
+    generation: bigint('generation', { mode: 'number' }).notNull(),
+    nextApplicabilityBoundary: timestamp('next_applicability_boundary', { withTimezone: true }),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+    ownerRevision: text('owner_revision').notNull(),
+    predicateRef: text('predicate_ref').notNull(),
+    sellingLegalEntityId: uuid('selling_legal_entity_id').notNull(),
+    tenantId: uuid('tenant_id').notNull(),
+  },
+  (table) => [
+    unique('ccc_market_bootstrap_candidate_generations_owner_uk').on(table.tenantId, table.sellingLegalEntityId),
+    check('ccc_market_bootstrap_candidate_generations_generation_ck', sql`${table.generation} > 0`),
+    check(
+      'ccc_market_bootstrap_candidate_generations_owner_revision_ck',
+      sql`${table.ownerRevision} = 'MARKET_BOOTSTRAP:' || ${table.tenantId}::text || ':' || ${table.sellingLegalEntityId}::text || ':' || ${table.generation}::text`,
+    ),
+    check(
+      'ccc_market_bootstrap_candidate_generations_predicate_ck',
+      sql`${table.predicateRef} = 'commerce.customer-context.policy.market_bootstrap.current:' || ${table.tenantId}::text || ':' || ${table.sellingLegalEntityId}::text`,
+    ),
+    check(
+      'ccc_market_bootstrap_candidate_generations_scope_ck',
+      sql`${table.declaredScopeRef} = 'commerce.customer-context.policy.market_bootstrap.all:' || ${table.tenantId}::text || ':' || ${table.sellingLegalEntityId}::text`,
+    ),
+    check(
+      'ccc_market_bootstrap_candidate_generations_boundary_ck',
+      sql`${table.nextApplicabilityBoundary} is null or ${table.nextApplicabilityBoundary} > ${table.observedAt}`,
+    ),
+    ...tenantScopedPolicies('ccc_market_bootstrap_candidate_generations_rls', table),
+  ],
+);
+
+export const purchaseCurrencyPolicyRevisions = commerceCustomerContextSchema.table.withRLS(
+  'purchase_currency_policy_revisions',
+  {
+    ...policyRevisionColumns(),
+    currencyCode: text('currency_code'),
+    ruleKind: text('rule_kind').notNull(),
+  },
+  (table) => [
+    ...policyRevisionConstraints('ccc_purchase_currency_policy', table),
+    check(
+      'ccc_purchase_currency_policy_field_scope_ck',
+      sql`${table.scopeKind} in ('SELLER', 'CHANNEL_SELLER', 'MARKET_CHANNEL_SELLER', 'STOREFRONT_MARKET_CHANNEL_SELLER')`,
+    ),
+    check(
+      'ccc_purchase_currency_policy_value_ck',
+      sql`${table.ruleKind} in ('ALLOWED_CURRENCY_CONSTRAINT', 'DEFAULT_CURRENCY') and ${table.currencyCode} ~ '^[A-Z]{3}$'`,
+    ),
+  ],
+);
+
+export const paymentTermPolicyRevisions = commerceCustomerContextSchema.table.withRLS(
+  'payment_term_policy_revisions',
+  {
+    ...policyRevisionColumns(),
+    enabled: boolean('enabled'),
+    paymentTermResourceId: text('payment_term_resource_id'),
+    ruleKind: text('rule_kind').notNull(),
+  },
+  (table) => [
+    ...policyRevisionConstraints('ccc_payment_term_policy', table),
+    check(
+      'ccc_payment_term_policy_field_scope_ck',
+      sql`${table.scopeKind} in ('SELLER', 'CHANNEL_SELLER', 'MARKET_CHANNEL_SELLER', 'STOREFRONT_MARKET_CHANNEL_SELLER')`,
+    ),
+    check(
+      'ccc_payment_term_policy_value_ck',
+      sql`(${table.ruleKind} in ('APPLICABLE_PAYMENT_TERM_CONSTRAINT', 'FALLBACK_PAYMENT_TERM') and ${table.paymentTermResourceId} is not null and ${table.enabled} is null) or (${table.ruleKind} = 'EXPLICIT_PAYMENT_TERM_CHOICE_POLICY' and ${table.paymentTermResourceId} is null and ${table.enabled} is not null)`,
+    ),
+    optionalTrimmed('ccc_payment_term_policy_resource_ck', table.paymentTermResourceId),
+  ],
+);
+
+export const commerceQuantityRuleRevisions = commerceCustomerContextSchema.table.withRLS(
+  'commerce_quantity_rule_revisions',
+  {
+    ...policyRevisionColumns(),
+    maximum: text('maximum'),
+    minimum: text('minimum'),
+    multiple: text('multiple'),
+    quantityTargetDivisibilityRevision: integer('quantity_target_divisibility_revision').notNull(),
+    quantityTargetModuleId: text('quantity_target_module_id').notNull(),
+    quantityTargetResourceId: text('quantity_target_resource_id').notNull(),
+    quantityTargetResourceType: text('quantity_target_resource_type').notNull(),
+    quantityTargetTenantId: uuid('quantity_target_tenant_id').notNull(),
+    quantityUnitModuleId: text('quantity_unit_module_id').notNull(),
+    quantityUnitResourceId: text('quantity_unit_resource_id').notNull(),
+    quantityUnitResourceType: text('quantity_unit_resource_type').notNull(),
+    quantityUnitRuleRevision: integer('quantity_unit_rule_revision').notNull(),
+    quantityUnitTenantId: uuid('quantity_unit_tenant_id').notNull(),
+    restrictionKind: text('restriction_kind').notNull(),
+    ruleKind: text('rule_kind').notNull(),
+    selectorKind: text('selector_kind').notNull(),
+    selectorResourceId: text('selector_resource_id'),
+    selectorResourceModuleId: text('selector_resource_module_id'),
+    selectorResourceType: text('selector_resource_type'),
+    selectorTenantId: uuid('selector_tenant_id'),
+  },
+  (table) => [
+    ...policyRevisionConstraints('ccc_quantity_rule', table),
+    check(
+      'ccc_quantity_rule_field_scope_ck',
+      sql`${table.scopeKind} in ('CHANNEL_SELLER', 'MARKET_CHANNEL_SELLER', 'STOREFRONT_MARKET_CHANNEL_SELLER')`,
+    ),
+    check(
+      'ccc_quantity_rule_selector_ck',
+      sql`(${table.selectorKind} = 'ALL' and ${table.selectorResourceModuleId} is null and ${table.selectorResourceType} is null and ${table.selectorResourceId} is null and ${table.selectorTenantId} is null) or (${table.selectorKind} = 'PRODUCT' and ${table.selectorResourceModuleId} = 'commerce.catalog' and ${table.selectorResourceType} = 'commerce.catalog.product' and ${table.selectorResourceId} is not null and ${table.selectorTenantId} = ${table.tenantId}) or (${table.selectorKind} = 'VARIANT' and ${table.selectorResourceModuleId} = 'commerce.catalog' and ${table.selectorResourceType} = 'commerce.catalog.variant' and ${table.selectorResourceId} is not null and ${table.selectorTenantId} = ${table.tenantId}) or (${table.selectorKind} = 'PACKAGE_OPTION' and ${table.selectorResourceModuleId} = 'commerce.catalog' and ${table.selectorResourceType} = 'commerce.catalog.package-definition' and ${table.selectorResourceId} is not null and ${table.selectorTenantId} = ${table.tenantId})`,
+    ),
+    check('ccc_quantity_rule_kind_ck', sql`${table.ruleKind} in ('REPLACEABLE_ENVELOPE', 'NON_RELAXABLE_CONSTRAINT')`),
+    check(
+      'ccc_quantity_rule_basis_ck',
+      sql`${table.quantityTargetModuleId} = 'commerce.catalog' and ${table.quantityTargetResourceType} in ('commerce.catalog.variant', 'commerce.catalog.package-definition') and ${table.quantityTargetTenantId} = ${table.tenantId} and ${table.quantityTargetDivisibilityRevision} between 1 and 2147483647 and ${table.quantityUnitModuleId} = 'commerce.catalog' and ${table.quantityUnitResourceType} = 'commerce.catalog.product-unit' and ${table.quantityUnitTenantId} = ${table.tenantId} and ${table.quantityUnitRuleRevision} between 1 and 2147483647`,
+    ),
+    check(
+      'ccc_quantity_rule_restriction_ck',
+      sql`(${table.restrictionKind} = 'NO_COMMERCIAL_QUANTITY_RESTRICTION' and ${table.minimum} is null and ${table.maximum} is null and ${table.multiple} is null) or (${table.restrictionKind} = 'BOUNDED' and (${table.minimum} is null or (length(${table.minimum}) <= 80 and ${table.minimum} ~ '^(?:[1-9][0-9]*(?:[.][0-9]+)?|0[.]0*[1-9][0-9]*)$')) and (${table.maximum} is null or (length(${table.maximum}) <= 80 and ${table.maximum} ~ '^(?:[1-9][0-9]*(?:[.][0-9]+)?|0[.]0*[1-9][0-9]*)$')) and (${table.multiple} is null or (length(${table.multiple}) <= 80 and ${table.multiple} ~ '^(?:[1-9][0-9]*(?:[.][0-9]+)?|0[.]0*[1-9][0-9]*)$')) and (${table.minimum} is not null or ${table.maximum} is not null or ${table.multiple} is not null) and (${table.minimum} is null or ${table.maximum} is null or ${table.maximum}::numeric >= ${table.minimum}::numeric))`,
+    ),
+    optionalTrimmed('ccc_quantity_rule_selector_resource_ck', table.selectorResourceId),
+    trimmed('ccc_quantity_rule_target_resource_ck', table.quantityTargetResourceId),
+    trimmed('ccc_quantity_rule_unit_resource_ck', table.quantityUnitResourceId),
+  ],
+);
+
+export const commerceQuantityRuleAssignments = commerceCustomerContextSchema.table.withRLS(
+  'commerce_quantity_rule_assignments',
+  {
+    quantityRuleAssignmentId: uuid('quantity_rule_assignment_id').defaultRandom().primaryKey(),
+    ...scopeColumns(),
+    applicableFrom: timestamp('applicable_from', { withTimezone: true }),
+    applicableTo: timestamp('applicable_to', { withTimezone: true }),
+    effectiveFrom: effectiveFrom(),
+    effectiveTo: effectiveTo(),
+    idempotencyKey: text('idempotency_key').notNull(),
+    lifecycle: text('lifecycle').default('ACTIVE').notNull(),
+    policyRevisionId: uuid('policy_revision_id').notNull(),
+    profileKind: text('profile_kind').notNull(),
+    profileResourceId: text('profile_resource_id').notNull(),
+    ...operationAttribution(),
+  },
+  (table) => [
+    scopeIdentity('ccc_quantity_rule_assignments_scope_id_uk', table, table.quantityRuleAssignmentId),
+    unique('ccc_quantity_rule_assignments_idempotency_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.idempotencyKey,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.policyRevisionId],
+      foreignColumns: [
+        commerceQuantityRuleRevisions.tenantId,
+        commerceQuantityRuleRevisions.legalEntityId,
+        commerceQuantityRuleRevisions.policyRevisionId,
+      ],
+      name: 'ccc_quantity_rule_assignments_revision_fk',
+    }).onDelete('restrict'),
+    check('ccc_quantity_rule_assignments_profile_ck', sql`${table.profileKind} in ('RETAIL', 'COUNTERPARTY')`),
+    check('ccc_quantity_rule_assignments_lifecycle_ck', sql`${table.lifecycle} in ('SCHEDULED', 'ACTIVE', 'RETIRED')`),
+    halfOpenPeriod('ccc_quantity_rule_assignments_period_ck', table),
+    check(
+      'ccc_quantity_rule_assignments_applicability_ck',
+      sql`(${table.lifecycle} <> 'ACTIVE' or ${table.applicableFrom} is not null) and ((${table.applicableFrom} is null and ${table.applicableTo} is null) or (${table.applicableFrom} >= ${table.effectiveFrom} and (${table.effectiveTo} is null or ${table.applicableFrom} < ${table.effectiveTo}) and (${table.applicableTo} is null or (${table.applicableTo} > ${table.applicableFrom} and (${table.effectiveTo} is null or ${table.applicableTo} <= ${table.effectiveTo})))))`,
+    ),
+    trimmed('ccc_quantity_rule_assignments_profile_resource_ck', table.profileResourceId),
+    trimmed('ccc_quantity_rule_assignments_idempotency_ck', table.idempotencyKey),
+    optionalTrimmed('ccc_quantity_rule_assignments_reason_ck', table.reason),
+    ...scopedPolicies('ccc_quantity_rule_assignments_rls', table),
+  ],
+);
+
+export const customerCommercePolicyCompletenessGenerations = commerceCustomerContextSchema.table.withRLS(
+  'customer_commerce_policy_completeness_generations',
+  {
+    customerCommercePolicyCompletenessGenerationId: uuid('customer_commerce_policy_completeness_generation_id')
+      .defaultRandom()
+      .primaryKey(),
+    ...scopeColumns(),
+    fieldFamily: text('field_family').notNull(),
+    generation: bigint('generation', { mode: 'number' }).notNull(),
+    nextApplicabilityBoundary: timestamp('next_applicability_boundary', { withTimezone: true }),
+    observedAt: timestamp('observed_at', { withTimezone: true }).notNull(),
+    ownerRevision: text('owner_revision').notNull(),
+    predicateRef: text('predicate_ref').notNull(),
+    stateMetadata: jsonb('state_metadata')
+      .$type<DatabaseJsonObject>()
+      .default(sql`'{}'::jsonb`)
+      .notNull(),
+  },
+  (table) => [
+    scopeIdentity('ccc_policy_generations_scope_id_uk', table, table.customerCommercePolicyCompletenessGenerationId),
+    unique('ccc_policy_generations_family_uk').on(table.tenantId, table.legalEntityId, table.fieldFamily),
+    check(
+      'ccc_policy_generations_family_ck',
+      sql`${table.fieldFamily} in ('MARKET_BOOTSTRAP', 'PURCHASE_CURRENCY', 'PAYMENT_TERM', 'COMMERCE_QUANTITY_RULE', 'COMMERCE_QUANTITY_ASSIGNMENT')`,
+    ),
+    check('ccc_policy_generations_generation_ck', sql`${table.generation} > 0`),
+    check(
+      'ccc_policy_generations_owner_revision_ck',
+      sql`${table.ownerRevision} = ${table.fieldFamily} || ':' || ${table.generation}::text`,
+    ),
+    check(
+      'ccc_policy_generations_predicate_family_ck',
+      sql`(${table.fieldFamily} = 'MARKET_BOOTSTRAP' and ${table.predicateRef} = 'commerce.customer-context.policy.market_bootstrap.current') or (${table.fieldFamily} = 'PURCHASE_CURRENCY' and ${table.predicateRef} = 'commerce.customer-context.policy.purchase_currency.current') or (${table.fieldFamily} = 'PAYMENT_TERM' and ${table.predicateRef} = 'commerce.customer-context.policy.payment_term.current') or (${table.fieldFamily} = 'COMMERCE_QUANTITY_RULE' and ${table.predicateRef} = 'commerce.customer-context.policy.commerce_quantity_rule.current') or (${table.fieldFamily} = 'COMMERCE_QUANTITY_ASSIGNMENT' and ${table.predicateRef} = 'commerce.customer-context.policy.commerce_quantity_assignment.current')`,
+    ),
+    check(
+      'ccc_policy_generations_boundary_ck',
+      sql`${table.nextApplicabilityBoundary} is null or ${table.nextApplicabilityBoundary} > ${table.observedAt}`,
+    ),
+    check('ccc_policy_generations_metadata_ck', sql`jsonb_typeof(${table.stateMetadata}) = 'object'`),
+    trimmed('ccc_policy_generations_predicate_ck', table.predicateRef),
+    trimmed('ccc_policy_generations_revision_ck', table.ownerRevision),
+    ...scopedPolicies('ccc_policy_generations_rls', table),
+  ],
+);
+
 const purchaseLimitColumns = () => ({
   amount: numeric('amount', { precision: 38, scale: 9 }),
   currencyCode: text('currency_code'),
@@ -2146,6 +2577,8 @@ const commerceCustomerContextDatabaseSchema = {
   approvalHierarchies,
   approvalRevalidations,
   approvalRoutes,
+  commerceQuantityRuleAssignments,
+  commerceQuantityRuleRevisions,
   counterpartyAccessInvitations,
   counterpartyCommerceAccessGrants,
   counterpartyInvitationClaimAttempts,
@@ -2153,6 +2586,7 @@ const commerceCustomerContextDatabaseSchema = {
   counterpartyPurchaseLimitDefaults,
   counterpartyPurchasingProfiles,
   customerAddressDefaults,
+  customerCommercePolicyCompletenessGenerations,
   customerGroupLifecyclePeriods,
   customerGroupMemberships,
   customerGroupRevisions,
@@ -2165,7 +2599,12 @@ const commerceCustomerContextDatabaseSchema = {
   customerProfiles,
   customerSettingRevisions,
   guestRetailAttributions,
+  marketBootstrapPolicyCandidateGenerations,
+  marketBootstrapPolicyCandidateRevisions,
+  marketBootstrapPolicyRevisions,
+  marketRetirementReservations,
   partyMergeProfileObservations,
+  paymentTermPolicyRevisions,
   paymentTermRetirementReservations,
   portalEnrollmentAttempts,
   portalEnrollmentOwnerOperations,
@@ -2174,6 +2613,7 @@ const commerceCustomerContextDatabaseSchema = {
   profileReconciliationCases,
   profileReconciliationOwnerOutcomes,
   purchaseApprovalRequests,
+  purchaseCurrencyPolicyRevisions,
   purchaseProposalRevisions,
   retailCustomerProfiles,
   retailPortalProfileBindingHistory,
@@ -2193,7 +2633,10 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
   counterpartyInvitationClaimProofs,
   counterpartyPurchaseLimitDefaults,
   counterpartyPurchasingProfiles,
+  commerceQuantityRuleAssignments,
+  commerceQuantityRuleRevisions,
   customerAddressDefaults,
+  customerCommercePolicyCompletenessGenerations,
   customerGroupMemberships,
   customerGroupLifecyclePeriods,
   customerGroupRevisions,
@@ -2201,14 +2644,19 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
   customerPaymentTermEntitlements,
   customerPaymentTermPreferences,
   paymentTermRetirementReservations,
+  paymentTermPolicyRevisions,
   customerPriceGroupAssignments,
   customerProfileAliases,
   customerProfileLifecycleHistory,
   customerProfiles,
   customerSettingRevisions,
   guestRetailAttributions,
+  marketBootstrapPolicyCandidateGenerations,
+  marketBootstrapPolicyCandidateRevisions,
+  marketRetirementReservations,
   partyMergeProfileObservations,
   principalPurchaseLimitOverrides,
+  purchaseCurrencyPolicyRevisions,
   purchaseProposalRevisions,
   approvalHierarchies,
   approvalRoutes,
@@ -2223,6 +2671,7 @@ export const COMMERCE_CUSTOMER_CONTEXT_TABLES = [
   retailPortalProfileBindingHistory,
   retailPortalProfileBindings,
   savedAddresses,
+  marketBootstrapPolicyRevisions,
 ] as const;
 
 /** Relational Queries v2 entry point for the owner-local database. */

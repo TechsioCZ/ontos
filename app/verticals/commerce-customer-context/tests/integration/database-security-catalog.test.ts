@@ -13,30 +13,42 @@ import {
 } from '../../src/database/schema.ts';
 
 const runtimeRole = 'ontos_runtime';
+const securityDefinerSearchPath = 'search_path=pg_catalog, commerce_customer_context, pg_temp';
 
 /** Routines the owner boundary keeps private: reachable only from another routine's definer context. */
 const privateRoutines = [
   'access_grant_row',
+  'assert_customer_commerce_policy_scope',
   'assert_customer_payment_terms_scope',
   'assert_profile_operation_scope',
+  'canonical_market_retirement_json',
   'ccc_portal_enrollment_attempts_identity_guard',
   'ccc_portal_enrollment_owner_operations_identity_guard',
   'customer_group_document',
   'customer_group_membership_document',
   'customer_payment_terms_state_json',
+  'derive_customer_commerce_policy_applicability',
   'guard_payment_term_retirement_reservation',
+  'guard_market_bootstrap_retirement_reference',
+  'guard_market_proposal_retirement_reference',
+  'guard_market_retirement_reference',
+  'guard_commerce_quantity_rule_assignment',
+  'guard_customer_commerce_policy_revision_mutation',
   'invalidate_invitation_claim_proofs',
   'invitation_grant_progress',
   'portal_enrollment_attempt_projection',
+  'lock_customer_commerce_policy_generation',
   'record_claim_reset_marker',
   'reject_address_book_reconciliation_receipt_mutation',
   'reject_append_only_mutation',
+  'store_customer_commerce_policy_generation',
 ] as const;
 
 /** Routines the runtime role must be able to execute; every owner surface reaches the database through one. */
 const grantedRoutines = [
   'add_saved_address',
   'archive_customer_group',
+  'assess_market_retirement_affected_use',
   'assess_payment_term_entitlement_use',
   'assign_customer_group_membership',
   'assign_price_group',
@@ -65,6 +77,12 @@ const grantedRoutines = [
   'list_access_reconciliation',
   'list_due_portal_enrollment_attempts',
   'list_saved_addresses',
+  'load_commerce_quantity_rule_assignments',
+  'load_commerce_quantity_rule_state',
+  'load_current_market_bootstrap_policy_candidates',
+  'load_market_bootstrap_policy_state',
+  'load_payment_term_policy_state',
+  'load_purchase_currency_policy_state',
   'lock_access_grant_authority',
   'migrate_price_group_assignments',
   'mutate_access_invitation',
@@ -72,6 +90,11 @@ const grantedRoutines = [
   'observe_party_merge_reconciliation',
   'open_profile_reconciliation',
   'persist_customer_payment_terms',
+  'persist_commerce_quantity_rule_assignments',
+  'persist_commerce_quantity_rule_state',
+  'persist_market_bootstrap_policy_state',
+  'persist_payment_term_policy_state',
+  'persist_purchase_currency_policy_state',
   'reactivate_customer_group',
   'read_access_invitation',
   'read_access_invitation_claim_reconciliation',
@@ -111,6 +134,7 @@ const grantedRoutines = [
   'remove_saved_address',
   'reroute_purchase_approval_request',
   'reserve_payment_term_retirement',
+  'reserve_market_retirement',
   'resolve_price_group_assignments',
   'resolve_profile_reconciliation',
   'resolve_retail_principal',
@@ -137,11 +161,18 @@ const appendOnlyTriggers = [
   ['customer_profile_aliases', 'ccc_profile_aliases_append_only'],
   ['customer_profile_lifecycle_history', 'ccc_profile_history_append_only'],
   ['guest_retail_attributions', 'ccc_guest_attributions_append_only'],
+  ['market_bootstrap_policy_revisions', 'ccc_market_bootstrap_policy_revision_guard'],
+  ['market_bootstrap_policy_revisions', 'market_bootstrap_policy_retirement_guard'],
   ['party_merge_profile_observations', 'ccc_party_merge_observations_append_only_trg'],
+  ['payment_term_policy_revisions', 'ccc_payment_term_policy_revision_guard'],
   ['portal_enrollment_attempts', 'ccc_portal_enrollment_attempts_identity_guard'],
   ['portal_enrollment_owner_operations', 'ccc_portal_enrollment_owner_operations_identity_guard'],
   ['profile_reconciliation_case_members', 'ccc_reconciliation_members_append_only'],
   ['profile_reconciliation_owner_outcomes', 'ccc_reconciliation_owner_outcomes_append_only_trg'],
+  ['purchase_currency_policy_revisions', 'ccc_purchase_currency_policy_revision_guard'],
+  ['purchase_proposal_revisions', 'purchase_proposal_market_retirement_guard'],
+  ['commerce_quantity_rule_assignments', 'ccc_quantity_rule_assignment_guard'],
+  ['commerce_quantity_rule_revisions', 'ccc_quantity_rule_revision_guard'],
   ['retail_portal_profile_binding_history', 'ccc_portal_binding_history_append_only'],
 ] as const;
 
@@ -152,6 +183,11 @@ const temporalExclusionConstraints = [
   'ccc_payment_entitlements_no_overlap_excl',
   'ccc_payment_preferences_no_overlap_excl',
   'ccc_price_assignments_no_overlap_excl',
+  'ccc_market_bootstrap_policy_no_overlap_excl',
+  'ccc_payment_term_policy_no_overlap_excl',
+  'ccc_purchase_currency_policy_no_overlap_excl',
+  'ccc_quantity_rule_assignments_no_overlap_excl',
+  'ccc_quantity_rule_no_overlap_excl',
 ] as const;
 
 const requiredUniqueIndexes = [
@@ -233,9 +269,7 @@ it.live('governs the Commerce Customer Context schema through forced RLS and rou
       );
       const callable = routines.filter(({ returnsTrigger }) => !returnsTrigger);
       expect(callable.filter(({ definer }) => !definer)).toEqual([]);
-      expect(callable.filter(({ searchPath }) => searchPath?.startsWith('search_path=pg_catalog') !== true)).toEqual(
-        [],
-      );
+      expect(callable.filter(({ searchPath }) => searchPath !== securityDefinerSearchPath)).toEqual([]);
       expect(routines.filter(({ executable, returnsTrigger }) => returnsTrigger && executable)).toEqual([]);
       expect(names(routines.filter(({ executable }) => executable))).toEqual(
         EffectArray.sort([...grantedRoutines], Order.String),

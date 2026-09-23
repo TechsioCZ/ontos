@@ -17,6 +17,9 @@ it.live(
         (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
       );
       const files = {
+        // Market Catalog: allowed exact owner-client composition seam.
+        'verticals/commerce-market-catalog/src/integrations/market-subject-restrictions.ts':
+          "import { execute } from '@app/commerce-customer-context/api/market-subject-restrictions-current/client';\n",
         // Shell: allowed documented composition seams.
         'apps/shell-super-app/api/auth/commerce-external-identity.ts':
           "import { verify } from '@app/commerce-customer-context/portal-auth/verification/client';\n",
@@ -72,6 +75,8 @@ it.live(
           exports: {
             '.': './src/index.ts',
             './api/client': './src/api/client.ts',
+            './api/market-subject-restrictions-current/client':
+              './src/api/market-subject-restrictions-current-client.ts',
             './portal-auth/verification/client': './src/portal-auth/verification/client.ts',
             './shared/contracts': './shared/contracts.ts',
           },
@@ -79,6 +84,9 @@ it.live(
         // party-registry: violates via direct api/ import.
         'verticals/party-registry/api/uses-commerce-api.ts':
           "import { OwnerTransition } from '../../commerce-customer-context/api/owner-transition.ts';\n",
+        // The narrow owner client is accepted only at the exact documented Market composition seam.
+        'verticals/party-registry/api/uses-subject-restrictions-client.ts':
+          "import { execute } from '@app/commerce-customer-context/api/market-subject-restrictions-current/client';\n",
       } as const;
       yield* Effect.all(
         Object.entries(files).map(([relative, source]) =>
@@ -101,6 +109,7 @@ it.live(
         'packages/core-runtime/src/auth/relative-commerce-leak.ts:1: Core runtime source imports Commerce/Storefront/Better Auth via relative specifier "../../../../verticals/commerce-customer-context/src/enrollment/journeys/index.ts" (resolves to "verticals/commerce-customer-context/src/enrollment/journeys/index.ts")',
         'packages/core-runtime/src/auth/unpinned.ts:1: Core runtime source imports a dependency outside the pinned external specifier set: "zod"',
         'verticals/party-registry/api/uses-commerce-api.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "../../commerce-customer-context/api/owner-transition.ts" (only published shared/ contracts and documented composition seams are allowed)',
+        'verticals/party-registry/api/uses-subject-restrictions-client.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "@app/commerce-customer-context/api/market-subject-restrictions-current/client" (only published shared/ contracts and documented composition seams are allowed)',
       ]);
     }),
 );

@@ -23,6 +23,15 @@ import {
   purchaseApprovalRequests,
   approvalDecisions,
   approvalRevalidations,
+  marketBootstrapPolicyRevisions,
+  marketBootstrapPolicyCandidateGenerations,
+  marketBootstrapPolicyCandidateRevisions,
+  marketRetirementReservations,
+  purchaseCurrencyPolicyRevisions,
+  paymentTermPolicyRevisions,
+  commerceQuantityRuleRevisions,
+  commerceQuantityRuleAssignments,
+  customerCommercePolicyCompletenessGenerations,
 } from '../../src/database/schema.ts';
 
 it('owns an exact private Commerce Customer Context table catalog', () => {
@@ -39,12 +48,208 @@ it('owns an exact private Commerce Customer Context table catalog', () => {
   );
 
   expect(COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME).toBe('commerce_customer_context');
-  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(40);
+  expect(COMMERCE_CUSTOMER_CONTEXT_TABLES).toHaveLength(49);
   expect(actual).toEqual(expected);
 });
 
+it('stores exact Market retirement evidence behind one active reservation per scoped Market', () => {
+  const reservation = getTableConfig(marketRetirementReservations);
+  expect(reservation.columns.map(({ name }) => name)).toEqual(
+    expect.arrayContaining([
+      'tenant_id',
+      'legal_entity_id',
+      'market_resource_id',
+      'market_revision',
+      'assessment_digest',
+      'source_evidence',
+      'evaluated_at',
+      'lifecycle',
+      'reservation_version',
+      'action_invocation_id',
+      'actor_principal_id',
+    ]),
+  );
+  expect(
+    reservation.indexes.some(({ config }) => config.name === 'ccc_market_retirement_reservations_active_market_uk'),
+  ).toBe(true);
+  expect(reservation.checks.some(({ name }) => name === 'ccc_market_retirement_reservations_digest_ck')).toBe(true);
+  expect(reservation.checks.some(({ name }) => name === 'ccc_market_retirement_reservations_evidence_ck')).toBe(true);
+});
+
+it('stores each executable Customer Commerce Policy family in explicit typed tables', () => {
+  const expected = [
+    [
+      marketBootstrapPolicyRevisions,
+      ['default_channel_id', 'default_commerce_market_id', 'default_selling_legal_entity_id'],
+    ],
+    [purchaseCurrencyPolicyRevisions, ['rule_kind', 'currency_code']],
+    [paymentTermPolicyRevisions, ['rule_kind', 'payment_term_resource_id', 'enabled']],
+    [
+      commerceQuantityRuleRevisions,
+      [
+        'selector_kind',
+        'selector_resource_type',
+        'rule_kind',
+        'quantity_target_resource_id',
+        'quantity_target_divisibility_revision',
+        'quantity_unit_resource_id',
+        'quantity_unit_rule_revision',
+        'restriction_kind',
+      ],
+    ],
+  ] as const;
+
+  for (const [table, requiredColumns] of expected) {
+    const config = getTableConfig(table);
+    for (const column of [
+      'policy_revision_id',
+      'scope_kind',
+      'channel_id',
+      'commerce_market_id',
+      'storefront_id',
+      'effective_from',
+      'effective_to',
+      'applicable_from',
+      'applicable_to',
+      'lifecycle',
+      'action_invocation_id',
+      'actor_principal_id',
+      ...requiredColumns,
+    ]) {
+      expect(
+        config.columns.some(({ name }) => name === column),
+        `${config.name}.${column}`,
+      ).toBe(true);
+    }
+    expect(config.columns.every(({ name }) => !['kind', 'payload', 'policy_json', 'value_json'].includes(name))).toBe(
+      true,
+    );
+    expect(config.checks.some(({ name }) => name.endsWith('_period_ck'))).toBe(true);
+    expect(config.checks.some(({ name }) => name.endsWith('_applicability_ck'))).toBe(true);
+    expect(config.checks.some(({ name }) => name.endsWith('_lifecycle_ck'))).toBe(true);
+  }
+
+  expect(
+    getTableConfig(marketBootstrapPolicyRevisions).columns.some(({ name }) => name === 'default_storefront_id'),
+  ).toBe(false);
+  expect(getTableConfig(purchaseCurrencyPolicyRevisions).columns.some(({ name }) => name === 'enabled')).toBe(false);
+});
+
+it('keeps bootstrap-only and ordinary policy scopes distinct at the database boundary', () => {
+  const bootstrap = getTableConfig(marketBootstrapPolicyRevisions);
+  const currency = getTableConfig(purchaseCurrencyPolicyRevisions);
+  const paymentTerm = getTableConfig(paymentTermPolicyRevisions);
+  const quantity = getTableConfig(commerceQuantityRuleRevisions);
+
+  expect(bootstrap.checks.some(({ name }) => name === 'ccc_market_bootstrap_policy_selector_ck')).toBe(true);
+  expect(currency.checks.some(({ name }) => name === 'ccc_purchase_currency_policy_field_scope_ck')).toBe(true);
+  expect(paymentTerm.checks.some(({ name }) => name === 'ccc_payment_term_policy_field_scope_ck')).toBe(true);
+  expect(quantity.checks.some(({ name }) => name === 'ccc_quantity_rule_field_scope_ck')).toBe(true);
+});
+
+it('stores quantity values as owner-qualified Catalog references and exact decimals', () => {
+  const quantity = getTableConfig(commerceQuantityRuleRevisions);
+  const columns = new Map(quantity.columns.map((column) => [column.name, column]));
+
+  for (const referenceColumn of [
+    'selector_resource_module_id',
+    'selector_resource_type',
+    'selector_resource_id',
+    'selector_tenant_id',
+    'quantity_target_module_id',
+    'quantity_target_resource_type',
+    'quantity_target_resource_id',
+    'quantity_target_tenant_id',
+    'quantity_target_divisibility_revision',
+    'quantity_unit_module_id',
+    'quantity_unit_resource_type',
+    'quantity_unit_resource_id',
+    'quantity_unit_tenant_id',
+    'quantity_unit_rule_revision',
+  ]) {
+    expect(columns.has(referenceColumn), referenceColumn).toBe(true);
+  }
+  for (const exactDecimal of ['minimum', 'maximum', 'multiple']) {
+    expect(columns.get(exactDecimal)?.getSQLType(), exactDecimal).toBe('text');
+  }
+  expect(columns.has('catalog_resource_id')).toBe(false);
+  expect(columns.has('unit')).toBe(false);
+  expect(quantity.checks.some(({ name }) => name === 'ccc_quantity_rule_basis_ck')).toBe(true);
+  expect(quantity.checks.some(({ name }) => name === 'ccc_quantity_rule_restriction_ck')).toBe(true);
+});
+
+it('stores concrete quantity assignments and per-family completeness generations explicitly', () => {
+  const assignments = getTableConfig(commerceQuantityRuleAssignments);
+  expect(assignments.columns.map(({ name }) => name)).toEqual(
+    expect.arrayContaining([
+      'quantity_rule_assignment_id',
+      'policy_revision_id',
+      'profile_kind',
+      'profile_resource_id',
+      'effective_from',
+      'effective_to',
+      'applicable_from',
+      'applicable_to',
+      'lifecycle',
+    ]),
+  );
+  expect(assignments.checks.some(({ name }) => name.endsWith('_profile_ck'))).toBe(true);
+  expect(assignments.checks.some(({ name }) => name.endsWith('_applicability_ck'))).toBe(true);
+
+  const generations = getTableConfig(customerCommercePolicyCompletenessGenerations);
+  expect(generations.columns.map(({ name }) => name)).toEqual(
+    expect.arrayContaining(['field_family', 'generation', 'predicate_ref', 'observed_at', 'state_metadata']),
+  );
+  expect(generations.checks.some(({ name }) => name.endsWith('_family_ck'))).toBe(true);
+  expect(generations.checks.some(({ name }) => name.endsWith('_generation_ck'))).toBe(true);
+  expect(generations.checks.some(({ name }) => name.endsWith('_owner_revision_ck'))).toBe(true);
+  expect(generations.checks.some(({ name }) => name.endsWith('_predicate_family_ck'))).toBe(true);
+});
+
+it('keeps pre-seller bootstrap discovery in a tenant-safe projection without administration metadata', () => {
+  const candidates = getTableConfig(marketBootstrapPolicyCandidateRevisions);
+  const generations = getTableConfig(marketBootstrapPolicyCandidateGenerations);
+
+  expect(candidates.columns.map(({ name }) => name)).toEqual(
+    expect.arrayContaining([
+      'tenant_id',
+      'selling_legal_entity_id',
+      'policy_revision_id',
+      'activated_at',
+      'retired_at',
+      'default_channel_id',
+      'default_commerce_market_id',
+    ]),
+  );
+  expect(candidates.columns.some(({ name }) => name === 'default_storefront_id')).toBe(false);
+  for (const administrationColumn of [
+    'action_invocation_id',
+    'actor_principal_id',
+    'idempotency_key',
+    'reason',
+    'recorded_at',
+  ]) {
+    expect(candidates.columns.some(({ name }) => name === administrationColumn)).toBe(false);
+  }
+  expect(generations.columns.map(({ name }) => name)).toEqual(
+    expect.arrayContaining([
+      'tenant_id',
+      'selling_legal_entity_id',
+      'generation',
+      'predicate_ref',
+      'owner_revision',
+      'declared_scope_ref',
+    ]),
+  );
+});
+
 it('requires tenant and Selling Legal Entity scope with complete forced-RLS policy shape', () => {
-  const tenantOnlyTables = new Set(['portal_enrollment_attempts', 'portal_enrollment_owner_operations']);
+  const tenantOnlyTables = new Set([
+    'market_bootstrap_policy_candidate_generations',
+    'market_bootstrap_policy_candidate_revisions',
+    'portal_enrollment_attempts',
+    'portal_enrollment_owner_operations',
+  ]);
   for (const table of COMMERCE_CUSTOMER_CONTEXT_TABLES) {
     const config = getTableConfig(table);
     const tenantOnly = tenantOnlyTables.has(config.name);
@@ -62,7 +267,9 @@ it('requires tenant and Selling Legal Entity scope with complete forced-RLS poli
         const names = new Set(columns.flatMap((column) => ('name' in column ? [column.name] : [])));
         return tenantOnly
           ? names.has('tenant_id') &&
-              (names.has('portal_enrollment_attempt_id') || names.has('portal_enrollment_owner_operation_id'))
+              (names.has('portal_enrollment_attempt_id') ||
+                names.has('portal_enrollment_owner_operation_id') ||
+                names.has('selling_legal_entity_id'))
           : names.has('tenant_id') && names.has('legal_entity_id');
       }),
       tenantOnly

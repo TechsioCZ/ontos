@@ -610,7 +610,7 @@ const reconcileCoverage = Effect.fn('qualityAudit.reconcileCoverage')(function* 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const canonicalRoot = yield* fs.realPath(root);
-  const expectedManifests = yield* fs.glob('{apps,verticals,packages}/*/package.json', {
+  const expectedManifests = yield* fs.glob('{apps,verticals,packages,vendor}/*/package.json', {
     exclude: ['**/node_modules/**'],
     root,
   });

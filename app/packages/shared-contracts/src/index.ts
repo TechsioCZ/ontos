@@ -6,6 +6,16 @@ export { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './p
 export type { ProblemDetailsStatus } from './problem-details.ts';
 
 export {
+  OwnerVerifiableSetCompletenessEvidenceSchema,
+  OwnerVerifiableSetCompletenessScopeSchema,
+} from './owner-verifiable-set-completeness.ts';
+export type {
+  OwnerVerifiableSetCompletenessEvidence,
+  OwnerVerifiableSetCompletenessEvidenceEncoded,
+  OwnerVerifiableSetCompletenessScope,
+} from './owner-verifiable-set-completeness.ts';
+
+export {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_TTL_SECONDS,

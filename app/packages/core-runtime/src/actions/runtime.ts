@@ -51,6 +51,7 @@ import type {
 import {
   decodeActionPayload,
   decodeActionResult,
+  getActionDecodedSuccessHook,
   getActionBusinessPermissionTargetResolver,
   getActionHandler,
   getActionResourcePermissionTargetResolver,
@@ -63,6 +64,7 @@ import {
   ActionHandlerExecutionError,
   ActionIdempotencyKeyRequired,
   ActionInvocationPersistenceError,
+  ActionInvocationNotFound,
   ActionInvocationStateError,
   ActionPayloadValidationError,
   ActionPermissionCheckError,
@@ -74,8 +76,15 @@ import {
   ActionTransactionError,
   ActionTrustedContextValidationError,
 } from './errors.ts';
-import type { ActionCoreError, ActionInvocationNotFound } from './errors.ts';
+import type { ActionCoreError } from './errors.ts';
 import type { DomainEventContractMap } from './events.ts';
+import { ModuleStateCheckUnavailableError, ModuleStateDeniedError } from '../modules/module-state-gate-errors.ts';
+import {
+  OperationAuthenticationRequired,
+  OperationContextDenied,
+  OperationContextInvalid,
+  OperationContextUnavailable,
+} from '../operations/errors.ts';
 import type { ActionPolicy, ActionPolicyEvaluatorInput } from './policy.ts';
 import { PolicyDenied } from './policy.ts';
 import type { ActionInvocationRecord, ActionPolicyEvidence, ActionRepositoryService } from './repository.ts';
@@ -275,6 +284,32 @@ const transactionFailure = () =>
     code: 'action_transaction_failed',
     reason: 'The Action transaction did not complete successfully',
   });
+
+const ActionCoreErrorSchema = Schema.Union([
+  ActionAlreadyCommitted,
+  ActionCollectorError,
+  ActionCommitIndeterminate,
+  ActionHandlerExecutionError,
+  ActionIdempotencyKeyRequired,
+  ActionInvocationNotFound,
+  ActionInvocationPersistenceError,
+  ActionInvocationStateError,
+  ActionPermissionCheckError,
+  ActionPermissionDenied,
+  ActionPayloadValidationError,
+  ActionPolicyDenied,
+  ActionPolicyEvaluationError,
+  ActionRequestHashConflict,
+  ActionResultValidationError,
+  ActionTransactionError,
+  ActionTrustedContextValidationError,
+  ModuleStateCheckUnavailableError,
+  ModuleStateDeniedError,
+  OperationAuthenticationRequired,
+  OperationContextDenied,
+  OperationContextInvalid,
+  OperationContextUnavailable,
+]);
 
 const alreadyCommitted = (invocationId: string) =>
   new ActionAlreadyCommitted({
@@ -1436,6 +1471,38 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                   ),
                 ),
             });
+            const onDecodedSuccess = getActionDecodedSuccessHook(input.registration);
+            if (onDecodedSuccess !== undefined) {
+              const hookExit = yield* Effect.exit(
+                Effect.suspend(() =>
+                  onDecodedSuccess(
+                    Object.freeze({
+                      actionInvocationId: lockedInvocation.actionInvocationId,
+                      result,
+                      scope,
+                      services,
+                    }),
+                  ),
+                ),
+              );
+              if (Exit.isFailure(hookExit)) {
+                const failureReasons = hookExit.cause.reasons.filter(Cause.isFailReason);
+                const [failureReason] = failureReasons;
+                if (failureReasons.length === hookExit.cause.reasons.length && failureReason !== undefined) {
+                  const decodedDomainError = yield* Effect.option(
+                    Schema.decodeUnknownEffect(input.registration.descriptor.domainErrorSchema)(failureReason.error),
+                  );
+                  if (Option.isSome(decodedDomainError)) {
+                    return yield* Effect.fail(decodedDomainError.value);
+                  }
+                  if (Schema.is(ActionCoreErrorSchema)(failureReason.error)) {
+                    return yield* Effect.failCause(Cause.fail(failureReason.error));
+                  }
+                }
+                yield* Effect.logError('Unexpected Action decoded-success hook defect', hookExit.cause);
+                return yield* makeHandlerExecutionError();
+              }
+            }
           }
           yield* repository
             .flushSuccess(drizzleTransaction, {

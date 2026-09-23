@@ -305,6 +305,12 @@ const tokenize = (source: string): readonly SourceToken[] => {
   const templateExpressionBraceDepths: number[] = [];
   let scannedKind = scanner.scan();
   while (scannedKind !== SyntaxKind.EndOfFile) {
+    // The native scanner can return a zero-width PrivateIdentifier for a bare
+    // `#` in a regular expression (for example /^#[0-9a-f]{6}$/u). Rescan it
+    // as a hash token so that traversal advances instead of growing forever.
+    if (scannedKind === SyntaxKind.PrivateIdentifier && scanner.getTokenStart() === scanner.getTokenEnd()) {
+      scannedKind = scanner.reScanHashToken();
+    }
     const kind = updateTemplateToken(scanner, scannedKind, templateExpressionBraceDepths);
     tokens.push({ kind, value: scanner.getTokenValue() });
     scannedKind = scanner.scan();

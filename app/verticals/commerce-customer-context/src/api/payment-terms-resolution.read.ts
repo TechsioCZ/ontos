@@ -20,6 +20,7 @@ import {
 import { customerCommercePaymentTermsPolicyResolver } from '../integrations/customer-commerce-payment-terms-policy.ts';
 import { paymentTermCatalogPortFromEnvironment } from '../integrations/payment-term-catalog.ts';
 import { paymentTermsPersistenceForTransaction } from '../persistence/payment-term-persistence.ts';
+import { customerCommercePolicyAdministrationServiceFactory } from '../services/customer-commerce-policy-administration.service.ts';
 import type {
   PaymentTermsResolutionRequest,
   PaymentTermsResolutionResponse,
@@ -109,10 +110,16 @@ export const paymentTermsResolutionRead = defineRead(
         legalEntityId,
         requestCorrelation: scope.correlationId,
       });
-      const policy = customerCommercePaymentTermsPolicyResolver('PROFILE', {
-        tenantId: scope.tenantId,
-        trustedStorefrontId,
-      });
+      // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Deterministic owner-port construction; neither constructor performs the governed read.
+      const policyService = yield* customerCommercePolicyAdministrationServiceFactory(transaction, scope);
+      const policy = customerCommercePaymentTermsPolicyResolver(
+        'PROFILE',
+        {
+          tenantId: scope.tenantId,
+          trustedStorefrontId,
+        },
+        policyService,
+      );
       const { resolution } = paymentTermsPersistenceForTransaction(
         {
           invoker: transaction,

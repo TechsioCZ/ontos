@@ -13,6 +13,7 @@ import {
   CorePersistenceLive,
   DatabaseConfigLive,
   LegalEntityContextLive,
+  legalEntityDetailRead,
   makeTenantModuleStateService,
   managedPrincipalsRead,
   OutboxRepositoryLive,
@@ -95,6 +96,11 @@ import type {
   TenantInternalProblem,
 } from '../shared/api.ts';
 import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
+// @ontos-codesmith-core-read-server-imports:start
+
+// @ontos-core-read legal-entity-detail
+// legalEntityDetailRead uses the canonical @app/core-runtime import
+// @ontos-codesmith-core-read-server-imports:end
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from './auth/authentication-namespace.ts';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
@@ -1658,6 +1664,40 @@ const supportRecoveryPrincipalLive = SupportRecoveryPrincipalContextResolverLive
   authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
 }).pipe(Layer.provide(corePersistenceLive));
 
+// @ontos-codesmith-core-read-server-groups:start
+
+// @ontos-core-read legal-entity-detail
+const coreReadLegalEntityDetailGroupLive = HttpApiBuilder.group(
+  ShellAuthenticationApi,
+  'coreReadLegalEntityDetail',
+  (handlers) =>
+    handlers.handle('executeLegalEntityDetail', ({ payload, request }) =>
+      Effect.gen(function* executeLegalEntityDetailCoreRead() {
+        const authentication = yield* AuthenticationService;
+        const resolved = yield* authentication
+          .resolveTenantContext(requestHeaders(request.headers))
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+        yield* forwardSetCookieHeaders(resolved.setCookieHeaders);
+        if (resolved.state !== 'authenticated') {
+          return yield* failIdentityProblem(shellAuthenticationRequiredProblem());
+        }
+        const runtime = yield* ReadRuntime;
+        return yield* runtime
+          .runRead({
+            input: payload,
+            principal: resolved.principal,
+            registration: legalEntityDetailRead,
+            transport: { correlationId: correlationFromRequest(request) },
+          })
+          .pipe(Effect.catch((error) => pipe(error, identityProblem, failIdentityProblem)));
+      }).pipe(
+        recoverUnexpectedDefect(request, 'Unexpected Shell Core read defect', () =>
+          failIdentityProblem(shellInternalProblem()),
+        ),
+      ),
+    ),
+);
+// @ontos-codesmith-core-read-server-groups:end
 const runtimeObservabilityLive = Layer.mergeAll(
   Logger.layer([Logger.defaultLogger, Logger.tracerLogger]),
   Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
@@ -1825,6 +1865,11 @@ export const makeShellAuthenticationApiRuntime = (
     compositionGroupLive,
     resourcesGroupLive,
     gatewayContextGroupLive,
+    // @ontos-codesmith-core-read-server-layers:start
+
+    // @ontos-core-read legal-entity-detail
+    coreReadLegalEntityDetailGroupLive,
+    // @ontos-codesmith-core-read-server-layers:end
     externalIdentityGroupLive,
   ).pipe(Layer.provide(outboxMatcherLayer), Layer.provide(handlerDependenciesLive), Layer.orDie);
 

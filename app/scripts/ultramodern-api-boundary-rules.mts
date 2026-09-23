@@ -812,7 +812,7 @@ const exportedFactoryOwnsCall = (code: string, callIndex: number, callEnd: numbe
   const defaultRuntime = [
     ...code.matchAll(
       new RegExp(
-        String.raw`\bconst\s+(?<runtime>${identifierPattern})\s*=\s*${escapesRegularExpression(factory)}\s*\(`,
+        String.raw`\bconst\s+(?<runtime>${identifierPattern})(?:\s*:\s*[^=;]+)?\s*=\s*${escapesRegularExpression(factory)}\s*\(`,
         'gu',
       ),
     ),
@@ -837,7 +837,7 @@ const expressionFactoryOwnsCall = (code: string, callIndex: number, callEnd: num
     /^\s*;/u.test(code.slice(callEnd))
   ) {
     const factoryResult = new RegExp(
-      String.raw`\bconst\s+(?<runtime>${identifierPattern})\s*=\s*${escapesRegularExpression(factory)}\s*\(\s*\)\s*;`,
+      String.raw`\bconst\s+(?<runtime>${identifierPattern})(?:\s*:\s*[^=;]+)?\s*=\s*${escapesRegularExpression(factory)}\s*\(\s*\)\s*;`,
       'gu',
     );
     return [...code.slice(callEnd).matchAll(factoryResult)].some((match) => {
@@ -865,7 +865,10 @@ const isRuntimeRootCall = (code: string, callIndex: number, callEnd: number): bo
   if (expressionFactoryOwnsCall(code, callIndex, callEnd)) {
     return true;
   }
-  const assignment = new RegExp(String.raw`\bconst\s+(?<name>${identifierPattern})\s*=\s*$`, 'u').exec(prefix);
+  const assignment = new RegExp(
+    String.raw`\bconst\s+(?<name>${identifierPattern})(?:\s*:\s*[^=;]+)?\s*=\s*$`,
+    'u',
+  ).exec(prefix);
   const runtimeName = assignment?.groups?.name;
   return (
     runtimeName !== undefined &&

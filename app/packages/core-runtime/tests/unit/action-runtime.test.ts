@@ -637,6 +637,142 @@ const registration = () =>
     }),
   );
 
+it.effect('runs the decoded-success hook before evidence flush and rolls back its typed failure', () =>
+  Effect.gen(function* decodedSuccessHook() {
+    const calls: string[] = [];
+    const descriptor = {
+      accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+      actionKey: 'shell.counter.snapshot',
+      auditProfile: 'standard',
+      domainErrorSchema: Schema.Never,
+      domainEvents: {},
+      entrypoint: defineSystemModuleEntrypoint({
+        access: 'write',
+        authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+        entrypointKey: 'shell.counter.snapshot',
+        moduleKey: 'core.shell',
+        role: 'action',
+      }),
+      idempotency: 'required',
+      legalEntityScope: 'optional',
+      owningModuleKey: 'core.shell',
+      payloadSchema: Schema.Struct({ amount: Schema.Finite }),
+      policies: [],
+      resultSchema: Schema.Struct({ total: Schema.Finite }),
+      schemaVersion: '1',
+    } as const;
+    const action = (fail: boolean) =>
+      defineAction(
+        descriptor,
+        ({ amount }) => Effect.succeed({ total: amount }),
+        () => Effect.succeed({ marker: 'scoped-service' }),
+        ({ actionInvocationId, result, scope, services }) =>
+          Effect.gen(function* persistSnapshot() {
+            expect(actionInvocationId).toBe('invocation-1');
+            expect(result).toEqual({ total: 3 });
+            expect(scope.tenantId).toBe(principal.tenantId);
+            expect(services.marker).toBe('scoped-service');
+            calls.push('hook');
+            if (fail) {
+              return yield* new ActionTransactionError({
+                code: 'action_transaction_failed',
+                reason: 'snapshot write failed',
+              });
+            }
+            return yield* Effect.void;
+          }),
+      );
+    const success = yield* makeHarness();
+    const result = yield* success.runtime.runAction({
+      payload: { amount: 3 },
+      principal,
+      registration: action(false),
+      transport: transport('snapshot-success'),
+    });
+    expect(result).toEqual({ total: 3 });
+    expect(calls).toEqual(['hook']);
+    expect(success.flushed).toHaveLength(1);
+    expect(success.transactionOutcomes().committedTransactionCount).toBe(1);
+
+    const failed = yield* makeHarness();
+    const failure = yield* Effect.flip(
+      failed.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: action(true),
+        transport: transport('snapshot-failure'),
+      }),
+    );
+    expect(Schema.is(ActionTransactionError)(failure)).toBe(true);
+    expect(failed.flushed).toHaveLength(0);
+    expect(failed.transactionOutcomes().rolledBackTransactionCount).toBe(1);
+
+    const replay = yield* makeHarness({
+      createRecord: {
+        actionInvocationId: 'committed',
+        completedAt: null,
+        requestHash: '',
+        status: 'succeeded',
+      },
+    });
+    yield* Effect.flip(
+      replay.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: action(false),
+        transport: transport('snapshot-replay'),
+      }),
+    );
+    expect(calls).toEqual(['hook', 'hook']);
+
+    const invalid = yield* makeHarness();
+    const invalidAction = defineAction(
+      descriptor,
+      () => Effect.succeed({ total: Number.NaN }),
+      () => Effect.succeed({ marker: 'scoped-service' }),
+      () =>
+        Effect.sync(() => {
+          calls.push('invalid-hook');
+        }),
+    );
+    yield* Effect.flip(
+      invalid.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: invalidAction,
+        transport: transport('snapshot-invalid'),
+      }),
+    );
+    expect(invalid.flushed).toHaveLength(0);
+    expect(calls).toEqual(['hook', 'hook']);
+
+    const rejected = yield* makeHarness();
+    const SnapshotRejectedContract = Schema.TaggedStruct('SnapshotRejected', { reason: Schema.String });
+    const SnapshotRejected = Schema.TaggedError<typeof SnapshotRejectedContract.Type>()('SnapshotRejected', {
+      reason: Schema.String,
+    });
+    const rejectionAction = defineAction(
+      { ...descriptor, domainErrorSchema: SnapshotRejected },
+      () => Effect.succeed(commitActionThenReject(new SnapshotRejected({ reason: 'stale' }))),
+      () => Effect.succeed({ marker: 'scoped-service' }),
+      () =>
+        Effect.sync(() => {
+          calls.push('rejection-hook');
+        }),
+    );
+    yield* Effect.flip(
+      rejected.runtime.runAction({
+        payload: { amount: 3 },
+        principal,
+        registration: rejectionAction,
+        transport: transport('snapshot-rejection'),
+      }),
+    );
+    expect(rejected.flushed).toHaveLength(1);
+    expect(calls).toEqual(['hook', 'hook']);
+  }),
+);
+
 it.effect(
   'executes the complete stage order with transaction ownership and success evidence',
   Effect.fn(function* testProgram4() {

@@ -10,19 +10,27 @@ import type { CommercePortalAuthDatabaseConnectionPair } from '../verticals/comm
 
 const EXPECTED_APPLICATION_SCHEMAS = [
   'auth',
+  'catalog',
   'commerce_customer_context',
+  'commerce_market_catalog',
   'contacts',
   'core',
   'party',
   'payment_term_catalog',
+  'pricing',
+  'storefront_registry',
 ] as const;
 const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_auth',
+  '__drizzle_migrations_catalog',
   '__drizzle_migrations_commerce_customer_context',
+  '__drizzle_migrations_commerce_market_catalog',
   '__drizzle_migrations_contacts',
   '__drizzle_migrations_core',
   '__drizzle_migrations_party',
   '__drizzle_migrations_payment_term_catalog',
+  '__drizzle_migrations_pricing',
+  '__drizzle_migrations_storefront_registry',
 ] as const;
 const COMMERCE_PORTAL_AUTH_SCHEMA_NAME = 'commerce_auth' as const;
 const COMMERCE_PORTAL_AUTH_MIGRATION_JOURNAL = '__drizzle_migrations_commerce_portal_auth' as const;
@@ -131,6 +139,10 @@ const ownerVerifierPaths = [
   '../verticals/party-registry/scripts/verify-engagement-db-schema.mts',
   '../verticals/payment-term-catalog/scripts/verify-db-schema.mts',
   '../verticals/commerce-customer-context/scripts/verify-db-schema.mts',
+  '../verticals/commerce-market-catalog/scripts/verify-db-schema.mts',
+  '../verticals/catalog/scripts/verify-db-schema.mts',
+  '../verticals/pricing/scripts/verify-db-schema.mts',
+  '../verticals/storefront-registry/scripts/verify-db-schema.mts',
 ] as const;
 
 const COMMERCE_PORTAL_AUTH_VERIFIER = '../verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts';

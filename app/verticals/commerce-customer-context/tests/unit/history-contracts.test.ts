@@ -1196,7 +1196,7 @@ it.effect('preserves exact Variant, configuration, Unit, Package, and Set eviden
       catalogSelection: {
         configuration: {
           definitionRevision: catalogRevision(
-            'commerce.catalog.product-configuration-definition',
+            'commerce.catalog.configuration-definition',
             'configuration-1',
             'configuration-r3',
           ),

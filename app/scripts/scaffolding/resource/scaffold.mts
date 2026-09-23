@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, FileSystem, Schema } from 'effect';
 
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
@@ -25,24 +25,24 @@ import {
 } from '../shared.mts';
 import type { OntosVerticalMetadata, ResourceScaffoldConfig } from '../shared.mts';
 
-const renderResource = (vertical: OntosVerticalMetadata, resource: string): string => {
+const renderResource = (vertical: Pick<OntosVerticalMetadata, 'moduleId'>, resource: string, core = false): string => {
   const type = toPascalCase(resource);
   const descriptor = `${toCamelCase(resource)}ResourceDescriptor`;
   const resourceType = `${vertical.moduleId}.${resource}`;
   return `${RESOURCE_GENERATOR_HEADER}
 // @ontos-resource-owner ${vertical.moduleId}
 // @ontos-resource-slug ${resource}
-import type { OntosResourceType } from '@app/core-runtime';
+import type { OntosResourceType } from '${core ? '../modules/manifest.ts' : '@app/core-runtime'}';
 import { Schema } from 'effect';
 
-const ResourceIdSchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
-const TenantIdSchema = Schema.String.check(Schema.isUUID());
+const ResourceIdSchema = Schema.String.check(${core ? 'Schema.isUUID()' : 'Schema.isMinLength(1), Schema.isMaxLength(300)'})${core ? ".pipe(Schema.brand('LegalEntityId'))" : ''};
+const TenantIdSchema = Schema.String.check(Schema.isUUID())${core ? ".pipe(Schema.brand('TenantId'))" : ''};
 
 export const ${type}RefSchema = Schema.Struct({
   moduleId: Schema.Literal('${vertical.moduleId}'),
-  resourceId: ResourceIdSchema,
+  resourceId: ${core ? 'Schema.toEncoded(ResourceIdSchema)' : 'ResourceIdSchema'},
   resourceType: Schema.Literal('${resourceType}'),
-  tenantId: TenantIdSchema,
+  tenantId: ${core ? 'Schema.toEncoded(TenantIdSchema)' : 'TenantIdSchema'},
 });
 export type ${type}Ref = typeof ${type}RefSchema.Type;
 
@@ -63,6 +63,54 @@ export const ${descriptor} = {
 };
 
 const isResourceDescriptor = (candidate: string): boolean => /^[a-z][A-Za-z0-9]*ResourceDescriptor,$/u.test(candidate);
+const CorePackageSchema = Schema.Struct({
+  exports: Schema.Record(Schema.String, Schema.String),
+  name: Schema.Literal('@app/core-runtime'),
+});
+
+const planCoreResourceScaffold = Effect.fn('ResourceScaffold.planCore')(function* planCoreResourceScaffold(
+  workspaceRoot: string,
+  resource: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const packagePath = yield* tryScaffold('failed to resolve Core package', () =>
+    resolveContainedPath(workspaceRoot, 'packages', 'core-runtime', 'package.json'),
+  );
+  const packageContent = yield* fileSystem
+    .readFileString(packagePath)
+    .pipe(Effect.mapError((cause) => scaffoldFailure('failed to read Core package', cause)));
+  const packageObject = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(CorePackageSchema), {
+    onExcessProperty: 'preserve',
+  })(packageContent).pipe(Effect.mapError((cause) => scaffoldFailure('invalid Core package', cause)));
+  const exportsValue = packageObject.exports;
+  const contractExport = `./resources/${resource}`;
+  if (exportsValue[contractExport] !== undefined) {
+    return yield* scaffoldFailure(`resource contract export ${contractExport} already exists`);
+  }
+  const resourcePath = yield* tryScaffold('failed to resolve Core resource path', () =>
+    resolveContainedPath(workspaceRoot, 'packages', 'core-runtime', 'src', 'resources', `${resource}.ts`),
+  );
+  const resourceMutation = yield* createMutationEffect(
+    resourcePath,
+    renderResource({ moduleId: 'core.identity' }, resource, true),
+  );
+  const patchedExports = Object.fromEntries(
+    Object.entries({ ...exportsValue, [contractExport]: `./src/resources/${resource}.ts` }).toSorted(
+      ([left], [right]) => left.localeCompare(right),
+    ),
+  );
+  const packageMutation = updateMutation(
+    packagePath,
+    packageContent,
+    patchJsonObjectProperty(packageContent, [], 'exports', patchedExports),
+  );
+  if (packageMutation === undefined) {
+    return yield* scaffoldFailure('Core resource package export patch unexpectedly made no change');
+  }
+  const mutations = [resourceMutation, packageMutation];
+  yield* tryScaffold('Core resource mutation paths are invalid', () => ensureUniqueMutationPaths(mutations));
+  return { mutations, result: { resourcePath } };
+});
 
 const planResourceScaffold = Effect.fn('ResourceScaffold.plan')(function* planResourceScaffold(
   workspaceRoot: string,
@@ -71,6 +119,12 @@ const planResourceScaffold = Effect.fn('ResourceScaffold.plan')(function* planRe
   const resource = yield* tryScaffold('resource name is invalid', () =>
     requireCanonicalSlug(config.resource, 'resource'),
   );
+  if (config.vertical === 'core') {
+    if (resource !== 'legal-entity') {
+      return yield* scaffoldFailure('Core Resource generation currently supports only legal-entity');
+    }
+    return yield* planCoreResourceScaffold(workspaceRoot, resource);
+  }
   const vertical = yield* discoverOntosModuleEffect(workspaceRoot, config.vertical);
   const resourcePath = yield* tryScaffold('failed to resolve resource path', () =>
     resolveContainedPath(vertical.directory, 'shared', 'resources', `${resource}.ts`),

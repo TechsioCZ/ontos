@@ -10,6 +10,14 @@ import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
 import { ShellAuthenticationApi, shellAuthenticationApiContract } from '../../shared/api.ts';
+// @ontos-codesmith-core-read-client-imports:start
+
+// @ontos-core-read legal-entity-detail
+import type {
+  LegalEntityDetailRequest,
+  LegalEntityDetailResponse,
+} from '../../shared/core-reads/legal-entity-detail.ts';
+// @ontos-codesmith-core-read-client-imports:end
 import type {
   AvailableLegalEntitiesResponse,
   AvailableTenantsResponse,
@@ -376,5 +384,17 @@ export const stopSupportImpersonation = (
       headers: identityHeaders(options),
     }),
   );
+
+// @ontos-codesmith-core-read-client-operations:start
+
+// @ontos-core-read legal-entity-detail
+export const executeLegalEntityDetail = (
+  payload: LegalEntityDetailRequest,
+  options: ShellAuthenticationClientOptions = {},
+): Effect.Effect<LegalEntityDetailResponse, IdentityClientError> =>
+  invokeShellAuthenticationClient(options, (client) =>
+    client.coreReadLegalEntityDetail.executeLegalEntityDetail({ payload }),
+  );
+// @ontos-codesmith-core-read-client-operations:end
 
 export { Effect } from '@modern-js/bff-effect/effect-client';

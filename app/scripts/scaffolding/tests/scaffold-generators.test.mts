@@ -188,6 +188,7 @@ const sharedContractsPackagePath = 'packages/shared-contracts';
 const sharedContractsNodeModulePath = 'node_modules/@app/shared-contracts';
 
 const partyGovernedContractPath = 'verticals/party-registry/shared/api.ts';
+const partyGovernedHandlerPath = 'verticals/party-registry/api/index.ts';
 
 interface FixtureVertical {
   readonly appId: string;
@@ -1506,6 +1507,11 @@ it.live(
         expect(moduleApiContract).toMatch(
           /headers: \{\},\s+params: \{\},\s+payload: ResourceDetailRequestSchema,\s+query: \{\}/u,
         );
+        expect(moduleApiContract).toContain(
+          'export type ResourceDetailRequest = typeof ResourceDetailRequestSchema.Type;',
+        );
+        expect(moduleApiContract).toContain('export const ResourceDetailResponseSchema = Schema.Struct(');
+        expect(moduleApiContract).not.toMatch(/export type ResourceDetailResponse\b/u);
         expect(moduleApiClient).toMatch(
           /client\.resourceDetail\.execute\(\{\s+headers: \{\},\s+params: \{\},\s+payload,\s+query: \{\},?\s+\}\)/u,
         );
@@ -1517,6 +1523,15 @@ it.live(
         expect(reportClient).not.toMatch(/\.provider\.ts|import\(/u);
         assertGovernedReadProviders([searchProvider, reportProvider]);
         expect(searchProvider).toMatch(/result\.map\(\(\{ ref \}\) => ref\)/u);
+        for (const [source, entrypoint, read] of [
+          [moduleApiRead, 'resourceDetail', 'resourceDetail'],
+          [searchProvider, 'inventoryItems', 'inventoryItems'],
+          [reportProvider, 'stockLevels', 'stockLevels'],
+        ]) {
+          expect(source).toMatch(new RegExp(`const ${entrypoint}Entrypoint = defineTenantModuleEntrypoint\\(\\{`, 'u'));
+          expect(source).not.toMatch(new RegExp(`export const ${entrypoint}Entrypoint`, 'u'));
+          expect(source).toMatch(new RegExp(`export const ${read}Read = defineRead\\(`, 'u'));
+        }
         expect(moduleApiRead).toMatch(/defineRead\(/u);
         expect(moduleApiRead).toMatch(/legalEntityScope: 'required'/u);
         assertGovernedReadServers([moduleApiServer, searchServer, reportServer]);
@@ -3073,13 +3088,11 @@ it.live(
 import { Effect, Schema } from 'effect';
 import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 
-export const CreateOrder2PayloadSchema = Schema.Struct({});
-export type CreateOrder2Payload = Schema.Schema.Type<typeof CreateOrder2PayloadSchema>;
+const CreateOrder2PayloadSchema = Schema.Struct({});
 
-export const CreateOrder2ResultSchema = Schema.Struct({});
-export type CreateOrder2Result = Schema.Schema.Type<typeof CreateOrder2ResultSchema>;
+const CreateOrder2ResultSchema = Schema.Struct({});
 
-export class CreateOrder2NotImplemented extends Schema.TaggedError<CreateOrder2NotImplemented>()(
+class CreateOrder2NotImplemented extends Schema.TaggedError<CreateOrder2NotImplemented>()(
   'CreateOrder2NotImplemented',
   {
     code: Schema.Literal('action_not_implemented'),
@@ -6166,10 +6179,26 @@ it.live(
   'typed injected governed runtime stays bound to the exported owner composition',
   Effect.fn(function* mergedScenario99() {
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8'));
-    const handler = yield* Effect.promise(() =>
-      readFile(path.join(appRoot, 'verticals/party-registry/api/index.ts'), 'utf-8'),
-    );
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedHandlerPath), 'utf-8'));
     expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    const typedShared = shared.replace(
+      'export const partyRegistryApi = HttpApi.make(',
+      'export const partyRegistryApi: PartyRegistryApi = HttpApi.make(',
+    );
+    expect(typedShared).not.toBe(shared);
+    expect(hasValidGovernedHttpCompositionRoot(typedShared, handler)).toBe(true);
+    const typedHandler = handler.replace(
+      'const apiRuntime = makePartyRegistryApiRuntime(',
+      'const apiRuntime: EffectBffDefinition<typeof partyRegistryApi> & EffectBffRuntime<typeof partyRegistryApi> = makePartyRegistryApiRuntime(',
+    );
+    expect(typedHandler).not.toBe(handler);
+    expect(hasValidGovernedHttpCompositionRoot(shared, typedHandler)).toBe(true);
+    expect(
+      hasValidGovernedHttpCompositionRoot(
+        shared,
+        typedHandler.replace('export default apiRuntime;', 'export default unrelatedRuntime;'),
+      ),
+    ).toBe(false);
     expect(
       hasValidGovernedHttpCompositionRoot(
         shared,
@@ -6198,9 +6227,7 @@ it.live(
   'assembled governed runtime rejects disconnected handler pipelines and counterfeit assemblers',
   Effect.fn(function* mergedScenario100() {
     const shared = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8'));
-    const handler = yield* Effect.promise(() =>
-      readFile(path.join(appRoot, 'verticals/party-registry/api/index.ts'), 'utf-8'),
-    );
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedHandlerPath), 'utf-8'));
     for (const [before, after] of [
       [
         'const resolvedApiHandlersLive = apiHandlersLive.pipe(',
@@ -6212,5 +6239,30 @@ it.live(
       expect(handler.includes(before)).toBeTruthy();
       expect(hasValidGovernedHttpCompositionRoot(shared, handler.replace(before, after))).toBe(false);
     }
+  }),
+);
+
+it.live(
+  'assembled governed runtime follows output-bearing merges without accepting dependency-only handlers',
+  Effect.fn(function* mergedScenario101() {
+    const shared = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedContractPath), 'utf-8'));
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, partyGovernedHandlerPath), 'utf-8'));
+    const renamed = handler.replace(
+      'const apiHandlersLive = Layer.mergeAll(',
+      'const apiHandlerGroupsLive = Layer.mergeAll(',
+    );
+    const resolution = 'const resolvedApiHandlersLive = apiHandlersLive.pipe(';
+    const outputBearingMerge = `const apiHandlersLive = Layer.mergeAll(
+    partyRegistryFoundationLive.pipe(Layer.provide(apiHandlerGroupsLive)),
+    apiHandlerGroupsLive,
+  );
+  ${resolution}`;
+    const dependencyOnlyMerge = outputBearingMerge.replace('    apiHandlerGroupsLive,\n', '    Layer.empty,\n');
+    const outputBearing = renamed.replace(resolution, outputBearingMerge);
+    const dependencyOnly = renamed.replace(resolution, dependencyOnlyMerge);
+
+    expect(outputBearing).not.toBe(handler);
+    expect(hasValidGovernedHttpCompositionRoot(shared, outputBearing)).toBe(true);
+    expect(hasValidGovernedHttpCompositionRoot(shared, dependencyOnly)).toBe(false);
   }),
 );

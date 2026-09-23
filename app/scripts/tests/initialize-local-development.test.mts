@@ -11,6 +11,7 @@ import { makeModuleContractFixture } from '../../packages/core-runtime/src/testi
 import { makeTestDatabase } from '../../packages/core-runtime/tests/support/database.ts';
 import type { deriveOntosModuleDeploymentContract } from '../generate-ontos-module-contract.mts';
 import {
+  LOCAL_DEVELOPMENT_VERTICALS,
   LOCAL_DEVELOPMENT_CONTEXT,
   LocalDevelopmentInitializationError,
   buildLocalDevelopmentRelationships,
@@ -21,6 +22,12 @@ import {
   parseLocalDevelopmentConfiguration,
   reconcileCoreContext,
 } from '../initialize-local-development.mts';
+import {
+  CZECH_LAUNCH_COMMERCE_FIXTURE,
+  CzechLaunchActivationRejected,
+  validateCzechLaunchActivation,
+  validateCzechLaunchFixtureContracts,
+} from '../czech-launch-commerce-fixture.mts';
 
 const localEnvironment = {
   BETTER_AUTH_SECRET: 'a-local-secret-with-at-least-32-characters',
@@ -36,12 +43,21 @@ const localEnvironment = {
 const LOCAL_AUTH_USER_ID = 'local-auth-user';
 const INVENTORY_MODULE_ID = 'inventory.core';
 const LOCAL_MODULES_DIRECTORY_PREFIX = 'ontos-local-modules-';
+const CUSTOMER_CONTEXT_VERTICAL_ID = 'commerce-customer-context';
+const MARKET_CATALOG_VERTICAL_ID = 'commerce-market-catalog';
+const PARTY_REGISTRY_VERTICAL_ID = 'party-registry';
 const PARTY_REGISTRY_MODULE_ID = 'party.registry';
 const PARTY_REGISTRY_MODULE_STATE_LABEL = 'Party Registry module state';
+const CATALOG_MODULE_ID = 'commerce.catalog';
 const TOPOLOGY_DIRECTORY = 'topology';
 const TOPOLOGY_PATH = 'topology/reference-topology.json';
 const topology = JSON.stringify({
-  verticals: [{ id: 'party-registry' }, { id: 'inventory' }],
+  verticals: [
+    { id: PARTY_REGISTRY_VERTICAL_ID },
+    { id: MARKET_CATALOG_VERTICAL_ID },
+    { id: CUSTOMER_CONTEXT_VERTICAL_ID },
+    { id: 'inventory' },
+  ],
 });
 
 const moduleContract = (moduleId: string): Effect.Success<ReturnType<typeof deriveOntosModuleDeploymentContract>> =>
@@ -135,7 +151,7 @@ it.effect('module-state reconciliation preserves migrated IDs and rejects identi
   }),
 );
 
-it.effect('derives only configured Party Registry through its generated owner contract', () =>
+it.effect('derives the fixed local commerce launch modules through generated owner contracts', () =>
   Effect.gen(function* testEffect5() {
     const root = yield* Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), LOCAL_MODULES_DIRECTORY_PREFIX)));
     yield* Effect.tryPromise(() => mkdir(path.join(root, TOPOLOGY_DIRECTORY), { recursive: true }));
@@ -143,8 +159,81 @@ it.effect('derives only configured Party Registry through its generated owner co
     const deriveContract = ({ vertical }: { readonly vertical: string }) =>
       Effect.succeed(moduleContract(`${vertical}.core`));
     expect(yield* deriveActivatedModuleIds(root, deriveContract).pipe(Effect.provide(NodeServices.layer))).toEqual([
+      'commerce-customer-context.core',
+      'commerce-market-catalog.core',
       'party-registry.core',
     ]);
+    expect(LOCAL_DEVELOPMENT_VERTICALS).toEqual([
+      PARTY_REGISTRY_VERTICAL_ID,
+      MARKET_CATALOG_VERTICAL_ID,
+      CUSTOMER_CONTEXT_VERTICAL_ID,
+    ]);
+  }),
+);
+
+it('omits the excluded storefront from the default market tuple', () => {
+  expect(CZECH_LAUNCH_COMMERCE_FIXTURE.policies.marketBootstrap.revision.value).toEqual({
+    defaultChannelId: 'B2C',
+    defaultCommerceMarketId: '74000000-0000-4000-8000-000000000010',
+    defaultSellingLegalEntityId: '71000000-0000-4000-8000-000000000010',
+    kind: 'DEFAULT_MARKET_TUPLE',
+  });
+});
+
+it.effect('publishes a schema-valid deterministic Czech Launch operator fixture', () =>
+  Effect.gen(function* validateFixture() {
+    yield* validateCzechLaunchFixtureContracts();
+    expect(CZECH_LAUNCH_COMMERCE_FIXTURE.scope).toMatchObject({
+      channelId: 'B2C',
+      storefrontId: 'czech-launch-b2c',
+      tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+    });
+    expect(CZECH_LAUNCH_COMMERCE_FIXTURE.policies.quantity.revision.value).toEqual({
+      basis: {
+        targetDivisibilityRevision: 1,
+        targetRef: {
+          moduleId: CATALOG_MODULE_ID,
+          resourceId: '76000000-0000-4000-8000-000000000015',
+          resourceType: 'commerce.catalog.package-definition',
+          tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+        },
+        unitRef: {
+          moduleId: CATALOG_MODULE_ID,
+          resourceId: '76000000-0000-4000-8000-000000000020',
+          resourceType: 'commerce.catalog.product-unit',
+          tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+        },
+        unitRuleRevision: 1,
+      },
+      constraintMode: 'REPLACEABLE_ENVELOPE',
+      envelope: { kind: 'BOUNDED', maximum: null, minimum: '1', multiple: '1' },
+      kind: 'COMMERCE_QUANTITY_RULE',
+      selector: {
+        kind: 'PACKAGE_OPTION',
+        packageOptionRef: {
+          moduleId: 'commerce.catalog',
+          resourceId: '76000000-0000-4000-8000-000000000015',
+          resourceType: 'commerce.catalog.package-definition',
+          tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+        },
+      },
+    });
+  }),
+);
+
+it.effect('fails Czech Launch activation closed without every current owner proof', () =>
+  Effect.gen(function* validateActivation() {
+    expect(
+      yield* validateCzechLaunchActivation({
+        ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts,
+        paymentTermCatalog: {
+          ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.paymentTermCatalog,
+          current: [],
+        },
+      }).pipe(Effect.flip),
+    ).toBeInstanceOf(CzechLaunchActivationRejected);
+
+    expect(yield* validateCzechLaunchActivation(CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts)).toBeDefined();
   }),
 );
 

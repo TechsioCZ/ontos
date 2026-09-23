@@ -189,6 +189,17 @@
       },
       "lefthook": false
     },
+    "vendor/*": {
+      "project": [
+        "src/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+        "!**/dist/**"
+      ],
+      "entry": [
+        "src/index.ts",
+        "src/utils.ts"
+      ],
+      "lefthook": false
+    },
     "packages/*": {
       "project": [
         "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",

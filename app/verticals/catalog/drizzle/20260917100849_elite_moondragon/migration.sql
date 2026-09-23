@@ -1,0 +1,3 @@
+CREATE UNIQUE INDEX "catalog_sku_reservations_binary_code_uk" ON "catalog"."commercial_sku_reservations" ("tenant_id","normalized_code" COLLATE "C");--> statement-breakpoint
+ALTER TABLE "catalog"."commercial_sku_assignment_revisions" DROP CONSTRAINT "catalog_sku_assignment_revisions_code_ck", ADD CONSTRAINT "catalog_sku_assignment_revisions_code_ck" CHECK ("normalized_code" = btrim("normalized_code") and length("normalized_code") between 1 and 240);--> statement-breakpoint
+ALTER TABLE "catalog"."commercial_sku_reservations" DROP CONSTRAINT "catalog_sku_reservations_code_ck", ADD CONSTRAINT "catalog_sku_reservations_code_ck" CHECK ("normalized_code" = btrim("normalized_code") and length("normalized_code") between 1 and 240);

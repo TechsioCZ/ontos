@@ -179,8 +179,15 @@ export interface OutboxWorkerScaffoldConfig {
   readonly worker: string;
 }
 
+export const ReadScaffoldAuthorizationSchema = Schema.Literals([
+  'authenticated_principal',
+  'context_permission',
+  'public',
+]);
+export type ReadScaffoldAuthorization = typeof ReadScaffoldAuthorizationSchema.Type;
+
 export interface PageScaffoldConfig {
-  readonly authorization: 'authenticated_principal' | 'context_permission' | 'public';
+  readonly authorization: ReadScaffoldAuthorization;
   readonly page: string;
   readonly permission?: string;
   readonly url?: string;
@@ -188,11 +195,19 @@ export interface PageScaffoldConfig {
 }
 
 export interface GovernedContributionScaffoldConfig {
-  readonly authorization: 'authenticated_principal' | 'context_permission' | 'public';
+  readonly authorization: ReadScaffoldAuthorization;
   readonly name: string;
   readonly permission?: string;
   readonly resource?: string;
   readonly vertical: string;
+}
+
+export interface CoreReadScaffoldConfig {
+  readonly authorization: ReadScaffoldAuthorization;
+  readonly core: true;
+  readonly module: string;
+  readonly name: string;
+  readonly permission?: string;
 }
 
 export interface SearchProviderAccessScaffoldConfig {

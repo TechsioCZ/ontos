@@ -1,7 +1,7 @@
 import { Effect, Schema, Predicate } from 'effect';
 import type { ActionHandlerContext, CommittedActionDomainRejection } from './context.ts';
 import { ActionPayloadValidationError, ActionResultValidationError } from './errors.ts';
-import type { ActionCollectorError } from './errors.ts';
+import type { ActionCollectorError, ActionCoreError } from './errors.ts';
 import type { ActionAccessEvidencePolicy, DomainEventContractMap } from './events.ts';
 import { isActionPolicy } from './policy.ts';
 import type { ActionPolicy } from './policy.ts';
@@ -216,6 +216,16 @@ export type ActionServiceFactory<Services, Requirements = never> = (
   scope: OperationalScope,
 ) => Effect.Effect<Services, OperationContextUnavailable, Requirements>;
 
+/** Runs only for a decoded successful result inside the owning Action transaction. */
+export type ActionDecodedSuccessHook<Result, Services, DomainError, Requirements = never> = (
+  context: Readonly<{
+    readonly actionInvocationId: string;
+    readonly result: Result;
+    readonly scope: OperationalScope;
+    readonly services: Services;
+  }>,
+) => Effect.Effect<void, ActionCoreError | DomainError, Requirements>;
+
 type EmptyActionServices = Readonly<Record<string, never>>;
 const emptyActionServices: EmptyActionServices = Object.freeze({});
 const emptyActionServiceFactory: ActionServiceFactory<EmptyActionServices> = () => Effect.succeed(emptyActionServices);
@@ -230,6 +240,12 @@ type ActionRegistrationPrivateValue<
 > = readonly [
   handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
   serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+  onDecodedSuccess?: ActionDecodedSuccessHook<
+    ResultSchema['Type'],
+    Services,
+    DomainErrorSchema['Type'],
+    HandlerRequirements
+  >,
 ];
 
 export type ActionRegistration<
@@ -372,6 +388,35 @@ export function defineAction<
   DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
   DomainEvents extends DomainEventContractMap,
   const Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
+  ...definition: readonly [
+    handler: ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+    serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+    onDecodedSuccess: ActionDecodedSuccessHook<
+      ResultSchema['Type'],
+      Services,
+      DomainErrorSchema['Type'],
+      HandlerRequirements
+    >,
+  ]
+): ActionRegistration<
+  PayloadSchema,
+  ResultSchema,
+  DomainErrorSchema,
+  DomainEvents,
+  Owner,
+  Services,
+  HandlerRequirements
+>;
+export function defineAction<
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  const Owner extends string,
   HandlerRequirements,
 >(
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
@@ -427,7 +472,7 @@ export function defineAction<
   descriptor: ActionDescriptor<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Owner>,
   ...definition:
     | readonly [
-        handler: ActionHandler<
+        ActionHandler<
           PayloadSchema,
           ResultSchema,
           DomainErrorSchema,
@@ -437,17 +482,33 @@ export function defineAction<
         >,
       ]
     | readonly [
-        handler: ActionHandler<
-          PayloadSchema,
-          ResultSchema,
-          DomainErrorSchema,
-          DomainEvents,
-          Services,
-          HandlerRequirements
-        >,
-        serviceFactory: ActionServiceFactory<Services, HandlerRequirements>,
+        ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+        ActionServiceFactory<Services, HandlerRequirements>,
       ]
-) {
+    | readonly [
+        ActionHandler<PayloadSchema, ResultSchema, DomainErrorSchema, DomainEvents, Services, HandlerRequirements>,
+        ActionServiceFactory<Services, HandlerRequirements>,
+        ActionDecodedSuccessHook<ResultSchema['Type'], Services, DomainErrorSchema['Type'], HandlerRequirements>,
+      ]
+):
+  | ActionRegistration<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Owner,
+      EmptyActionServices,
+      HandlerRequirements
+    >
+  | ActionRegistration<
+      PayloadSchema,
+      ResultSchema,
+      DomainErrorSchema,
+      DomainEvents,
+      Owner,
+      Services,
+      HandlerRequirements
+    > {
   validateActionDescriptorInput(descriptor);
 
   const frozenDescriptor = Object.freeze({
@@ -464,8 +525,17 @@ export function defineAction<
       descriptor: frozenDescriptor,
     });
   }
-  const [handler, serviceFactory] = definition;
-  return ActionPrivateStorage.create([handler, serviceFactory] as const, {
+  const [handler, serviceFactory, onDecodedSuccess] = definition;
+  if (definition.length === 3 && !Predicate.isFunction(onDecodedSuccess)) {
+    return failActionDefinition('Action decoded-success hook must be a function');
+  }
+  if (onDecodedSuccess === undefined) {
+    return ActionPrivateStorage.create([handler, serviceFactory] as const, {
+      [actionRegistration]: true as const,
+      descriptor: frozenDescriptor,
+    });
+  }
+  return ActionPrivateStorage.create([handler, serviceFactory, onDecodedSuccess] as const, {
     [actionRegistration]: true as const,
     descriptor: frozenDescriptor,
   });
@@ -524,6 +594,27 @@ export const getActionServiceFactory = <
     HandlerRequirements
   >,
 ): ActionServiceFactory<Services, HandlerRequirements> => ActionPrivateStorage.getValue(registration)[1];
+
+/** Internal Core runtime seam; never part of the public Action descriptor. */
+export const getActionDecodedSuccessHook = <
+  PayloadSchema extends Schema.ConstraintDecoder<unknown>,
+  ResultSchema extends Schema.ConstraintDecoder<unknown>,
+  DomainErrorSchema extends Schema.ConstraintDecoder<{ readonly _tag: string }>,
+  DomainEvents extends DomainEventContractMap,
+  Owner extends string,
+  Services,
+  HandlerRequirements,
+>(
+  registration: ActionRegistration<
+    PayloadSchema,
+    ResultSchema,
+    DomainErrorSchema,
+    DomainEvents,
+    Owner,
+    Services,
+    HandlerRequirements
+  >,
+) => ActionPrivateStorage.getValue(registration)[2];
 
 export const getActionResourcePermissionTargetResolver = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,

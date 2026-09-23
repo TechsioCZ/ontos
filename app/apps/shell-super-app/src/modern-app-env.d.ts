@@ -2,6 +2,11 @@
 
 declare const ULTRAMODERN_SITE_URL: string;
 
+declare module 'catalog/Widget' {
+  const CatalogWidget: React.ComponentType;
+  export default CatalogWidget;
+}
+
 declare module 'partyRegistry/Page*' {
   const VerticalPage: React.FunctionComponent<{
     readonly routeParams: Readonly<Record<string, string>>;

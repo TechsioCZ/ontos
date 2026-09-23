@@ -9,21 +9,16 @@ import {
   PurchaseCurrencyPurchasingContextPort,
   unavailablePurchaseCurrencyPurchasingContextPort,
 } from '../shared/domain/purchase-currency-context-port.ts';
-import {
-  PurchaseCurrencyPolicyPort,
-  unavailablePurchaseCurrencyPolicyPort,
-} from '../shared/domain/purchase-currency-policy-port.ts';
 import { profileReactivationEligibilityEvaluatorFactoryLive } from '../src/integrations/profile-reactivation-eligibility.ts';
 import { profileCounterpartyRoleEligibilityResolverFactoryLive } from '../src/profile-counterparty-role-eligibility.ts';
 import { profileRetailPermissionReaderFactoryLive } from '../src/integrations/retail-permission-reader.ts';
 import { partyRegistryGuestResolverFactoryLive } from '../src/integrations/party-registry-guest-resolver.ts';
 import { partyRegistryRetailPartyResolverFactoryLive } from '../src/integrations/party-registry-retail-party-resolver.ts';
-import {
-  PurchaseCurrencyPricingPort,
-  unavailablePurchaseCurrencyPricingPort,
-} from '../shared/domain/purchase-currency-pricing-port.ts';
 import { unavailableHistoryActionOwnerPorts, RepeatCartOwner } from '../shared/domain/history-action-ports.ts';
 import { paymentTermCatalogGatewayCredentialLive } from './payment-term-catalog-gateway-credential.ts';
+import { catalogQuantityGatewayCredentialLive } from './catalog-quantity-gateway-credential.ts';
+import { purchaseCurrencyPricingGatewayCredentialLive } from './purchase-currency-pricing-gateway-credential.ts';
+import { applicationCompositionMarketReferenceOwnerDeploymentStateAuthorityLive } from './application-composition-market-reference-owner-authority.ts';
 
 type CommerceCustomerContextOwnerRuntimeServices =
   | Layer.Success<typeof BusinessPermissionRelationshipMutationLive>
@@ -64,28 +59,21 @@ const unavailablePurchaseCurrencyPurchasingContextPortLive = Layer.succeed(
   PurchaseCurrencyPurchasingContextPort,
   unavailablePurchaseCurrencyPurchasingContextPort(),
 );
-const unavailablePurchaseCurrencyPolicyPortLive = Layer.succeed(
-  PurchaseCurrencyPolicyPort,
-  unavailablePurchaseCurrencyPolicyPort(),
-);
-const unavailablePurchaseCurrencyPricingPortLive = Layer.succeed(
-  PurchaseCurrencyPricingPort,
-  unavailablePurchaseCurrencyPricingPort(),
-);
 const unavailableHistoryActionOwners = unavailableHistoryActionOwnerPorts();
 const unavailableRepeatCartOwnerLive = Layer.succeed(RepeatCartOwner, unavailableHistoryActionOwners.carts);
 
 /**
- * Production owner composition.  The Payment Term Catalog issuer is a server-owned gateway
- * credential; its configuration layer fails closed when a deployment has not supplied the
- * corresponding secret or gateway URL. It is intentionally composed next to the other external
- * owner ports so no request/session credential can be substituted by a caller.
+ * Production owner composition. External owner issuers are server-owned gateway credentials;
+ * their configuration layers fail closed when a deployment has not supplied the corresponding
+ * secret or gateway URL. They are intentionally composed next to the other external owner ports
+ * so no request/session credential can be substituted by a caller.
  */
 export const commerceCustomerContextProductionExternalPortsLive = Layer.mergeAll(
   unavailableCounterpartyInvitationProofDeliveryLive,
   unavailablePurchaseCurrencyPurchasingContextPortLive,
-  unavailablePurchaseCurrencyPolicyPortLive,
-  unavailablePurchaseCurrencyPricingPortLive,
+  purchaseCurrencyPricingGatewayCredentialLive,
   paymentTermCatalogGatewayCredentialLive,
+  catalogQuantityGatewayCredentialLive,
   unavailableRepeatCartOwnerLive,
+  applicationCompositionMarketReferenceOwnerDeploymentStateAuthorityLive,
 );

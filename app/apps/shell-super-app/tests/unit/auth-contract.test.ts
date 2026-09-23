@@ -94,6 +94,7 @@ it('publishes authentication, identity lifecycle, and gateway operations', () =>
     changePrincipalStatus: '/auth/identity/principal-status',
     createNonHumanPrincipal: '/auth/identity/principals',
     currentSession: '/auth/session',
+    executeLegalEntityDetail: '/core/reads/legal-entity-detail',
     issueApiKeyGatewayContext: '/auth/api-key/gateway-context',
     issueExternalGatewayContext: '/auth/identity/external/gateway-context',
     issueGatewayContext: '/auth/gateway-context',

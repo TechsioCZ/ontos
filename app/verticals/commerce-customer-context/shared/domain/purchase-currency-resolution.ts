@@ -1,10 +1,11 @@
+import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { Schema } from 'effect';
 import {
   CustomerProfileRefSchema,
   PurchaseCurrencyAuthorizationSubjectSchema,
   isPurchaseCurrencyAuthorizationSubjectCompatible,
 } from './customer-profile-ref.ts';
-import { AKROS_LAUNCH_CURRENCY, CurrencyCodeSchema, CurrencyCodeSetSchema } from './currency.ts';
+import { CurrencyCodeSchema, CurrencyCodeSetSchema } from './currency.ts';
 import type { CurrencyCode } from './currency.ts';
 import { ProfileInstantSchema } from './profile-contracts.ts';
 
@@ -89,11 +90,27 @@ export const PurchaseCurrencyResolutionRequestSchema = Schema.Struct({
 );
 export type PurchaseCurrencyResolutionRequest = typeof PurchaseCurrencyResolutionRequestSchema.Type;
 
+const PurchaseCurrencyPolicyCompletenessEvidenceSchema = Schema.toEncoded(
+  OwnerVerifiableSetCompletenessEvidenceSchema,
+).check(
+  Schema.makeFilter((evidence) =>
+    evidence.ownerRevision.startsWith('PURCHASE_CURRENCY:') &&
+    evidence.scope.predicateRef === 'commerce.customer-context.policy.purchase_currency.current'
+      ? undefined
+      : 'Completeness evidence must identify the Current Purchase Currency policy field',
+  ),
+);
+
 const CurrencyPolicyDecisionSchema = Schema.Struct({
+  allowedCurrencies: CurrencyCodeSetSchema,
+  completeness: PurchaseCurrencyPolicyCompletenessEvidenceSchema,
   defaultCurrency: Schema.Union([CurrencyCodeSchema, Schema.Null]),
-  explicitChoiceEnabled: Schema.Boolean,
-  policyRevision: PolicyRevisionSchema,
-  supportedCurrencies: CurrencyCodeSetSchema,
+  policyRevisionIds: Schema.Array(PolicyRevisionSchema).check(
+    Schema.isMinLength(1),
+    Schema.makeFilter((revisionIds) =>
+      new Set(revisionIds).size === revisionIds.length ? undefined : 'Policy revision IDs must be unique',
+    ),
+  ),
 });
 export type CurrencyPolicyDecision = typeof CurrencyPolicyDecisionSchema.Type;
 
@@ -105,7 +122,8 @@ export type PricingCurrencySupport = typeof PricingCurrencySupportSchema.Type;
 
 const resolutionEvidenceFields = {
   contextRevision: ContextRevisionSchema,
-  policyRevision: PolicyRevisionSchema,
+  policyCompleteness: PurchaseCurrencyPolicyCompletenessEvidenceSchema,
+  policyRevisionIds: Schema.Array(PolicyRevisionSchema).check(Schema.isMinLength(1)),
   pricingRevision: PricingRevisionSchema,
   requestedAt: ProfileInstantSchema,
 } as const;
@@ -121,7 +139,7 @@ type PurchaseCurrencyResolved = typeof PurchaseCurrencyResolvedSchema.Type;
 
 export const ExplicitPurchaseCurrencyChoiceInvalid = Schema.TaggedStruct('EXPLICIT_CHOICE_INVALID', {
   currencyCode: CurrencyCodeSchema,
-  reason: Schema.Literals(['EXPLICIT_CHOICE_DISABLED', 'POLICY_UNSUPPORTED', 'PRICING_UNSUPPORTED']),
+  reason: Schema.Literals(['POLICY_UNSUPPORTED', 'PRICING_UNSUPPORTED']),
 });
 
 export const NoUsablePurchaseCurrency = Schema.TaggedStruct('NO_USABLE_CURRENCY', {
@@ -165,7 +183,7 @@ const supported = (
   policy: CurrencyPolicyDecision,
   pricing: PricingCurrencySupport,
 ): 'POLICY_UNSUPPORTED' | 'PRICING_UNSUPPORTED' | 'SUPPORTED' => {
-  if (!policy.supportedCurrencies.includes(code)) {
+  if (!policy.allowedCurrencies.includes(code)) {
     return 'POLICY_UNSUPPORTED';
   }
   return pricing.supportedCurrencies.includes(code) ? 'SUPPORTED' : 'PRICING_UNSUPPORTED';
@@ -173,7 +191,8 @@ const supported = (
 
 const evidence = (input: PurchaseCurrencyResolutionInput) => ({
   contextRevision: input.request.contextRevision,
-  policyRevision: input.policy.policyRevision,
+  policyCompleteness: input.policy.completeness,
+  policyRevisionIds: input.policy.policyRevisionIds,
   pricingRevision: input.pricing.pricingRevision,
   requestedAt: input.request.requestedAt,
 });
@@ -192,9 +211,10 @@ const resolved = (
 export const resolvePurchaseCurrency = (input: PurchaseCurrencyResolutionInput): PurchaseCurrencyResolutionOutcome => {
   const { policy, pricing, request } = input;
   if (
-    new Set(policy.supportedCurrencies).size !== policy.supportedCurrencies.length ||
+    new Set(policy.allowedCurrencies).size !== policy.allowedCurrencies.length ||
     new Set(pricing.supportedCurrencies).size !== pricing.supportedCurrencies.length ||
-    (policy.defaultCurrency !== null && !policy.supportedCurrencies.includes(policy.defaultCurrency))
+    policy.allowedCurrencies.length === 0 ||
+    (policy.defaultCurrency !== null && !policy.allowedCurrencies.includes(policy.defaultCurrency))
   ) {
     return InconsistentPurchaseCurrencyPolicy.make({
       reason: 'Currency policy contains duplicates or a default outside its supported set',
@@ -202,12 +222,6 @@ export const resolvePurchaseCurrency = (input: PurchaseCurrencyResolutionInput):
   }
 
   if (request.explicitChoice !== undefined) {
-    if (!policy.explicitChoiceEnabled) {
-      return ExplicitPurchaseCurrencyChoiceInvalid.make({
-        currencyCode: request.explicitChoice,
-        reason: 'EXPLICIT_CHOICE_DISABLED',
-      });
-    }
     const support = supported(request.explicitChoice, policy, pricing);
     return support === 'SUPPORTED'
       ? resolved(input, request.explicitChoice, 'EXPLICIT_CHOICE')
@@ -228,15 +242,3 @@ export const resolvePurchaseCurrency = (input: PurchaseCurrencyResolutionInput):
     reason: 'No explicit choice or valid unambiguous policy default exists',
   });
 };
-
-export const AKROS_LAUNCH_CURRENCY_POLICY: CurrencyPolicyDecision = Object.freeze({
-  defaultCurrency: AKROS_LAUNCH_CURRENCY,
-  explicitChoiceEnabled: true,
-  policyRevision: 'akros-launch-czk-v1',
-  supportedCurrencies: Object.freeze([AKROS_LAUNCH_CURRENCY]),
-});
-
-export const AKROS_LAUNCH_PRICING_CURRENCY_SUPPORT: PricingCurrencySupport = Object.freeze({
-  pricingRevision: 'akros-launch-czk-v1',
-  supportedCurrencies: Object.freeze([AKROS_LAUNCH_CURRENCY]),
-});

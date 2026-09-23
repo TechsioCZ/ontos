@@ -213,6 +213,11 @@ export default defineConfig(
           security: createCloudflareWorkerSecurity(),
           services: [
             {
+              binding: getOptionalBuildConfig('VERTICAL_CATALOG_WORKER_BINDING') ?? 'VERTICAL_CATALOG_WORKER',
+              prefix: '/catalog-api',
+              service: getOptionalBuildConfig('VERTICAL_CATALOG_WORKER_NAME') ?? 'app-catalog',
+            },
+            {
               binding:
                 getOptionalBuildConfig('VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER_BINDING') ??
                 'VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER',
@@ -220,6 +225,14 @@ export default defineConfig(
               service:
                 getOptionalBuildConfig('VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER_NAME') ??
                 'app-commerce-customer-context',
+            },
+            {
+              binding:
+                getOptionalBuildConfig('VERTICAL_COMMERCE_MARKET_CATALOG_WORKER_BINDING') ??
+                'VERTICAL_COMMERCE_MARKET_CATALOG_WORKER',
+              prefix: '/commerce-market-catalog-api',
+              service:
+                getOptionalBuildConfig('VERTICAL_COMMERCE_MARKET_CATALOG_WORKER_NAME') ?? 'app-commerce-market-catalog',
             },
             {
               binding:
@@ -234,6 +247,18 @@ export default defineConfig(
               prefix: '/payment-term-catalog-api',
               service:
                 getOptionalBuildConfig('VERTICAL_PAYMENT_TERM_CATALOG_WORKER_NAME') ?? 'app-payment-term-catalog',
+            },
+            {
+              binding: getOptionalBuildConfig('VERTICAL_PRICING_WORKER_BINDING') ?? 'VERTICAL_PRICING_WORKER',
+              prefix: '/pricing-api',
+              service: getOptionalBuildConfig('VERTICAL_PRICING_WORKER_NAME') ?? 'app-pricing',
+            },
+            {
+              binding:
+                getOptionalBuildConfig('VERTICAL_STOREFRONT_REGISTRY_WORKER_BINDING') ??
+                'VERTICAL_STOREFRONT_REGISTRY_WORKER',
+              prefix: '/storefront-registry-api',
+              service: getOptionalBuildConfig('VERTICAL_STOREFRONT_REGISTRY_WORKER_NAME') ?? 'app-storefront-registry',
             },
           ],
           ssr: true,

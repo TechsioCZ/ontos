@@ -494,7 +494,6 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeInViewport();
   await expect(page.locator('header[aria-label="Dashboard header"]')).toBeInViewport();
   await expect(page.getByRole('button', { name: 'E2E user' })).toBeInViewport();
-  await expect(page.getByRole('region', { name: 'Authenticated identity' })).toBeInViewport();
   await expect(page.getByRole('link', { name: 'Home' })).toBeInViewport();
   const tenant = page.getByRole('combobox', { name: 'Current tenant' });
   await expect(tenant).toBeInViewport();
@@ -506,6 +505,9 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   await secondTenant.click();
   await expect(page.getByText('Tenant switching failed. Try again.')).toBeInViewport();
   await expect(tenant).toContainText(authentication.tenants.first.name);
+  const authenticatedIdentity = page.getByRole('region', { name: 'Authenticated identity' });
+  await authenticatedIdentity.scrollIntoViewIfNeeded();
+  await expect(authenticatedIdentity).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(
     true,
   );

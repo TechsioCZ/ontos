@@ -70,6 +70,7 @@ const makeHarness = Effect.fn(function* makeHarness(
     readonly onBusinessPermissionTarget?: (target: BusinessPermissionAccessTarget) => void;
     readonly onContextPermissionTarget?: (target: { readonly moduleId: string; readonly permission: string }) => void;
     readonly onLegalEntityPermission?: (permission: string | undefined) => void;
+    readonly onLegalEntityTarget?: (legalEntityId: string, tenantId: string) => void;
     readonly onResourcePermission?: (permission: 'read' | 'write' | undefined) => void;
     readonly onResourceTarget?: (target: {
       readonly moduleId: string;
@@ -174,8 +175,11 @@ const makeHarness = Effect.fn(function* makeHarness(
           })),
         );
       },
-      legalEntities: ({ legalEntityIds, permission }) => {
+      legalEntities: ({ legalEntityIds, permission, tenantId }) => {
         options.onLegalEntityPermission?.(permission);
+        for (const legalEntityId of legalEntityIds) {
+          options.onLegalEntityTarget?.(legalEntityId, tenantId);
+        }
         return Effect.succeed(
           legalEntityIds.map((key) => ({
             decision: options.permissionDecision ?? ('unavailable' as const),
@@ -613,6 +617,61 @@ const counterpartyReadRegistration = (legalEntityScope: 'required' | 'optional',
     () => Effect.succeed({}),
     () => ({ kind: 'legal_entity', permission: 'read_counterparty' }),
   );
+
+it.effect(
+  'authorizes an explicit Legal Entity target before handler resolution without substituting the selected context',
+  Effect.fn(function* explicitLegalEntityTarget() {
+    const targetId = '00000000-0000-4000-8000-000000000099';
+    const selectedId = '00000000-0000-4000-8000-000000000004';
+    const observed: string[] = [];
+    let handlerCalls = 0;
+    const targetRead = defineRead(
+      {
+        ...registration().descriptor,
+        entrypoint: defineSystemModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'authenticated_principal' },
+          entrypointKey: 'core.identity.api.target-test',
+          moduleKey: 'core.identity',
+          role: 'api',
+        }),
+        legalEntityScope: 'optional',
+        owningModuleKey: 'core.identity',
+        permissionTarget: 'legal_entity',
+        readKey: 'core.identity.api.target-test',
+      },
+      () => {
+        handlerCalls += 1;
+        return Effect.succeed({ evidence: { resultCount: 0 }, result: [] });
+      },
+      () => Effect.succeed({}),
+      () => ({ kind: 'legal_entity', legalEntityId: targetId, permission: 'access' }),
+    );
+    for (const decision of ['allowed', 'denied', 'unavailable'] as const) {
+      const harness = yield* makeHarness({
+        onLegalEntityTarget: (id, tenantId) => observed.push(`${tenantId}:${id}`),
+        permissionDecision: decision,
+        resolvedScope: { ...scope, legalEntityId: selectedId },
+      });
+      const outcome = yield* Effect.exit(
+        harness.runtime.runRead({
+          input: {},
+          principal: scope,
+          registration: targetRead,
+          transport: { correlationId: scope.correlationId },
+        }),
+      );
+      if (decision === 'allowed') {
+        expect(Exit.isSuccess(outcome)).toBe(true);
+      } else {
+        expect(Exit.isFailure(outcome)).toBe(true);
+        expect(harness.stages).not.toContain('handler_executed');
+      }
+    }
+    expect(handlerCalls).toBe(1);
+    expect(observed).toEqual(Array.from({ length: 3 }, () => `${scope.tenantId}:${targetId}`));
+  }),
+);
 
 const counterpartyReadPrincipal = (legalEntityId: string) => ({
   authBindingId: '00000000-0000-4000-8000-000000000005',

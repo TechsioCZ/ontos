@@ -1,12 +1,17 @@
 import { Context, Effect } from 'effect';
 import { unavailablePurchaseCurrencyDependency } from './purchase-currency-dependency.ts';
 import type { PurchaseCurrencyDependencyUnavailable } from './purchase-currency-dependency.ts';
-import type { PricingCurrencySupport, PurchaseCurrencyCurrentFacts } from './purchase-currency-resolution.ts';
+import type {
+  PricingCurrencySupport,
+  PurchaseCurrencyCurrentFacts,
+  PurchaseCurrencySubject,
+} from './purchase-currency-resolution.ts';
 
 export interface PurchaseCurrencyPricingPortService {
   readonly resolveCurrent: (input: {
     readonly context: Pick<PurchaseCurrencyCurrentFacts, 'contextRevision' | 'purchasingContext'>;
     readonly observedAt: string;
+    readonly subject: PurchaseCurrencySubject;
   }) => Effect.Effect<PricingCurrencySupport, PurchaseCurrencyDependencyUnavailable>;
 }
 

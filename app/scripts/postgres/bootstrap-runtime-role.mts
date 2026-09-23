@@ -69,7 +69,7 @@ const bootstrapRuntimeRole = (
     );
     yield* query(client, `grant connect on database ${quoteIdentifier(database)} to ontos_runtime`);
     yield* Effect.forEach(
-      ['core', 'auth', 'contacts', 'party'],
+      ['core', 'auth', 'contacts', 'party', 'catalog'],
       (schema) =>
         Effect.gen(function* grantSchemaPrivilegesEffect() {
           const schemaExists = yield* query<{ exists: boolean }>(

@@ -9,7 +9,6 @@ import {
   changeCustomerPaymentTerms,
   projectCustomerPaymentTermsAt,
   removeCustomerPaymentTerm,
-  resolveCustomerCommercePaymentTermsPolicy,
   resolvePaymentTerms,
 } from '../../shared/domain/payment-terms.ts';
 import type {
@@ -408,44 +407,13 @@ it('implements explicit, preferred, fallback, invalid, broken, missing, and inco
     profileRef,
     revision: 1,
   };
-  const policy = resolveCustomerCommercePaymentTermsPolicy(
-    {
-      configurationRevision: 'policy-config-1',
-      policySource: 'customer-commerce-policy:launch-config',
-      rules: [
-        {
-          audience: 'PROFILE',
-          effectiveFrom: '2026-01-01T00:00:00.000Z',
-          eligiblePaymentTermRefs: [entitled.paymentTermRef, fallback.paymentTermRef, other.paymentTermRef],
-          explicitlyPermittedPaymentTermRefs: [],
-          fallbackPaymentTermRefs: [fallback.paymentTermRef],
-          policyRevision: 'policy-revision-1',
-          scope: {
-            channelId: 'b2b-web',
-            marketId: 'cz',
-            sellingLegalEntityId: '99999999-9999-4999-8999-999999999999',
-            storefrontId: 'akros-b2b',
-            tenantId,
-          },
-        },
-      ],
-    },
-    {
-      at: '2026-06-01T00:00:00.000Z',
-      audience: 'PROFILE',
-      purchasingContext: {
-        channelId: 'b2b-web',
-        marketId: 'cz',
-        sellingLegalEntityId: '99999999-9999-4999-8999-999999999999',
-        storefrontId: 'akros-b2b',
-      },
-      tenantId,
-      trustedStorefrontId: 'akros-b2b',
-    },
-  );
-  if (Predicate.isTagged(policy, 'INCONSISTENT_CONFIGURATION')) {
-    throw new Error(`Expected a resolved launch policy, received ${policy.reason}`);
-  }
+  const policy = {
+    eligiblePaymentTermRefs: [entitled.paymentTermRef, fallback.paymentTermRef, other.paymentTermRef],
+    explicitlyPermittedPaymentTermRefs: [],
+    fallbackPaymentTermRefs: [fallback.paymentTermRef],
+    policyRevision: 'policy-revision-1',
+    policySource: 'commerce.customer-context/payment-term-policy-current',
+  };
   const base = {
     at: '2026-06-01T00:00:00.000Z',
     definitions: [entitled, fallback, other],

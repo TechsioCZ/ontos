@@ -2,6 +2,11 @@ import { GatewayContextApiGroup } from '@app/shared-contracts';
 import { ExternalIdentityApiGroup } from '@app/shared-contracts/external-identity';
 import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
+// @ontos-codesmith-core-read-contract-imports:start
+
+// @ontos-core-read legal-entity-detail
+import { LegalEntityDetailRequestSchema, LegalEntityDetailResponseSchema } from './core-reads/legal-entity-detail.ts';
+// @ontos-codesmith-core-read-contract-imports:end
 
 export type SafeTenantIdentity = typeof SafeTenantIdentitySchema.Type;
 export type SafeAuthenticatedIdentity = typeof SafeAuthenticatedIdentitySchema.Type;
@@ -801,6 +806,19 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
         }),
       ),
   )
+  // @ontos-codesmith-core-read-api-groups:start
+
+  // @ontos-core-read legal-entity-detail
+  .add(
+    HttpApiGroup.make('coreReadLegalEntityDetail').add(
+      HttpApiEndpoint.post('executeLegalEntityDetail', '/core/reads/legal-entity-detail', {
+        error: identityErrors,
+        payload: LegalEntityDetailRequestSchema,
+        success: LegalEntityDetailResponseSchema,
+      }),
+    ),
+  )
+  // @ontos-codesmith-core-read-api-groups:end
   .add(GatewayContextApiGroup)
   .add(ExternalIdentityApiGroup);
 

@@ -1,0 +1,4 @@
+ALTER TABLE "catalog"."manufacturer_relation_revisions" ALTER COLUMN "target_id" SET DATA TYPE text USING "target_id"::text;--> statement-breakpoint
+ALTER TABLE "catalog"."manufacturer_relations" ALTER COLUMN "target_id" SET DATA TYPE text USING "target_id"::text;--> statement-breakpoint
+ALTER TABLE "catalog"."manufacturer_relation_revisions" ADD CONSTRAINT "catalog_manufacturer_relation_revisions_target_id_ck" CHECK (length("target_id") between 1 and 300);--> statement-breakpoint
+ALTER TABLE "catalog"."manufacturer_relations" ADD CONSTRAINT "catalog_manufacturer_relations_target_id_ck" CHECK (length("target_id") between 1 and 300);

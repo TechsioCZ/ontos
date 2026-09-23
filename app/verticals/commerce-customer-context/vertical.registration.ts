@@ -6,8 +6,13 @@ import { commerceCustomerContextManifest } from './vertical.manifest.ts';
 /* jscpd:ignore-start -- generated imports intentionally mirror the manifest's generated action imports. */
 // <generated-module-registration-imports>
 import { addSavedAddressAction } from './src/actions/add-saved-address.action.ts';
+import { administerCommerceQuantityRuleAction } from './src/actions/administer-commerce-quantity-rule.action.ts';
+import { administerMarketBootstrapPolicyAction } from './src/actions/administer-market-bootstrap-policy.action.ts';
+import { administerPaymentTermPolicyAction } from './src/actions/administer-payment-term-policy.action.ts';
+import { administerPurchaseCurrencyPolicyAction } from './src/actions/administer-purchase-currency-policy.action.ts';
 import { archiveCustomerGroupAction } from './src/actions/archive-customer-group.action.ts';
 import { archiveCustomerProfileAction } from './src/actions/archive-customer-profile.action.ts';
+import { assignCommerceQuantityRuleAction } from './src/actions/assign-commerce-quantity-rule.action.ts';
 import { assignCounterpartyPriceGroupAction } from './src/actions/assign-counterparty-price-group.action.ts';
 import { assignCustomerGroupAction } from './src/actions/assign-customer-group.action.ts';
 import { assignCustomerPriceGroupAction } from './src/actions/assign-customer-price-group.action.ts';
@@ -55,6 +60,7 @@ import { repeatCounterpartyOrderAction } from './src/actions/repeat-counterparty
 import { repeatRetailOrderAction } from './src/actions/repeat-retail-order.action.ts';
 import { reroutePurchaseApprovalRequestAction } from './src/actions/reroute-purchase-approval-request.action.ts';
 import { resendCounterpartyAccessInvitationAction } from './src/actions/resend-counterparty-access-invitation.action.ts';
+import { reserveMarketRetirementAction } from './src/actions/reserve-market-retirement.action.ts';
 import { reservePaymentTermRetirementAction } from './src/actions/reserve-payment-term-retirement.action.ts';
 import { resolveProfileReconciliationAction } from './src/actions/resolve-profile-reconciliation.action.ts';
 import { revalidatePurchaseApprovalAction } from './src/actions/revalidate-purchase-approval.action.ts';
@@ -78,8 +84,13 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     /* jscpd:ignore-start -- generated runtime actions intentionally mirror the manifest's public action list. */
     // <generated-module-registration-actions>
     addSavedAddressAction,
+    administerCommerceQuantityRuleAction,
+    administerMarketBootstrapPolicyAction,
+    administerPaymentTermPolicyAction,
+    administerPurchaseCurrencyPolicyAction,
     archiveCustomerGroupAction,
     archiveCustomerProfileAction,
+    assignCommerceQuantityRuleAction,
     assignCounterpartyPriceGroupAction,
     assignCustomerGroupAction,
     assignCustomerPriceGroupAction,
@@ -119,6 +130,7 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
     repeatRetailOrderAction,
     reroutePurchaseApprovalRequestAction,
     resendCounterpartyAccessInvitationAction,
+    reserveMarketRetirementAction,
     reservePaymentTermRetirementAction,
     resolveProfileReconciliationAction,
     revalidatePurchaseApprovalAction,
@@ -140,6 +152,8 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'commerce-quantity-policy-current': () => import('./src/api/commerce-quantity-policy-current-client.ts'),
+      'commerce-quantity-resolution': () => import('./src/api/commerce-quantity-resolution-client.ts'),
       'counterparty-access-invitation-read': () => import('./src/api/counterparty-access-invitation-read-client.ts'),
       'counterparty-all-customer-archive': () => import('./src/api/counterparty-all-customer-archive-client.ts'),
       'counterparty-all-order-history': () => import('./src/api/counterparty-all-order-history-client.ts'),
@@ -166,9 +180,15 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'guest-attribution-status': () => import('./src/api/guest-attribution-status-client.ts'),
       'guest-payment-terms-resolution': () => import('./src/api/guest-payment-terms-resolution-client.ts'),
       'invoice-recipient-resolution': () => import('./src/api/invoice-recipient-resolution-client.ts'),
+      'market-affected-use-assessment': () => import('./src/api/market-affected-use-assessment-client.ts'),
+      'market-bootstrap-policy-current': () => import('./src/api/market-bootstrap-policy-current-client.ts'),
+      'market-bootstrap-resolution': () => import('./src/api/market-bootstrap-resolution-client.ts'),
+      'market-subject-restrictions-current': () => import('./src/api/market-subject-restrictions-current-client.ts'),
       'payment-term-affected-use-assessment': () => import('./src/api/payment-term-affected-use-assessment-client.ts'),
+      'payment-term-policy-current': () => import('./src/api/payment-term-policy-current-client.ts'),
       'payment-terms-resolution': () => import('./src/api/payment-terms-resolution-client.ts'),
       'profile-reconciliation-read': () => import('./src/api/profile-reconciliation-read-client.ts'),
+      'purchase-currency-policy-current': () => import('./src/api/purchase-currency-policy-current-client.ts'),
       'purchase-currency-resolution': () => import('./src/api/purchase-currency-resolution-client.ts'),
       'purchase-limit-evaluation': () => import('./src/api/purchase-limit-evaluation-client.ts'),
       'purchase-limit-policy-read': () => import('./src/api/purchase-limit-policy-read-client.ts'),

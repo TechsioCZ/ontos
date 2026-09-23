@@ -182,6 +182,78 @@
           ]
         }
       }
+    },
+    {
+      "id": "commerce-market-catalog",
+      "package": "@app/commerce-market-catalog",
+      "path": "verticals/commerce-market-catalog",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-market-catalog.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-market-catalog",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-market-catalog"
+          ]
+        }
+      }
+    },
+    {
+      "id": "catalog",
+      "package": "@app/catalog",
+      "path": "verticals/catalog",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/catalog.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#catalog",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#catalog"
+          ]
+        }
+      }
+    },
+    {
+      "id": "pricing",
+      "package": "@app/pricing",
+      "path": "verticals/pricing",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/pricing.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#pricing",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#pricing"
+          ]
+        }
+      }
+    },
+    {
+      "id": "storefront-registry",
+      "package": "@app/storefront-registry",
+      "path": "verticals/storefront-registry",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/storefront-registry.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#storefront-registry",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#storefront-registry"
+          ]
+        }
+      }
     }
   ]
 }

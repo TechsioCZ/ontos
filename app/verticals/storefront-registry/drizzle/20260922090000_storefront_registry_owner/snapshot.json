@@ -1,0 +1,663 @@
+{
+  "version": "8",
+  "dialect": "postgres",
+  "id": "795cfda8-c3b5-4bd5-a912-2201b0c72103",
+  "prevIds": [
+    "00000000-0000-0000-0000-000000000000"
+  ],
+  "ddl": [
+    {
+      "name": "storefront_registry",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "storefront_application_revisions",
+      "entityType": "tables",
+      "schema": "storefront_registry"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "storefront_applications",
+      "entityType": "tables",
+      "schema": "storefront_registry"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "storefront_registry_generations",
+      "entityType": "tables",
+      "schema": "storefront_registry"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "storefront_application_revision_id",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storefront_application_id",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_number",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "allowed_channels",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "lifecycle",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_to",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "acting_principal_id",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "storefront_application_id",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storefront_app_id",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "current_revision",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_registry_generations"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "generation",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_registry_generations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "last_action_invocation_id",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_registry_generations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "storefront_registry",
+      "table": "storefront_registry_generations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "storefront_application_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "effective_from",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "storefront_registry_revisions_effective_idx",
+      "entityType": "indexes",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "storefront_application_id"
+      ],
+      "schemaTo": "storefront_registry",
+      "tableTo": "storefront_applications",
+      "columnsTo": [
+        "tenant_id",
+        "storefront_application_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "storefront_registry_revisions_application_fk",
+      "entityType": "fks",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "columns": [
+        "storefront_application_revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "storefront_application_revisions_pkey",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "storefront_application_id"
+      ],
+      "nameExplicit": false,
+      "name": "storefront_applications_pkey",
+      "schema": "storefront_registry",
+      "table": "storefront_applications",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "tenant_id"
+      ],
+      "nameExplicit": false,
+      "name": "storefront_registry_generations_pkey",
+      "schema": "storefront_registry",
+      "table": "storefront_registry_generations",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "storefront_application_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "storefront_registry_revisions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "storefront_application_id",
+        "revision_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "storefront_registry_revisions_number_uk",
+      "entityType": "uniques",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "storefront_registry_revisions_invocation_uk",
+      "entityType": "uniques",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "storefront_application_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "storefront_registry_applications_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "storefront_app_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "storefront_registry_applications_app_id_uk",
+      "entityType": "uniques",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "value": "\"revision_number\" > 0",
+      "name": "storefront_registry_revisions_number_ck",
+      "entityType": "checks",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "value": "\"lifecycle\" in ('DRAFT', 'ACTIVE', 'SUSPENDED', 'RETIRED')",
+      "name": "storefront_registry_revisions_lifecycle_ck",
+      "entityType": "checks",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "value": "\"effective_to\" is null or \"effective_to\" > \"effective_from\"",
+      "name": "storefront_registry_revisions_period_ck",
+      "entityType": "checks",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "value": "jsonb_typeof(\"allowed_channels\") = 'array' and jsonb_array_length(\"allowed_channels\") > 0",
+      "name": "storefront_registry_revisions_channels_ck",
+      "entityType": "checks",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 500",
+      "name": "storefront_registry_revisions_reason_ck",
+      "entityType": "checks",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "value": "\"current_revision\" > 0",
+      "name": "storefront_registry_applications_revision_ck",
+      "entityType": "checks",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "value": "\"storefront_app_id\" ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'",
+      "name": "storefront_registry_applications_app_id_ck",
+      "entityType": "checks",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "value": "\"generation\" >= 0",
+      "name": "storefront_registry_generations_generation_ck",
+      "entityType": "checks",
+      "schema": "storefront_registry",
+      "table": "storefront_registry_generations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"storefront_registry\".\"storefront_application_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "storefront_registry_revisions_tenant_select",
+      "entityType": "policies",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"storefront_registry\".\"storefront_application_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "storefront_registry_revisions_tenant_insert",
+      "entityType": "policies",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"storefront_registry\".\"storefront_application_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"storefront_registry\".\"storefront_application_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "storefront_registry_revisions_tenant_update",
+      "entityType": "policies",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"storefront_registry\".\"storefront_application_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "storefront_registry_revisions_tenant_delete",
+      "entityType": "policies",
+      "schema": "storefront_registry",
+      "table": "storefront_application_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"storefront_registry\".\"storefront_applications\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "storefront_registry_applications_tenant_select",
+      "entityType": "policies",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"storefront_registry\".\"storefront_applications\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "storefront_registry_applications_tenant_insert",
+      "entityType": "policies",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"storefront_registry\".\"storefront_applications\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"storefront_registry\".\"storefront_applications\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "storefront_registry_applications_tenant_update",
+      "entityType": "policies",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"storefront_registry\".\"storefront_applications\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "storefront_registry_applications_tenant_delete",
+      "entityType": "policies",
+      "schema": "storefront_registry",
+      "table": "storefront_applications"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"storefront_registry\".\"storefront_registry_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "storefront_registry_generations_tenant_select",
+      "entityType": "policies",
+      "schema": "storefront_registry",
+      "table": "storefront_registry_generations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"storefront_registry\".\"storefront_registry_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "storefront_registry_generations_tenant_insert",
+      "entityType": "policies",
+      "schema": "storefront_registry",
+      "table": "storefront_registry_generations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"storefront_registry\".\"storefront_registry_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"storefront_registry\".\"storefront_registry_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "storefront_registry_generations_tenant_update",
+      "entityType": "policies",
+      "schema": "storefront_registry",
+      "table": "storefront_registry_generations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"storefront_registry\".\"storefront_registry_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "storefront_registry_generations_tenant_delete",
+      "entityType": "policies",
+      "schema": "storefront_registry",
+      "table": "storefront_registry_generations"
+    }
+  ],
+  "renames": []
+}

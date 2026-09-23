@@ -329,6 +329,12 @@ interface AllowedCompositionSeam {
 
 const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
   {
+    importer: 'verticals/commerce-market-catalog/src/integrations/market-subject-restrictions.ts',
+    reason:
+      'Market Catalog composes the narrow Customer Context current subject-restrictions owner client for eligibility resolution.',
+    specifier: `${commercePackageSpecifierPrefix}/api/market-subject-restrictions-current/client`,
+  },
+  {
     importer: 'apps/shell-super-app/src/api/vertical-clients.ts',
     reason: 'Commerce publishes this as its sanctioned read-only API client for Shell composition.',
     specifier: `${commercePackageSpecifierPrefix}/api/client`,

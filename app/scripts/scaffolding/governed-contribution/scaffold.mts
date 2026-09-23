@@ -353,7 +353,6 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi'
 export const ${type}RequestSchema = Schema.Struct({});
 export type ${type}Request = typeof ${type}RequestSchema.Type;
 export const ${type}ResponseSchema = Schema.Struct({ ok: Schema.Literal(true) });
-export type ${type}Response = typeof ${type}ResponseSchema.Type;
 
 export const ${type}AuthenticationProblemSchema = makeProblemDetailsSchema(
   '${type}AuthenticationProblem',
@@ -430,7 +429,7 @@ import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect } from 'effect';
 import { ${type}RequestSchema, ${type}ResponseSchema } from '../../shared/apis/${name}.ts';
 
-export const ${toCamelCase(name)}Entrypoint = defineTenantModuleEntrypoint({
+const ${toCamelCase(name)}Entrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: ${renderReadAuthorization(config)},
   entrypointKey: '${vertical.moduleId}.api.${name}',
@@ -558,7 +557,7 @@ import { defineRead, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { ${inputSchema}, ${resultSchema} } from '../../shared/apis/${contract}.ts';
 import type { ${inputType}, ${resultType} } from '../../shared/apis/${contract}.ts';
 
-export const ${toCamelCase(name)}Entrypoint = defineTenantModuleEntrypoint({
+const ${toCamelCase(name)}Entrypoint = defineTenantModuleEntrypoint({
   access: 'read',
   authorization: ${renderReadAuthorization(config)},
   entrypointKey: '${vertical.moduleId}.${role}.${name}',

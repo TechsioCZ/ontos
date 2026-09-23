@@ -1,0 +1,1712 @@
+{
+  "id": "e47cfebc-277d-4021-b2b2-1a23d45370e3",
+  "prevIds": [
+    "fa2916ac-2332-47ee-b215-b8d639204de9"
+  ],
+  "version": "8",
+  "dialect": "postgres",
+  "ddl": [
+    {
+      "name": "commerce_market_catalog",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "market_catalog_completeness_generations",
+      "entityType": "tables",
+      "schema": "commerce_market_catalog"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "market_definition_revisions",
+      "entityType": "tables",
+      "schema": "commerce_market_catalog"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "market_lifecycle_periods",
+      "entityType": "tables",
+      "schema": "commerce_market_catalog"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "markets",
+      "entityType": "tables",
+      "schema": "commerce_market_catalog"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "storefront_association_revisions",
+      "entityType": "tables",
+      "schema": "commerce_market_catalog"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "storefront_associations",
+      "entityType": "tables",
+      "schema": "commerce_market_catalog"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_catalog_completeness_generations"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "0",
+      "generated": null,
+      "identity": null,
+      "name": "generation",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_catalog_completeness_generations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "last_action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_catalog_completeness_generations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_catalog_completeness_generations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "market_definition_revision_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "market_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selling_legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_number",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "purpose",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "channels",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "jurisdictions",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "supported_locales",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_to",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "change_reason",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "acting_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "market_lifecycle_period_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "market_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selling_legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_number",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "lifecycle",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_to",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "acting_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "market_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selling_legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "business_code",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "current_definition_revision_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "current_definition_revision",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "aggregate_revision",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_by_action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_by_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "storefront_association_revision_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storefront_association_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision_number",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "market_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "market_definition_revision_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selling_legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storefront_app_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "channel",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_to",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_kind",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "provenance_reference",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "removed_at",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "reason",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "acting_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "storefront_association_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selling_legal_entity_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "current_revision",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_by_action_invocation_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "created_by_principal_id",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "selling_legal_entity_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "commerce_market_catalog_markets_seller_idx",
+      "entityType": "indexes",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "storefront_app_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "channel",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "effective_from",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "commerce_market_catalog_association_revisions_eligibility_idx",
+      "entityType": "indexes",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "market_id"
+      ],
+      "schemaTo": "commerce_market_catalog",
+      "tableTo": "markets",
+      "columnsTo": [
+        "tenant_id",
+        "market_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "commerce_market_catalog_definition_revisions_market_fk",
+      "entityType": "fks",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "market_id"
+      ],
+      "schemaTo": "commerce_market_catalog",
+      "tableTo": "markets",
+      "columnsTo": [
+        "tenant_id",
+        "market_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "commerce_market_catalog_lifecycle_market_fk",
+      "entityType": "fks",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "storefront_association_id"
+      ],
+      "schemaTo": "commerce_market_catalog",
+      "tableTo": "storefront_associations",
+      "columnsTo": [
+        "tenant_id",
+        "storefront_association_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "commerce_market_catalog_association_revisions_association_fk",
+      "entityType": "fks",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "market_id"
+      ],
+      "schemaTo": "commerce_market_catalog",
+      "tableTo": "markets",
+      "columnsTo": [
+        "tenant_id",
+        "market_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "commerce_market_catalog_association_revisions_market_fk",
+      "entityType": "fks",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "market_definition_revision_id"
+      ],
+      "schemaTo": "commerce_market_catalog",
+      "tableTo": "market_definition_revisions",
+      "columnsTo": [
+        "tenant_id",
+        "market_definition_revision_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "commerce_market_catalog_association_revisions_definition_fk",
+      "entityType": "fks",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "columns": [
+        "tenant_id"
+      ],
+      "nameExplicit": false,
+      "name": "market_catalog_completeness_generations_pkey",
+      "schema": "commerce_market_catalog",
+      "table": "market_catalog_completeness_generations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "market_definition_revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "market_definition_revisions_pkey",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "market_lifecycle_period_id"
+      ],
+      "nameExplicit": false,
+      "name": "market_lifecycle_periods_pkey",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "market_id"
+      ],
+      "nameExplicit": false,
+      "name": "markets_pkey",
+      "schema": "commerce_market_catalog",
+      "table": "markets",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "storefront_association_revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "storefront_association_revisions_pkey",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "storefront_association_id"
+      ],
+      "nameExplicit": false,
+      "name": "storefront_associations_pkey",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "market_definition_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_market_catalog_definition_revisions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "market_id",
+        "revision_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_market_catalog_definition_revisions_number_uk",
+      "entityType": "uniques",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_market_catalog_definition_revisions_invocation_uk",
+      "entityType": "uniques",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "market_lifecycle_period_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_market_catalog_lifecycle_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "market_id",
+        "revision_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_market_catalog_lifecycle_revision_uk",
+      "entityType": "uniques",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_market_catalog_lifecycle_invocation_uk",
+      "entityType": "uniques",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "market_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_market_catalog_markets_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "business_code"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_market_catalog_markets_code_uk",
+      "entityType": "uniques",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "storefront_association_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_market_catalog_association_revisions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "storefront_association_id",
+        "revision_number"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_market_catalog_association_revisions_number_uk",
+      "entityType": "uniques",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "action_invocation_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_market_catalog_association_revisions_invocation_uk",
+      "entityType": "uniques",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "storefront_association_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "commerce_market_catalog_associations_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    },
+    {
+      "value": "\"generation\" >= 0",
+      "name": "commerce_market_catalog_completeness_generation_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "market_catalog_completeness_generations"
+    },
+    {
+      "value": "\"revision_number\" > 0",
+      "name": "commerce_market_catalog_definition_revisions_number_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "value": "\"effective_to\" is null or \"effective_to\" > \"effective_from\"",
+      "name": "commerce_market_catalog_definition_revisions_period_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "value": "\"purpose\" = btrim(\"purpose\") and length(\"purpose\") between 1 and 500",
+      "name": "commerce_market_catalog_definition_revisions_purpose_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "value": "\"change_reason\" = btrim(\"change_reason\") and length(\"change_reason\") between 1 and 500",
+      "name": "commerce_market_catalog_definition_revisions_reason_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "value": "\"revision_number\" > 0",
+      "name": "commerce_market_catalog_lifecycle_revision_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "value": "\"lifecycle\" in ('ACTIVE', 'SUSPENDED', 'RETIRED')",
+      "name": "commerce_market_catalog_lifecycle_state_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "value": "\"effective_to\" is null or \"effective_to\" > \"effective_from\"",
+      "name": "commerce_market_catalog_lifecycle_period_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "value": "\"reason\" = btrim(\"reason\") and length(\"reason\") between 1 and 500",
+      "name": "commerce_market_catalog_lifecycle_reason_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "value": "\"business_code\" ~ '^[A-Z0-9][A-Z0-9_-]{1,63}$'",
+      "name": "commerce_market_catalog_markets_code_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "value": "\"current_definition_revision\" > 0 and \"aggregate_revision\" > 0",
+      "name": "commerce_market_catalog_markets_revision_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "value": "\"revision_number\" > 0",
+      "name": "commerce_market_catalog_association_revisions_number_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "value": "\"channel\" in ('B2C', 'B2B')",
+      "name": "commerce_market_catalog_association_revisions_channel_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "value": "\"effective_to\" is null or \"effective_to\" > \"effective_from\"",
+      "name": "commerce_market_catalog_association_revisions_period_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "value": "\"storefront_app_id\" ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'",
+      "name": "commerce_market_catalog_association_revisions_storefront_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "value": "\"removed_at\" is null or \"removed_at\" >= \"effective_from\"",
+      "name": "commerce_market_catalog_association_revisions_removal_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "value": "\"current_revision\" > 0",
+      "name": "commerce_market_catalog_associations_revision_ck",
+      "entityType": "checks",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"market_catalog_completeness_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_market_catalog_completeness_tenant_select",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "market_catalog_completeness_generations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_market_catalog\".\"market_catalog_completeness_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "commerce_market_catalog_completeness_tenant_insert",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "market_catalog_completeness_generations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"market_catalog_completeness_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"commerce_market_catalog\".\"market_catalog_completeness_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "commerce_market_catalog_completeness_tenant_update",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "market_catalog_completeness_generations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"market_catalog_completeness_generations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_market_catalog_completeness_tenant_delete",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "market_catalog_completeness_generations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"market_definition_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_market_catalog_definition_revisions_tenant_select",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_market_catalog\".\"market_definition_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "commerce_market_catalog_definition_revisions_tenant_insert",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"market_definition_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"commerce_market_catalog\".\"market_definition_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "commerce_market_catalog_definition_revisions_tenant_update",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"market_definition_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_market_catalog_definition_revisions_tenant_delete",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "market_definition_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"market_lifecycle_periods\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_market_catalog_lifecycle_tenant_select",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_market_catalog\".\"market_lifecycle_periods\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "commerce_market_catalog_lifecycle_tenant_insert",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"market_lifecycle_periods\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"commerce_market_catalog\".\"market_lifecycle_periods\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "commerce_market_catalog_lifecycle_tenant_update",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"market_lifecycle_periods\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_market_catalog_lifecycle_tenant_delete",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "market_lifecycle_periods"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"markets\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_market_catalog_markets_tenant_select",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_market_catalog\".\"markets\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "commerce_market_catalog_markets_tenant_insert",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"markets\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"commerce_market_catalog\".\"markets\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "commerce_market_catalog_markets_tenant_update",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"markets\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_market_catalog_markets_tenant_delete",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "markets"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"storefront_association_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_market_catalog_association_revisions_tenant_select",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_market_catalog\".\"storefront_association_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "commerce_market_catalog_association_revisions_tenant_insert",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"storefront_association_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"commerce_market_catalog\".\"storefront_association_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "commerce_market_catalog_association_revisions_tenant_update",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"storefront_association_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_market_catalog_association_revisions_tenant_delete",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_association_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"storefront_associations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_market_catalog_associations_tenant_select",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"commerce_market_catalog\".\"storefront_associations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "commerce_market_catalog_associations_tenant_insert",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"storefront_associations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"commerce_market_catalog\".\"storefront_associations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "commerce_market_catalog_associations_tenant_update",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"commerce_market_catalog\".\"storefront_associations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "commerce_market_catalog_associations_tenant_delete",
+      "entityType": "policies",
+      "schema": "commerce_market_catalog",
+      "table": "storefront_associations"
+    }
+  ],
+  "renames": []
+}

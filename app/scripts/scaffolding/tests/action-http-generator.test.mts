@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import {
+  decodeActionRegistration,
   inspectAction,
   renderActionHttpClient,
   renderActionHttpContract,
@@ -30,6 +31,31 @@ const vertical = {
   topologyEntry: {},
 } satisfies OntosVerticalMetadata;
 const appRoot = path.resolve(import.meta.dirname, '../../..');
+
+it('accepts callable Effect union domain schemas and rejects malformed schema descriptors', () => {
+  const domainErrorSchema = Schema.Union([
+    Schema.Struct({ _tag: Schema.Literal('ProductConflict'), code: Schema.Literal('product_conflict') }),
+    Schema.Struct({ _tag: Schema.Literal('ProductUnavailable'), code: Schema.Literal('product_unavailable') }),
+  ]);
+  const descriptor = {
+    actionKey: 'commerce.catalog.create-product',
+    domainErrorSchema,
+    idempotency: 'required',
+    owningModuleKey: 'commerce.catalog',
+    payloadSchema: Schema.Struct({ rate: Schema.Number }),
+  };
+  const valid = decodeActionRegistration({ createProductAction: { descriptor } }, 'createProductAction');
+  expect(Option.isSome(valid)).toBe(true);
+  if (Option.isSome(valid)) {
+    expect(valid.value.descriptor.domainErrorSchema.ast).toEqual(domainErrorSchema.ast);
+  }
+
+  const invalid = decodeActionRegistration(
+    { createProductAction: { descriptor: { ...descriptor, domainErrorSchema: { ast: 'not an AST' } } } },
+    'createProductAction',
+  );
+  expect(Option.isNone(invalid)).toBe(true);
+});
 
 it('renders one exact typed Action endpoint and exhaustive domain mapping', () => {
   const action = 'change-rate';
@@ -103,6 +129,22 @@ it('renders required idempotency and governed assertion acquisition in the Actio
   expect(client).toContain("defaultApiPrefix: '/pricing-policy-api'");
 });
 
+it('renders exhaustive Match narrowing for discriminated-union Action payloads', () => {
+  const payloadSchema = Schema.Union([
+    Schema.Struct({ operation: Schema.Literal('RESERVE'), reason: Schema.String }),
+    Schema.Struct({ operation: Schema.Literal('COMMIT'), reservationToken: Schema.String }),
+    Schema.Struct({ operation: Schema.Literal('RELEASE'), reservationToken: Schema.String }),
+  ]);
+  const client = renderActionHttpClient(vertical, 'reserve-market-retirement', true, payloadSchema);
+
+  expect(client).toContain("import { Effect, Match, Redacted, Schema } from 'effect';");
+  expect(client).toContain("Match.when({ operation: 'COMMIT' }, (commitPayload) =>");
+  expect(client).toContain("Match.when({ operation: 'RELEASE' }, (releasePayload) =>");
+  expect(client).toContain("Match.when({ operation: 'RESERVE' }, (reservePayload) =>");
+  expect(client).toContain('Match.exhaustive');
+  expect(client).not.toContain('payload: encoded,');
+});
+
 it.live(
   'accepts Action registrations with real Effect domain error Schemas',
   Effect.fn(function* acceptsRealDomainErrorSchema() {
@@ -131,6 +173,7 @@ export const validAction = {
     domainErrorSchema: Schema.Union([FixtureConflict, FixtureUnavailable]),
     idempotency: 'required',
     owningModuleKey: 'fixture',
+    payloadSchema: Schema.Struct({ fixtureId: Schema.String }),
   },
 };
 `,
@@ -160,6 +203,7 @@ it.live(
     domainErrorSchema: { ast: {} },
     idempotency: 'required',
     owningModuleKey: 'fixture',
+    payloadSchema: { ast: {} },
   },
 };
 `,

@@ -1,0 +1,3 @@
+CREATE UNIQUE INDEX "catalog_product_category_events_category_revision_uk" ON "catalog"."product_category_events" ("tenant_id","category_id","category_revision") WHERE "change_kind" in ('CREATED', 'RENAMED', 'MOVED', 'RETIRED');--> statement-breakpoint
+ALTER TABLE "catalog"."product_category_events" ADD CONSTRAINT "catalog_product_category_events_snapshot_ck" CHECK ("change_kind" not in ('CREATED', 'RENAMED', 'MOVED', 'RETIRED') or ("next_name" is not null and "next_lifecycle_state" is not null));--> statement-breakpoint
+ALTER TABLE "catalog"."product_category_events" DROP CONSTRAINT "catalog_product_category_events_category_revision_ck", ADD CONSTRAINT "catalog_product_category_events_category_revision_ck" CHECK ("category_revision" > 0);

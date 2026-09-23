@@ -21,6 +21,7 @@
     "./outbox/core-identity-principal-binding-reserved-v1": "./src/outbox/core-identity-principal-binding-reserved-v1.ts",
     "./outbox/core-identity-principal-binding-status-changed-v1": "./src/outbox/core-identity-principal-binding-status-changed-v1.ts",
     "./outbox/worker": "./src/outbox/worker-entrypoint.ts",
+    "./resources/legal-entity": "./src/resources/legal-entity.ts",
     "./testing/actions": "./src/testing/actions.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts"
   },

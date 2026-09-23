@@ -27,6 +27,9 @@
   ],
   "references": [
     {
+      "path": "../catalog"
+    },
+    {
       "path": "../../packages/core-runtime"
     },
     {
@@ -36,7 +39,13 @@
       "path": "../../packages/customer-payment-term-contracts"
     },
     {
+      "path": "../../packages/customer-market-retirement-contracts"
+    },
+    {
       "path": "../../packages/payment-term-catalog-contracts"
+    },
+    {
+      "path": "../../packages/pricing-contracts"
     },
     {
       "path": "../../packages/shared-contracts"

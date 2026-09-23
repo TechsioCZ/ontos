@@ -1,10 +1,33 @@
+import fs from 'node:fs';
+
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { deriveInstalledVerticalIds, InstalledVerticalTopologyError } from '../../api/verticals/installed-verticals.ts';
+import { DeploymentAllowlistTopologySchema } from '../../api/modules/deployment-allowlist.ts';
+import {
+  deriveInstalledVerticalIds,
+  InstalledVerticalTopologyError,
+  installedVerticalIds,
+} from '../../api/verticals/installed-verticals.ts';
 
 it.effect('derives installed vertical IDs from the injected topology without hardcoded registrations', () =>
   Effect.gen(function* verifyCase1() {
+    const topology = Schema.decodeUnknownSync(DeploymentAllowlistTopologySchema)(
+      JSON.parse(fs.readFileSync(new URL('../../../../topology/reference-topology.json', import.meta.url), 'utf-8')),
+    );
+    const expectedInstalledIds = yield* deriveInstalledVerticalIds(topology);
+
+    expect([...expectedInstalledIds]).toEqual([
+      'party-registry',
+      'commerce-customer-context',
+      'payment-term-catalog',
+      'commerce-market-catalog',
+      'catalog',
+      'pricing',
+      'storefront-registry',
+    ]);
+    expect(expectedInstalledIds.has('party.registry')).toBe(false);
+    expect([...(yield* installedVerticalIds)]).toEqual([...expectedInstalledIds]);
     const valid = yield* deriveInstalledVerticalIds({
       sharedPackages: [{ id: 'shared-contracts', kind: 'package' }],
       shell: { id: 'shell-super-app', kind: 'shell' },

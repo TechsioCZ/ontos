@@ -6,6 +6,15 @@ The accepted product decision is [ADR-0017](../../../docs/adr/0017-commerce-appl
 
 ## Application inventory
 
+This inventory describes channel and application edges; it is not a list of every business
+MicroVertical. `commerce.market-catalog` remains a separate MicroVertical because it owns canonical
+Commerce Market identity, lifecycle, Storefront associations, persistence, governed entrypoints,
+and completeness evidence. `commerce.customer-context` consumes that owner only through its
+published client. The deployment `appId` names the topology unit and gateway audience, while the
+`moduleId` names the stable semantic owner. This boundary follows accepted ownership and the V0
+one-business-module-per-deployment contract, not the fact that the work originated in a separate
+planning issue.
+
 | Application/edge               | Deployment and ownership                                                                                                                                                                                    |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Storefront Application**     | External to the standard OntOS Shell deployment. Owns framework, routes, rendering, layout, interaction, branding, assets, and SEO. A customer may have separate B2C/B2B storefronts.                       |

@@ -1,0 +1,2 @@
+ALTER TABLE "catalog"."attribute_value_sets" ADD COLUMN "current_state" text DEFAULT 'SET' NOT NULL;--> statement-breakpoint
+ALTER TABLE "catalog"."attribute_value_sets" ADD CONSTRAINT "catalog_attribute_value_sets_state_ck" CHECK ("current_state" in ('SET', 'REMOVED'));

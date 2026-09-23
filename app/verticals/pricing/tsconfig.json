@@ -1,0 +1,33 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "noEmit": false,
+    "outDir": "../../node_modules/.cache/tsgo/declarations/verticals__pricing",
+    "tsBuildInfoFile": "../../node_modules/.cache/tsgo/verticals__pricing.tsbuildinfo",
+    "types": ["node"]
+  },
+  "include": [
+    "api",
+    "locales/**/*.json",
+    "package.json",
+    "shared",
+    "shared/ultramodern-build.json",
+    "server",
+    "src",
+    "tests",
+    "vertical.manifest.ts",
+    "vertical.registration.ts"
+  ],
+  "references": [
+    { "path": "../../packages/core-runtime" },
+    { "path": "../../packages/gateway-principal-verifier" },
+    { "path": "../../packages/pricing-contracts" },
+    { "path": "../../packages/shared-contracts" },
+    { "path": "../../packages/shared-design-tokens" }
+  ]
+}

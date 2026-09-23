@@ -22,6 +22,9 @@ diff --git a/dist/cjs/strict-effect-runtime.cjs b/dist/cjs/strict-effect-runtime
          const file = (0, external_source_analysis_cjs_namespaceObject.parseSource)(input.source, input.id, 'Invalid API syntax');
          const module = {
              ...input,
+@@ -248 +248 @@
+-            return statements.slice(0, -1).every((statement)=>types_namespaceObject.isVariableDeclaration(statement)) && types_namespaceObject.isReturnStatement(last) ? last.argument : void 0;
++            return statements.slice(0, -1).every((statement)=>types_namespaceObject.isVariableDeclaration(statement) || types_namespaceObject.isTSTypeAliasDeclaration(statement)) && types_namespaceObject.isReturnStatement(last) ? last.argument : void 0;
 diff --git a/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js b/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
 --- a/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
 +++ b/dist/esm-node/oxlint-plugin/rules/strict-effect-api-boundaries.js
@@ -46,6 +49,9 @@ diff --git a/dist/esm-node/strict-effect-runtime.js b/dist/esm-node/strict-effec
          const file = parseSource(input.source, input.id, 'Invalid API syntax');
          const module = {
              ...input,
+@@ -205 +205 @@
+-            return statements.slice(0, -1).every((statement)=>__rspack_external__babel_types_6e8337dd.isVariableDeclaration(statement)) && __rspack_external__babel_types_6e8337dd.isReturnStatement(last) ? last.argument : void 0;
++            return statements.slice(0, -1).every((statement)=>__rspack_external__babel_types_6e8337dd.isVariableDeclaration(statement) || __rspack_external__babel_types_6e8337dd.isTSTypeAliasDeclaration(statement)) && __rspack_external__babel_types_6e8337dd.isReturnStatement(last) ? last.argument : void 0;
 diff --git a/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js b/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
 --- a/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
 +++ b/dist/esm/oxlint-plugin/rules/strict-effect-api-boundaries.js
@@ -70,6 +76,9 @@ diff --git a/dist/esm/strict-effect-runtime.js b/dist/esm/strict-effect-runtime.
          const file = parseSource(input.source, input.id, 'Invalid API syntax');
          const module = {
              ...input,
+@@ -204 +204 @@
+-            return statements.slice(0, -1).every((statement)=>__rspack_external__babel_types_6e8337dd.isVariableDeclaration(statement)) && __rspack_external__babel_types_6e8337dd.isReturnStatement(last) ? last.argument : void 0;
++            return statements.slice(0, -1).every((statement)=>__rspack_external__babel_types_6e8337dd.isVariableDeclaration(statement) || __rspack_external__babel_types_6e8337dd.isTSTypeAliasDeclaration(statement)) && __rspack_external__babel_types_6e8337dd.isReturnStatement(last) ? last.argument : void 0;
 diff --git a/dist/cjs/microvertical-api-baseline.cjs b/dist/cjs/microvertical-api-baseline.cjs
 --- a/dist/cjs/microvertical-api-baseline.cjs
 +++ b/dist/cjs/microvertical-api-baseline.cjs

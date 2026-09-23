@@ -77,6 +77,7 @@ const UnknownRecordSchema = Schema.Record(Schema.String, Schema.Unknown);
 const decodeRecord = Schema.decodeUnknownOption(UnknownRecordSchema);
 const isString = Schema.is(Schema.String);
 const DomainErrorSchema = Schema.declare<Schema.Top>(Schema.isSchema);
+const ActionPayloadSchema = Schema.declare<Schema.Top>(Schema.isSchema);
 const ActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
 const OwningModuleKeySchema = Schema.String.pipe(Schema.brand('OwningModuleKey'));
 const ActionDescriptorSchema = Schema.Struct({
@@ -84,6 +85,7 @@ const ActionDescriptorSchema = Schema.Struct({
   domainErrorSchema: DomainErrorSchema,
   idempotency: Schema.Literals(['optional', 'required']),
   owningModuleKey: OwningModuleKeySchema,
+  payloadSchema: ActionPayloadSchema,
 });
 type ActionDescriptor = typeof ActionDescriptorSchema.Type;
 interface ActionModuleLike {
@@ -226,12 +228,52 @@ const collectDomainErrors = (ast: SchemaAstLike): readonly DomainErrorIdentity[]
   return errors.toSorted((left, right) => left.tag.localeCompare(right.tag) || left.code.localeCompare(right.code));
 };
 
+interface PayloadDiscriminator {
+  readonly key: string;
+  readonly values: readonly string[];
+}
+
+const payloadDiscriminatorPriority = ['_tag', 'operation', 'type', 'kind'] as const;
+const payloadDiscriminatorRank = new Map<string, number>(
+  payloadDiscriminatorPriority.map((key, index) => [key, index]),
+);
+
+const collectPayloadDiscriminator = (ast: SchemaAstLike): PayloadDiscriminator | undefined => {
+  const astTypes = ast.types;
+  if (!Predicate.isTagged(ast, 'Union') || astTypes === undefined || astTypes.length < 2) {
+    return undefined;
+  }
+  const branchValues = astTypes.map(collectNodeDomainErrorValues);
+  const [firstBranch] = branchValues;
+  if (firstBranch === undefined) {
+    return undefined;
+  }
+  const candidates = [...firstBranch.entries()]
+    .filter(
+      ([key, values]) =>
+        /^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(key) &&
+        values.size === 1 &&
+        branchValues.every((branch) => branch.get(key)?.size === 1),
+    )
+    .map(([key]) => ({
+      key,
+      values: branchValues.flatMap((branch) => [...(branch.get(key) ?? [])]),
+    }))
+    .filter(({ values }) => new Set(values).size === branchValues.length)
+    .toSorted((left, right) => {
+      const leftRank = payloadDiscriminatorRank.get(left.key) ?? payloadDiscriminatorPriority.length;
+      const rightRank = payloadDiscriminatorRank.get(right.key) ?? payloadDiscriminatorPriority.length;
+      return leftRank - rightRank || left.key.localeCompare(right.key);
+    });
+  return candidates[0];
+};
+
 interface DecodedActionRegistration {
   readonly descriptor: ActionDescriptor;
 }
 
 // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Dynamic import namespaces are untrusted here and are decoded field-by-field before the scaffold accepts the registration.
-const decodeActionRegistration = (module: unknown, value: string): Option.Option<DecodedActionRegistration> =>
+export const decodeActionRegistration = (module: unknown, value: string): Option.Option<DecodedActionRegistration> =>
   Option.gen(function* decodeActionRegistrationOption() {
     const moduleRecord = yield* decodeRecord(module);
     const action = yield* decodeRecord(moduleRecord[value]);
@@ -670,14 +712,41 @@ export const ${value}ActionApiLive = HttpApiBuilder.group(
 `;
 };
 
-export const renderActionHttpClient = (vertical: OntosVerticalMetadata, action: string, required: boolean): string => {
+export const renderActionHttpClient = (
+  vertical: OntosVerticalMetadata,
+  action: string,
+  required: boolean,
+  payloadSchema?: Schema.Top,
+): string => {
   const type = toPascalCase(action);
   const value = toCamelCase(action);
+  const payloadDiscriminator = payloadSchema === undefined ? undefined : collectPayloadDiscriminator(payloadSchema.ast);
+  const executeRequest =
+    payloadDiscriminator === undefined
+      ? `client.${value}Action.execute({
+      headers: { 'idempotency-key': options.idempotencyKey },
+      payload: encoded,
+    })`
+      : `Match.value(encoded).pipe(
+${payloadDiscriminator.values
+  .toSorted((left, right) => left.localeCompare(right))
+  .map((discriminatorValue) => {
+    const payloadBinding = `${toCamelCase(discriminatorValue.toLowerCase())}Payload`;
+    return `      Match.when({ ${payloadDiscriminator.key}: '${discriminatorValue}' }, (${payloadBinding}) =>
+        client.${value}Action.execute({
+          headers: { 'idempotency-key': options.idempotencyKey },
+          payload: ${payloadBinding},
+        }),
+      ),`;
+  })
+  .join('\n')}
+      Match.exhaustive,
+    )`;
   return `${HEADER}
 // @ontos-action-http-owner ${vertical.moduleId}
 // @ontos-action-http-slug ${action}
 import { makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
-import { Effect, Redacted, Schema } from 'effect';
+import { Effect, ${payloadDiscriminator === undefined ? '' : 'Match, '}Redacted, Schema } from 'effect';
 import { ${type}ActionApi, ${type}PayloadSchema } from '../../shared/apis/${action}-action.ts';
 import type { ${type}Payload } from '../../shared/actions/${action}.ts';
 import { operationGateway } from './action-gateway.ts';
@@ -708,10 +777,7 @@ export const execute${type}WithAuthorization = (
   ...[credential, requestCorrelation, options]: AuthorizedInvocation
 ) => Schema.encodeUnknownEffect(${type}PayloadSchema)(payload).pipe(
   Effect.flatMap((encoded) => makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-    Effect.flatMap((client) => client.${value}Action.execute({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload: encoded,
-    })),
+    Effect.flatMap((client) => ${executeRequest}),
   )),
 );
 
@@ -947,7 +1013,12 @@ const plan = Effect.fn('ActionHttpScaffold.plan')(function* planActionHttp(
     ),
     createOrUpdateOwnedGeneratedMutationEffect(
       clientPath,
-      renderActionHttpClient(vertical, action, inspected.descriptor.idempotency === 'required'),
+      renderActionHttpClient(
+        vertical,
+        action,
+        inspected.descriptor.idempotency === 'required',
+        inspected.descriptor.payloadSchema,
+      ),
       ownsGeneratedActionHttpArtifact,
     ),
   ]);

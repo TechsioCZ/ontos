@@ -29,7 +29,19 @@
       "path": "verticals/commerce-customer-context"
     },
     {
+      "path": "verticals/commerce-market-catalog"
+    },
+    {
       "path": "verticals/payment-term-catalog"
+    },
+    {
+      "path": "verticals/catalog"
+    },
+    {
+      "path": "verticals/pricing"
+    },
+    {
+      "path": "verticals/storefront-registry"
     },
     {
       "path": "packages/email-delivery"

@@ -75,7 +75,11 @@ export const LOCAL_DEVELOPMENT_CONTEXT = Object.freeze({
   tenantSlug: 'techsio',
 });
 
-export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze(['party-registry'] as const);
+export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze([
+  'party-registry',
+  'commerce-market-catalog',
+  'commerce-customer-context',
+] as const);
 
 export interface LocalDevelopmentConfiguration {
   readonly authBaseUrl: string;
@@ -113,6 +117,7 @@ export class LocalDevelopmentInitializationError extends Schema.TaggedError<Loca
       'local_configuration_invalid',
       'local_contract_invalid',
       'local_conflict',
+      'local_owner_dependency_missing',
       'local_persistence_failed',
     ]),
     reason: Schema.String,
@@ -123,6 +128,63 @@ const failure = (
   code: LocalDevelopmentInitializationError['code'],
   reason: string,
 ): LocalDevelopmentInitializationError => new LocalDevelopmentInitializationError({ code, reason });
+
+export const LOCAL_DEVELOPMENT_OWNER_INITIALIZATION_ORDER = Object.freeze([
+  'storefront-registry',
+  'commerce-market-catalog',
+  'catalog',
+  'pricing-currency-support',
+  'payment-term-catalog',
+  'market-subject-restrictions',
+  'customer-commerce-policy',
+] as const);
+
+export type LocalDevelopmentOwnerInitializationStep = (typeof LOCAL_DEVELOPMENT_OWNER_INITIALIZATION_ORDER)[number];
+
+export interface LocalDevelopmentOwnerInitializationRequest {
+  readonly idempotencyKey: string;
+  readonly legalEntityId: string;
+  readonly owner: LocalDevelopmentOwnerInitializationStep;
+  readonly tenantId: string;
+}
+
+export type LocalDevelopmentOwnerReconciler = (
+  request: LocalDevelopmentOwnerInitializationRequest,
+) => Effect.Effect<void, LocalDevelopmentInitializationError>;
+
+export type LocalDevelopmentOwnerReconcilers = Readonly<
+  Partial<Record<LocalDevelopmentOwnerInitializationStep, LocalDevelopmentOwnerReconciler>>
+>;
+
+const ownerInitializationRequest = (
+  owner: LocalDevelopmentOwnerInitializationStep,
+): LocalDevelopmentOwnerInitializationRequest => ({
+  idempotencyKey: `ontos-local-owner:${LOCAL_DEVELOPMENT_CONTEXT.tenantId}:${owner}:v1`,
+  legalEntityId: LOCAL_DEVELOPMENT_CONTEXT.legalEntityId,
+  owner,
+  tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
+});
+
+/**
+ * Reconciles local owner facts in dependency order through owner-provided entrypoints.
+ *
+ * Each owner receives a stable idempotency key, so a complete reconciliation can be
+ * retried without inventing new facts. Missing entrypoints fail before any dependent
+ * owner is invoked; owner-specific adapters remain responsible for mapping their
+ * typed failure into LocalDevelopmentInitializationError.
+ */
+export const initializeLocalDevelopmentOwners = Effect.fn('LocalDevelopment.initializeOwners')(
+  function* initializeOwners(
+    reconcilers: LocalDevelopmentOwnerReconcilers,
+  ): Effect.fn.Return<void, LocalDevelopmentInitializationError> {
+    for (const owner of LOCAL_DEVELOPMENT_OWNER_INITIALIZATION_ORDER) {
+      const reconcile = reconcilers[owner];
+      yield* reconcile === undefined
+        ? failure('local_owner_dependency_missing', `The ${owner} local owner reconciler is unavailable`)
+        : reconcile(ownerInitializationRequest(owner));
+    }
+  },
+);
 
 const loopbackHosts = new Set(['127.0.0.1', '::1', '[::1]', 'localhost']);
 

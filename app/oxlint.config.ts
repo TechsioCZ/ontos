@@ -337,6 +337,7 @@ export default defineConfig({
         '**/route.meta.ts',
         'apps/shell-super-app/shared/ultramodern-build.ts',
         'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
+        'verticals/commerce-market-catalog/src/routes/ultramodern-route-metadata.ts',
         'verticals/party-registry/shared/ultramodern-build.ts',
         'verticals/party-registry/src/routes/ultramodern-route-metadata.ts',
         'verticals/party-registry/vertical.manifest.ts',

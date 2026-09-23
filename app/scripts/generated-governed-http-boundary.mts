@@ -133,6 +133,24 @@ const isWholeCallExpression = (source: string, declaration: RegExp): boolean => 
   return opening !== -1 && closing === source.length - 1;
 };
 
+const wholeCallArguments = (source: string, declaration: RegExp): readonly string[] | undefined => {
+  const match = declaration.exec(source);
+  if (match?.index === undefined || !isWholeCallExpression(source, declaration)) {
+    return undefined;
+  }
+  const opening = source.indexOf('(', match.index);
+  const closing = matchingDelimiterEnd(source, opening, '(', ')');
+  if (opening === -1 || closing === undefined) {
+    return undefined;
+  }
+  return separatedSource(
+    source,
+    topLevelSeparators(maskNonCode(source), ',', opening + 1, closing),
+    opening + 1,
+    closing,
+  ).filter((argument) => argument !== '');
+};
+
 interface SourceDepthAnalysis {
   readonly code: string;
   readonly prefixDepths: Int32Array;
@@ -460,7 +478,7 @@ const exportedRuntimeFactory = (source: string): SourceRange | undefined => {
   if (exported === undefined || !/^[A-Za-z][A-Za-z0-9]*$/u.test(exported)) {
     return undefined;
   }
-  const runtimeInitializer = assignedExpression(source, new RegExp(`const ${escapeRegExp(exported)}\\s*=\\s*`, 'u'));
+  const runtimeInitializer = constInitializer(source, exported);
   const factory = /^(?<factory>make[A-Za-z][A-Za-z0-9]*ApiRuntime)\(/u.exec(runtimeInitializer ?? '')?.groups?.factory;
   const factoryExpression =
     factory === undefined
@@ -516,6 +534,82 @@ const hasExactValueImport = (
   );
 };
 
+interface OutputPipeExpression {
+  readonly base: string;
+  readonly transforms: readonly string[];
+}
+
+const outputPipeExpression = (source: string): OutputPipeExpression | undefined => {
+  const structure = maskNonCode(source);
+  let match: RegExpExecArray | undefined;
+  for (const candidate of structure.matchAll(/\.pipe\s*\(/gu)) {
+    if (candidate.index !== undefined && codeDepthBeforePosition(source, candidate.index) === 0) {
+      match = candidate;
+    }
+  }
+  if (match?.index === undefined) {
+    return undefined;
+  }
+  const opening = structure.indexOf('(', match.index);
+  const closing = matchingDelimiterEnd(source, opening, '(', ')');
+  if (opening === -1 || closing !== source.length - 1) {
+    return undefined;
+  }
+  return {
+    base: source.slice(0, match.index).trim(),
+    transforms: separatedSource(
+      source,
+      topLevelSeparators(structure, ',', opening + 1, closing),
+      opening + 1,
+      closing,
+    ).filter((transform) => transform !== ''),
+  };
+};
+
+const isOutputSafeLayerTransform = (source: string): boolean =>
+  /^(?:GovernedReadLayer|Layer)\.orDie$/u.test(source) ||
+  isWholeCallExpression(source, /^(?:GovernedReadLayer|Layer)\.provide(?:Merge)?\(/u);
+
+const MAX_OUTPUT_COMPOSITION_DEPTH = 64;
+const MAX_OUTPUT_COMPOSITION_IDENTIFIERS = 32;
+
+const outputCompositionIncludes = (
+  source: string,
+  expression: string,
+  expectedLayer: string,
+  seen: Set<string> = new Set<string>(),
+  depth = 0,
+): boolean => {
+  if (depth >= MAX_OUTPUT_COMPOSITION_DEPTH) {
+    return false;
+  }
+  const candidate = expression.trim();
+  if (candidate === expectedLayer) {
+    return true;
+  }
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate)) {
+    if (seen.has(candidate) || seen.size >= MAX_OUTPUT_COMPOSITION_IDENTIFIERS) {
+      return false;
+    }
+    seen.add(candidate);
+    const initializer = constInitializer(source, candidate);
+    return initializer !== undefined && outputCompositionIncludes(source, initializer, expectedLayer, seen, depth + 1);
+  }
+  const piped = outputPipeExpression(candidate);
+  if (piped !== undefined) {
+    return (
+      piped.transforms.length > 0 &&
+      piped.transforms.every(isOutputSafeLayerTransform) &&
+      outputCompositionIncludes(source, piped.base, expectedLayer, seen, depth + 1)
+    );
+  }
+  const merged = wholeCallArguments(candidate, /^(?:GovernedReadLayer|Layer)\.mergeAll\(/u);
+  return (
+    merged !== undefined &&
+    merged.some((operand) => outputCompositionIncludes(source, operand, expectedLayer, seen, depth + 1))
+  );
+};
+
 const slotIsMountedByAssembler = (
   source: string,
   runtimeSource: string,
@@ -533,16 +627,7 @@ const slotIsMountedByAssembler = (
     return false;
   }
   const handlers = objectPropertyValue(definition, 'handlers');
-  if (handlers === layerName) {
-    return true;
-  }
-  if (handlers === undefined || !/^[A-Za-z][A-Za-z0-9]*$/u.test(handlers)) {
-    return false;
-  }
-  const resolved = assignedExpression(runtimeSource, new RegExp(`const ${escapeRegExp(handlers)}\\s*=\\s*`, 'u'));
-  return (
-    resolved !== undefined && isWholeCallExpression(resolved, new RegExp(`^${escapeRegExp(layerName)}\\.pipe\\(`, 'u'))
-  );
+  return handlers !== undefined && outputCompositionIncludes(runtimeSource, handlers, layerName);
 };
 
 const definesExpectedRuntime = (definition: string | undefined, expectedApi: string, runtimeName: string): boolean =>
@@ -636,6 +721,9 @@ const apiStatementEnd = (source: string, start: number): number | undefined => {
   return nextExport === undefined ? semicolon : Math.min(semicolon, nextExport);
 };
 
+const governedApiDeclarationPrefix = (binding: string): string =>
+  `export const ${binding}(?:\\s*:\\s*[A-Za-z][A-Za-z0-9]*(?:\\.[A-Za-z][A-Za-z0-9]*)*)?\\s*=\\s*`;
+
 /** Resolve the actual exported root containing the generated slot, never an alias or decoy. */
 export const governedApiBinding = (source: string): string | undefined => {
   const slot = generatedSlotRange(source, GOVERNED_API_SLOT_START, GOVERNED_API_SLOT_END);
@@ -643,7 +731,9 @@ export const governedApiBinding = (source: string): string | undefined => {
     return undefined;
   }
   const candidates = [
-    ...maskComments(source).matchAll(/export const (?<name>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApi\.make\(/gu),
+    ...maskComments(source).matchAll(
+      new RegExp(`${governedApiDeclarationPrefix('(?<name>[A-Za-z][A-Za-z0-9]*)')}HttpApi\\.make\\(`, 'gu'),
+    ),
   ]
     .filter((match) => isTopLevelCodePosition(source, match.index))
     .map((match) => match.groups?.name)
@@ -651,7 +741,7 @@ export const governedApiBinding = (source: string): string | undefined => {
       if (name === undefined) {
         return false;
       }
-      const root = assignedExpressionRange(source, new RegExp(`export const ${escapeRegExp(name)}\\s*=\\s*`, 'u'));
+      const root = assignedExpressionRange(source, new RegExp(governedApiDeclarationPrefix(escapeRegExp(name)), 'u'));
       const statementEnd = root === undefined ? undefined : apiStatementEnd(source, root.start);
       return (
         root !== undefined &&
@@ -668,7 +758,7 @@ const governedSharedApiRoot = (source: string): SourceRange | undefined => {
   const apiRoot =
     binding === undefined
       ? undefined
-      : assignedExpressionRange(source, new RegExp(`export const ${escapeRegExp(binding)}\\s*=\\s*`, 'u'));
+      : assignedExpressionRange(source, new RegExp(governedApiDeclarationPrefix(escapeRegExp(binding)), 'u'));
   const slot = generatedSlotRange(source, GOVERNED_API_SLOT_START, GOVERNED_API_SLOT_END);
   if (apiRoot === undefined || slot === undefined) {
     return undefined;
@@ -1706,6 +1796,58 @@ const generatedReadContributions = (
 const governedOwnerModuleId = (manifest: string | undefined): string | undefined =>
   /^\/\/ @ontos-module-id (?<moduleId>[^\s]+)$/mu.exec(manifest ?? '')?.groups?.moduleId;
 
+/** Keep the generated call shape while permitting a checked, declaration-safe Action type. */
+export const hasGeneratedActionRegistrationBinding = (
+  source: string,
+  camel: string,
+  type: string,
+  moduleId: string,
+): boolean => {
+  const actionName = escapeRegExp(`${camel}Action`);
+  const direct = new RegExp(`^export const ${actionName} = defineAction\\(`, 'mu');
+  const typed = new RegExp(
+    `^export const ${actionName}\\s*:\\s*ActionRegistration<\\s*typeof ${escapeRegExp(type)}PayloadSchema\\s*,\\s*typeof ${escapeRegExp(type)}ResultSchema\\s*,\\s*typeof (?<error>[A-Z][A-Za-z0-9]*ErrorSchema)\\s*,\\s*Readonly<Record<string, never>>\\s*,\\s*['"]${escapeRegExp(moduleId)}['"]\\s*,\\s*(?<services>[A-Z][A-Za-z0-9]*Services)\\s*>\\s*=\\s*defineAction\\(`,
+    'mu',
+  );
+  const directMatch = direct.exec(source);
+  if (directMatch !== null && isCodePosition(source, directMatch.index)) {
+    return true;
+  }
+  const typedMatch = typed.exec(source);
+  return (
+    typedMatch !== null &&
+    isCodePosition(source, typedMatch.index) &&
+    source.includes(`domainErrorSchema: ${typedMatch.groups?.error},`) &&
+    source.includes(`payloadSchema: ${type}PayloadSchema,`) &&
+    source.includes(`resultSchema: ${type}ResultSchema,`)
+  );
+};
+
+export const hasGeneratedActionKeyIdentity = (source: string, expectedKey: string): boolean => {
+  const escapedKey = escapeRegExp(expectedKey);
+  if (new RegExp(`actionKey:\\s*(?<quote>['"])${escapedKey}\\k<quote>`, 'u').test(source)) {
+    return true;
+  }
+  const declarations = [
+    ...source.matchAll(
+      /\bconst\s+(?<alias>[A-Za-z_$][\w$]*)\s*=\s*(?<quote>['"])(?<key>[^'"\r\n]*)\k<quote>\s*(?:as\s+const\s*)?;/gu,
+    ),
+  ].filter((match) => isCodePosition(source, match.index));
+  return declarations.some((declaration) => {
+    if (declaration.groups?.key !== expectedKey) {
+      return false;
+    }
+    const { alias } = declaration.groups;
+    if (declarations.filter((candidate) => candidate.groups?.alias === alias).length !== 1) {
+      return false;
+    }
+    const property = new RegExp(`\\bactionKey\\s*(?::\\s*${escapeRegExp(alias)}\\b|(?=\\s*[,}]))`, 'gu');
+    return [...source.matchAll(property)].some(
+      (match) => match.index > declaration.index && isCodePosition(source, match.index),
+    );
+  });
+};
+
 const hasCompleteGeneratedActionHttpSeam = (input: {
   readonly deploymentAppId: string;
   readonly handlerRoot: string;
@@ -1748,8 +1890,8 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
       actionSource.startsWith(
         `// @generated by OntOS Codesmith Action v1\n// @ontos-action-owner ${input.moduleId}\n// @ontos-action-slug ${slug}\n`,
       ),
-      actionSource.includes(`export const ${camel}Action = defineAction(`),
-      new RegExp(`actionKey:\\s*['"]${escapeRegExp(input.moduleId)}\\.${escapedSlug}['"]`, 'u').test(actionSource),
+      hasGeneratedActionRegistrationBinding(actionSource, camel, type, input.moduleId),
+      hasGeneratedActionKeyIdentity(actionSource, `${input.moduleId}.${slug}`),
       new RegExp(
         `HttpApiEndpoint\\.post\\(\\s*'execute',\\s*'/${escapeRegExp(input.deploymentAppId)}/actions/${escapedSlug}'`,
         'u',

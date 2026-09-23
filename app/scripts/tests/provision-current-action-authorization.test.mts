@@ -76,6 +76,184 @@ const currentActionKeys = [
   'party.registry.update-party-relationship',
 ] as const;
 
+const addedVerticalActionKeys = [
+  'commerce.catalog.activate-local-override',
+  'commerce.catalog.activate-package-definition',
+  'commerce.catalog.activate-package-option',
+  'commerce.catalog.add-product-category-assignment',
+  'commerce.catalog.assert-size-equivalence',
+  'commerce.catalog.assign-catalog-media',
+  'commerce.catalog.assign-sku',
+  'commerce.catalog.change-local-override',
+  'commerce.catalog.change-product-manufacturer',
+  'commerce.catalog.change-product-relationship',
+  'commerce.catalog.change-variant',
+  'commerce.catalog.confirm-gtin',
+  'commerce.catalog.confirm-variant-combination',
+  'commerce.catalog.correct-gtin',
+  'commerce.catalog.correct-product',
+  'commerce.catalog.correct-sku',
+  'commerce.catalog.create-attribute-definition',
+  'commerce.catalog.create-brand',
+  'commerce.catalog.create-configuration-unit',
+  'commerce.catalog.create-controlled-attribute-value',
+  'commerce.catalog.create-package-definition',
+  'commerce.catalog.create-product',
+  'commerce.catalog.create-product-category',
+  'commerce.catalog.create-product-relationship',
+  'commerce.catalog.create-product-type',
+  'commerce.catalog.create-product-unit',
+  'commerce.catalog.create-set-composition',
+  'commerce.catalog.create-variant',
+  'commerce.catalog.decide-product-type-unnecessary',
+  'commerce.catalog.govern-product-attribute-applicability',
+  'commerce.catalog.govern-variant-allowed-values',
+  'commerce.catalog.govern-variant-axes',
+  'commerce.catalog.import-source-assertion',
+  'commerce.catalog.mark-gtin-unresolved',
+  'commerce.catalog.move-product-category',
+  'commerce.catalog.promote-package-definition',
+  'commerce.catalog.publish-product-configuration',
+  'commerce.catalog.reactivate-brand',
+  'commerce.catalog.reactivate-controlled-attribute-value',
+  'commerce.catalog.reactivate-product',
+  'commerce.catalog.reactivate-variant',
+  'commerce.catalog.release-local-override',
+  'commerce.catalog.remove-catalog-media',
+  'commerce.catalog.remove-product-attribute-values',
+  'commerce.catalog.remove-product-category-assignment',
+  'commerce.catalog.remove-product-localized-facts',
+  'commerce.catalog.remove-product-manufacturer',
+  'commerce.catalog.remove-product-relationship',
+  'commerce.catalog.remove-variant-attribute-override',
+  'commerce.catalog.remove-variant-localized-facts',
+  'commerce.catalog.rename-attribute-definition',
+  'commerce.catalog.rename-brand',
+  'commerce.catalog.rename-controlled-attribute-value',
+  'commerce.catalog.rename-product-category',
+  'commerce.catalog.rename-sku',
+  'commerce.catalog.reorder-catalog-media',
+  'commerce.catalog.replace-product-sizes',
+  'commerce.catalog.retire-brand',
+  'commerce.catalog.retire-configuration-unit',
+  'commerce.catalog.retire-controlled-attribute-value',
+  'commerce.catalog.retire-gtin',
+  'commerce.catalog.retire-package-definition',
+  'commerce.catalog.retire-package-option',
+  'commerce.catalog.retire-product',
+  'commerce.catalog.retire-product-category',
+  'commerce.catalog.retire-product-unit',
+  'commerce.catalog.retire-variant',
+  'commerce.catalog.revise-attribute-definition',
+  'commerce.catalog.revise-configuration-unit',
+  'commerce.catalog.revise-package-definition',
+  'commerce.catalog.revise-product-type',
+  'commerce.catalog.revise-product-unit',
+  'commerce.catalog.revise-set-composition',
+  'commerce.catalog.set-product-attribute-values',
+  'commerce.catalog.set-product-brand',
+  'commerce.catalog.set-product-localized-facts',
+  'commerce.catalog.set-product-manufacturer',
+  'commerce.catalog.set-product-type',
+  'commerce.catalog.set-product-unit-target-divisibility',
+  'commerce.catalog.set-variant-attribute-override',
+  'commerce.catalog.set-variant-localized-facts',
+  'commerce.catalog.update-product',
+  'commerce.customer-context.add-saved-address',
+  'commerce.customer-context.administer-commerce-quantity-rule',
+  'commerce.customer-context.administer-market-bootstrap-policy',
+  'commerce.customer-context.administer-payment-term-policy',
+  'commerce.customer-context.administer-purchase-currency-policy',
+  'commerce.customer-context.archive-customer-group',
+  'commerce.customer-context.archive-customer-profile',
+  'commerce.customer-context.assign-commerce-quantity-rule',
+  'commerce.customer-context.assign-counterparty-price-group',
+  'commerce.customer-context.assign-customer-group',
+  'commerce.customer-context.assign-customer-price-group',
+  'commerce.customer-context.attribute-guest-retail-customer',
+  'commerce.customer-context.bind-retail-portal-profile',
+  'commerce.customer-context.bootstrap-counterparty-access-administrator',
+  'commerce.customer-context.change-counterparty-purchase-limit',
+  'commerce.customer-context.change-customer-payment-terms',
+  'commerce.customer-context.change-principal-purchase-limit-override',
+  'commerce.customer-context.change-retail-payment-term-preference',
+  'commerce.customer-context.claim-counterparty-access-invitation',
+  'commerce.customer-context.clear-default-billing-address',
+  'commerce.customer-context.clear-default-delivery-destination',
+  'commerce.customer-context.consume-purchase-approval',
+  'commerce.customer-context.create-approval-hierarchy',
+  'commerce.customer-context.create-counterparty-access-invitation',
+  'commerce.customer-context.create-counterparty-purchasing-profile',
+  'commerce.customer-context.create-customer-group',
+  'commerce.customer-context.create-purchase-proposal-revision',
+  'commerce.customer-context.decide-purchase-approval-request',
+  'commerce.customer-context.ensure-retail-customer-profile',
+  'commerce.customer-context.grant-counterparty-commerce-access',
+  'commerce.customer-context.migrate-counterparty-price-group',
+  'commerce.customer-context.migrate-customer-price-group',
+  'commerce.customer-context.open-profile-reconciliation',
+  'commerce.customer-context.reactivate-customer-group',
+  'commerce.customer-context.reactivate-customer-profile',
+  'commerce.customer-context.recover-retail-portal-profile-binding',
+  'commerce.customer-context.remove-counterparty-price-group',
+  'commerce.customer-context.remove-customer-group',
+  'commerce.customer-context.remove-customer-payment-term',
+  'commerce.customer-context.remove-customer-price-group',
+  'commerce.customer-context.remove-saved-address',
+  'commerce.customer-context.repeat-counterparty-order',
+  'commerce.customer-context.repeat-retail-order',
+  'commerce.customer-context.reroute-purchase-approval-request',
+  'commerce.customer-context.resend-counterparty-access-invitation',
+  'commerce.customer-context.reserve-market-retirement',
+  'commerce.customer-context.reserve-payment-term-retirement',
+  'commerce.customer-context.resolve-profile-reconciliation',
+  'commerce.customer-context.revalidate-purchase-approval',
+  'commerce.customer-context.revoke-counterparty-access-invitation',
+  'commerce.customer-context.revoke-counterparty-commerce-access',
+  'commerce.customer-context.revoke-retail-portal-profile-binding',
+  'commerce.customer-context.set-default-billing-address',
+  'commerce.customer-context.set-default-delivery-destination',
+  'commerce.customer-context.submit-purchase-approval-request',
+  'commerce.customer-context.suspend-customer-profile',
+  'commerce.customer-context.trigger-purchase-approval',
+  'commerce.customer-context.update-customer-group',
+  'commerce.customer-context.update-saved-address',
+  'commerce.market-catalog.activate-market',
+  'commerce.market-catalog.associate-storefront',
+  'commerce.market-catalog.create-market',
+  'commerce.market-catalog.remove-storefront-association',
+  'commerce.market-catalog.retire-market',
+  'commerce.market-catalog.revise-market-definition',
+  'commerce.market-catalog.revise-storefront-association',
+  'commerce.market-catalog.suspend-market',
+  'commerce.pricing.set-supported-currencies',
+  'commerce.storefront-registry.register-storefront-application',
+  'commerce.storefront-registry.revise-storefront-application',
+  'payment.term-catalog.correct-payment-term',
+  'payment.term-catalog.create-payment-term',
+  'payment.term-catalog.reconcile-payment-term-reference',
+  'payment.term-catalog.retire-payment-term',
+] as const;
+
+// These Actions are provisioned as 'explicit' (not Tenant-membership default), so they are discovered
+// alongside currentActionKeys/addedVerticalActionKeys but excluded from the tenant-membership fixtures below.
+const explicitlyProvisionedActionKeys = [
+  'commerce.customer-context.claim-portal-enrollment-transition',
+  'commerce.customer-context.record-portal-enrollment-outcome',
+  'commerce.customer-context.start-portal-enrollment',
+  'commerce.customer-context.terminate-portal-enrollment',
+  'core.identity.activate-principal-binding',
+  'core.identity.change-principal-binding-status',
+  'core.identity.reserve-principal-binding',
+] as const;
+
+const completeCurrentActionKeys = [...addedVerticalActionKeys, ...currentActionKeys, ...explicitlyProvisionedActionKeys]
+  // This top-level scripts/tests file resolves against the root tsconfig (no scripts-scoped project), whose
+  // default lib lacks the ES2023 toSorted() overload that real tsc + Node accept at runtime; sorting the
+  // freshly spread array in place is equivalent and side-effect-free.
+  // oxlint-disable-next-line unicorn/no-array-sort -- See comment above.
+  .sort();
+
 const currentActions = currentActionKeys.map((actionKey) => ({
   actionKey,
   provisioning: 'tenant_membership_default' as const,
@@ -189,6 +367,30 @@ it.effect(
       ),
     );
     expect(formatActionAuthorizationProvisioningFailure(unexpectedRejection)).toBe(unexpectedMessage);
+  }),
+);
+
+it.effect(
+  'discovers exactly the current generated Action baseline',
+  Effect.fn(function* testEffect7() {
+    const workspaceRoot = path.resolve(import.meta.dirname, '../..');
+    const { discoverCurrentActionKeys } = yield* Effect.promise(
+      (): Promise<{
+        readonly discoverCurrentActionKeys: typeof DiscoverCurrentActionKeys;
+      }> =>
+        import(pathToFileURL(path.resolve(import.meta.dirname, '../provision-current-action-authorization.mts')).href),
+    );
+    const discoveredActionKeys = yield* discoverCurrentActionKeys(workspaceRoot).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    expect(discoveredActionKeys).toEqual(completeCurrentActionKeys);
+    expect(new Set(currentActionKeys).size).toBe(38);
+    expect(currentActionKeys.filter((key) => key.startsWith('core.')).length).toBe(8);
+    expect(currentActionKeys.filter((key) => key.startsWith('party.registry.')).length).toBe(30);
+    expect(new Set(completeCurrentActionKeys).size).toBe(completeCurrentActionKeys.length);
+    expect(completeCurrentActionKeys).toContain('commerce.customer-context.claim-counterparty-access-invitation');
+    expect(completeCurrentActionKeys).toContain('commerce.catalog.publish-product-configuration');
+    expect(completeCurrentActionKeys).toContain('payment.term-catalog.retire-payment-term');
   }),
 );
 

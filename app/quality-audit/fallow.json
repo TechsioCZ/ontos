@@ -14,6 +14,7 @@
     "**/.env",
     "**/.env.*",
     "repos/**",
+    "vendor/**",
     "docs/**",
     "specs/**",
     ".agents/**",

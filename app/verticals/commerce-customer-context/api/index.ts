@@ -3,6 +3,7 @@ import {
   ActionAuthorizationPreflight,
   ActionRuntimeLive,
   ActionAuthorizationPreflightDatabaseLive,
+  ActiveApplicationCompositionConfigLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -138,6 +139,8 @@ import { claimCounterpartyAccessInvitationActionApiLive } from './claim-counterp
 import { claimPortalEnrollmentTransitionActionApiLive } from './claim-portal-enrollment-transition-action-server.ts';
 import { clearDefaultBillingAddressActionApiLive } from './clear-default-billing-address-action-server.ts';
 import { clearDefaultDeliveryDestinationActionApiLive } from './clear-default-delivery-destination-action-server.ts';
+import { commerceQuantityPolicyCurrentReadApiLive } from './commerce-quantity-policy-current-read-server.ts';
+import { commerceQuantityResolutionReadApiLive } from './commerce-quantity-resolution-read-server.ts';
 import { consumePurchaseApprovalActionApiLive } from './consume-purchase-approval-action-server.ts';
 import { counterpartyAccessInvitationReadReadApiLive } from './counterparty-access-invitation-read-read-server.ts';
 import { counterpartyAllCustomerArchiveReadApiLive } from './counterparty-all-customer-archive-read-server.ts';
@@ -171,12 +174,18 @@ import { grantCounterpartyCommerceAccessActionApiLive } from './grant-counterpar
 import { guestAttributionStatusReadApiLive } from './guest-attribution-status-read-server.ts';
 import { guestPaymentTermsResolutionReadApiLive } from './guest-payment-terms-resolution-read-server.ts';
 import { invoiceRecipientResolutionReadApiLive } from './invoice-recipient-resolution-read-server.ts';
+import { marketAffectedUseAssessmentReadApiLive } from './market-affected-use-assessment-read-server.ts';
+import { marketBootstrapPolicyCurrentReadApiLive } from './market-bootstrap-policy-current-read-server.ts';
+import { marketBootstrapResolutionReadApiLive } from './market-bootstrap-resolution-read-server.ts';
+import { marketSubjectRestrictionsCurrentReadApiLive } from './market-subject-restrictions-current-read-server.ts';
 import { migrateCounterpartyPriceGroupActionApiLive } from './migrate-counterparty-price-group-action-server.ts';
 import { migrateCustomerPriceGroupActionApiLive } from './migrate-customer-price-group-action-server.ts';
 import { openProfileReconciliationActionApiLive } from './open-profile-reconciliation-action-server.ts';
 import { paymentTermAffectedUseAssessmentReadApiLive } from './payment-term-affected-use-assessment-read-server.ts';
+import { paymentTermPolicyCurrentReadApiLive } from './payment-term-policy-current-read-server.ts';
 import { paymentTermsResolutionReadApiLive } from './payment-terms-resolution-read-server.ts';
 import { profileReconciliationReadReadApiLive } from './profile-reconciliation-read-read-server.ts';
+import { purchaseCurrencyPolicyCurrentReadApiLive } from './purchase-currency-policy-current-read-server.ts';
 import { purchaseCurrencyResolutionReadApiLive } from './purchase-currency-resolution-read-server.ts';
 import { purchaseLimitEvaluationReadApiLive } from './purchase-limit-evaluation-read-server.ts';
 import { purchaseLimitPolicyReadReadApiLive } from './purchase-limit-policy-read-read-server.ts';
@@ -194,6 +203,7 @@ import { repeatOrderPreparationReadApiLive } from './repeat-order-preparation-re
 import { repeatRetailOrderActionApiLive } from './repeat-retail-order-action-server.ts';
 import { reroutePurchaseApprovalRequestActionApiLive } from './reroute-purchase-approval-request-action-server.ts';
 import { resendCounterpartyAccessInvitationActionApiLive } from './resend-counterparty-access-invitation-action-server.ts';
+import { reserveMarketRetirementActionApiLive } from './reserve-market-retirement-action-server.ts';
 import { reservePaymentTermRetirementActionApiLive } from './reserve-payment-term-retirement-action-server.ts';
 import { resolveProfileReconciliationActionApiLive } from './resolve-profile-reconciliation-action-server.ts';
 import { retailAccessDecisionReadApiLive } from './retail-access-decision-read-server.ts';
@@ -672,8 +682,11 @@ const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
   Layer.provideMerge(productionPurchaseLimitCurrentnessLive),
   Layer.provide(DatabaseConfigLive),
 );
+const configuredProductionExternalPortsLive = commerceCustomerContextProductionExternalPortsLive.pipe(
+  Layer.provide(ActiveApplicationCompositionConfigLive),
+);
 const productionActionRuntimeLive = commerceCustomerContextActionRuntime.pipe(
-  Layer.provideMerge(commerceCustomerContextProductionExternalPortsLive),
+  Layer.provideMerge(configuredProductionExternalPortsLive),
   Layer.provideMerge(ProfileReconciliationOwnerVerifierUnavailableLive),
 );
 
@@ -692,11 +705,11 @@ export const commerceCustomerContextActionRuntimeAwaitingOwnerPreparation: Layer
   Layer.Error<typeof productionActionRuntimeLive>,
   CommerceEnrollmentOwnerTransitionPreparation
 > = actionRuntimeAwaitingOwnerPreparation.pipe(
-  Layer.provideMerge(commerceCustomerContextProductionExternalPortsLive),
+  Layer.provideMerge(configuredProductionExternalPortsLive),
   Layer.provideMerge(ProfileReconciliationOwnerVerifierUnavailableLive),
 );
 const productionReadRuntimeLive = commerceCustomerContextReadRuntime.pipe(
-  Layer.provideMerge(commerceCustomerContextProductionExternalPortsLive),
+  Layer.provideMerge(configuredProductionExternalPortsLive),
 );
 
 type CommerceCustomerContextApiRuntimeArguments = readonly [
@@ -738,8 +751,7 @@ export const makeCommerceCustomerContextApiRuntime = (
   const actionPrincipalVerifierLive = GovernedActionPrincipalVerifierLive.pipe(
     Layer.provide(governedActionRuntimeLive),
   );
-  const apiHandlersLive = Layer.mergeAll(
-    commerceCustomerContextReadinessLayer,
+  const apiHandlerGroupsLive = Layer.mergeAll(
     portalAuthSessionApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
     portalAuthMfaApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
     portalAuthRecoveryApiLive.pipe(GovernedReadLayer.provide(portalAuthRuntimeLive)),
@@ -798,6 +810,8 @@ export const makeCommerceCustomerContextApiRuntime = (
     claimPortalEnrollmentTransitionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     clearDefaultBillingAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     clearDefaultDeliveryDestinationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    commerceQuantityPolicyCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    commerceQuantityResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     consumePurchaseApprovalActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     counterpartyAccessInvitationReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     counterpartyAllCustomerArchiveReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -831,12 +845,18 @@ export const makeCommerceCustomerContextApiRuntime = (
     guestAttributionStatusReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     guestPaymentTermsResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     invoiceRecipientResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    marketAffectedUseAssessmentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    marketBootstrapPolicyCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    marketBootstrapResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    marketSubjectRestrictionsCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     migrateCounterpartyPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     migrateCustomerPriceGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     openProfileReconciliationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     paymentTermAffectedUseAssessmentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    paymentTermPolicyCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentTermsResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     profileReconciliationReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    purchaseCurrencyPolicyCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     purchaseCurrencyResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     purchaseLimitEvaluationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     purchaseLimitPolicyReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -854,6 +874,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     repeatRetailOrderActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     reroutePurchaseApprovalRequestActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     resendCounterpartyAccessInvitationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    reserveMarketRetirementActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     reservePaymentTermRetirementActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     resolveProfileReconciliationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     retailAccessDecisionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -878,6 +899,10 @@ export const makeCommerceCustomerContextApiRuntime = (
     updateCustomerGroupActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     updateSavedAddressActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     // </generated-governed-http-handler-layers>
+  );
+  const apiHandlersLive = Layer.mergeAll(
+    commerceCustomerContextReadinessLayer.pipe(Layer.provide(apiHandlerGroupsLive)),
+    apiHandlerGroupsLive,
   ).pipe(
     // Core revalidates a presented session binding's authentication namespace before any
     // authorization runs and answers `operation_context_unavailable` when no registry is reachable,

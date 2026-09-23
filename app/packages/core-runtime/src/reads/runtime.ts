@@ -106,6 +106,7 @@ export interface ReadRuntimeOptions {
 }
 
 const stableTargetKey = (value: string): boolean => value.length > 0 && value.length <= 300;
+const targetLegalEntityIdIsValid = Schema.is(Schema.String.check(Schema.isUUID()));
 const PermissionDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 type PermissionDecision = typeof PermissionDecisionSchema.Type;
 
@@ -128,8 +129,9 @@ const businessPermissionTargetIsValid = (
 const legalEntityTargetIsValid = (
   target: Extract<AtomicResolvedReadPermissionTarget, { readonly kind: 'legal_entity' }>,
 ): boolean =>
-  target.permission === undefined ||
-  LEGAL_ENTITY_PERMISSION_KEYS.some((permission) => permission === target.permission);
+  (target.legalEntityId === undefined || targetLegalEntityIdIsValid(target.legalEntityId)) &&
+  (target.permission === undefined ||
+    LEGAL_ENTITY_PERMISSION_KEYS.some((permission) => permission === target.permission));
 
 const atomicTargetIsValid = (target: AtomicResolvedReadPermissionTarget, scope?: OperationalScope): boolean => {
   if (target.kind === 'business_permission') {
@@ -212,7 +214,7 @@ const toOwnerAuthorizationTarget = (
         withOptionalProperty(
           {
             kind: 'legal_entity' as const,
-            legalEntityId: scope.legalEntityId ?? '',
+            legalEntityId: legalEntityTarget.legalEntityId ?? scope.legalEntityId ?? '',
           },
           legalEntityTarget.permission !== undefined,
           'permission',
@@ -314,7 +316,12 @@ const targetMetadata = (target: ResolvedReadPermissionTarget) => {
       targetResourceType: business.kind,
     };
   }
-  if (canonical.kind === 'legal_entity' || canonical.kind === 'tenant') {
+  if (canonical.kind === 'legal_entity') {
+    return canonical.legalEntityId === undefined
+      ? {}
+      : { targetResourceId: canonical.legalEntityId, targetResourceType: 'core.identity.legal-entity' };
+  }
+  if (canonical.kind === 'tenant') {
     return {};
   }
   if (canonical.kind === 'module') {
@@ -389,10 +396,11 @@ const checkAtomicPermissionTarget = <AccessValue extends (typeof ContextAccess)[
       })
       .pipe(Effect.map((decisions) => decisionFor(decisions, scope.tenantId)));
   }
-  if (scope.legalEntityId === undefined) {
+  if (scope.legalEntityId === undefined && !(target.kind === 'legal_entity' && target.legalEntityId !== undefined)) {
     return Effect.succeed(allowMissingLegalEntity ? 'allowed' : 'unavailable');
   }
-  const { legalEntityId } = scope;
+  const legalEntityId =
+    target.kind === 'legal_entity' ? (target.legalEntityId ?? scope.legalEntityId ?? '') : (scope.legalEntityId ?? '');
   if (target.kind === 'legal_entity') {
     const decision =
       target.permission === undefined

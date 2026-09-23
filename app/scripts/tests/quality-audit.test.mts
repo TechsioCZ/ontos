@@ -628,6 +628,15 @@ it.live(
     expect(narrowed.results.at(-1)?.name).toBe('coverage');
     expect(narrowed.results.at(-1)?.diagnostic ?? '').toMatch(/Knip workspace coverage mismatch/u);
     expect(narrowed.results.some((result) => result.name === 'coverage' && result.status === 'error')).toBe(true);
+    mkdirSync(path.join(root, 'vendor/omitted'), { recursive: true });
+    writeFileSync(
+      path.join(root, 'vendor/omitted/package.json'),
+      yield* encodeReport({ name: 'omitted-vendor', private: true }),
+    );
+    const missingVendorError = yield* Effect.flip(runFixture(root, output, 'knip'));
+    expect(missingVendorError.message).toMatch(/analysis failed/u);
+    const missingVendor = yield* summary(output);
+    expect(missingVendor.results.at(-1)?.diagnostic ?? '').toMatch(/vendor\/omitted/u);
     writeFileSync(
       path.join(root, 'quality-audit/fallow.json'),
       yield* encodeReport({

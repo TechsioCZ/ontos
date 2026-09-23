@@ -97,6 +97,7 @@ import type {
   RetailPrincipalResolutionRequest,
   RetailPrincipalResolutionResponse,
 } from '../../shared/apis/retail-principal-resolution.ts';
+import type { MarketSubjectRestrictionsCurrentRequest } from '../../shared/apis/market-subject-restrictions-current.ts';
 import {
   CommerceCustomerProfileSubjectSchema,
   ReconciliationOwnerSchema,
@@ -114,6 +115,10 @@ import type {
 } from '../../shared/domain/profile-contracts.ts';
 import { decideRetailPortalAccess } from '../../shared/domain/profile-decisions.ts';
 import type { CommerceCustomerProfile, CommerceCustomerProfileRef } from '../../shared/domain/profile-decisions.ts';
+import type {
+  MarketSubjectRestrictionProfileResult,
+  MarketSubjectRestrictionsCurrentServices,
+} from '../api/market-subject-restrictions-current.read.ts';
 import {
   ProfileReconciliationOwnerVerificationFailure,
   profileReconciliationOwnerVerifierUnavailable,
@@ -2113,6 +2118,7 @@ const readServices = (
   readonly customerProfileRead: CustomerProfileReadServices;
   readonly customerProfileTradingGate: CustomerProfileTradingGateServices;
   readonly guestAttributionStatus: GuestAttributionStatusServices;
+  readonly marketSubjectRestrictionsCurrent: MarketSubjectRestrictionsCurrentServices;
   readonly profileReconciliationRead: ProfileReconciliationReadServices;
   readonly retailAccessDecision: RetailAccessDecisionServices;
   readonly retailPortalProfileBindingRead: RetailPortalProfileBindingReadServices;
@@ -2218,6 +2224,78 @@ const readServices = (
         },
         permissions: [],
       })),
+    );
+  };
+
+  const readRestrictionProfile = (
+    input: MarketSubjectRestrictionsCurrentRequest,
+  ): Effect.Effect<MarketSubjectRestrictionProfileResult, ReadHandlerUnavailable> => {
+    const requestedProfileKind = input.subject.kind === 'RETAIL_PROFILE' ? 'RETAIL' : 'COUNTERPARTY';
+    return transaction.invoke(readProfileRoutine, [input.subject.profileRef.resourceId, requestedProfileKind]).pipe(
+      Effect.mapError(readUnavailableFromRoutineFailure),
+      Effect.flatMap(([row]): Effect.Effect<MarketSubjectRestrictionProfileResult, ReadHandlerUnavailable> => {
+        if (row === undefined || row.outcome === 'PROFILE_NOT_FOUND') {
+          return Effect.succeed({
+            outcome: 'PROFILE_UNVERIFIABLE' as const,
+            reason: 'The Purchasing Subject profile does not exist in the verified owner scope',
+          });
+        }
+        if (row.outcome === 'PROFILE_RECONCILIATION_REQUIRED') {
+          return Effect.succeed({
+            outcome: 'PROFILE_UNVERIFIABLE' as const,
+            reason: 'The Purchasing Subject profile is under owner reconciliation',
+          });
+        }
+        if (row.payload === null || !Schema.is(ProfilePayloadSchema)(row.payload)) {
+          return Effect.fail(readUnavailable('The Purchasing Subject restriction projection is invalid'));
+        }
+        const raw = row.payload;
+        const sellerResourceId = raw.scopeLegalEntityId;
+        if (
+          sellerResourceId === undefined ||
+          sellerResourceId !== scope.legalEntityId ||
+          raw.profileKind !== requestedProfileKind
+        ) {
+          return Effect.fail(readUnavailable('The Purchasing Subject restriction projection is invalid'));
+        }
+        const sellerRef = {
+          moduleId: 'core.identity' as const,
+          resourceId: sellerResourceId,
+          resourceType: 'core.identity.legal-entity' as const,
+          tenantId: scope.tenantId,
+        };
+        if (raw.subject.kind === 'RETAIL') {
+          return Effect.succeed({
+            observation: {
+              profileRef: {
+                moduleId: 'commerce.customer-context' as const,
+                resourceId: raw.profileId,
+                resourceType: 'commerce.customer-context.retail-customer-profile' as const,
+                tenantId: scope.tenantId,
+              },
+              revision: raw.revision,
+              sellerRef,
+              state: raw.state,
+            },
+            outcome: 'PROFILE_AVAILABLE' as const,
+          });
+        }
+        return Effect.succeed({
+          observation: {
+            counterpartyResourceId: raw.subject.counterpartyResourceId,
+            profileRef: {
+              moduleId: 'commerce.customer-context' as const,
+              resourceId: raw.profileId,
+              resourceType: 'commerce.customer-context.counterparty-purchasing-profile' as const,
+              tenantId: scope.tenantId,
+            },
+            revision: raw.revision,
+            sellerRef,
+            state: raw.state,
+          },
+          outcome: 'PROFILE_AVAILABLE' as const,
+        });
+      }),
     );
   };
 
@@ -2478,6 +2556,7 @@ const readServices = (
           ),
         ),
     },
+    marketSubjectRestrictionsCurrent: { readRestrictionProfile },
     profileReconciliationRead: {
       readCase: (
         input,
@@ -2932,6 +3011,7 @@ export interface ProfilePersistenceServices {
   readonly customerProfileTradingGate: CustomerProfileTradingGateServices;
   readonly ensureRetailCustomerProfile: EnsureRetailCustomerProfileServices;
   readonly guestAttributionStatus: GuestAttributionStatusServices;
+  readonly marketSubjectRestrictionsCurrent: MarketSubjectRestrictionsCurrentServices;
   readonly openProfileReconciliation: OpenProfileReconciliationServices;
   readonly profileReconciliationRead: ProfileReconciliationReadServices;
   readonly reactivateCustomerProfile: ReactivateCustomerProfileServices;
@@ -2960,6 +3040,7 @@ export const profilePersistenceServicesForTransaction = (
     customerProfileTradingGate: reads.customerProfileTradingGate,
     ensureRetailCustomerProfile: ensureServices(transaction, scope, dependencies),
     guestAttributionStatus: reads.guestAttributionStatus,
+    marketSubjectRestrictionsCurrent: reads.marketSubjectRestrictionsCurrent,
     openProfileReconciliation: reconciliation.open,
     profileReconciliationRead: reads.profileReconciliationRead,
     reactivateCustomerProfile: lifecycleServices(transaction, scope, 'REACTIVATE', dependencies),

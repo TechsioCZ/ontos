@@ -58,6 +58,7 @@ export * from './repeat-counterparty-order-action-client.ts';
 export * from './repeat-retail-order-action-client.ts';
 export * from './reroute-purchase-approval-request-action-client.ts';
 export * from './resend-counterparty-access-invitation-action-client.ts';
+export * from './reserve-market-retirement-action-client.ts';
 export * from './reserve-payment-term-retirement-action-client.ts';
 export * from './resolve-profile-reconciliation-action-client.ts';
 export * from './revalidate-purchase-approval-action-client.ts';
@@ -74,6 +75,13 @@ export * from './trigger-purchase-approval-action-client.ts';
 export * from './update-customer-group-action-client.ts';
 export * from './update-saved-address-action-client.ts';
 // </generated-action-http-client-exports>
+export * from './commerce-quantity-resolution-client.ts';
+export * from './market-bootstrap-policy-current-client.ts';
+export * from './market-bootstrap-resolution-client.ts';
+export * from './market-subject-restrictions-current-client.ts';
+export * from './market-affected-use-assessment-client.ts';
+export * from './payment-terms-resolution-client.ts';
+export * from './purchase-currency-resolution-client.ts';
 export * from './payment-term-affected-use-assessment-client.ts';
 export {
   PaymentTermAffectedUseAssessmentRequestSchema,

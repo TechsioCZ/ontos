@@ -13,6 +13,8 @@ class CommerceCustomerContextSchemaVerificationError extends Schema.TaggedError<
 
 interface VerificationRow {
   readonly append_only_trigger_count: number;
+  readonly applicability_constraint_count: number;
+  readonly applicability_projection_column_count: number;
   readonly exclusion_count: number;
   readonly forced_rls_count: number;
   readonly group_description_column_count: number;
@@ -35,6 +37,7 @@ interface VerificationRow {
 const EXPECTED_RUNTIME_ROUTINES = [
   'add_saved_address',
   'archive_customer_group',
+  'assess_market_retirement_affected_use',
   'assess_payment_term_entitlement_use',
   'assign_customer_group_membership',
   'assign_price_group',
@@ -63,13 +66,24 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'list_access_reconciliation',
   'list_due_portal_enrollment_attempts',
   'list_saved_addresses',
+  'load_commerce_quantity_rule_assignments',
+  'load_commerce_quantity_rule_state',
+  'load_current_market_bootstrap_policy_candidates',
+  'load_market_bootstrap_policy_state',
+  'load_payment_term_policy_state',
+  'load_purchase_currency_policy_state',
   'lock_access_grant_authority',
   'migrate_price_group_assignments',
   'mutate_access_invitation',
   'mutate_retail_portal_binding',
   'observe_party_merge_reconciliation',
   'open_profile_reconciliation',
+  'persist_commerce_quantity_rule_assignments',
+  'persist_commerce_quantity_rule_state',
   'persist_customer_payment_terms',
+  'persist_market_bootstrap_policy_state',
+  'persist_payment_term_policy_state',
+  'persist_purchase_currency_policy_state',
   'reactivate_customer_group',
   'read_access_invitation',
   'read_access_invitation_claim_reconciliation',
@@ -108,6 +122,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'remove_price_group_assignment',
   'remove_saved_address',
   'reroute_purchase_approval_request',
+  'reserve_market_retirement',
   'reserve_payment_term_retirement',
   'resolve_price_group_assignments',
   'resolve_profile_reconciliation',
@@ -127,38 +142,7 @@ const EXPECTED_RUNTIME_ROUTINES = [
   'verify_payment_terms_reconciliation_owner',
 ] as const;
 
-const PROFILE_RUNTIME_ROUTINES = [
-  'ensure_counterparty_profile',
-  'ensure_retail_profile',
-  'finalize_reconciled_access_invitation',
-  'finalize_retail_portal_binding_authorization',
-  'finalize_retail_portal_profile_binding_permission_mutation',
-  'mutate_access_invitation',
-  'mutate_retail_portal_binding',
-  'observe_party_merge_reconciliation',
-  'open_profile_reconciliation',
-  'read_access_invitation_claim_reconciliation',
-  'read_customer_profile',
-  'read_guest_attribution',
-  'read_profile_reconciliation',
-  'read_profile_trading_gate',
-  'read_retail_portal_binding',
-  'read_retail_portal_binding_authorization',
-  'read_retail_portal_profile_binding_permission_mutation',
-  'read_retail_profile_by_party',
-  'reconcile_profile_reconciliation_owner',
-  'record_address_book_reconciliation_receipt',
-  'record_guest_attribution',
-  'record_profile_reconciliation_owner_outcome',
-  'reserve_payment_term_retirement',
-  'resolve_profile_reconciliation',
-  'resolve_retail_principal',
-  'stage_access_invitation_claim_grants',
-  'stage_retail_portal_profile_binding_permission_mutations',
-  'transition_profile',
-  'verify_address_book_reconciliation',
-  'verify_payment_terms_reconciliation_owner',
-] as const;
+const SECURITY_DEFINER_SEARCH_PATH = 'search_path=pg_catalog, commerce_customer_context, pg_temp';
 
 const EXPECTED_TRIGGER_NAMES = [
   'ccc_access_invitations_claim_reset_marker',
@@ -167,16 +151,23 @@ const EXPECTED_TRIGGER_NAMES = [
   'ccc_group_revisions_append_only',
   'ccc_guest_attributions_append_only',
   'ccc_invitation_claim_proofs_lifecycle_trg',
+  'ccc_market_bootstrap_policy_revision_guard',
   'ccc_party_merge_observations_append_only_trg',
+  'ccc_payment_term_policy_revision_guard',
   'ccc_portal_binding_history_append_only',
   'ccc_portal_enrollment_attempts_identity_guard',
   'ccc_portal_enrollment_owner_operations_identity_guard',
   'ccc_profile_aliases_append_only',
   'ccc_profile_history_append_only',
+  'ccc_purchase_currency_policy_revision_guard',
+  'ccc_quantity_rule_assignment_guard',
+  'ccc_quantity_rule_revision_guard',
   'ccc_reconciliation_members_append_only',
   'ccc_reconciliation_owner_outcomes_append_only_trg',
   'customer_payment_term_entitlements_retirement_guard',
   'customer_payment_term_preferences_retirement_guard',
+  'market_bootstrap_policy_retirement_guard',
+  'purchase_proposal_market_retirement_guard',
 ] as const;
 
 const sameStrings = (actual: readonly string[], expected: readonly string[]): boolean =>
@@ -226,6 +217,31 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
           try: () =>
             connected.query<VerificationRow>(
               `select
+                 (select count(*)::integer
+                    from information_schema.columns as column_record
+                   where column_record.table_schema = $1
+                     and column_record.table_name = any(array[
+                       'commerce_quantity_rule_assignments',
+                       'market_bootstrap_policy_revisions',
+                       'purchase_currency_policy_revisions',
+                       'payment_term_policy_revisions',
+                       'commerce_quantity_rule_revisions'
+                     ])
+                     and column_record.column_name = any(array['applicable_from', 'applicable_to']))
+                   as applicability_projection_column_count,
+                 (select count(*)::integer
+                    from pg_catalog.pg_constraint as constraint_record
+                    join pg_catalog.pg_class as relation on relation.oid = constraint_record.conrelid
+                    join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+                   where namespace.nspname = $1
+                     and constraint_record.contype = 'c'
+                     and constraint_record.conname = any(array[
+                       'ccc_quantity_rule_assignments_applicability_ck',
+                       'ccc_market_bootstrap_policy_applicability_ck',
+                       'ccc_purchase_currency_policy_applicability_ck',
+                       'ccc_payment_term_policy_applicability_ck',
+                       'ccc_quantity_rule_applicability_ck'
+                     ])) as applicability_constraint_count,
                  (select count(*)::integer
                     from pg_catalog.pg_class as relation
                     join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
@@ -318,10 +334,7 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
                    where namespace.nspname = $1
                      and has_function_privilege('ontos_runtime', routine.oid, 'EXECUTE')
                      and (not routine.prosecdef
-                       or (routine.proname::text = any($2::text[])
-                         and not ('search_path=pg_catalog, commerce_customer_context, pg_temp' = any(coalesce(routine.proconfig, array[]::text[]))))
-                       or (not (routine.proname::text = any($2::text[]))
-                         and not ('search_path=pg_catalog, commerce_customer_context' = any(coalesce(routine.proconfig, array[]::text[])))))) as unsafe_routine_count,
+                       or not ($2::text = any(coalesce(routine.proconfig, array[]::text[]))))) as unsafe_routine_count,
                  (select coalesce(
                            array_agg(routine.proname::text order by routine.proname),
                            array[]::text[]
@@ -331,16 +344,13 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
                    where namespace.nspname = $1
                      and has_function_privilege('ontos_runtime', routine.oid, 'EXECUTE')
                      and (not routine.prosecdef
-                       or (routine.proname::text = any($2::text[])
-                         and not ('search_path=pg_catalog, commerce_customer_context, pg_temp' = any(coalesce(routine.proconfig, array[]::text[]))))
-                       or (not (routine.proname::text = any($2::text[]))
-                         and not ('search_path=pg_catalog, commerce_customer_context' = any(coalesce(routine.proconfig, array[]::text[])))))) as unsafe_routines,
+                       or not ($2::text = any(coalesce(routine.proconfig, array[]::text[]))))) as unsafe_routines,
                  has_schema_privilege('ontos_runtime', $1, 'USAGE') as runtime_usage,
                  has_schema_privilege('ontos_runtime', $1, 'CREATE') as runtime_create,
                  runtime.rolsuper as runtime_super,
                  runtime.rolbypassrls as runtime_bypass_rls
                from pg_catalog.pg_roles as runtime where runtime.rolname = 'ontos_runtime'`,
-              [COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME, PROFILE_RUNTIME_ROUTINES],
+              [COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME, SECURITY_DEFINER_SEARCH_PATH],
             ),
         });
         const [row] = result.rows;
@@ -348,10 +358,12 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
           return yield* failure('Commerce Customer Context database infrastructure is absent');
         }
         const unsafeInfrastructure = [
+          row.applicability_projection_column_count !== 10,
+          row.applicability_constraint_count !== 5,
           row.forced_rls_count !== COMMERCE_CUSTOMER_CONTEXT_TABLES.length,
           row.policy_count !== COMMERCE_CUSTOMER_CONTEXT_TABLES.length * 5 + 2,
           row.raw_runtime_privilege_count !== 0,
-          row.exclusion_count !== 6,
+          row.exclusion_count !== 11,
           row.group_description_column_count !== 1,
           row.group_description_constraint_count !== 1,
           row.append_only_trigger_count !== 10,
@@ -379,7 +391,7 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
             `Commerce Customer Context database infrastructure is unsafe; ` +
               `forcedRls=${row.forced_rls_count}/${COMMERCE_CUSTOMER_CONTEXT_TABLES.length}, ` +
               `policies=${row.policy_count}/${COMMERCE_CUSTOMER_CONTEXT_TABLES.length * 5 + 2}, ` +
-              `rawRuntimePrivileges=${row.raw_runtime_privilege_count}, exclusions=${row.exclusion_count}/6, ` +
+              `rawRuntimePrivileges=${row.raw_runtime_privilege_count}, exclusions=${row.exclusion_count}/11, ` +
               `appendOnlyTriggers=${row.append_only_trigger_count}/10, ` +
               `triggers=${row.trigger_count}/${EXPECTED_TRIGGER_NAMES.length}, ` +
               `missingTriggers=[${missingTriggers.join(',')}], unexpectedTriggers=[${unexpectedTriggers.join(',')}], ` +

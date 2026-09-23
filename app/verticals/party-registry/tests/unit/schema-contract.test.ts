@@ -635,11 +635,15 @@ it.layer(NodeFileSystem.layer)('schema-contract', (suite) => {
           fileURLToPath(new URL('../../../../scripts/verify-application-db-schema.mts', import.meta.url)),
         ),
       );
-      expect(bootstrap).toMatch(/\['core', 'auth', 'contacts', 'party'\]/u);
+      expect(bootstrap).toMatch(/\['core', 'auth', 'contacts', 'party', 'catalog'\]/u);
       expect(verifier).toMatch(
-        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'auth',\s*'commerce_customer_context',\s*'contacts',\s*'core',\s*'party',\s*'payment_term_catalog',\s*\]/u,
+        /const EXPECTED_APPLICATION_SCHEMAS = \[\s*'auth',\s*'catalog',\s*'commerce_customer_context',\s*'commerce_market_catalog',\s*'contacts',\s*'core',\s*'party',\s*'payment_term_catalog',\s*'pricing',\s*'storefront_registry',\s*\]/u,
       );
+      expect(verifier).toMatch(/__drizzle_migrations_catalog/u);
       expect(verifier).toMatch(/__drizzle_migrations_party/u);
+      expect(verifier).toMatch(/__drizzle_migrations_pricing/u);
+      expect(verifier).toMatch(/__drizzle_migrations_storefront_registry/u);
+      expect(verifier).toMatch(/verticals\/catalog\/scripts\/verify-db-schema\.mts/u);
       expect(verifier).toMatch(/verticals\/party-registry\/scripts\/verify-db-schema\.mts/u);
     }),
   );

@@ -28,7 +28,9 @@
   },
   "ontosContractOwner": {
     "appId": "payment-term-catalog",
-    "moduleApis": ["current-payment-terms"],
+    "moduleApis": [
+      "current-payment-terms"
+    ],
     "moduleId": "payment.term-catalog",
     "packageName": "@app/payment-term-catalog"
   }

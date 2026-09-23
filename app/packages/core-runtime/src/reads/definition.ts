@@ -76,6 +76,8 @@ export type AtomicResolvedReadPermissionTarget =
     }>
   | Readonly<{
       readonly kind: 'legal_entity';
+      /** Explicit authorized target; omitted keeps the selected-context behavior. */
+      readonly legalEntityId?: string;
       readonly permission?: LegalEntityPermissionKey;
     }>
   | Readonly<{ readonly kind: 'module'; readonly moduleId: string }>
