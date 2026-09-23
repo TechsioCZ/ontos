@@ -14,7 +14,7 @@ import type {
 } from '@modern-js/bff-effect/effect-edge';
 import { Context, Data, Schema } from 'effect';
 
-import { assembleEffectBffRuntime } from './effect-bff-runtime.ts';
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 
 class FixtureDependency extends Context.Service<FixtureDependency, { readonly value: string }>()(
   '@app/shared-contracts/effect-bff-runtime.type-test/FixtureDependency',

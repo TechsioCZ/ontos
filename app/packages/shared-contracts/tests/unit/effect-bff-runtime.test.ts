@@ -11,7 +11,7 @@ import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effec
 import { Context, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { assembleEffectBffRuntime } from '../../src/effect-bff-runtime.ts';
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 
 class Greeting extends Context.Service<Greeting, { readonly value: string }>()(
   '@app/shared-contracts/tests/unit/effect-bff-runtime.test/Greeting',

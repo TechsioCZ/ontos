@@ -89,7 +89,7 @@ const ExecutionEnvelopeSchema = Schema.Struct({
   }),
   target: Schema.String,
 });
-const RawAppSchema = Schema.Struct({
+export const RawAppSchema = Schema.Struct({
   api: Schema.optionalKey(Schema.Struct({ prefix: Schema.optionalKey(Schema.String) })),
   deliveryUnit: Schema.optionalKey(Schema.Struct({ unitId: Schema.optionalKey(UnitIdSchema) })),
   deploy: Schema.optionalKey(
@@ -115,9 +115,31 @@ const RawAppSchema = Schema.Struct({
   port: Schema.Number,
   surfaceProfile: Schema.optionalKey(Schema.Literal('api-only')),
 });
-const CompactConfigSchema = Schema.Struct({
-  topology: Schema.optionalKey(Schema.Struct({ apps: Schema.optionalKey(Schema.Array(RawAppSchema)) })),
+const TopologyAppSchema = Schema.Struct({
+  api: Schema.optionalKey(Schema.Struct({ bff: Schema.optionalKey(Schema.Struct({ prefix: Schema.String })) })),
+  cloudflare: Schema.optionalKey(
+    Schema.Struct({
+      distributedSsrProofRoutes: Schema.optionalKey(Schema.Array(Schema.String)),
+      jsonSmokeChecks: Schema.optionalKey(Schema.Array(SmokeCheckSchema)),
+      routes: Schema.optionalKey(Schema.Struct({ ssr: Schema.optionalKey(Schema.String) })),
+    }),
+  ),
+  deliveryUnit: Schema.optionalKey(Schema.Struct({ unitId: Schema.optionalKey(UnitIdSchema) })),
+  id: AppIdSchema,
+  moduleFederation: Schema.optionalKey(
+    Schema.Struct({
+      name: Schema.optionalKey(Schema.String),
+    }),
+  ),
+  path: Schema.optionalKey(Schema.String),
+  surfaceProfile: Schema.optionalKey(Schema.Literal('api-only')),
+  verticalRefs: Schema.optionalKey(Schema.Array(Schema.String)),
 });
+export const TopologySchema = Schema.Struct({
+  shell: TopologyAppSchema,
+  verticals: Schema.Array(TopologyAppSchema),
+});
+const DevelopmentOverlaySchema = Schema.Struct({ ports: Schema.Record(Schema.String, Schema.Number) });
 const containsApiReleaseMarker = Schema.is(Schema.Struct({ marker: ApiReleaseMarkerSchema }));
 const isJsonScalar = Schema.is(Schema.Union([Schema.Null, Schema.Boolean, Schema.Number, Schema.String]));
 const findReleaseMarkers = (value: Schema.Json): readonly ApiReleaseMarker[] => {
@@ -503,7 +525,7 @@ const resolveProofRoutes = (configuredRoutes: readonly string[], configuredSsrRo
   return [configuredSsrRoute?.startsWith('/') === true ? configuredSsrRoute : '/'];
 };
 
-const deriveAppConfiguration = (rawApp: typeof RawAppSchema.Type) => {
+export const deriveAppConfiguration = (rawApp: typeof RawAppSchema.Type) => {
   const cloudflare = rawApp.deploy?.cloudflare;
   return {
     apiPrefix: rawApp.api?.prefix?.replace(/\/+$/u, ''),
@@ -578,13 +600,66 @@ const loadApp = (workspaceRoot: string, rawApp: typeof RawAppSchema.Type): Proof
     };
   });
 
+interface ProjectedProofApp {
+  api?: { prefix: string };
+  deliveryUnit?: NonNullable<(typeof TopologyAppSchema.Type)['deliveryUnit']>;
+  deploy?: { cloudflare: NonNullable<(typeof TopologyAppSchema.Type)['cloudflare']> };
+  id: string;
+  kind: string;
+  moduleFederation: { name?: string; verticalRefs?: readonly string[] };
+  port: number;
+  surfaceProfile?: 'api-only';
+}
+
+export const projectProofApp = (app: typeof TopologyAppSchema.Type & { readonly kind: string }, port: number) => {
+  const moduleFederation: ProjectedProofApp['moduleFederation'] = {};
+  if (app.moduleFederation?.name !== undefined) {
+    moduleFederation.name = app.moduleFederation.name;
+  }
+  if (app.verticalRefs !== undefined) {
+    moduleFederation.verticalRefs = app.verticalRefs;
+  }
+  const projected: ProjectedProofApp = { id: app.id, kind: app.kind, moduleFederation, port };
+  if (app.deliveryUnit !== undefined) {
+    projected.deliveryUnit = app.deliveryUnit;
+  }
+  if (app.surfaceProfile !== undefined) {
+    projected.surfaceProfile = app.surfaceProfile;
+  }
+  if (app.api?.bff?.prefix !== undefined) {
+    projected.api = { prefix: app.api.bff.prefix };
+  }
+  if (app.cloudflare !== undefined) {
+    projected.deploy = { cloudflare: app.cloudflare };
+  }
+  return projected;
+};
+
+const loadConfiguredApp = (
+  workspaceRoot: string,
+  app: typeof TopologyAppSchema.Type & { readonly kind: string },
+  ports: Readonly<Record<string, number>>,
+) =>
+  Effect.gen(function* loadConfiguredAppEffect() {
+    const port = ports[app.id];
+    yield* ensure(port !== undefined, `${app.id} is missing its development port`);
+    const rawApp = yield* Schema.decodeUnknownEffect(RawAppSchema)(projectProofApp(app, port)).pipe(
+      Effect.mapError((cause) => proofError(`${app.id} has invalid Workerd proof configuration`, cause)),
+    );
+    return yield* loadApp(workspaceRoot, rawApp);
+  });
+
 const loadApps = (workspaceRoot: string): ProofEffect<readonly App[]> =>
   Effect.gen(function* loadAppsEffect() {
-    const compactConfig = yield* readJsonDocument(
-      path.join(workspaceRoot, '.modernjs/ultramodern.json'),
-      CompactConfigSchema,
-    );
-    return yield* Effect.forEach(compactConfig.topology?.apps ?? [], (rawApp) => loadApp(workspaceRoot, rawApp), {
+    const [topology, overlay] = yield* Effect.all([
+      readJsonDocument(path.join(workspaceRoot, 'topology/reference-topology.json'), TopologySchema),
+      readJsonDocument(path.join(workspaceRoot, 'topology/local-overlays/development.json'), DevelopmentOverlaySchema),
+    ]);
+    const apps = [
+      { ...topology.shell, kind: 'shell' },
+      ...topology.verticals.map((app) => ({ ...app, kind: 'vertical' })),
+    ];
+    return yield* Effect.forEach(apps, (app) => loadConfiguredApp(workspaceRoot, app, overlay.ports), {
       concurrency: 1,
     });
   });
@@ -1555,7 +1630,9 @@ const main = Effect.gen(function* mainEffect() {
 }).pipe(Effect.scoped);
 
 const loggedMain = main.pipe(Effect.tapCause((cause) => Effect.logError(cause)));
-const exit = await Effect.runPromiseExit(Effect.provide(loggedMain, NodeFileSystem.layer));
-if (Exit.isFailure(exit)) {
-  process.exitCode = 1;
+if (import.meta.main) {
+  const exit = await Effect.runPromiseExit(Effect.provide(loggedMain, NodeFileSystem.layer));
+  if (Exit.isFailure(exit)) {
+    process.exitCode = 1;
+  }
 }

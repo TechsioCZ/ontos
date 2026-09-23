@@ -22,14 +22,9 @@ const RuntimePackageSchema = Schema.Struct({
   scripts: Schema.optional(DependencyMapSchema),
   version: Schema.optional(Schema.String),
 });
-const CompactConfigSchema = Schema.Struct({
-  packageSource: Schema.optional(
-    Schema.Struct({
-      aliasPackageNamePrefix: Schema.optional(Schema.String),
-      aliasScope: Schema.optional(Schema.String),
-      modernPackageVersion: Schema.optional(Schema.String),
-    }),
-  ),
+const ReleaseCohortSchema = Schema.Struct({
+  aliases: Schema.Record(Schema.String, Schema.String),
+  release: Schema.Struct({ version: Schema.String }),
 });
 const decodeRuntimePackage = Schema.decodeUnknownEffect(RuntimePackageSchema, {
   onExcessProperty: 'preserve',
@@ -37,7 +32,7 @@ const decodeRuntimePackage = Schema.decodeUnknownEffect(RuntimePackageSchema, {
 const decodeRuntimePackageJson = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimePackageSchema), {
   onExcessProperty: 'preserve',
 });
-const decodeCompactConfigJson = Schema.decodeUnknownEffect(Schema.fromJsonString(CompactConfigSchema), {
+const decodeReleaseCohortJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseCohortSchema), {
   onExcessProperty: 'preserve',
 });
 /** @typedef {typeof Schema.Json.Type} JsonValue */
@@ -58,7 +53,7 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(JsonValueSchema, { 
 const isJsonRecord = Schema.is(JsonRecordSchema);
 
 /** @typedef {typeof RuntimePackageSchema.Type} RuntimePackage */
-/** @typedef {typeof CompactConfigSchema.Type} CompactConfig */
+/** @typedef {typeof ReleaseCohortSchema.Type} ReleaseCohort */
 
 class MaterializationError extends Error {
   /** @param {string} message - Error message. */
@@ -114,15 +109,15 @@ const readOptionalRuntimePackage = (filePath) =>
   });
 
 /** @param {string} filePath - Optional compact configuration path. */
-const readOptionalCompactConfig = (filePath) =>
-  Effect.gen(function* readOptionalCompactConfigEffect() {
+const readOptionalReleaseCohort = (filePath) =>
+  Effect.gen(function* readOptionalReleaseCohortEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const exists = yield* fileSystem.exists(filePath);
     if (!exists) {
       return null;
     }
     const source = yield* fileSystem.readFileString(filePath);
-    return yield* decodeCompactConfigJson(source);
+    return yield* decodeReleaseCohortJson(source);
   });
 
 /**
@@ -138,19 +133,19 @@ const writeJson = (filePath, json) =>
 
 /**
  * @param {Readonly<Record<string, string>> | undefined} dependencies - Dependency section.
- * @param {string} aliasPrefix - Generated package alias prefix.
+ * @param {Readonly<Record<string, string>>} aliases - Producer-owned package aliases.
  * @param {string} modernPackageVersion - Modern.js package version.
  */
-const normalizeDependencySection = (dependencies, aliasPrefix, modernPackageVersion) => {
+const normalizeDependencySection = (dependencies, aliases, modernPackageVersion) => {
   if (dependencies === undefined) {
     return null;
   }
   return Object.fromEntries(
     Object.entries(dependencies).flatMap(([dependencyName, dependencyVersion]) => {
-      if (!dependencyName.startsWith(aliasPrefix)) {
+      const officialPackageName = Object.entries(aliases).find(([, target]) => target === dependencyName)?.[0];
+      if (officialPackageName === undefined) {
         return [[dependencyName, dependencyVersion]];
       }
-      const officialPackageName = `@modern-js/${dependencyName.slice(aliasPrefix.length)}`;
       return [
         [dependencyName, modernPackageVersion],
         [officialPackageName, `npm:${dependencyName}@${modernPackageVersion}`],
@@ -166,22 +161,22 @@ const normalizeDependencySection = (dependencies, aliasPrefix, modernPackageVers
  */
 const normalizeRuntimePackageDependencies = (runtimeManifest, workspaceRoot, pathService) =>
   Effect.gen(function* normalizeRuntimePackageDependenciesEffect() {
-    const compactConfig = yield* readOptionalCompactConfig(
-      pathService.join(workspaceRoot, '.modernjs/ultramodern.json'),
+    const cohort = yield* readOptionalReleaseCohort(
+      pathService.join(workspaceRoot, 'node_modules/@modern-js/ultramodern-create/release-cohort.json'),
     );
-    const modernPackageVersion = compactConfig?.packageSource?.modernPackageVersion;
-    const aliasScope = compactConfig?.packageSource?.aliasScope;
-    const aliasPackageNamePrefix = compactConfig?.packageSource?.aliasPackageNamePrefix;
-    if (modernPackageVersion === undefined || aliasScope === undefined || aliasPackageNamePrefix === undefined) {
+    if (cohort === null) {
       return runtimeManifest;
     }
 
-    const aliasPrefix = `@${aliasScope}/${aliasPackageNamePrefix}`;
-    const dependencies = normalizeDependencySection(runtimeManifest.dependencies, aliasPrefix, modernPackageVersion);
+    const dependencies = normalizeDependencySection(
+      runtimeManifest.dependencies,
+      cohort.aliases,
+      cohort.release.version,
+    );
     const optionalDependencies = normalizeDependencySection(
       runtimeManifest.optionalDependencies,
-      aliasPrefix,
-      modernPackageVersion,
+      cohort.aliases,
+      cohort.release.version,
     );
     const normalizedManifest = { ...runtimeManifest };
     if (dependencies !== null) {

@@ -1,4 +1,4 @@
-import { Config, Console, Effect, Exit, Option, Path, Stdio } from 'effect';
+import { Config, Effect, Option, Path, Stdio } from 'effect';
 import type { PlatformError } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
@@ -68,14 +68,3 @@ export const launchUltramodern = <E,>(invocation: Effect.Success<ReturnType<type
     const processSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return Number(yield* processSpawner.exitCode(invocation.command).pipe(Effect.mapError(invocation.launchFailure)));
   });
-
-export const runUltramodernScript = <E extends { readonly reason: string }>(options: CommandOptions<E>) =>
-  resolveUltramodernInvocation(options).pipe(
-    Effect.flatMap(launchUltramodern),
-    Effect.tapError(({ reason }) => Console.error(reason)),
-  );
-
-export const ultramodernExitCode = Exit.match<number, unknown, number, number>({
-  onFailure: () => 1,
-  onSuccess: (status) => status,
-});
