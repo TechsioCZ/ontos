@@ -138,7 +138,7 @@ it.effect('propagates supported request context and resolved transport headers',
       method: 'GET',
       operationId: 'RepresentativeApi:/read',
       routePath: '/read',
-      source: 'generated-client' as const,
+      source: 'effect-server' as const,
     };
     const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
 
