@@ -8,7 +8,7 @@ const EffectBffOperationContextSchema = Schema.Struct({
   // eslint-disable-next-line effect-native/no-unbranded-identifier-schema -- The framework operation name is owner-supplied routing metadata, not an interchangeable Resource identifier.
   operationId: Schema.String,
   routePath: Schema.String,
-  source: Schema.Literals(['client', 'server', 'generated-client', 'effect-adapter', 'data-platform', 'unknown']),
+  source: Schema.Literals(['client', 'server', 'generated-client', 'effect-server', 'data-platform', 'unknown']),
 });
 
 export type EffectBffOperationContext = typeof EffectBffOperationContextSchema.Type;
