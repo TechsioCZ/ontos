@@ -20,8 +20,8 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
-    "@effect/opentelemetry": "4.0.0-rc.112",
-    "effect": "4.0.0-rc.112",
+    "@effect/opentelemetry": "4.0.0-rc.117",
+    "effect": "4.0.0-rc.117",
     "@app/core-runtime": "workspace:*",
     "@modern-js/bff-effect": "catalog:ultramodern"
   },

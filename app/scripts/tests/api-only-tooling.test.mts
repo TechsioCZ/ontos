@@ -612,7 +612,7 @@ it.live(
     );
     expect(sharedContractsPackage.exports['./server/effect-bff-runtime']).toBeUndefined();
     expect(sharedContractsPackage.dependencies['@modern-js/plugin-bff']).toBe('catalog:ultramodern');
-    expect(sharedContractsPackage.dependencies.effect).toBe('npm:@bleedingdev/effect@4.0.0-rc.112');
+    expect(sharedContractsPackage.dependencies.effect).toBe('npm:@bleedingdev/effect@4.0.0-rc.117');
   }),
 );
 
@@ -2389,7 +2389,7 @@ const kind = ${JSON.stringify(kind)};
 const pluginNames = ['appTools', 'ultramodernAppTools', 'bffPlugin', 'i18nPlugin', 'tanstackRouterPlugin', 'moduleFederationPlugin', 'pluginTailwindcss', 'ultramodernReleaseEnvelopePlugin'];
 const framework = {
   ...Object.fromEntries(pluginNames.map(name => [name, () => ({ name })])),
-  builtinModules: [], createRequire: () => name => ({ version: name === 'effect/package.json' ? '4.0.0-rc.112' : '3.9.0-ultramodern.2' }),
+  builtinModules: [], createRequire: () => name => ({ version: name === 'effect/package.json' ? '4.0.0-rc.117' : '3.9.0-ultramodern.2' }),
   defineConfig: config => config, presetUltramodern: config => config,
   createModuleFederationConfig: config => config,
   getBuildConfigEnvironment: () => undefined, ultramodernLocalisedUrls: {},
