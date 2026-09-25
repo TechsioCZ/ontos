@@ -24,7 +24,6 @@
     "./permissions/inventory.stock.correct": "./shared/permissions/inventory-stock-correct.ts",
     "./permissions/inventory.stock.issue": "./shared/permissions/inventory-stock-issue.ts",
     "./permissions/inventory.stock.receipt": "./shared/permissions/inventory-stock-receipt.ts",
-    "./privacy-owner-contract": "./shared/domain/inventory-privacy-owner-contract.ts",
     "./reservation-evidence-handoff": "./shared/domain/inventory-reservation-evidence-handoff.ts",
     "./resources/catalog-to-stock-binding": "./shared/resources/catalog-to-stock-binding.ts",
     "./resources/commitment-protection": "./shared/resources/commitment-protection.ts",
