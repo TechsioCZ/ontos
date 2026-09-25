@@ -398,11 +398,12 @@ presentation do not by themselves create another Product. A materially different
 must not silently replace the meaning of an existing selection.
 
 **Variant** — Catalog Resource identifying one predefined independently distinguishable realization
-of exactly one Product. Every Product has `1..N` Variants, including a Product with only one
-realization. A draft Variant may be incomplete and is not thereby a validated selection. A material
-change of an atomic realization requires a different Variant; a Set Variant uses the explicitly
-versioned succession semantics of Set Composition Revision. Variant is not SKU, Quantity, stock,
-Price, or an Assortment decision.
+of exactly one Product. Every Product has `1..N` Variants; a Product with only one realization still
+has one explicit Variant rather than a Product-only selectable target. A draft Variant may be
+incomplete and is not thereby a validated selection. A material change of an atomic realization
+requires a different Variant; a Set Variant uses the explicitly versioned succession semantics of Set
+Composition Revision. Variant is not SKU, Quantity, stock, Price, or an Assortment decision.
+_Avoid_: implicit/default/fallback Variant chosen by Pricing when an exact Variant is missing.
 
 **Catalog Selection Target** — Stable predefined target before purchase Quantity is applied: exactly
 one Variant, or a Package Option belonging to that Variant. Product alone is not an exact target.
