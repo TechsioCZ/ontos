@@ -1,6 +1,7 @@
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
-import { Effect, Option, Ref, Schema } from 'effect';
+import { DateTime, Effect, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 
 import {
   CatalogToStockBindingSchema,
@@ -68,12 +69,11 @@ import {
   makeInventoryReservationReleaseExecutionService,
   makeInventoryReservationReleaseService,
 } from '../../src/services/inventory-reservation-release.service.ts';
-import { makeInventoryPostCommitReservationReconciliationService } from '../../src/services/inventory-post-commit-reservation-reconciliation.service.ts';
 import type { ReservationConfirmationIssuer } from '../../src/services/reservation-confirmation.service.ts';
 import { makeReservationConfirmationService } from '../../src/services/reservation-confirmation.service.ts';
 import { makeStockCorrectionService } from '../../src/services/stock-correction.service.ts';
 import { makeInMemoryInventoryEffectLedger } from '../support/inventory-effect-ledger.ts';
-import { runInventoryOwnerAcceptanceBindingCorrectionScenarios } from '../support/inventory-owner-acceptance-binding-correction.ts';
+import { runInventoryOwnerAcceptanceLateIssueCorrectionScenario } from '../support/inventory-owner-acceptance-binding-correction.ts';
 import {
   runBindingCorrectionMeaningAcceptance,
   runExternalIssuerCutoverAcceptance,
@@ -356,6 +356,7 @@ const makeCreateHarness = Effect.gen(function* makeCreateHarness() {
     effects: effects.persistence,
     eligibility: { isEligible: () => Effect.succeed(true) },
     ledger,
+    lockBindingScopes: () => Effect.void,
     makeAllocationId: ({ effectId: id, positionId, purchaseDemandOccurrenceId }) =>
       StockAllocationIdSchema.make(`${id}:${purchaseDemandOccurrenceId}:${positionId}`),
     makeMutationId: () => mutationId,
@@ -805,19 +806,10 @@ describe('Inventory owner contract acceptance', () => {
     }),
   );
 
-  it.effect('preserves every live binding-correction boundary and Current correction debt', () =>
-    Effect.gen(function* acceptBindingCorrectionBoundaries() {
-      const result = yield* runInventoryOwnerAcceptanceBindingCorrectionScenarios({
-        assessCurrentBinding: (input) =>
-          makeInventoryPostCommitReservationReconciliationService({
-            commitTransition: { transition: () => Effect.die('unused') },
-            obligationStore: {
-              commitReservation: () => Effect.die('unused'),
-              read: () => Effect.die('unused'),
-            },
-            physicalEffectReader: { read: () => Effect.die('unused') },
-            reductionWriter: { reduceAfterAppliedIssue: () => Effect.die('unused') },
-          }).assessCurrentBinding(input),
+  it.effect('preserves later material effects when correcting a Stock Position', () =>
+    Effect.gen(function* acceptLateIssueCorrection() {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-09-25T10:05:00.000Z')));
+      const result = yield* runInventoryOwnerAcceptanceLateIssueCorrectionScenario({
         correctStockPosition: ({
           authority: correctionAuthority,
           context,
@@ -837,30 +829,7 @@ describe('Inventory owner contract acceptance', () => {
           }).correct(correctionPayload, context),
       });
 
-      expect(result.preProtection).toMatchObject({
-        healthState: 'AT_RISK',
-        releaseRecorded: false,
-        retargeted: false,
-      });
-      expect(result.preProtection.currentBindingStockItemId).not.toBe(
-        result.preProtection.originalReservationStockItemId,
-      );
-      expect(result.protected).toMatchObject({
-        healthState: 'AT_RISK',
-        reconciliationRequired: true,
-        releaseRecorded: false,
-        retargeted: false,
-      });
-      expect(result.protected.currentBindingStockItemId).not.toBe(result.protected.fenceStockItemId);
-      expect(result.committed).toMatchObject({
-        exception: 'POST_COMMIT_BINDING_MISMATCH',
-        orderRolledBack: false,
-        replacementObligationCreated: false,
-        retargeted: false,
-      });
-      expect(result.committed.historicalStockItemId).toBe(result.committed.obligationStockItemId);
-      expect(result.committed.currentStockItemId).not.toBe(result.committed.obligationStockItemId);
-      expect(result.correction).toEqual({
+      expect(result).toEqual({
         correctionTag: 'INDETERMINATE',
         currentOnHandEstablished: false,
         materialEffectIds: ['ffffffff-ffff-4fff-8fff-ffffffffffff'],

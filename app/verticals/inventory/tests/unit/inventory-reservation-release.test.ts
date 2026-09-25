@@ -1,4 +1,7 @@
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import type { OutboxWorkerHandlerContext, ScopedRoutineInvoker } from '@app/core-runtime';
+import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
+import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -38,6 +41,10 @@ import {
   reservationReleaseLedgerIntent,
 } from '../../src/services/inventory-effect-ledger.service.ts';
 import { makeInMemoryInventoryEffectLedger } from '../support/inventory-effect-ledger.ts';
+import {
+  handleExecuteInventoryReservationRelease,
+  InventoryReservationReleaseExecution,
+} from '../../src/workers/execute-inventory-reservation-release.worker.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = LegalEntityIdSchema.make('22222222-2222-4222-8222-222222222222');
@@ -338,6 +345,76 @@ describe('Inventory Reservation Release', () => {
         });
         expect(harness.backendCalls()).toBe(1);
       }),
+  );
+
+  it.effect('publishes one replay-stable Reservation guarantee change from persisted Release evidence', () =>
+    Effect.gen(function* publishReleasedGuarantee() {
+      const harness = makeHarness();
+      const requested = yield* harness.service.request(payload(), {
+        actionInvocationId,
+        legalEntityId,
+        requestedAt: timestamp,
+        tenantId,
+      });
+      yield* harness.execution.execute({ legalEntityId, tenantId }, requested.result.effect.request);
+      const terminal = Schema.decodeUnknownSync(ReleasedReservationEffectSchema)(harness.effects.read());
+      const publications: { readonly input: unknown; readonly topic: string }[] = [];
+      const routineInvoker: ScopedRoutineInvoker = {
+        invoke: (routine) =>
+          Effect.sync(() => Schema.decodeUnknownSync(Schema.Array(routine.resultSchema))([{ record: terminal }])),
+      };
+      const workerScope: OutboxWorkerLegalEntityScope = {
+        completionPublisher: {
+          publish: (definition, input) =>
+            Effect.sync(() => {
+              publications.push({ input, topic: definition.topic });
+              return {
+                domainEventId: input.completionId,
+                outcome: publications.length === 1 ? ('PUBLISHED' as const) : ('ALREADY_PUBLISHED' as const),
+              };
+            }),
+        },
+        legalEntityId,
+        routineInvoker,
+        tenantId,
+      };
+      const context: OutboxWorkerHandlerContext = {
+        attemptNumber: 1,
+        claimId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        consumerModuleKey: 'commerce.inventory',
+        deliveryId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        domainEventId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+        legalEntityScope: 'required',
+        messageId: 'ffffffff-ffff-4fff-8fff-ffffffffffff',
+        producerModuleKey: 'commerce.inventory',
+        tenantId,
+        tenantSequenceNo: 1n,
+        topic: 'commerce.inventory.inventory-reservation-release-requested.v1',
+        workerKey: 'commerce.inventory.execute-inventory-reservation-release',
+      };
+      const worker = handleExecuteInventoryReservationRelease({ request: terminal.request }, context).pipe(
+        Effect.provideService(InventoryReservationReleaseExecution, { execute: () => Effect.void }),
+        Effect.provideService(OutboxWorkerLegalEntityScopeFanout, {
+          forEachScope: (_workerContext, observe) => observe(workerScope),
+        }),
+      );
+
+      yield* worker;
+      yield* worker;
+
+      expect(publications).toHaveLength(2);
+      expect(publications[0]).toEqual(publications[1]);
+      expect(publications[0]).toMatchObject({ topic: 'commerce.inventory.reservation-guarantee-changed.v1' });
+      expect(publications[0]?.input).toMatchObject({
+        completionId: mutationId,
+        occurredAt: new Date('2026-09-24T10:05:00.000Z'),
+        payloadJson: {
+          ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: mutationId },
+          state: 'RELEASED',
+          subjectRef: reservation.ref,
+        },
+      });
+    }),
   );
 
   it.effect('executes only the durable original Reservation snapshot when a replay envelope is retargeted', () =>

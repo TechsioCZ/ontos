@@ -1,5 +1,5 @@
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Match, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
@@ -51,9 +51,17 @@ const payload = Schema.decodeUnknownSync(StockCorrectionPayloadSchema)({
   reason: { code: 'AUTHORITATIVE_COUNT', reference: 'count:42' },
 });
 
+const explanatoryDeltaFieldsFor = (state: 'APPLIED' | 'INDETERMINATE', materialChange: 'DECREASE' | 'UNCHANGED') =>
+  Match.value(state).pipe(
+    Match.when('INDETERMINATE', () => ({})),
+    Match.when('APPLIED', () => ({ explanatoryDelta: materialChange === 'UNCHANGED' ? '0' : '-3' })),
+    Match.exhaustive,
+  );
+
 const resultFor = (
   state: 'APPLIED' | 'INDETERMINATE',
   outcome: 'APPLIED' | 'EXACT_REPLAY' | 'RECONCILIATION_REQUIRED',
+  materialChange: 'DECREASE' | 'UNCHANGED' = 'DECREASE',
 ) =>
   Schema.decodeUnknownSync(StockCorrectionResultSchema)({
     correction: {
@@ -69,9 +77,9 @@ const resultFor = (
       evaluatedMaterialEffectIds: [],
       evidenceKind: 'EXTERNAL_SOURCE_ASSERTION',
       expectedPositionRevision: 3,
-      explanatoryDelta: state === 'APPLIED' ? '-3' : undefined,
+      ...explanatoryDeltaFieldsFor(state, materialChange),
       issuer: { backendId: 'erp-a', backendKind: 'external_business_system' },
-      materialChange: state === 'APPLIED' ? 'DECREASE' : undefined,
+      materialChange: state === 'APPLIED' ? materialChange : undefined,
       materialEffectIds: state === 'INDETERMINATE' ? [] : undefined,
       ownerEvidenceRef: 'erp-a:snapshot:42',
       positionRef,
@@ -176,23 +184,50 @@ describe('Correct Stock Position Action', () => {
     expect(Object.keys(correctStockPositionAction.descriptor.domainEvents)).toEqual([
       'commerce.inventory.stock-position-corrected.v1',
       'commerce.inventory.stock-position-correction-indeterminate.v1',
+      'commerce.inventory.stock-position-evidence-changed.v1',
     ]);
     expect(correctStockPositionAction.descriptor.auditEvidenceSchema).toBeDefined();
     expect(correctStockPositionAction.descriptor.auditProfile).toBe('sensitive');
   });
 
-  for (const [state, outcome, expectedEvent] of [
-    ['APPLIED', 'APPLIED', 'commerce.inventory.stock-position-corrected.v1'],
-    ['INDETERMINATE', 'RECONCILIATION_REQUIRED', 'commerce.inventory.stock-position-correction-indeterminate.v1'],
-    ['APPLIED', 'EXACT_REPLAY', undefined],
+  for (const [state, outcome, materialChange, expectedEvents, expectedPublishedState] of [
+    [
+      'APPLIED',
+      'APPLIED',
+      'DECREASE',
+      ['commerce.inventory.stock-position-corrected.v1', 'commerce.inventory.stock-position-evidence-changed.v1'],
+      'CORRECTED',
+    ],
+    [
+      'INDETERMINATE',
+      'RECONCILIATION_REQUIRED',
+      'DECREASE',
+      [
+        'commerce.inventory.stock-position-correction-indeterminate.v1',
+        'commerce.inventory.stock-position-evidence-changed.v1',
+      ],
+      'INDETERMINATE',
+    ],
+    ['APPLIED', 'APPLIED', 'UNCHANGED', ['commerce.inventory.stock-position-corrected.v1'], null],
+    ['APPLIED', 'EXACT_REPLAY', 'DECREASE', [], null],
   ] as const) {
     it.effect(`records bounded audit and Data Access evidence for ${outcome} without duplicate replay events`, () =>
       Effect.gen(function* actionEvidenceContract() {
-        const material = yield* runHandler(resultFor(state, outcome));
+        const material = yield* runHandler(resultFor(state, outcome, materialChange));
         expect(material.dataAccessEvents).toHaveLength(1);
         expect(material.dataAccessEvents[0]?.resultCount).toBe(outcome === 'EXACT_REPLAY' ? 1 : 0);
-        expect(material.domainEvents).toHaveLength(expectedEvent === undefined ? 0 : 1);
-        expect(material.domainEvents[0]?.eventType).toBe(expectedEvent);
+        expect(material.domainEvents.map(({ eventType }) => eventType)).toEqual(expectedEvents);
+        expect(material.outboxMessages).toHaveLength(expectedPublishedState === null ? 0 : 1);
+        if (expectedPublishedState !== null) {
+          expect(material.outboxMessages[0]?.message).toMatchObject({
+            payloadJson: {
+              ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 4 },
+              state: expectedPublishedState,
+              subjectRef: positionRef,
+            },
+            topic: 'commerce.inventory.stock-position-evidence-changed.v1',
+          });
+        }
         expect(material.auditEvidence).toMatchObject({
           businessReasonCode: 'AUTHORITATIVE_COUNT',
           businessReasonReference: 'count:42',

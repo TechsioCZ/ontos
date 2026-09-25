@@ -110,6 +110,13 @@ export const inventoryObligationRequirements = inventorySchema.table.withRLS(
       table.obligationId,
       table.purchaseDemandOccurrenceId,
     ),
+    index('inventory_obligation_requirements_binding_impact_idx').on(
+      table.tenantId,
+      table.bindingId,
+      table.stockItemId,
+      table.exactSelectionMeaningKind,
+      table.exactSelectionMeaningId,
+    ),
     foreignKey({
       columns: [table.tenantId, table.obligationId],
       foreignColumns: [inventoryObligations.tenantId, inventoryObligations.obligationId],

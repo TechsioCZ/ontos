@@ -24,6 +24,7 @@ import {
   inventoryObligationPersistenceForScope,
   mapInventoryObligationWriteError,
 } from '../../src/persistence/inventory-obligation-repository.ts';
+import { inventoryCatalogToStockBindings } from '../../src/persistence/catalog-to-stock-binding-table.ts';
 import {
   INVENTORY_OBLIGATION_TABLES,
   inventoryObligationAllocations,
@@ -274,6 +275,15 @@ const allocationRow = {
   unitResourceType: unitRef.resourceType,
   unitTenantId: tenantId,
 };
+const currentBindingRows = [{ bindingId, stockItemId: itemId }];
+const currentBindingQuery = () => ({
+  where: () => ({
+    for: () => {
+      const result = Effect.succeed(currentBindingRows);
+      return Object.assign(result, { limit: () => result });
+    },
+  }),
+});
 
 describe('Inventory obligation persistence', () => {
   it('owns one RLS aggregate with Attempt/import-lineage uniqueness and exact tenant-qualified references', () => {
@@ -388,6 +398,7 @@ describe('Inventory obligation persistence', () => {
               : Effect.succeed([]);
           },
         }),
+        select: () => ({ from: () => currentBindingQuery() }),
       };
       // @ts-expect-error Mock implements only the exercised Effect-Drizzle chains.
       const persistence = inventoryObligationPersistenceForScope(transaction, scope);
@@ -410,15 +421,20 @@ describe('Inventory obligation persistence', () => {
           values: () => ({ onConflictDoNothing: () => ({ returning: () => Effect.succeed([]) }) }),
         }),
         select: () => ({
-          from: (table: unknown) => ({
-            where: () =>
-              table === inventoryObligations
-                ? { limit: () => Effect.succeed([obligationRow]) }
-                : {
-                    orderBy: () =>
-                      Effect.succeed(table === inventoryObligationRequirements ? [requirementRow] : [allocationRow]),
-                  },
-          }),
+          from: (table: unknown) =>
+            table === inventoryCatalogToStockBindings
+              ? currentBindingQuery()
+              : {
+                  where: () =>
+                    table === inventoryObligations
+                      ? { limit: () => Effect.succeed([obligationRow]) }
+                      : {
+                          orderBy: () =>
+                            Effect.succeed(
+                              table === inventoryObligationRequirements ? [requirementRow] : [allocationRow],
+                            ),
+                        },
+                },
         }),
       };
       // @ts-expect-error Mock implements only the exercised Effect-Drizzle chains.
@@ -604,15 +620,20 @@ describe('Inventory obligation persistence', () => {
           values: () => ({ onConflictDoNothing: () => ({ returning: () => Effect.succeed([]) }) }),
         }),
         select: () => ({
-          from: (table: unknown) => ({
-            where: () =>
-              table === inventoryObligations
-                ? { limit: () => Effect.succeed([obligationRow]) }
-                : {
-                    orderBy: () =>
-                      Effect.succeed(table === inventoryObligationRequirements ? [requirementRow] : [allocationRow]),
-                  },
-          }),
+          from: (table: unknown) =>
+            table === inventoryCatalogToStockBindings
+              ? currentBindingQuery()
+              : {
+                  where: () =>
+                    table === inventoryObligations
+                      ? { limit: () => Effect.succeed([obligationRow]) }
+                      : {
+                          orderBy: () =>
+                            Effect.succeed(
+                              table === inventoryObligationRequirements ? [requirementRow] : [allocationRow],
+                            ),
+                        },
+                },
         }),
       };
       // @ts-expect-error Mock implements only the exercised Effect-Drizzle chains.
@@ -637,6 +658,7 @@ describe('Inventory obligation persistence', () => {
             return Effect.succeed([]);
           },
         }),
+        select: () => ({ from: () => currentBindingQuery() }),
       };
       // @ts-expect-error Mock implements only the exercised Effect-Drizzle chains.
       const persistence = inventoryObligationPersistenceForScope(transaction, scope);

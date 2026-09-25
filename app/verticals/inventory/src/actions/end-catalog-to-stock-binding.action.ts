@@ -26,6 +26,7 @@ import {
 import type { CatalogToStockBindingPersistence } from '../../shared/domain/catalog-to-stock-binding.ts';
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core invokes this owner-local repository constructor only inside the generated transaction-scoped Action factory; expires: 2027-03-31.
 import { makeDrizzleCatalogToStockBindingPersistence } from '../persistence/catalog-to-stock-binding-repository.ts';
+import { serializeCatalogToStockBindingPersistence } from '../persistence/binding-correction-serialization.ts';
 
 export {
   EndCatalogToStockBindingErrorSchema,
@@ -123,7 +124,10 @@ export const endCatalogToStockBindingAction = defineAction(
     schemaVersion: '1',
   },
   handleEndCatalogToStockBinding,
-  (transaction) => Effect.succeed(makeDrizzleCatalogToStockBindingPersistence(transaction)),
+  (transaction) =>
+    Effect.succeed(
+      serializeCatalogToStockBindingPersistence(transaction, makeDrizzleCatalogToStockBindingPersistence(transaction)),
+    ),
 );
 
 // <generated-outbox-message-exports>

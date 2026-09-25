@@ -31,6 +31,7 @@ import { InventoryReservationGuaranteeUnsupported } from '../../shared/domain/in
 import type { ReservationAuthorityEffectIdSchema } from '../../shared/domain/reservation-issuer-failure-fields.ts';
 import { ActionInvocationIdSchema, LegalEntityIdSchema } from '../../shared/domain/physical-stock-effect.ts';
 import type { TrustedCurrentCommercePurchasingContext } from '../../shared/domain/stock-sharing-eligibility.ts';
+import type { ExactCatalogSelectionMeaning } from '../../shared/domain/stock-item.ts';
 import type { InventoryReservationCommerceContextAuthority } from './inventory-reservation-commerce-context.ts';
 import type { InventoryReservationDemandResolver } from './inventory-reservation-demand-resolver.ts';
 import type { InventoryEffectLedgerService } from './inventory-effect-ledger.service.ts';
@@ -133,6 +134,12 @@ interface Dependencies {
   readonly effects: ReservationCreateEffectPersistence;
   readonly eligibility: ReservationPositionEligibility;
   readonly ledger: InventoryEffectLedgerService;
+  readonly lockBindingScopes: (
+    scopes: readonly {
+      readonly exactSelectionMeaning: ExactCatalogSelectionMeaning;
+      readonly tenantId: string;
+    }[],
+  ) => EffectType.Effect<void, CatalogToStockBindingUnavailable>;
   readonly makeAllocationId: Parameters<typeof makeReservationAllocationPlanner>[0]['makeAllocationId'];
   readonly makeMutationId: () => typeof InventoryReservationCreateMutationIdSchema.Type;
   readonly resolver: InventoryReservationDemandResolver;
@@ -501,6 +508,21 @@ export const makeInventoryReservationCreateService = (
         ),
         Effect.flatMap((selected) => requireSupportedAuthority(payload.effectId, selected)),
       );
+      const bindingScopes = [
+        ...new Map(
+          payload.demands.map((demand) => [
+            `${context.tenantId}:${demand.exactSelectionMeaning.kind}:${demand.exactSelectionMeaning.id}`,
+            { exactSelectionMeaning: demand.exactSelectionMeaning, tenantId: context.tenantId },
+          ]),
+        ).values(),
+      ];
+      yield* dependencies
+        .lockBindingScopes(bindingScopes)
+        .pipe(
+          Effect.mapError((cause) =>
+            unavailable(payload.effectId, 'Catalog-to-Stock Binding evidence is unavailable', cause),
+          ),
+        );
       const demands = yield* Effect.forEach(
         payload.demands,
         (demand) =>

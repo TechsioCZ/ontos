@@ -5,20 +5,33 @@
 // @ontos-outbox-worker-topic commerce.inventory.stock-issue-requested.v1
 import type { OutboxWorkerHandlerContext } from '@app/core-runtime';
 import { defineOutboxWorker, defineTenantModuleEntrypoint } from '@app/core-runtime';
-import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
-import { Effect, Ref } from 'effect';
+import { defineOutboxWorkerCompletion, OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
+import { DateTime, Effect, Ref } from 'effect';
 import type { OutboxPayload } from '@app/inventory/outbox/commerce-inventory-stock-issue-requested-v1';
 import {
   OutboxPayloadSchema,
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/inventory/outbox/commerce-inventory-stock-issue-requested-v1';
+import {
+  OutboxPayloadSchema as StockPositionEvidenceChangedPayloadSchema,
+  outboxTopic as stockPositionEvidenceChangedTopic,
+} from '@app/inventory/outbox/commerce-inventory-stock-position-evidence-changed-v1';
 
 import { PhysicalStockEffectRejected } from '../../shared/domain/physical-stock-effect.ts';
 import { PhysicalStockEffects } from '../services/physical-stock-effects.service.ts';
 
 const workerKey = 'commerce.inventory.execute-stock-issue' as const;
 const moduleKey = 'commerce.inventory' as const;
+
+const stockPositionEvidenceChanged = defineOutboxWorkerCompletion({
+  consumerModuleKey: moduleKey,
+  eventType: stockPositionEvidenceChangedTopic,
+  payloadSchema: StockPositionEvidenceChangedPayloadSchema,
+  producerModuleKey: moduleKey,
+  topic: stockPositionEvidenceChangedTopic,
+  workerKey,
+});
 
 export const handleExecuteStockIssue = Effect.fn('ExecuteStockIssueWorker.handle')(function* handle(
   payload: OutboxPayload,
@@ -43,7 +56,30 @@ export const handleExecuteStockIssue = Effect.fn('ExecuteStockIssueWorker.handle
   const effects = yield* PhysicalStockEffects;
   yield* fanout.forEachScope(context, (scope) =>
     scope.legalEntityId === payload.request.legalEntityId
-      ? Ref.set(matched, true).pipe(Effect.andThen(effects.execute(scope, payload.request)))
+      ? Ref.set(matched, true).pipe(
+          Effect.andThen(
+            Effect.gen(function* executeAndPublish() {
+              const applied = yield* effects.execute(scope, payload.request);
+              yield* scope.completionPublisher.publish(stockPositionEvidenceChanged, {
+                completionId: applied.request.effectId,
+                occurredAt: DateTime.toDateUtc(DateTime.makeUnsafe(applied.evidence.appliedAt)),
+                payloadJson: {
+                  ordering: {
+                    _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY',
+                    occurrenceId: applied.request.effectId,
+                  },
+                  ownerReadOrProofKey: 'commerce.inventory.api.current-stock-evidence-for-availability',
+                  state: 'ISSUE_APPLIED',
+                  subjectRef: applied.request.positionRef,
+                },
+                sourceActionInvocationId: applied.request.actionInvocationId,
+                subjectModuleKey: applied.request.positionRef.moduleId,
+                subjectResourceId: applied.request.positionRef.resourceId,
+                subjectResourceType: applied.request.positionRef.resourceType,
+              });
+            }),
+          ),
+        )
       : Effect.void,
   );
   if (!(yield* Ref.get(matched))) {

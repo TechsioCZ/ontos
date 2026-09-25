@@ -67,6 +67,7 @@ const rejected = (
 ) => new InventoryReservationCreateRejected({ code: 'inventory_reservation_create_rejected', effectId, reason });
 
 const uniqueViolationSqlState = ['23', '505'].join('');
+const checkViolationSqlState = ['23', '514'].join('');
 const invalidEffectId = ReservationAuthorityEffectId.make('invalid-reservation-create-effect');
 const unknownEffectId = ReservationAuthorityEffectId.make('unknown-reservation-create-effect');
 const unresolvedEffectsId = ReservationAuthorityEffectId.make('unresolved-reservation-create-effects');
@@ -75,6 +76,14 @@ export const mapReservationCreateEffectWriteError = (
   effectId: typeof ReservationAuthorityEffectIdSchema.Type,
   cause: unknown,
 ) => {
+  const staleBinding = findPostgresFailure(
+    cause,
+    ({ code, constraint }) =>
+      code === checkViolationSqlState && constraint === 'inventory_reservation_create_effects_stale_binding_ck',
+  );
+  if (Option.isSome(staleBinding)) {
+    return rejected(effectId, 'INVALID_BACKEND_OBSERVATION');
+  }
   const attempt = findPostgresFailure(
     cause,
     ({ code, constraint }) =>
@@ -259,7 +268,7 @@ export const reservationCreateEffectPersistenceForWorkerScope = (
     scope.routineInvoker
       .invoke(finalizeReservationCreateEffectForWorkerRoutine, [expected.request.effectId, terminal])
       .pipe(
-        Effect.mapError((cause) => unavailable(expected.request.effectId, cause)),
+        Effect.mapError((cause) => mapReservationCreateEffectWriteError(expected.request.effectId, cause)),
         Effect.flatMap(([row]) =>
           row === undefined ? Effect.fail(unavailable(expected.request.effectId)) : Effect.succeed(row.record),
         ),

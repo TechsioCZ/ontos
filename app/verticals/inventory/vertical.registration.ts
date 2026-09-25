@@ -75,7 +75,6 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
     },
     components: {
       // <generated-module-registration-components>
-      'inventory-widget': () => import('./src/components/inventory-widget.tsx'),
       // </generated-module-registration-components>
     },
     pages: {

@@ -22,6 +22,8 @@ import {
   CommitmentProtectionUnavailable,
 } from '../../shared/domain/commitment-protection.ts';
 import { LegalEntityIdSchema } from '../../shared/domain/physical-stock-effect.ts';
+import { OutboxPayloadSchema as CommitmentProtectionChangedOutboxPayloadSchema } from '../../shared/outbox/commerce-inventory-commitment-protection-changed-v1.ts';
+import type { OutboxPayload as CommitmentProtectionChangedOutboxPayload } from '../../shared/outbox/commerce-inventory-commitment-protection-changed-v1.ts';
 import { commitmentProtectionPersistenceForScope } from '../persistence/commitment-protection-repository.ts';
 import { inventoryEffectLedgerPersistenceForScope } from '../persistence/inventory-effect-ledger-repository.ts';
 import { reservationConfirmationPersistenceForScope } from '../persistence/reservation-confirmation-repository.ts';
@@ -29,6 +31,7 @@ import { CommitmentProtectionAuthorityPort } from '../services/commitment-protec
 import type { CommitmentProtectionService } from '../services/commitment-protection.service.ts';
 import { makeCommitmentProtectionService } from '../services/commitment-protection.service.ts';
 import { makeInventoryEffectLedgerService } from '../services/inventory-effect-ledger.service.ts';
+import { createEstablishCommitmentProtectionCommerceInventoryCommitmentProtectionChangedV1OutboxMessage } from './establish-commitment-protection-commerce-inventory-commitment-protection-changed-v1.outbox-message.ts';
 
 export {
   EstablishCommitmentProtectionErrorSchema,
@@ -38,6 +41,10 @@ export {
 
 const ACTION_KEY = 'commerce.inventory.establish-commitment-protection';
 const MODULE_KEY = 'commerce.inventory';
+const COMMITMENT_PROTECTION_CHANGED_EVENT = 'commerce.inventory.commitment-protection-changed.v1';
+const domainEvents = {
+  [COMMITMENT_PROTECTION_CHANGED_EVENT]: CommitmentProtectionChangedOutboxPayloadSchema,
+} as const;
 
 const invalidLegalEntityScope = (payload: EstablishCommitmentProtectionPayload, cause: unknown) => {
   const failure = new CommitmentProtectionUnavailable({
@@ -53,7 +60,7 @@ const invalidLegalEntityScope = (payload: EstablishCommitmentProtectionPayload, 
 export const handleEstablishCommitmentProtection = Effect.fn('EstablishCommitmentProtectionAction.handle')(
   function* handle(
     payload: EstablishCommitmentProtectionPayload,
-    context: ActionHandlerContext<Readonly<Record<string, never>>, CommitmentProtectionService>,
+    context: ActionHandlerContext<typeof domainEvents, CommitmentProtectionService>,
   ) {
     if (context.scope.legalEntityId === undefined) {
       return yield* new CommitmentProtectionRejected({
@@ -82,6 +89,42 @@ export const handleEstablishCommitmentProtection = Effect.fn('EstablishCommitmen
       targetResourceId: payload.protectionRef.resourceId,
       targetResourceType: payload.protectionRef.resourceType,
     });
+    yield* Match.value(result).pipe(
+      Match.tag('PROTECTED', (protectedResult) => {
+        if (protectedResult.replayed || protectedResult.protection.revision !== 1) {
+          return Effect.void;
+        }
+        const eventPayload = {
+          ordering: {
+            _tag: 'OWNER_AGGREGATE_REVISION' as const,
+            revision: protectedResult.protection.revision,
+          },
+          ownerReadOrProofKey: 'commerce.inventory.api.commitment-protection-verification' as const,
+          state: protectedResult.protection.health.state,
+          subjectRef: protectedResult.protection.ref,
+        } satisfies CommitmentProtectionChangedOutboxPayload;
+        return context
+          .addDomainEvent({
+            eventType: COMMITMENT_PROTECTION_CHANGED_EVENT,
+            payloadJson: eventPayload,
+            producerModuleKey: MODULE_KEY,
+            subjectModuleKey: MODULE_KEY,
+            subjectResourceId: protectedResult.protection.ref.resourceId,
+            subjectResourceType: protectedResult.protection.ref.resourceType,
+          })
+          .pipe(
+            Effect.flatMap((event) =>
+              context.addOutboxMessage(
+                event,
+                createEstablishCommitmentProtectionCommerceInventoryCommitmentProtectionChangedV1OutboxMessage(
+                  eventPayload,
+                ),
+              ),
+            ),
+          );
+      }),
+      Match.orElse(() => Effect.void),
+    );
     return result;
   },
 );
@@ -107,7 +150,7 @@ export const establishCommitmentProtectionAction = defineAction(
       },
     })),
     domainErrorSchema: EstablishCommitmentProtectionErrorSchema,
-    domainEvents: {},
+    domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
       authorization: { kind: 'action_execution', provisioning: 'explicit' },
@@ -146,4 +189,9 @@ export const establishCommitmentProtectionAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
+export { createEstablishCommitmentProtectionCommerceInventoryCommitmentProtectionChangedV1OutboxMessage } from './establish-commitment-protection-commerce-inventory-commitment-protection-changed-v1.outbox-message.ts';
+export { EstablishCommitmentProtectionCommerceInventoryCommitmentProtectionChangedV1OutboxPayloadSchema } from './establish-commitment-protection-commerce-inventory-commitment-protection-changed-v1.outbox-message.ts';
+export { EstablishCommitmentProtectionCommerceInventoryCommitmentProtectionChangedV1OutboxProducerModuleKey } from './establish-commitment-protection-commerce-inventory-commitment-protection-changed-v1.outbox-message.ts';
+export { EstablishCommitmentProtectionCommerceInventoryCommitmentProtectionChangedV1OutboxTopic } from './establish-commitment-protection-commerce-inventory-commitment-protection-changed-v1.outbox-message.ts';
+export type { EstablishCommitmentProtectionCommerceInventoryCommitmentProtectionChangedV1OutboxPayload } from './establish-commitment-protection-commerce-inventory-commitment-protection-changed-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

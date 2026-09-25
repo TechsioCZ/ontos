@@ -9,6 +9,7 @@ import { expect, it } from 'effect-rstest';
 import { compareInventoryCatalog } from '../../src/database/catalog.ts';
 import { INVENTORY_SCHEMA_NAME, INVENTORY_TABLE_INVENTORY, INVENTORY_TABLES } from '../../src/database/schema.ts';
 import { inventoryBackendConfigurationImmutabilityTriggerContract } from '../../src/persistence/inventory-backend-configuration-table.ts';
+import { inventoryBindingCorrectionReconciliations } from '../../src/persistence/binding-correction-impact-table.ts';
 import {
   inventoryCatalogToStockBindingCompatibilityTriggerContract,
   inventoryCatalogToStockBindingHistoryImmutabilityContract,
@@ -38,6 +39,7 @@ import {
   inventoryObligationImmutabilityContract,
   inventoryObligationCoverageTriggerContract,
   inventoryObligationScopeTriggerContract,
+  inventoryObligationRequirements,
 } from '../../src/persistence/inventory-obligation-table.ts';
 import {
   finalizePhysicalStockEffectForWorkerRoutine,
@@ -92,7 +94,10 @@ import {
   inventoryStockCorrectionSourceEvidenceImmutabilityContract,
   inventoryStockCorrectionSourceEvidenceScopeVerifierContract,
 } from '../../src/persistence/stock-correction-source-evidence-table.ts';
-import { inventoryStockItemImmutabilityTriggerContract } from '../../src/persistence/stock-item-table.ts';
+import {
+  inventoryStockItemImmutabilityTriggerContract,
+  inventoryStockItems,
+} from '../../src/persistence/stock-item-table.ts';
 import {
   inventoryStockPositionImmutabilityTriggerContract,
   inventoryStockPositionOwnerConfigurationTriggerContract,
@@ -112,10 +117,11 @@ const requireMigrationFolder = (folder: string | undefined, suffix: string): str
   return folder ?? '';
 };
 
-it('owns thirty-four tenant-scoped Inventory tables with row-level security', () => {
+it('owns thirty-five tenant-scoped Inventory tables with row-level security', () => {
   expect(INVENTORY_SCHEMA_NAME).toBe('inventory');
   expect(INVENTORY_TABLE_INVENTORY).toEqual([
     'backend_configurations',
+    'binding_correction_reconciliations',
     'catalog_to_stock_binding_history',
     'catalog_to_stock_bindings',
     'commitment_protection_history',
@@ -168,6 +174,39 @@ it('owns thirty-four tenant-scoped Inventory tables with row-level security', ()
   }
 });
 
+it('owns deterministic binding-impact lookup and one durable committed mismatch observation per Requirement', () => {
+  const requirementConfig = getTableConfig(inventoryObligationRequirements);
+  expect(requirementConfig.indexes.map(({ config }) => config.name)).toContain(
+    'inventory_obligation_requirements_binding_impact_idx',
+  );
+
+  const reconciliationConfig = getTableConfig(inventoryBindingCorrectionReconciliations);
+  expect(reconciliationConfig.indexes.map(({ config }) => config.name)).toEqual([
+    'inventory_binding_correction_reconciliations_scope_id_uk',
+    'inventory_binding_correction_reconciliations_observation_uk',
+    'inventory_binding_correction_reconciliations_open_idx',
+  ]);
+  expect(reconciliationConfig.foreignKeys.map((key) => key.getName())).toEqual([
+    'inventory_binding_correction_reconciliations_requirement_fk',
+    'inventory_binding_correction_reconciliations_historical_item_fk',
+    'inventory_binding_correction_reconciliations_current_item_fk',
+  ]);
+  expect(reconciliationConfig.checks.map(({ name }) => name)).toEqual([
+    'inventory_binding_correction_reconciliations_meaning_ck',
+  ]);
+});
+
+it('allows historical Stock Items to coexist while keeping one Current item per exact meaning and Tenant', () => {
+  const stockItemConfig = getTableConfig(inventoryStockItems);
+  const exactMeaningIndex = stockItemConfig.indexes.find(
+    ({ config }) => config.name === 'inventory_stock_items_exact_meaning_uk',
+  );
+
+  expect(exactMeaningIndex?.config.unique).toBe(true);
+  expect(exactMeaningIndex?.config.where?.queryChunks).toBeDefined();
+  expect(exactMeaningIndex?.config.columns).toHaveLength(2);
+});
+
 // oxlint-disable-next-line eslint/complexity -- One migration contract keeps the serialized Inventory owner chain auditable in order; expires: 2027-03-31.
 it('ships generated owner history and explicit immutable-identity hardening', () => {
   const config = readFileSync(fileURLToPath(new URL('../../drizzle.config.ts', import.meta.url)), 'utf-8');
@@ -216,6 +255,21 @@ it('ships generated owner history and explicit immutable-identity hardening', ()
   );
   const reservationShortageImpactFolder = folders.find((entry) =>
     entry.endsWith('_inventory-reservation-shortage-impacts'),
+  );
+  const bindingCorrectionWorkerFenceFolder = folders.find((entry) =>
+    entry.endsWith('_replace-reservation-create-effect-finalizer'),
+  );
+  const bindingCorrectionImpactFolder = folders.find((entry) =>
+    entry.endsWith('_binding-correction-reconciliation-impact'),
+  );
+  const currentStockItemUniquenessFolder = folders.find((entry) =>
+    entry.endsWith('_current-stock-item-exact-meaning-uniqueness'),
+  );
+  const committedConfirmationRevisionFolder = folders.find((entry) =>
+    entry.endsWith('_allow-committed-confirmation-health-revisions'),
+  );
+  const committedProtectionRevisionFolder = folders.find((entry) =>
+    entry.endsWith('_allow-committed-protection-health-revisions'),
   );
   const foundation = readMigration(requireMigrationFolder(foundationFolder, '_inventory-foundation'));
   const hardening = readMigration(requireMigrationFolder(hardeningFolder, '_enforce-inventory-identities'));
@@ -270,10 +324,29 @@ it('ships generated owner history and explicit immutable-identity hardening', ()
   const reservationShortageImpact = readMigration(
     requireMigrationFolder(reservationShortageImpactFolder, '_inventory-reservation-shortage-impacts'),
   );
+  const bindingCorrectionWorkerFence = readMigration(
+    requireMigrationFolder(bindingCorrectionWorkerFenceFolder, '_replace-reservation-create-effect-finalizer'),
+  );
+  const bindingCorrectionImpact = readMigration(
+    requireMigrationFolder(bindingCorrectionImpactFolder, '_binding-correction-reconciliation-impact'),
+  );
+  const currentStockItemUniqueness = readMigration(
+    requireMigrationFolder(currentStockItemUniquenessFolder, '_current-stock-item-exact-meaning-uniqueness'),
+  );
+  const committedConfirmationRevision = readMigration(
+    requireMigrationFolder(committedConfirmationRevisionFolder, '_allow-committed-confirmation-health-revisions'),
+  );
+  const committedProtectionRevision = readMigration(
+    requireMigrationFolder(committedProtectionRevisionFolder, '_allow-committed-protection-health-revisions'),
+  );
 
   expect(foundation.match(/CREATE TABLE "inventory"\./gu)).toHaveLength(3);
   expect(foundation.match(/ENABLE ROW LEVEL SECURITY/gu)).toHaveLength(3);
   expect(foundation).not.toMatch(/REFERENCES "(?:core|auth|party|contacts|catalog)"\./u);
+  expect(currentStockItemUniqueness).toContain('DROP INDEX "inventory"."inventory_stock_items_exact_meaning_uk"');
+  expect(currentStockItemUniqueness).toContain(
+    'CREATE UNIQUE INDEX "inventory_stock_items_exact_meaning_uk" ON "inventory"."stock_items" ("tenant_id","exact_selection_meaning_id") WHERE "lifecycle_state" = \'CURRENT\'',
+  );
   expect(backend.match(/CREATE TABLE "inventory"\."backend_configurations"/gu)).toHaveLength(1);
   expect(backend.match(/ENABLE ROW LEVEL SECURITY/gu)).toHaveLength(1);
   expect(backend).not.toMatch(/REFERENCES "(?:core|auth|party|contacts|catalog)"\./u);
@@ -733,6 +806,22 @@ it('ships generated owner history and explicit immutable-identity hardening', ()
   expect(reservationCreateEffect).toContain('FOR UPDATE');
   expect(reservationCreateEffect.match(/REVOKE ALL ON FUNCTION/gu)).toHaveLength(3);
   expect(reservationCreateEffect.match(/GRANT EXECUTE ON FUNCTION/gu)).toHaveLength(2);
+  expect(bindingCorrectionWorkerFence).toContain(
+    'CREATE OR REPLACE FUNCTION "inventory"."finalize_reservation_create_effect_for_worker"',
+  );
+  expect(bindingCorrectionWorkerFence).toContain('FOR UPDATE');
+  expect(bindingCorrectionWorkerFence).toContain('inventory_reservation_create_effects_stale_binding_ck');
+  expect(bindingCorrectionWorkerFence).toContain('authority_exact_reservation_capability');
+  expect(bindingCorrectionWorkerFence).toContain('authority_stock_correction_capability');
+  expect(bindingCorrectionWorkerFence).toContain("request_json #>> '{authority,selection,exactReservationCapability}'");
+  expect(bindingCorrectionWorkerFence).toContain("request_json #>> '{authority,selection,stockCorrectionCapability}'");
+  expect(bindingCorrectionWorkerFence).not.toContain('CREATE TRIGGER');
+  expect(bindingCorrectionImpact).toContain(
+    'ALTER TABLE "inventory"."binding_correction_reconciliations" FORCE ROW LEVEL SECURITY',
+  );
+  expect(bindingCorrectionImpact).toContain(
+    'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE "inventory"."binding_correction_reconciliations" TO "ontos_runtime"',
+  );
   expect(sourceConflict.match(/CREATE TABLE "inventory"\./gu)).toHaveLength(1);
   expect(sourceConflict.match(/ENABLE ROW LEVEL SECURITY/gu)).toHaveLength(1);
   expect(sourceConflict.match(/ALTER TABLE .* FORCE ROW LEVEL SECURITY/gu)).toHaveLength(1);
@@ -809,6 +898,24 @@ it('ships generated owner history and explicit immutable-identity hardening', ()
     inventoryReservationConfirmationScopeContract.functionName.replace('.', '"."'),
   );
   expect(reservationConfirmation).toContain(inventoryReservationConfirmationScopeContract.triggerName);
+  expect(committedConfirmationRevision).toContain(
+    'CREATE OR REPLACE FUNCTION "inventory"."enforce_reservation_confirmation_scope"()',
+  );
+  expect(committedConfirmationRevision).toContain("reservation.lifecycle_meaning = 'COMMITTED_OBLIGATION'");
+  expect(committedConfirmationRevision).toContain("TG_OP = 'INSERT'");
+  expect(committedConfirmationRevision).toContain("TG_OP = 'UPDATE'");
+  expect(committedConfirmationRevision).not.toContain('CREATE TRIGGER');
+  expect(committedProtectionRevision).toContain(
+    'CREATE OR REPLACE FUNCTION "inventory"."enforce_commitment_protection_scope"()',
+  );
+  expect(committedProtectionRevision).toContain("reservation.lifecycle_meaning = 'COMMITTED_OBLIGATION'");
+  expect(committedProtectionRevision).toContain('reservation.attempt_id = NEW.attempt_id');
+  expect(committedProtectionRevision).toContain(
+    "(NEW.snapshot - 'health' - 'revision') IS DISTINCT FROM (OLD.snapshot - 'health' - 'revision')",
+  );
+  expect(committedProtectionRevision).toContain('NEW.authority_effect_id IS DISTINCT FROM OLD.authority_effect_id');
+  expect(committedProtectionRevision).not.toContain('reservation.origin_attempt_id');
+  expect(committedProtectionRevision).not.toContain('CREATE TRIGGER');
   for (const constraintName of Object.values(inventoryReservationConfirmationScopeContract.constraintNames)) {
     expect(reservationConfirmation).toContain(constraintName);
   }

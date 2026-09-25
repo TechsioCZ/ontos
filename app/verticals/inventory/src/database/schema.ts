@@ -3,6 +3,7 @@ import type { EmptyRelations, ExtractTablesFromSchema, ExtractTablesWithRelation
 import type { PgTable } from 'drizzle-orm/pg-core';
 
 import { inventoryBackendConfigurations } from '../persistence/inventory-backend-configuration-table.ts';
+import { inventoryBindingCorrectionReconciliations } from '../persistence/binding-correction-impact-table.ts';
 import {
   inventoryCatalogToStockBindingHistory,
   inventoryCatalogToStockBindings,
@@ -57,6 +58,7 @@ import {
 
 export { INVENTORY_SCHEMA_NAME, inventorySchema } from './inventory-schema.ts';
 export { inventoryBackendConfigurations } from '../persistence/inventory-backend-configuration-table.ts';
+export { inventoryBindingCorrectionReconciliations } from '../persistence/binding-correction-impact-table.ts';
 export {
   inventoryCatalogToStockBindingHistory,
   inventoryCatalogToStockBindings,
@@ -111,6 +113,7 @@ export {
 
 export const INVENTORY_TABLE_INVENTORY = [
   'backend_configurations',
+  'binding_correction_reconciliations',
   'catalog_to_stock_binding_history',
   'catalog_to_stock_bindings',
   'commitment_protection_history',
@@ -148,6 +151,7 @@ export const INVENTORY_TABLE_INVENTORY = [
 
 export const INVENTORY_TABLES: readonly PgTable[] = [
   inventoryBackendConfigurations,
+  inventoryBindingCorrectionReconciliations,
   inventoryCatalogToStockBindingHistory,
   inventoryCatalogToStockBindings,
   inventoryCommitmentProtectionHistory,
@@ -197,6 +201,7 @@ const inventoryDatabaseSchemaIdentity = {
 } as const;
 
 const inventoryDatabaseSchemaReservations = {
+  inventoryBindingCorrectionReconciliations,
   inventoryObligations,
   inventoryPhysicalStockEffects,
   inventoryReservationConfirmationHistory,

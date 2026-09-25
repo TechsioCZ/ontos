@@ -308,6 +308,7 @@ const makeHarness = Effect.gen(function* makeHarness() {
   const observations = yield* Ref.make<
     readonly ((request: InventoryReservationCreateRequest) => ReservationCreateBackendObservation)[]
   >([successfulObservation]);
+  const bindingLockCalls = yield* Ref.make<readonly (readonly string[])[]>([]);
   const ledger = makeInMemoryInventoryEffectLedger(timestamp);
   const backend: InventoryReservationCreateBackend = {
     create: (request) =>
@@ -328,6 +329,11 @@ const makeHarness = Effect.gen(function* makeHarness() {
     effects: effects.persistence,
     eligibility: { isEligible: () => Effect.succeed(true) },
     ledger,
+    lockBindingScopes: (scopes) =>
+      Ref.update(bindingLockCalls, (calls) => [
+        ...calls,
+        scopes.map(({ exactSelectionMeaning }) => `${exactSelectionMeaning.kind}:${exactSelectionMeaning.id}`),
+      ]),
     makeAllocationId: ({ effectId: id, positionId, purchaseDemandOccurrenceId }) =>
       Schema.decodeUnknownSync(StockAllocationIdSchema)(`${id}:${purchaseDemandOccurrenceId}:${positionId}`),
     makeMutationId: () => mutationId,
@@ -336,7 +342,7 @@ const makeHarness = Effect.gen(function* makeHarness() {
   const execution = makeInventoryReservationCreateExecutionService({ backend, effects: effects.persistence, ledger });
   const execute = (request: InventoryReservationCreateRequest) =>
     execution.execute({ legalEntityId, tenantId }, request);
-  return { backendCalls, effects, execute, observations, service };
+  return { backendCalls, bindingLockCalls, effects, execute, observations, service };
 });
 
 describe('Inventory Reservation create result', () => {
@@ -395,6 +401,18 @@ describe('Inventory Reservation create result', () => {
         expect(requirement?.allocations.every(({ stockItemRef }) => stockItemRef.resourceId === itemId)).toBe(true);
       }
       expect((yield* Ref.get(harness.effects.obligations)).size).toBe(1);
+    }),
+  );
+
+  it.effect('requests one bulk binding fence before resolving caller-ordered demands', () =>
+    Effect.gen(function* bulkFence() {
+      const harness = yield* makeHarness;
+      yield* harness.service.create(
+        payload([resolved('occurrence-a', '5'), resolved('occurrence-b', '5')]),
+        actionContext,
+      );
+
+      expect(yield* Ref.get(harness.bindingLockCalls)).toEqual([['PACKAGE_OPTION:catalog:package:meaning-1']]);
     }),
   );
 
@@ -602,6 +620,7 @@ describe('Inventory Reservation create result', () => {
         effects: harness.effects.persistence,
         eligibility: { isEligible: () => Effect.die('eligibility must not be re-resolved for exact replay') },
         ledger: makeInMemoryInventoryEffectLedger(timestamp),
+        lockBindingScopes: () => Effect.die('bindings must not be locked for exact replay'),
         makeAllocationId: () => Schema.decodeUnknownSync(StockAllocationIdSchema)('unused'),
         makeMutationId: () => mutationId,
         resolver: { resolve: () => Effect.die('demand must not be re-resolved for exact replay') },
@@ -683,6 +702,7 @@ describe('Inventory Reservation create result', () => {
         effects: persistence,
         eligibility: { isEligible: () => Effect.succeed(true) },
         ledger: makeInMemoryInventoryEffectLedger(timestamp),
+        lockBindingScopes: () => Effect.void,
         makeAllocationId: ({ effectId: id, positionId, purchaseDemandOccurrenceId }) =>
           Schema.decodeUnknownSync(StockAllocationIdSchema)(`${id}:${purchaseDemandOccurrenceId}:${positionId}`),
         makeMutationId: () => mutationId,
@@ -718,6 +738,7 @@ describe('Inventory Reservation create result', () => {
         effects: harness.effects.persistence,
         eligibility: { isEligible: () => Effect.succeed(true) },
         ledger: makeInMemoryInventoryEffectLedger(timestamp),
+        lockBindingScopes: () => Effect.void,
         makeAllocationId: () => Schema.decodeUnknownSync(StockAllocationIdSchema)('unused'),
         makeMutationId: () => mutationId,
         resolver: {
@@ -752,6 +773,7 @@ describe('Inventory Reservation create result', () => {
         effects: harness.effects.persistence,
         eligibility: { isEligible: () => Effect.succeed(true) },
         ledger: makeInMemoryInventoryEffectLedger(timestamp),
+        lockBindingScopes: () => Effect.void,
         makeAllocationId: () => Schema.decodeUnknownSync(StockAllocationIdSchema)('unused'),
         makeMutationId: () => mutationId,
         resolver: { resolve: () => Effect.die('resolver must not execute') },
@@ -841,7 +863,7 @@ describe('Inventory Reservation create result', () => {
       yield* harness.execute(staged.result.effect.request);
       const persisted = yield* harness.effects.persistence.read(effectId);
       const terminal = yield* Effect.fromOption(persisted).pipe(Effect.orDie);
-      const completions: unknown[] = [];
+      const completions: { readonly input: unknown; readonly topic: string }[] = [];
       const executions: InventoryReservationCreateRequest[] = [];
       const workerDomainEventId = '11111111-2222-4333-8444-555555555555';
       const routineInvoker: ScopedRoutineInvoker = {
@@ -850,9 +872,9 @@ describe('Inventory Reservation create result', () => {
       };
       const workerScope: OutboxWorkerLegalEntityScope = {
         completionPublisher: {
-          publish: (_definition, input) =>
+          publish: (definition, input) =>
             Effect.sync(() => {
-              completions.push(input);
+              completions.push({ input, topic: definition.topic });
               return { domainEventId: workerDomainEventId, outcome: 'PUBLISHED' as const };
             }),
         },
@@ -893,8 +915,16 @@ describe('Inventory Reservation create result', () => {
       expect(executions).toEqual([staged.result.effect.request]);
       expect(completions).toHaveLength(1);
       expect(completions[0]).toMatchObject({
+        topic: 'commerce.inventory.reservation-guarantee-changed.v1',
+      });
+      expect(completions[0]?.input).toMatchObject({
         completionId: mutationId,
-        payloadJson: terminal,
+        occurredAt: new Date(timestamp),
+        payloadJson: {
+          ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: mutationId },
+          state: 'ESTABLISHED',
+          subjectRef: staged.result.effect.request.reservation.ref,
+        },
         sourceActionInvocationId: actionInvocationId,
         subjectResourceId: reservationId,
       });
@@ -986,7 +1016,7 @@ describe('Inventory Reservation create result', () => {
 
       expect(publications.map(({ topic }) => topic)).toEqual([
         'commerce.inventory.inventory-reservation-create-requested.v1',
-        'commerce.inventory.inventory-reservation-create-completed.v1',
+        'commerce.inventory.reservation-guarantee-changed.v1',
       ]);
       expect(publications[0]?.input).toMatchObject({
         payloadJson: { request: staged.result.effect.request },
@@ -994,7 +1024,12 @@ describe('Inventory Reservation create result', () => {
       });
       expect(publications[1]?.input).toMatchObject({
         completionId: mutationId,
-        payloadJson: established,
+        occurredAt: new Date(timestamp),
+        payloadJson: {
+          ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: mutationId },
+          state: 'ESTABLISHED',
+          subjectRef: established.reservation.ref,
+        },
         sourceActionInvocationId: actionInvocationId,
       });
       expect(yield* Ref.get(attempts)).toBe(2);

@@ -9,6 +9,7 @@ import { createActionCollector } from '../../../../packages/core-runtime/src/act
 import type { ActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import type { DomainEventContractMap } from '../../../../packages/core-runtime/src/actions/events.ts';
 import {
+  PhysicalStockEffectIndeterminate,
   PhysicalStockEffectConflict,
   PhysicalStockEffectPayloadSchema,
   PhysicalStockEffectRequestSchema,
@@ -34,6 +35,7 @@ const locationId = '55555555-5555-4555-8555-555555555555';
 const unitId = '66666666-6666-4666-8666-666666666666';
 const configurationId = '77777777-7777-4777-8777-777777777777';
 const requestedAt = '2026-09-24T12:00:00.000Z';
+const appliedAt = '2026-09-24T12:05:00.000Z';
 
 const payload = Schema.decodeUnknownSync(PhysicalStockEffectPayloadSchema)({
   customerConfigurationId: 'customer-configuration:primary',
@@ -90,6 +92,26 @@ const requestFor = (kind: PhysicalStockEffectKind) =>
     },
   });
 
+const appliedFor = (kind: PhysicalStockEffectKind) => {
+  const request = requestFor(kind);
+  return {
+    _tag: 'APPLIED' as const,
+    evidence: {
+      appliedAt,
+      backend: request.backend,
+      backendConfigurationRef: request.backendConfigurationRef,
+      backendEvidenceRef: `erp:${kind.toLowerCase()}:42`,
+      backendId: request.backendId,
+      effectId: request.effectId,
+      issuer: 'erp-primary',
+      kind,
+      positionRef: request.positionRef,
+      quantity: request.quantity,
+    },
+    request,
+  };
+};
+
 const actionContext = <DomainEvents extends DomainEventContractMap>(
   collector: ActionCollector<DomainEvents>,
   services: PhysicalStockEffectRequestService,
@@ -138,7 +160,9 @@ const runStockReceiptAction = (effect: PhysicalStockEffectRecord, outcome: 'EXAC
 };
 
 const workerScope: OutboxWorkerLegalEntityScope = {
-  completionPublisher: { publish: () => Effect.die('unused test completion publisher') },
+  completionPublisher: {
+    publish: () => Effect.succeed({ domainEventId: effectId, outcome: 'PUBLISHED' as const }),
+  },
   legalEntityId,
   routineInvoker: { invoke: () => Effect.die('unused test routine invoker') },
   tenantId,
@@ -217,6 +241,7 @@ describe('Inventory physical effect Actions and workers', () => {
         execute: (_scope: OutboxWorkerLegalEntityScope, request: ReturnType<typeof requestFor>) =>
           Effect.sync(() => {
             executed.push(request.kind);
+            return appliedFor(request.kind);
           }),
       };
       const fanout = {
@@ -237,6 +262,93 @@ describe('Inventory physical effect Actions and workers', () => {
     }),
   );
 
+  for (const [kind, handle] of [
+    ['ISSUE', handleExecuteStockIssue],
+    ['RECEIPT', handleExecuteStockReceipt],
+  ] as const) {
+    it.effect(`${kind} worker publishes one replay-stable Stock Position evidence change from the applied effect`, () =>
+      Effect.gen(function* publishAppliedEffect() {
+        const publications: { readonly input: unknown; readonly topic: string }[] = [];
+        const publishingScope: OutboxWorkerLegalEntityScope = {
+          ...workerScope,
+          completionPublisher: {
+            publish: (definition, input) =>
+              Effect.sync(() => {
+                publications.push({ input, topic: definition.topic });
+                return {
+                  domainEventId: input.completionId,
+                  outcome: publications.length === 1 ? ('PUBLISHED' as const) : ('ALREADY_PUBLISHED' as const),
+                };
+              }),
+          },
+        };
+        const services = { execute: () => Effect.succeed(appliedFor(kind)) };
+        const fanout = {
+          forEachScope: (
+            _context: OutboxWorkerHandlerContext,
+            observe: (scope: OutboxWorkerLegalEntityScope) => Effect.Effect<void, unknown, unknown>,
+          ) => observe(publishingScope),
+        };
+        const worker = handle({ request: requestFor(kind) }, workerContext(kind)).pipe(
+          Effect.provideService(PhysicalStockEffects, services),
+          Effect.provideService(OutboxWorkerLegalEntityScopeFanout, fanout),
+        );
+
+        yield* worker;
+        yield* worker;
+
+        expect(publications).toHaveLength(2);
+        expect(publications[0]).toEqual(publications[1]);
+        expect(publications[0]).toMatchObject({ topic: 'commerce.inventory.stock-position-evidence-changed.v1' });
+        expect(publications[0]?.input).toMatchObject({
+          completionId: effectId,
+          occurredAt: new Date(appliedAt),
+          payloadJson: {
+            ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: effectId },
+            state: kind === 'ISSUE' ? 'ISSUE_APPLIED' : 'RECEIPT_APPLIED',
+            subjectRef: payload.positionRef,
+          },
+        });
+      }),
+    );
+  }
+
+  it.effect('does not publish a Stock Position evidence change for an indeterminate effect', () =>
+    Effect.gen(function* rejectIndeterminatePublication() {
+      let publications = 0;
+      const publishingScope: OutboxWorkerLegalEntityScope = {
+        ...workerScope,
+        completionPublisher: {
+          publish: () =>
+            Effect.sync(() => {
+              publications += 1;
+              return { domainEventId: effectId, outcome: 'PUBLISHED' as const };
+            }),
+        },
+      };
+      const failure = yield* handleExecuteStockIssue({ request: requestFor('ISSUE') }, workerContext('ISSUE')).pipe(
+        Effect.provideService(PhysicalStockEffects, {
+          execute: () =>
+            Effect.fail(
+              new PhysicalStockEffectIndeterminate({
+                code: 'physical_stock_effect_indeterminate',
+                effectId: payload.effectId,
+                reason: 'BACKEND_OUTCOME_UNKNOWN',
+                retryable: true,
+              }),
+            ),
+        }),
+        Effect.provideService(OutboxWorkerLegalEntityScopeFanout, {
+          forEachScope: (_context, observe) => observe(publishingScope),
+        }),
+        Effect.flip,
+      );
+
+      expect(failure.reason).toBe('BACKEND_OUTCOME_UNKNOWN');
+      expect(publications).toBe(0);
+    }),
+  );
+
   it.effect('workers fail closed before execution when delivery context mismatches', () =>
     Effect.gen(function* workerContextMismatch() {
       let executions = 0;
@@ -244,6 +356,7 @@ describe('Inventory physical effect Actions and workers', () => {
         execute: () =>
           Effect.sync(() => {
             executions += 1;
+            return appliedFor('ISSUE');
           }),
       };
       const context = { ...workerContext('ISSUE'), tenantId: 'aaaaaaaa-0000-4000-8000-000000000000' };

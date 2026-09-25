@@ -42,7 +42,9 @@ export const inventoryStockItems = inventorySchema.table.withRLS(
   },
   (table) => [
     uniqueIndex('inventory_stock_items_scope_id_uk').on(table.tenantId, table.stockItemId),
-    uniqueIndex('inventory_stock_items_exact_meaning_uk').on(table.tenantId, table.exactSelectionMeaningId),
+    uniqueIndex('inventory_stock_items_exact_meaning_uk')
+      .on(table.tenantId, table.exactSelectionMeaningId)
+      .where(sql`${table.lifecycleState} = 'CURRENT'`),
     index('inventory_stock_items_current_idx')
       .on(table.tenantId, table.lifecycleState)
       .where(sql`${table.lifecycleState} = 'CURRENT'`),

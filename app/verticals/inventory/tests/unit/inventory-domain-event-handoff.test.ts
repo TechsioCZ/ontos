@@ -3,90 +3,53 @@ import { describe, expect, it } from 'effect-rstest';
 
 import {
   InventoryCommittedEventNoticeSchema,
-  InventoryDomainEventDeliveryAcceptedSchema,
-  InventoryDomainEventDeliveryRejectedSchema,
   InventoryDomainEventFamilySchema,
+  InventoryImmutableOccurrenceOrderingSchema,
+  InventoryOwnerAggregateRevisionOrderingSchema,
   currentInventoryTruthRequirement,
-  evaluateInventoryDomainEventDelivery,
+  inventoryDomainEventDeliveryFailureBoundary,
   inventoryDomainEventFamilies,
   inventoryDomainEventFamilyByKey,
-  inventoryDomainEventDeliveryFailureBoundary,
 } from '../../shared/domain/inventory-domain-event-handoff.ts';
-import type {
-  InventoryCommittedEventNotice,
-  InventoryDomainEventConsumerState,
-  InventoryDomainEventDeliveryResult,
-  InventoryDomainEventFamilyKey,
-} from '../../shared/domain/inventory-domain-event-handoff.ts';
+import { OutboxPayloadSchema as CommitmentProtectionChangedPayloadSchema } from '../../shared/outbox/commerce-inventory-commitment-protection-changed-v1.ts';
+import { OutboxPayloadSchema as CommittedObligationChangedPayloadSchema } from '../../shared/outbox/commerce-inventory-committed-obligation-changed-v1.ts';
+import { OutboxPayloadSchema as ReservationGuaranteeChangedPayloadSchema } from '../../shared/outbox/commerce-inventory-reservation-guarantee-changed-v1.ts';
+import { OutboxPayloadSchema as StockPositionEvidenceChangedPayloadSchema } from '../../shared/outbox/commerce-inventory-stock-position-evidence-changed-v1.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const positionId = '22222222-2222-4222-8222-222222222222';
-const reservationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 
-const resourceTypeByFamily = {
-  COMMITMENT_PROTECTION_CHANGED: 'commerce.inventory.commitment-protection',
-  COMMITTED_OBLIGATION_CHANGED: 'commerce.inventory.inventory-reservation',
-  RESERVATION_GUARANTEE_CHANGED: 'commerce.inventory.inventory-reservation',
-  STOCK_POSITION_EVIDENCE_CHANGED: 'commerce.inventory.stock-position',
-} as const satisfies Readonly<Record<InventoryDomainEventFamilyKey, string>>;
-
-const resourceIdByFamily = {
-  COMMITMENT_PROTECTION_CHANGED: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-  COMMITTED_OBLIGATION_CHANGED: reservationId,
-  RESERVATION_GUARANTEE_CHANGED: reservationId,
-  STOCK_POSITION_EVIDENCE_CHANGED: positionId,
-} as const satisfies Readonly<Record<InventoryDomainEventFamilyKey, string>>;
-
-const defaultOrdering = (family: InventoryDomainEventFamilyKey) =>
-  inventoryDomainEventFamilyByKey[family].ordering === 'OWNER_AGGREGATE_REVISION'
-    ? { _tag: 'OWNER_AGGREGATE_REVISION', revision: 4 }
-    : { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: 'reservation-transition:create-effect-a' };
-
-const notice = (
-  family: InventoryDomainEventFamilyKey,
+const stockPositionNotice = (
   overrides: Partial<typeof InventoryCommittedEventNoticeSchema.Encoded> & {
-    readonly providerPayload?: { readonly token: string };
-    readonly subjectRevision?: number;
+    readonly consumerState?: unknown;
+    readonly processedEvents?: unknown;
+    readonly providerPayload?: unknown;
   } = {},
-): InventoryCommittedEventNotice => {
-  const descriptor = inventoryDomainEventFamilyByKey[family];
-  return Schema.decodeUnknownSync(InventoryCommittedEventNoticeSchema, { onExcessProperty: 'error' })({
+) =>
+  Schema.decodeUnknownSync(InventoryCommittedEventNoticeSchema, { onExcessProperty: 'error' })({
     correlationId: 'inventory-event-handoff:test',
     domainEventId: '33333333-3333-4333-8333-333333333333',
-    eventType: descriptor.eventType,
+    eventType: 'commerce.inventory.stock-position-evidence-changed.v1',
     occurredAt: '2026-09-25T10:00:00.000Z',
-    ordering: defaultOrdering(family),
+    ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 4 },
     producerModuleKey: 'commerce.inventory',
     producerRevision: 1,
     subjectRef: {
       moduleId: 'commerce.inventory',
-      resourceId: resourceIdByFamily[family],
-      resourceType: resourceTypeByFamily[family],
+      resourceId: positionId,
+      resourceType: 'commerce.inventory.stock-position',
       tenantId,
     },
     tenantSequenceNo: '42',
     ...overrides,
   });
-};
 
-const acceptedResult = (result: InventoryDomainEventDeliveryResult) =>
-  Schema.decodeUnknownSync(InventoryDomainEventDeliveryAcceptedSchema)(result);
-
-const rejectedResult = (result: InventoryDomainEventDeliveryResult) =>
-  Schema.decodeUnknownSync(InventoryDomainEventDeliveryRejectedSchema)(result);
-
-const deliver = (
-  family: InventoryDomainEventFamilyKey,
-  event: InventoryCommittedEventNotice,
-  state: InventoryDomainEventConsumerState | null,
-  consumerModuleKey = inventoryDomainEventFamilyByKey[family].consumer.moduleKey,
-) => evaluateInventoryDomainEventDelivery({ consumerModuleKey, event, family, state });
-
-describe('Inventory domain events and owner handoffs', () => {
-  it('owns exactly four canonical family mappings instead of accepting caller-authored descriptors', () => {
+describe('Inventory committed Domain Event producer contract', () => {
+  it('owns exactly four canonical family mappings with real consumer use-case metadata', () => {
     const decoded = inventoryDomainEventFamilies.map((entry) =>
       Schema.decodeUnknownSync(InventoryDomainEventFamilySchema, { onExcessProperty: 'error' })(entry),
     );
+
     expect(decoded.map(({ family }) => family)).toEqual([
       'RESERVATION_GUARANTEE_CHANGED',
       'COMMITMENT_PROTECTION_CHANGED',
@@ -94,7 +57,10 @@ describe('Inventory domain events and owner handoffs', () => {
       'COMMITTED_OBLIGATION_CHANGED',
     ]);
     expect(inventoryDomainEventFamilyByKey.STOCK_POSITION_EVIDENCE_CHANGED).toMatchObject({
-      consumer: { moduleKey: 'commerce.availability' },
+      consumer: {
+        behavior: 'INVALIDATE_AND_REREAD_OWNER',
+        moduleKey: 'commerce.availability',
+      },
       eventType: 'commerce.inventory.stock-position-evidence-changed.v1',
       ordering: 'OWNER_AGGREGATE_REVISION',
       ownerReadOrProofKey: 'commerce.inventory.api.current-stock-evidence-for-availability',
@@ -102,226 +68,210 @@ describe('Inventory domain events and owner handoffs', () => {
       subjectResourceTypes: ['commerce.inventory.stock-position'],
     });
     expect(new Set(decoded.map(({ eventType }) => eventType)).size).toBe(4);
-    expect(new Set(decoded.map(({ family }) => family)).size).toBe(4);
   });
 
-  it('keeps the committed notice minimal and rejects provider payloads', () => {
-    expect(notice('STOCK_POSITION_EVIDENCE_CHANGED')).not.toHaveProperty('providerPayload');
-    expect(() => notice('STOCK_POSITION_EVIDENCE_CHANGED', { providerPayload: { token: 'secret' } })).toThrow();
+  it('requires an event-type revision matching the producer schema revision', () => {
+    const family = inventoryDomainEventFamilyByKey.STOCK_POSITION_EVIDENCE_CHANGED;
+    expect(() =>
+      Schema.decodeUnknownSync(InventoryDomainEventFamilySchema, { onExcessProperty: 'error' })({
+        ...family,
+        eventType: 'commerce.inventory.stock-position-evidence-changed.v2',
+      }),
+    ).toThrow();
   });
 
-  it('treats delayed or silent delivery as no Current proof', () => {
+  it('keeps committed notices minimal and rejects provider or downstream state payloads', () => {
+    expect(stockPositionNotice()).not.toHaveProperty('providerPayload');
+    expect(() => stockPositionNotice({ providerPayload: { token: 'secret' } })).toThrow();
+    expect(() => stockPositionNotice({ processedEvents: [] })).toThrow();
+    expect(() => stockPositionNotice({ consumerState: { highestTenantSequenceNo: '42' } })).toThrow();
+  });
+
+  it('supports only the declared owner revision and immutable occurrence ordering evidence', () => {
+    const revisionOrdering = Schema.decodeUnknownSync(InventoryOwnerAggregateRevisionOrderingSchema)({
+      _tag: 'OWNER_AGGREGATE_REVISION',
+      revision: 7,
+    });
+    const occurrenceOrdering = Schema.decodeUnknownSync(InventoryImmutableOccurrenceOrderingSchema)({
+      _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY',
+      occurrenceId: 'reservation-create-effect:effect-a',
+    });
+    expect(Schema.is(InventoryOwnerAggregateRevisionOrderingSchema)(revisionOrdering)).toBe(true);
+    expect(revisionOrdering.revision).toBe(7);
+    expect(Schema.is(InventoryImmutableOccurrenceOrderingSchema)(occurrenceOrdering)).toBe(true);
+    expect(occurrenceOrdering.occurrenceId).toBe('reservation-create-effect:effect-a');
+    expect(() =>
+      Schema.decodeUnknownSync(InventoryOwnerAggregateRevisionOrderingSchema)({
+        _tag: 'OWNER_AGGREGATE_REVISION',
+        revision: 0,
+      }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeUnknownSync(InventoryImmutableOccurrenceOrderingSchema)({
+        _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY',
+        occurrenceId: '   ',
+      }),
+    ).toThrow();
+  });
+
+  it('makes owner-read and producer-commit boundaries explicit without implementing a consumer state machine', () => {
     expect(currentInventoryTruthRequirement()).toEqual({
       currentTruthSource: 'SUPPORTED_OWNER_READ_OR_PROOF',
       eventSilenceIsCurrentProof: false,
       retainedEventIsCurrentGuarantee: false,
     });
-  });
-
-  it('derives the exact canonical owner read for a new family event', () => {
-    const result = acceptedResult(
-      deliver('STOCK_POSITION_EVIDENCE_CHANGED', notice('STOCK_POSITION_EVIDENCE_CHANGED'), null),
-    );
-    expect(result).toMatchObject({
-      consumerBusinessEffectAllowedFromEventAlone: false,
-      disposition: 'INVALIDATE_AND_REREAD_OWNER',
-      ownerReadOrProofKey: 'commerce.inventory.api.current-stock-evidence-for-availability',
-      ownerReadRequired: true,
-      producerFactMutationRequired: false,
-      retainedEventIsCurrentGuarantee: false,
-    });
-  });
-
-  it('processes A then B and suppresses exact A replay without another invalidation', () => {
-    const eventA = notice('STOCK_POSITION_EVIDENCE_CHANGED');
-    const afterA = acceptedResult(deliver('STOCK_POSITION_EVIDENCE_CHANGED', eventA, null));
-    const eventB = notice('STOCK_POSITION_EVIDENCE_CHANGED', {
-      domainEventId: '44444444-4444-4444-8444-444444444444',
-      ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 5 },
-      tenantSequenceNo: '43',
-    });
-    const afterB = acceptedResult(deliver('STOCK_POSITION_EVIDENCE_CHANGED', eventB, afterA.nextState));
-    const replayA = acceptedResult(deliver('STOCK_POSITION_EVIDENCE_CHANGED', eventA, afterB.nextState));
-
-    expect(afterB).toMatchObject({ disposition: 'INVALIDATE_AND_REREAD_OWNER', ownerReadRequired: true });
-    expect(afterB.nextState).toMatchObject({ highestTenantSequenceNo: 43n, latestOwnerRevision: 5 });
-    expect(replayA).toMatchObject({ disposition: 'DUPLICATE_IGNORED', ownerReadRequired: false });
-    expect(replayA.nextState).toEqual(afterB.nextState);
-  });
-
-  it('suppresses an unseen older transport sequence after a newer event without another invalidation', () => {
-    const afterA = acceptedResult(
-      deliver('STOCK_POSITION_EVIDENCE_CHANGED', notice('STOCK_POSITION_EVIDENCE_CHANGED'), null),
-    );
-    const afterB = acceptedResult(
-      deliver(
-        'STOCK_POSITION_EVIDENCE_CHANGED',
-        notice('STOCK_POSITION_EVIDENCE_CHANGED', {
-          domainEventId: '44444444-4444-4444-8444-444444444444',
-          ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 5 },
-          tenantSequenceNo: '43',
-        }),
-        afterA.nextState,
-      ),
-    );
-    const older = acceptedResult(
-      deliver(
-        'STOCK_POSITION_EVIDENCE_CHANGED',
-        notice('STOCK_POSITION_EVIDENCE_CHANGED', {
-          domainEventId: '55555555-5555-4555-8555-555555555555',
-          ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 3 },
-          tenantSequenceNo: '41',
-        }),
-        afterB.nextState,
-      ),
-    );
-
-    expect(older).toMatchObject({ disposition: 'OUT_OF_ORDER_IGNORED', ownerReadRequired: false });
-    expect(older.nextState).toMatchObject({ highestTenantSequenceNo: 43n, latestOwnerRevision: 5 });
-  });
-
-  it('rejects the same domain event identity paired with a changed tenant sequence', () => {
-    const afterA = acceptedResult(
-      deliver('STOCK_POSITION_EVIDENCE_CHANGED', notice('STOCK_POSITION_EVIDENCE_CHANGED'), null),
-    );
-    const conflict = rejectedResult(
-      deliver(
-        'STOCK_POSITION_EVIDENCE_CHANGED',
-        notice('STOCK_POSITION_EVIDENCE_CHANGED', {
-          ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 6 },
-          tenantSequenceNo: '44',
-        }),
-        afterA.nextState,
-      ),
-    );
-    expect(conflict.reason).toBe('DOMAIN_EVENT_SEQUENCE_CONFLICT');
-  });
-
-  it('rejects a conflicting event identity at an already-observed tenant sequence', () => {
-    const afterA = acceptedResult(
-      deliver('STOCK_POSITION_EVIDENCE_CHANGED', notice('STOCK_POSITION_EVIDENCE_CHANGED'), null),
-    );
-    const conflict = rejectedResult(
-      deliver(
-        'STOCK_POSITION_EVIDENCE_CHANGED',
-        notice('STOCK_POSITION_EVIDENCE_CHANGED', {
-          domainEventId: '66666666-6666-4666-8666-666666666666',
-          ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 6 },
-        }),
-        afterA.nextState,
-      ),
-    );
-    expect(conflict.reason).toBe('TENANT_SEQUENCE_IDENTITY_CONFLICT');
-  });
-
-  it('rejects a second event identity claiming an already-observed owner revision', () => {
-    const afterA = acceptedResult(
-      deliver('STOCK_POSITION_EVIDENCE_CHANGED', notice('STOCK_POSITION_EVIDENCE_CHANGED'), null),
-    );
-    const conflict = rejectedResult(
-      deliver(
-        'STOCK_POSITION_EVIDENCE_CHANGED',
-        notice('STOCK_POSITION_EVIDENCE_CHANGED', {
-          domainEventId: '77777777-7777-4777-8777-777777777777',
-          tenantSequenceNo: '44',
-        }),
-        afterA.nextState,
-      ),
-    );
-    expect(conflict.reason).toBe('REVISION_IDENTITY_CONFLICT');
-  });
-
-  it('orders Reservation transitions by immutable occurrence and event sequence without subjectRevision', () => {
-    const eventA = notice('RESERVATION_GUARANTEE_CHANGED', {
-      ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: 'reservation-create-effect:a' },
-      tenantSequenceNo: '50',
-    });
-    const afterA = acceptedResult(deliver('RESERVATION_GUARANTEE_CHANGED', eventA, null));
-    const eventB = notice('RESERVATION_GUARANTEE_CHANGED', {
-      domainEventId: '88888888-8888-4888-8888-888888888888',
-      ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: 'reservation-release-effect:b' },
-      tenantSequenceNo: '51',
-    });
-    const afterB = acceptedResult(deliver('RESERVATION_GUARANTEE_CHANGED', eventB, afterA.nextState));
-    const replayA = acceptedResult(deliver('RESERVATION_GUARANTEE_CHANGED', eventA, afterB.nextState));
-
-    expect(eventA).not.toHaveProperty('subjectRevision');
-    expect(() => notice('RESERVATION_GUARANTEE_CHANGED', { subjectRevision: 1 })).toThrow();
-    expect(afterB).toMatchObject({ disposition: 'INVALIDATE_AND_REREAD_OWNER', ownerReadRequired: true });
-    expect(afterB.nextState.latestOwnerRevision).toBeUndefined();
-    expect(replayA).toMatchObject({ disposition: 'DUPLICATE_IGNORED', ownerReadRequired: false });
-
-    const occurrenceConflict = rejectedResult(
-      deliver(
-        'RESERVATION_GUARANTEE_CHANGED',
-        notice('RESERVATION_GUARANTEE_CHANGED', {
-          domainEventId: '99999999-9999-4999-8999-999999999999',
-          ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: 'reservation-create-effect:a' },
-          tenantSequenceNo: '52',
-        }),
-        afterB.nextState,
-      ),
-    );
-    expect(occurrenceConflict.reason).toBe('OCCURRENCE_IDENTITY_CONFLICT');
-  });
-
-  it('fails closed on every attempted canonical-family bypass', () => {
-    const canonical = notice('STOCK_POSITION_EVIDENCE_CHANGED');
-    expect(
-      rejectedResult(
-        deliver(
-          'STOCK_POSITION_EVIDENCE_CHANGED',
-          notice('STOCK_POSITION_EVIDENCE_CHANGED', {
-            eventType: 'commerce.inventory.reservation-guarantee-changed.v1',
-          }),
-          null,
-        ),
-      ).reason,
-    ).toBe('EVENT_FAMILY_MISMATCH');
-    expect(rejectedResult(deliver('STOCK_POSITION_EVIDENCE_CHANGED', canonical, null, 'commerce.order')).reason).toBe(
-      'CONSUMER_MISMATCH',
-    );
-    expect(
-      rejectedResult(
-        deliver(
-          'STOCK_POSITION_EVIDENCE_CHANGED',
-          notice('STOCK_POSITION_EVIDENCE_CHANGED', {
-            subjectRef: {
-              ...canonical.subjectRef,
-              resourceId: reservationId,
-              resourceType: 'commerce.inventory.inventory-reservation',
-            },
-          }),
-          null,
-        ),
-      ).reason,
-    ).toBe('SUBJECT_IDENTITY_MISMATCH');
-    expect(
-      rejectedResult(
-        deliver(
-          'STOCK_POSITION_EVIDENCE_CHANGED',
-          notice('STOCK_POSITION_EVIDENCE_CHANGED', {
-            ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: 'bypass' },
-          }),
-          null,
-        ),
-      ).reason,
-    ).toBe('ORDERING_EVIDENCE_MISMATCH');
-    expect(
-      rejectedResult(
-        deliver(
-          'STOCK_POSITION_EVIDENCE_CHANGED',
-          notice('STOCK_POSITION_EVIDENCE_CHANGED', { producerRevision: 2 }),
-          null,
-        ),
-      ).reason,
-    ).toBe('PRODUCER_MISMATCH');
-  });
-
-  it('retries delivery separately and never rolls back the committed producer transaction', () => {
     expect(inventoryDomainEventDeliveryFailureBoundary).toEqual({
       producerTransactionRolledBack: false,
       retry: 'SEPARATE_DELIVERY_RETRY',
     });
+  });
+
+  it('accepts only the minimal Reservation guarantee notice', () => {
+    const payload = {
+      ordering: {
+        _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY',
+        occurrenceId: 'reservation-create-effect:55555555-5555-4555-8555-555555555555',
+      },
+      ownerReadOrProofKey: 'commerce.inventory.api.inventory-reservation-detail',
+      state: 'ESTABLISHED',
+      subjectRef: {
+        moduleId: 'commerce.inventory',
+        resourceId: '44444444-4444-4444-8444-444444444444',
+        resourceType: 'commerce.inventory.inventory-reservation',
+        tenantId,
+      },
+    } as const;
+    const decode = Schema.decodeUnknownSync(ReservationGuaranteeChangedPayloadSchema, {
+      onExcessProperty: 'error',
+    });
+
+    expect(decode(payload)).toEqual(payload);
+    expect(decode({ ...payload, state: 'RELEASED' })).toMatchObject({ state: 'RELEASED' });
+    expect(decode({ ...payload, state: 'AT_RISK' })).toMatchObject({ state: 'AT_RISK' });
+    expect(() => decode({ ...payload, state: 'PROTECTED' })).toThrow();
+    expect(() =>
+      decode({
+        ordering: payload.ordering,
+        state: payload.state,
+        subjectRef: payload.subjectRef,
+      }),
+    ).toThrow();
+    expect(() => decode({ ...payload, providerPayload: { token: 'secret' } })).toThrow();
+  });
+
+  it('accepts only revision-ordered Commitment Protection notices', () => {
+    const payload = {
+      ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 2 },
+      ownerReadOrProofKey: 'commerce.inventory.api.commitment-protection-verification',
+      state: 'AT_RISK',
+      subjectRef: {
+        moduleId: 'commerce.inventory',
+        resourceId: '55555555-5555-4555-8555-555555555555',
+        resourceType: 'commerce.inventory.commitment-protection',
+        tenantId,
+      },
+    } as const;
+    const decode = Schema.decodeUnknownSync(CommitmentProtectionChangedPayloadSchema, {
+      onExcessProperty: 'error',
+    });
+
+    expect(decode(payload)).toEqual(payload);
+    expect(decode({ ...payload, state: 'PROTECTED' })).toMatchObject({ state: 'PROTECTED' });
+    expect(() =>
+      decode({
+        ...payload,
+        ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: 'effect-a' },
+      }),
+    ).toThrow();
+    expect(() => decode({ ...payload, ownerReadOrProofKey: 'commerce.inventory.api.unknown' })).toThrow();
+  });
+
+  it('binds Stock Position change kind to owner revision or immutable effect ordering', () => {
+    const subjectRef = {
+      moduleId: 'commerce.inventory',
+      resourceId: positionId,
+      resourceType: 'commerce.inventory.stock-position',
+      tenantId,
+    } as const;
+    const common = {
+      ownerReadOrProofKey: 'commerce.inventory.api.current-stock-evidence-for-availability',
+      subjectRef,
+    } as const;
+    const decode = Schema.decodeUnknownSync(StockPositionEvidenceChangedPayloadSchema, {
+      onExcessProperty: 'error',
+    });
+
+    expect(
+      decode({
+        ...common,
+        ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 7 },
+        state: 'CORRECTED',
+      }),
+    ).toMatchObject({ state: 'CORRECTED' });
+    expect(
+      decode({
+        ...common,
+        ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 8 },
+        state: 'INDETERMINATE',
+      }),
+    ).toMatchObject({ state: 'INDETERMINATE' });
+    expect(
+      decode({
+        ...common,
+        ordering: {
+          _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY',
+          occurrenceId: 'physical-stock-effect:66666666-6666-4666-8666-666666666666',
+        },
+        state: 'RECEIPT_APPLIED',
+      }),
+    ).toMatchObject({ state: 'RECEIPT_APPLIED' });
+    expect(
+      decode({
+        ...common,
+        ordering: {
+          _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY',
+          occurrenceId: 'physical-stock-effect:77777777-7777-4777-8777-777777777777',
+        },
+        state: 'ISSUE_APPLIED',
+      }),
+    ).toMatchObject({ state: 'ISSUE_APPLIED' });
+    expect(() =>
+      decode({
+        ...common,
+        ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 7 },
+        state: 'ISSUE_APPLIED',
+      }),
+    ).toThrow();
+    expect(() =>
+      decode({
+        ...common,
+        ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: 'effect-a' },
+        state: 'CORRECTED',
+      }),
+    ).toThrow();
+  });
+
+  it('accepts only immutable reconciliation-required committed-obligation notices', () => {
+    const payload = {
+      ordering: {
+        _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY',
+        occurrenceId: 'binding-correction-debt:77777777-7777-4777-8777-777777777777',
+      },
+      ownerReadOrProofKey: 'commerce.inventory.api.inventory-reconciliation-evidence',
+      state: 'RECONCILIATION_REQUIRED',
+      subjectRef: {
+        moduleId: 'commerce.inventory',
+        resourceId: '77777777-7777-4777-8777-777777777777',
+        resourceType: 'commerce.inventory.imported-committed-obligation',
+        tenantId,
+      },
+    } as const;
+    const decode = Schema.decodeUnknownSync(CommittedObligationChangedPayloadSchema, {
+      onExcessProperty: 'error',
+    });
+
+    expect(decode(payload)).toEqual(payload);
+    expect(() => decode({ ...payload, state: 'COMMITTED' })).toThrow();
+    expect(() => decode({ ...payload, consumerState: { reconciled: false } })).toThrow();
   });
 });

@@ -93,6 +93,7 @@ export const makeDrizzleStockItemRepository = (transaction: ScopedTransaction): 
         and(
           eq(inventoryStockItems.tenantId, tenantId),
           eq(inventoryStockItems.exactSelectionMeaningId, exactSelectionMeaningId),
+          eq(inventoryStockItems.lifecycleState, 'CURRENT'),
         ),
       )
       .limit(1)

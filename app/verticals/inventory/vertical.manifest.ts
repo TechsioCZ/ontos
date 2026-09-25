@@ -5,7 +5,6 @@ import {
   defineOntosModuleManifest,
   ShellNavigationContributionSchema,
   ShellPageContributionSchema,
-  ShellPublicComponentContributionSchema,
   ShellReportContributionSchema,
   ShellSearchContributionSchema,
 } from '@app/core-runtime';
@@ -54,7 +53,6 @@ import { inventoryStockCorrectPermission } from './shared/permissions/inventory-
 import { inventoryStockIssuePermission } from './shared/permissions/inventory-stock-issue.ts';
 import { inventoryStockReceiptPermission } from './shared/permissions/inventory-stock-receipt.ts';
 import { inventoryStockSharingEligibilityManagePermission } from './shared/permissions/inventory-stock-sharing-eligibility-manage.ts';
-import InventoryWidget from './src/components/inventory-widget.tsx';
 import { recoverInventoryEffectAction } from './src/actions/recover-inventory-effect.action.ts';
 import { releaseInventoryReservationAction } from './src/actions/release-inventory-reservation.action.ts';
 import { reservationConfirmationResourceDescriptor } from './shared/resources/reservation-confirmation.ts';
@@ -72,7 +70,6 @@ import { stockSharingEligibilityResourceDescriptor } from './shared/resources/st
 
 type NavigationContributionInput = typeof ShellNavigationContributionSchema.Encoded;
 type PageContributionInput = typeof ShellPageContributionSchema.Encoded;
-type PublicComponentContributionInput = typeof ShellPublicComponentContributionSchema.Encoded;
 type ReportContributionInput = typeof ShellReportContributionSchema.Encoded;
 type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
 
@@ -80,8 +77,6 @@ const _navigationContribution = (value: NavigationContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const _pageContribution = (value: PageContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
-const publicComponentContribution = (value: PublicComponentContributionInput) =>
-  Result.getOrThrow(Schema.decodeResult(ShellPublicComponentContributionSchema)(value));
 const _reportContribution = (value: ReportContributionInput) =>
   Result.getOrThrow(Schema.decodeResult(ShellReportContributionSchema)(value));
 const _searchContribution = (value: SearchContributionInput) =>
@@ -159,7 +154,6 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
     ],
     components: {
       // <generated-module-manifest-components>
-      'inventory-widget': InventoryWidget,
       // </generated-module-manifest-components>
     },
     events: [],
@@ -199,18 +193,6 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       ],
       publicComponents: [
         // <generated-module-shell-components>
-        publicComponentContribution({
-          componentKey: 'commerce.inventory.inventory-widget',
-          contributionKey: 'commerce.inventory.component.inventory-widget',
-          entrypoint: {
-            access: 'read',
-            authorization: { kind: 'authenticated_principal' },
-            entrypointKey: 'commerce.inventory.component.inventory-widget',
-            moduleKey: 'commerce.inventory',
-            role: 'public_component',
-            scope: 'tenant',
-          },
-        }),
         // </generated-module-shell-components>
       ],
       reports: [

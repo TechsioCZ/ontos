@@ -43,6 +43,7 @@ import {
 } from './inventory-effect-ledger.service.ts';
 
 type RequestError = PhysicalStockEffectConflict | PhysicalStockEffectRejected | PhysicalStockEffectUnavailable;
+type AppliedPhysicalStockEffect = typeof AppliedPhysicalStockEffectSchema.Type;
 type ExecutionError =
   | PhysicalStockEffectConflict
   | PhysicalStockEffectIndeterminate
@@ -147,7 +148,7 @@ export interface PhysicalStockEffectsService {
   readonly execute: (
     scope: OutboxWorkerLegalEntityScope,
     request: PhysicalStockEffectRequest,
-  ) => EffectType.Effect<void, ExecutionError>;
+  ) => EffectType.Effect<AppliedPhysicalStockEffect, ExecutionError>;
 }
 
 export class PhysicalStockEffects extends Context.Service<PhysicalStockEffects, PhysicalStockEffectsService>()(
@@ -318,14 +319,15 @@ export const makePhysicalStockEffectsService = (
           ledgerRecord.record,
           physicalStockLedgerResolution(current),
         ).pipe(Effect.mapError((cause) => mapLedgerError(request.effectId, cause)));
-        return yield* impacts.evaluate({
+        yield* impacts.evaluate({
           changeId: current.request.effectId,
           changeKind: current.request.kind,
           occurredAt: current.evidence.appliedAt,
           positionRef: current.request.positionRef,
         });
+        return current;
       }
-      return yield* Effect.void;
+      return yield* unavailable(request.effectId, 'Physical stock effect did not reach an applied terminal state');
     }
     const outcome: InventoryBackendEffectOutcome = yield* backend
       .execute(request)
@@ -347,13 +349,15 @@ export const makePhysicalStockEffectsService = (
       Effect.mapError((cause) => mapLedgerError(request.effectId, cause)),
     );
     return yield* Match.value(saved).pipe(
-      Match.tag('APPLIED', ({ evidence, request: appliedRequest }) =>
-        impacts.evaluate({
-          changeId: appliedRequest.effectId,
-          changeKind: appliedRequest.kind,
-          occurredAt: evidence.appliedAt,
-          positionRef: appliedRequest.positionRef,
-        }),
+      Match.tag('APPLIED', (applied) =>
+        impacts
+          .evaluate({
+            changeId: applied.request.effectId,
+            changeKind: applied.request.kind,
+            occurredAt: applied.evidence.appliedAt,
+            positionRef: applied.request.positionRef,
+          })
+          .pipe(Effect.as(applied)),
       ),
       Match.tag('REJECTED', ({ reason }) => Effect.fail(rejected(request.effectId, reason))),
       Match.tag('REQUESTED', () =>

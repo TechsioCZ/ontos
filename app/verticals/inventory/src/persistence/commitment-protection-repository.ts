@@ -14,6 +14,7 @@ import type {
   EstablishCommitmentProtectionError,
 } from '../../shared/domain/commitment-protection.ts';
 import { ReservationAuthorityEffectIdSchema } from '../../shared/domain/reservation-issuer-failure-fields.ts';
+import { currentBindingRequirementsMatch, lockBindingCorrectionScopes } from './binding-correction-serialization.ts';
 import {
   inventoryCommitmentProtectionHistory,
   inventoryCommitmentProtectionScopeContract,
@@ -231,6 +232,57 @@ export const commitmentProtectionPersistenceForScope = (
     'CommitmentProtectionPersistence.createOrRead',
   )(function* createOrReadProtection(candidate) {
     yield* requireCandidateTenant(candidate);
+    const bindingRequirements = candidate.confirmation.reservation.requirements.map((requirement) => ({
+      bindingId: requirement.bindingRef.resourceId,
+      exactSelectionMeaning: requirement.exactSelectionMeaning,
+      stockItemId: requirement.stockItem.stockItemRef.resourceId,
+      tenantId: candidate.ref.tenantId,
+    }));
+    yield* lockBindingCorrectionScopes(transaction, bindingRequirements).pipe(
+      Effect.mapError((cause) => unavailable(candidate.authorityEvidence.effectId, cause)),
+    );
+    const [existingBeforeInsert] = yield* transaction
+      .select()
+      .from(inventoryCommitmentProtections)
+      .where(
+        and(
+          eq(inventoryCommitmentProtections.tenantId, operationScope.tenantId),
+          or(
+            eq(inventoryCommitmentProtections.protectionId, candidate.ref.resourceId),
+            and(
+              eq(inventoryCommitmentProtections.reservationId, candidate.confirmation.reservation.ref.resourceId),
+              eq(inventoryCommitmentProtections.attemptId, candidate.confirmation.reservation.origin.attemptId),
+            ),
+            eq(inventoryCommitmentProtections.confirmationId, candidate.confirmation.ref.resourceId),
+            eq(inventoryCommitmentProtections.authorityEffectId, candidate.authorityEvidence.effectId),
+          ),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError((cause) => unavailable(candidate.authorityEvidence.effectId, cause)));
+    if (existingBeforeInsert !== undefined) {
+      if (
+        existingBeforeInsert.reservationId === candidate.confirmation.reservation.ref.resourceId &&
+        existingBeforeInsert.attemptId === candidate.confirmation.reservation.origin.attemptId &&
+        existingBeforeInsert.protectionId !== candidate.ref.resourceId
+      ) {
+        return yield* rejected(candidate.authorityEvidence.effectId, 'SIBLING_PROTECTION_FORBIDDEN');
+      }
+      if (
+        existingBeforeInsert.protectionId !== candidate.ref.resourceId ||
+        existingBeforeInsert.confirmationId !== candidate.confirmation.ref.resourceId ||
+        existingBeforeInsert.authorityEffectId !== candidate.authorityEvidence.effectId
+      ) {
+        return yield* rejected(candidate.authorityEvidence.effectId, 'PROTECTION_IDENTITY_CONFLICT');
+      }
+      return { outcome: 'EXISTING' as const, protection: yield* decodeRow(existingBeforeInsert) };
+    }
+    const bindingsRemainCurrent = yield* currentBindingRequirementsMatch(transaction, bindingRequirements).pipe(
+      Effect.mapError((cause) => unavailable(candidate.authorityEvidence.effectId, cause)),
+    );
+    if (!bindingsRemainCurrent) {
+      return yield* rejected(candidate.authorityEvidence.effectId, 'CONFIRMATION_SCOPE_MISMATCH');
+    }
     const [inserted] = yield* transaction
       .insert(inventoryCommitmentProtections)
       .values(valuesFor(candidate))

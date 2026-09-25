@@ -14,6 +14,7 @@ import type {
   ReservationConfirmationPersistence,
 } from '../../shared/domain/reservation-confirmation.ts';
 import type { ReservationConfirmationRef } from '../../shared/resources/reservation-confirmation.ts';
+import { currentBindingRequirementsMatch, lockBindingCorrectionScopes } from './binding-correction-serialization.ts';
 import {
   inventoryReservationConfirmationHistory,
   inventoryReservationConfirmationScopeContract,
@@ -188,6 +189,40 @@ export const reservationConfirmationPersistenceForScope = (
     'ReservationConfirmationPersistence.createOrRead',
   )(function* createOrReadConfirmation(candidate) {
     yield* requireTenant(candidate.ref.tenantId, candidate.ref);
+    const bindingRequirements = candidate.reservation.requirements.map((requirement) => ({
+      bindingId: requirement.bindingRef.resourceId,
+      exactSelectionMeaning: requirement.exactSelectionMeaning,
+      stockItemId: requirement.stockItem.stockItemRef.resourceId,
+      tenantId: candidate.ref.tenantId,
+    }));
+    yield* lockBindingCorrectionScopes(transaction, bindingRequirements).pipe(Effect.mapError(unavailable));
+    const [existingBeforeInsert] = yield* transaction
+      .select()
+      .from(inventoryReservationConfirmations)
+      .where(
+        and(
+          eq(inventoryReservationConfirmations.tenantId, operationScope.tenantId),
+          or(
+            eq(inventoryReservationConfirmations.confirmationId, candidate.ref.resourceId),
+            and(
+              eq(inventoryReservationConfirmations.reservationId, candidate.reservation.ref.resourceId),
+              eq(inventoryReservationConfirmations.attemptId, candidate.reservation.origin.attemptId),
+            ),
+            eq(inventoryReservationConfirmations.authorityEffectId, candidate.authorityEvidence.effectId),
+          ),
+        ),
+      )
+      .limit(1)
+      .pipe(Effect.mapError(unavailable));
+    if (existingBeforeInsert !== undefined) {
+      return { confirmation: yield* decodeRow(existingBeforeInsert), outcome: 'EXISTING' as const };
+    }
+    const bindingsRemainCurrent = yield* currentBindingRequirementsMatch(transaction, bindingRequirements).pipe(
+      Effect.mapError(unavailable),
+    );
+    if (!bindingsRemainCurrent) {
+      return yield* rejected('RESERVATION_SCOPE_MISMATCH', candidate.ref);
+    }
     const [inserted] = yield* transaction
       .insert(inventoryReservationConfirmations)
       .values(valuesFor(candidate))

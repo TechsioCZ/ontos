@@ -1,7 +1,7 @@
 import type { Effect as EffectType, Option } from 'effect';
 import { Schema } from 'effect';
 
-import { CatalogToStockBindingSchema, PurchaseDemandOccurrenceIdSchema } from './catalog-to-stock-binding.ts';
+import { PurchaseDemandOccurrenceIdSchema } from './catalog-to-stock-binding.ts';
 import type { CatalogToStockBinding } from './catalog-to-stock-binding.ts';
 import {
   ImportedCommittedObligationSchema,
@@ -105,16 +105,3 @@ export interface InventoryPostCommitBindingAssessmentInput {
   readonly obligation: ImportedCommittedObligation | RuntimeCommittedInventoryObligation;
   readonly purchaseDemandOccurrenceId: typeof PurchaseDemandOccurrenceIdSchema.Type;
 }
-
-export const InventoryPostCommitBindingMismatchAssessmentSchema = Schema.Struct({
-  currentBinding: CatalogToStockBindingSchema,
-  currentStockItemRef: CatalogToStockBindingSchema.fields.stockItemRef,
-  exception: Schema.Literals(['NONE', 'POST_COMMIT_BINDING_MISMATCH']),
-  historicalStockItemRef: CatalogToStockBindingSchema.fields.stockItemRef,
-  obligation: PostCommitInventoryObligationSchema,
-  orderRolledBack: Schema.Literal(false),
-  replacementObligationCreated: Schema.Literal(false),
-  retargeted: Schema.Literal(false),
-});
-export type InventoryPostCommitBindingMismatchAssessment =
-  typeof InventoryPostCommitBindingMismatchAssessmentSchema.Type;

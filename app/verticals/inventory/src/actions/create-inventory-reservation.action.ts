@@ -25,11 +25,13 @@ import {
   InventoryReservationCreateRejected,
 } from '../../shared/domain/inventory-reservation-create.ts';
 import { StockAllocationIdSchema } from '../../shared/domain/inventory-obligation.ts';
+import { CatalogToStockBindingUnavailable } from '../../shared/domain/catalog-to-stock-binding-unavailable.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/commerce-inventory-inventory-reservation-create-requested-v1.ts';
 import {
   catalogToStockBindingStockItemReader,
   makeDrizzleCatalogToStockBindingPersistence,
 } from '../persistence/catalog-to-stock-binding-repository.ts';
+import { lockBindingCorrectionScopes } from '../persistence/binding-correction-serialization.ts';
 import { inventoryBackendConfigurationPersistenceForScope } from '../persistence/inventory-backend-configuration-repository.ts';
 import { inventoryEffectLedgerPersistenceForScope } from '../persistence/inventory-effect-ledger-repository.ts';
 import {
@@ -153,6 +155,16 @@ export const createInventoryReservationAction = defineAction(
             inventoryEffectLedgerPersistenceForScope(transaction, scope),
             DateTime.now.pipe(Effect.map(DateTime.formatIso)),
           ),
+          lockBindingScopes: (scopes) =>
+            lockBindingCorrectionScopes(transaction, scopes).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new CatalogToStockBindingUnavailable({
+                    code: 'catalog_to_stock_binding_unavailable',
+                    reason: `Unable to serialize Catalog-to-Stock Binding resolution: ${String(cause)}`,
+                  }),
+              ),
+            ),
           makeAllocationId: ({ effectId, positionId, purchaseDemandOccurrenceId }) =>
             StockAllocationIdSchema.make(
               createHash('sha256')

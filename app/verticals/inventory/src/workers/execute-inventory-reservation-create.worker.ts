@@ -15,6 +15,10 @@ import {
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/inventory/outbox/commerce-inventory-inventory-reservation-create-requested-v1';
+import {
+  OutboxPayloadSchema as ReservationGuaranteeChangedPayloadSchema,
+  outboxTopic as reservationGuaranteeChangedTopic,
+} from '@app/inventory/outbox/commerce-inventory-reservation-guarantee-changed-v1';
 
 import {
   EstablishedReservationCreateEffectSchema,
@@ -34,12 +38,21 @@ export class InventoryReservationCreateExecution extends Context.Service<
 const workerKey = 'commerce.inventory.execute-inventory-reservation-create' as const;
 const moduleKey = 'commerce.inventory' as const;
 
-const completion = defineOutboxWorkerCompletion({
+const terminalCompletion = defineOutboxWorkerCompletion({
   consumerModuleKey: moduleKey,
   eventType: 'commerce.inventory.inventory-reservation-create-completed.v1',
   payloadSchema: ReservationCreateEffectSchema,
   producerModuleKey: moduleKey,
   topic: 'commerce.inventory.inventory-reservation-create-completed.v1',
+  workerKey,
+});
+
+const reservationGuaranteeChanged = defineOutboxWorkerCompletion({
+  consumerModuleKey: moduleKey,
+  eventType: reservationGuaranteeChangedTopic,
+  payloadSchema: ReservationGuaranteeChangedPayloadSchema,
+  producerModuleKey: moduleKey,
+  topic: reservationGuaranteeChangedTopic,
   workerKey,
 });
 
@@ -135,9 +148,26 @@ export const handleExecuteInventoryReservationCreate = Effect.fn('ExecuteInvento
                   });
                   return yield* Effect.void;
                 }
-                yield* scope.completionPublisher.publish(completion, {
+                if (Schema.is(EstablishedReservationCreateEffectSchema)(terminal)) {
+                  yield* scope.completionPublisher.publish(reservationGuaranteeChanged, {
+                    completionId: request.mutationId,
+                    occurredAt: DateTime.toDateUtc(DateTime.makeUnsafe(terminal.reservation.establishedAt)),
+                    payloadJson: {
+                      ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: request.mutationId },
+                      ownerReadOrProofKey: 'commerce.inventory.api.inventory-reservation-detail',
+                      state: 'ESTABLISHED',
+                      subjectRef: terminal.reservation.ref,
+                    },
+                    sourceActionInvocationId: request.sourceActionInvocationId,
+                    subjectModuleKey: terminal.reservation.ref.moduleId,
+                    subjectResourceId: terminal.reservation.ref.resourceId,
+                    subjectResourceType: terminal.reservation.ref.resourceType,
+                  });
+                  return yield* Effect.void;
+                }
+                yield* scope.completionPublisher.publish(terminalCompletion, {
                   completionId: request.mutationId,
-                  occurredAt: yield* DateTime.nowAsDate,
+                  occurredAt: DateTime.toDateUtc(DateTime.makeUnsafe(terminal.observedAt)),
                   payloadJson: terminal,
                   sourceActionInvocationId: request.sourceActionInvocationId,
                   subjectModuleKey: request.reservation.ref.moduleId,

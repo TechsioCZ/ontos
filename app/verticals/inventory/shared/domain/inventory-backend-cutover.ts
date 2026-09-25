@@ -1,4 +1,4 @@
-import { DateTime, Match, Schema } from 'effect';
+import { DateTime, Match, Result, Schema } from 'effect';
 
 import {
   InventoryBackendConfigurationSchema,
@@ -58,11 +58,7 @@ export const InventoryBackendCutoverConfigurationIdentityReusedSchema = Schema.T
 export const InventoryBackendCutoverAuthorityBoundaryMismatchSchema = Schema.TaggedStruct(
   'AUTHORITY_BOUNDARY_MISMATCH',
   {
-    reason: Schema.Literals([
-      'PRE_CUTOVER_AUTHORITY_NOT_BEFORE_BOUNDARY',
-      'POST_CUTOVER_AUTHORITY_NOT_AT_BOUNDARY',
-      'READINESS_EVALUATED_BEFORE_BOUNDARY',
-    ]),
+    reason: Schema.Literals(['PRE_CUTOVER_AUTHORITY_NOT_BEFORE_BOUNDARY', 'POST_CUTOVER_AUTHORITY_NOT_AT_BOUNDARY']),
   },
 );
 export const InventoryBackendCutoverOpeningConfigurationMismatchSchema = Schema.TaggedStruct(
@@ -126,10 +122,85 @@ export const InventoryBackendAuthorityTransitionSchema = Schema.Struct({
   unresolvedEffectPolicy: Schema.Literal('BLOCK_SWITCH_AND_NEVER_REPEAT_AS_FRESH_EFFECT'),
 });
 
+const InventoryBackendCutoverConfigurationFenceSchema = Schema.Struct({
+  configurationId: InventoryBackendConfigurationSchema.fields.configurationId,
+  customerConfigurationId: InventoryBackendConfigurationSchema.fields.customerConfigurationId,
+  revision: InventoryBackendConfigurationSchema.fields.revision,
+  tenantId: InventoryBackendConfigurationSchema.fields.tenantId,
+});
+
+export const InventoryBackendCutoverReadinessFenceSchema = Schema.TaggedStruct('CUTOVER_READINESS_FENCE', {
+  effectiveBoundary: cutoverInstant,
+  effectLedgerStateIdentity: Schema.String,
+  identity: Schema.String,
+  obligationSetIdentity: Schema.String,
+  openingPacketIdentity: Schema.String,
+  ownerFactsIdentity: Schema.String,
+  postCutoverConfiguration: InventoryBackendCutoverConfigurationFenceSchema,
+  preCutoverConfiguration: InventoryBackendCutoverConfigurationFenceSchema,
+});
+export type InventoryBackendCutoverReadinessFence = typeof InventoryBackendCutoverReadinessFenceSchema.Type;
+
 export const InventoryBackendCutoverReadySchema = Schema.TaggedStruct('READY', {
+  authorityStatus: Schema.Literal('PRE_CUTOVER_BACKEND_REMAINS_AUTHORITATIVE'),
   evaluatedAt: cutoverInstant,
+  readinessFence: InventoryBackendCutoverReadinessFenceSchema,
+  transitionCandidate: InventoryBackendAuthorityTransitionSchema,
+});
+
+export const InventoryBackendCutoverReadinessResultSchema = Schema.Union([
+  InventoryBackendCutoverBlockedSchema,
+  InventoryBackendCutoverReadySchema,
+]);
+export type InventoryBackendCutoverReadinessResult = typeof InventoryBackendCutoverReadinessResultSchema.Type;
+
+export const InventoryBackendCutoverAuthorizationTimeMismatchSchema = Schema.TaggedStruct(
+  'BOUNDARY_AUTHORIZATION_TIME_MISMATCH',
+  {
+    effectiveBoundary: cutoverInstant,
+    reason: Schema.Literals([
+      'BEFORE_EFFECTIVE_BOUNDARY',
+      'AFTER_EFFECTIVE_BOUNDARY',
+      'CURRENT_FACTS_NOT_EVALUATED_AT_BOUNDARY',
+    ]),
+  },
+);
+export const InventoryBackendCutoverStaleReadinessFenceSchema = Schema.TaggedStruct('STALE_READINESS_FENCE', {
+  currentReadinessIdentity: Schema.String,
+  expectedReadinessIdentity: Schema.String,
+});
+export const InventoryBackendCutoverAuthorizationBlockerSchema = Schema.Union([
+  InventoryBackendCutoverBlockerSchema,
+  InventoryBackendCutoverAuthorizationTimeMismatchSchema,
+  InventoryBackendCutoverStaleReadinessFenceSchema,
+]);
+export type InventoryBackendCutoverAuthorizationBlocker = typeof InventoryBackendCutoverAuthorizationBlockerSchema.Type;
+
+export const AuthorizeInventoryBackendCutoverInputSchema = Schema.Struct({
+  authorizedAt: cutoverInstant,
+  currentFacts: ReplaceSelectedInventoryBackendInputSchema,
+  readiness: InventoryBackendCutoverReadySchema,
+});
+export type AuthorizeInventoryBackendCutoverInput = typeof AuthorizeInventoryBackendCutoverInputSchema.Type;
+
+export const InventoryBackendCutoverAuthorizationBlockedSchema = Schema.TaggedStruct('AUTHORIZATION_BLOCKED', {
+  authorityStatus: Schema.Literal('PRE_CUTOVER_BACKEND_REMAINS_AUTHORITATIVE'),
+  authorizedAt: cutoverInstant,
+  blockers: Schema.NonEmptyArray(InventoryBackendCutoverAuthorizationBlockerSchema),
+});
+
+export const InventoryBackendCutoverAuthorizedSchema = Schema.TaggedStruct('AUTHORIZED', {
+  authorityStatus: Schema.Literal('POST_CUTOVER_BACKEND_AUTHORITATIVE'),
+  authorizedAt: cutoverInstant,
+  readinessFence: InventoryBackendCutoverReadinessFenceSchema,
   transition: InventoryBackendAuthorityTransitionSchema,
 });
+
+export const InventoryBackendCutoverAuthorizationResultSchema = Schema.Union([
+  InventoryBackendCutoverAuthorizationBlockedSchema,
+  InventoryBackendCutoverAuthorizedSchema,
+]);
+export type InventoryBackendCutoverAuthorizationResult = typeof InventoryBackendCutoverAuthorizationResultSchema.Type;
 
 export const InventoryBackendCutoverResultSchema = Schema.Union([
   InventoryBackendRetainedSchema,
@@ -139,6 +210,53 @@ export const InventoryBackendCutoverResultSchema = Schema.Union([
 export type InventoryBackendCutoverResult = typeof InventoryBackendCutoverResultSchema.Type;
 
 const epoch = (instant: string): number => DateTime.toEpochMillis(DateTime.makeUnsafe(instant));
+
+const InventoryBackendCutoverOpeningPacketFenceEvidenceSchema = Schema.Struct({
+  obligations: InventoryOpeningPacketSchema.fields.obligations,
+  selectedConfiguration: InventoryOpeningPacketSchema.fields.selectedConfiguration,
+  stock: InventoryOpeningPacketSchema.fields.stock,
+});
+const InventoryBackendCutoverOwnerFactsFenceEvidenceSchema = Schema.Struct({
+  bindings: InventoryOpeningEvaluationInputSchema.fields.bindings,
+  effectLedger: InventoryOpeningEvaluationInputSchema.fields.effectLedger,
+  legacyUncommittedHolds: InventoryOpeningEvaluationInputSchema.fields.legacyUncommittedHolds,
+  obligations: InventoryOpeningEvaluationInputSchema.fields.obligations,
+  selectedConfiguration: InventoryOpeningEvaluationInputSchema.fields.selectedConfiguration,
+  stockItems: InventoryOpeningEvaluationInputSchema.fields.stockItems,
+  stockPositions: InventoryOpeningEvaluationInputSchema.fields.stockPositions,
+});
+const InventoryBackendCutoverReadinessIdentityEvidenceSchema = Schema.Struct({
+  effectiveBoundary: cutoverInstant,
+  effectLedgerStateIdentity: Schema.String,
+  obligationSetIdentity: Schema.String,
+  openingPacketIdentity: Schema.String,
+  ownerFactsIdentity: Schema.String,
+  postCutoverConfiguration: InventoryBackendConfigurationSchema,
+  preCutoverConfiguration: InventoryBackendConfigurationSchema,
+});
+const canonicalEffectLedgerFenceSchema = Schema.fromJsonString(
+  InventoryOpeningEvaluationInputSchema.fields.effectLedger,
+);
+const canonicalObligationSetFenceSchema = Schema.fromJsonString(
+  InventoryOpeningEvaluationInputSchema.fields.obligations,
+);
+const canonicalOpeningPacketFenceSchema = Schema.fromJsonString(
+  InventoryBackendCutoverOpeningPacketFenceEvidenceSchema,
+);
+const canonicalOwnerFactsFenceSchema = Schema.fromJsonString(InventoryBackendCutoverOwnerFactsFenceEvidenceSchema);
+const canonicalReadinessIdentitySchema = Schema.fromJsonString(InventoryBackendCutoverReadinessIdentityEvidenceSchema);
+
+const configurationFence = ({
+  configurationId,
+  customerConfigurationId,
+  revision,
+  tenantId,
+}: typeof InventoryBackendConfigurationSchema.Type) => ({
+  configurationId,
+  customerConfigurationId,
+  revision,
+  tenantId,
+});
 
 const sameConfiguration = (
   left: typeof InventoryBackendConfigurationSchema.Type,
@@ -184,9 +302,80 @@ const successfulCreateReservationRef = (record: typeof InventoryEffectLedgerReco
   );
 };
 
+const makeReadinessFence = (
+  input: typeof ReplaceSelectedInventoryBackendInputSchema.Type,
+  openingPacket: typeof InventoryOpeningPacketSchema.Type,
+): InventoryBackendCutoverReadinessFence => {
+  const effectLedger = input.openingFacts.effectLedger.toSorted((left, right) =>
+    left.effectId.localeCompare(right.effectId),
+  );
+  const obligations = input.openingFacts.obligations.toSorted((left, right) =>
+    left.ref.resourceId.localeCompare(right.ref.resourceId),
+  );
+  const effectLedgerStateIdentity = Result.getOrThrow(
+    Schema.encodeResult(canonicalEffectLedgerFenceSchema)(effectLedger),
+  );
+  const obligationSetIdentity = Result.getOrThrow(Schema.encodeResult(canonicalObligationSetFenceSchema)(obligations));
+  const openingPacketIdentity = Result.getOrThrow(
+    Schema.encodeResult(canonicalOpeningPacketFenceSchema)({
+      obligations: openingPacket.obligations.toSorted((left, right) =>
+        left.ref.resourceId.localeCompare(right.ref.resourceId),
+      ),
+      selectedConfiguration: openingPacket.selectedConfiguration,
+      stock: openingPacket.stock.toSorted((left, right) =>
+        left.position.ref.resourceId.localeCompare(right.position.ref.resourceId),
+      ),
+    }),
+  );
+  const ownerFactsIdentity = Result.getOrThrow(
+    Schema.encodeResult(canonicalOwnerFactsFenceSchema)({
+      bindings: input.openingFacts.bindings.toSorted((left, right) =>
+        left.bindingRef.resourceId.localeCompare(right.bindingRef.resourceId),
+      ),
+      effectLedger,
+      legacyUncommittedHolds: input.openingFacts.legacyUncommittedHolds.toSorted((left, right) =>
+        left.holdReference.localeCompare(right.holdReference),
+      ),
+      obligations,
+      selectedConfiguration: input.openingFacts.selectedConfiguration,
+      stockItems: input.openingFacts.stockItems.toSorted((left, right) =>
+        left.stockItemRef.resourceId.localeCompare(right.stockItemRef.resourceId),
+      ),
+      stockPositions: input.openingFacts.stockPositions.toSorted((left, right) =>
+        left.position.ref.resourceId.localeCompare(right.position.ref.resourceId),
+      ),
+    }),
+  );
+  const postCutoverConfiguration = configurationFence(input.postCutoverConfiguration);
+  const preCutoverConfiguration = configurationFence(input.preCutoverConfiguration);
+  const identity = Result.getOrThrow(
+    Schema.encodeResult(canonicalReadinessIdentitySchema)({
+      effectiveBoundary: input.effectiveBoundary,
+      effectLedgerStateIdentity,
+      obligationSetIdentity,
+      openingPacketIdentity,
+      ownerFactsIdentity,
+      postCutoverConfiguration: input.postCutoverConfiguration,
+      preCutoverConfiguration: input.preCutoverConfiguration,
+    }),
+  );
+
+  return {
+    _tag: 'CUTOVER_READINESS_FENCE',
+    effectiveBoundary: input.effectiveBoundary,
+    effectLedgerStateIdentity,
+    identity,
+    obligationSetIdentity,
+    openingPacketIdentity,
+    ownerFactsIdentity,
+    postCutoverConfiguration,
+    preCutoverConfiguration,
+  };
+};
+
 const evaluateReplacement = (
   input: typeof ReplaceSelectedInventoryBackendInputSchema.Type,
-): InventoryBackendCutoverResult => {
+): InventoryBackendCutoverReadinessResult => {
   const blockers: InventoryBackendCutoverBlocker[] = [];
   const { postCutoverConfiguration: post, preCutoverConfiguration: pre } = input;
 
@@ -204,9 +393,6 @@ const evaluateReplacement = (
   }
   if (epoch(post.selectedAt) !== epoch(input.effectiveBoundary)) {
     blockers.push({ _tag: 'AUTHORITY_BOUNDARY_MISMATCH', reason: 'POST_CUTOVER_AUTHORITY_NOT_AT_BOUNDARY' });
-  }
-  if (epoch(input.evaluatedAt) < epoch(input.effectiveBoundary)) {
-    blockers.push({ _tag: 'AUTHORITY_BOUNDARY_MISMATCH', reason: 'READINESS_EVALUATED_BEFORE_BOUNDARY' });
   }
   if (
     !sameConfiguration(input.openingFacts.selectedConfiguration, post) ||
@@ -279,8 +465,10 @@ const evaluateReplacement = (
   }
   return {
     _tag: 'READY',
+    authorityStatus: 'PRE_CUTOVER_BACKEND_REMAINS_AUTHORITATIVE',
     evaluatedAt: input.evaluatedAt,
-    transition: {
+    readinessFence: makeReadinessFence(input, opening.packet),
+    transitionCandidate: {
       customerConfigurationId: post.customerConfigurationId,
       cutoverPurpose: 'PLANNED_BACKEND_REPLACEMENT_NOT_OUTAGE_RECOVERY',
       effectiveBoundary: input.effectiveBoundary,
@@ -315,3 +503,69 @@ export const evaluateInventoryBackendCutover = (input: InventoryBackendCutoverIn
     Match.tag('REPLACE_SELECTED_BACKEND', evaluateReplacement),
     Match.exhaustive,
   );
+
+/** Assesses cutover readiness without changing or authorizing runtime authority. */
+export const assessInventoryBackendCutoverReadiness = (
+  input: typeof ReplaceSelectedInventoryBackendInputSchema.Type,
+): InventoryBackendCutoverReadinessResult => evaluateReplacement(input);
+
+const authorizationBlocked = (
+  input: AuthorizeInventoryBackendCutoverInput,
+  blockers: readonly [InventoryBackendCutoverAuthorizationBlocker, ...InventoryBackendCutoverAuthorizationBlocker[]],
+): InventoryBackendCutoverAuthorizationResult => ({
+  _tag: 'AUTHORIZATION_BLOCKED',
+  authorityStatus: 'PRE_CUTOVER_BACKEND_REMAINS_AUTHORITATIVE',
+  authorizedAt: input.authorizedAt,
+  blockers,
+});
+
+/** Revalidates fresh owner facts at the exact boundary before authorizing the authority transition. */
+export const authorizeInventoryBackendCutover = (
+  input: AuthorizeInventoryBackendCutoverInput,
+): InventoryBackendCutoverAuthorizationResult => {
+  const authorizationEpoch = epoch(input.authorizedAt);
+  const boundaryEpoch = epoch(input.readiness.transitionCandidate.effectiveBoundary);
+  if (authorizationEpoch !== boundaryEpoch) {
+    return authorizationBlocked(input, [
+      {
+        _tag: 'BOUNDARY_AUTHORIZATION_TIME_MISMATCH',
+        effectiveBoundary: input.readiness.transitionCandidate.effectiveBoundary,
+        reason: authorizationEpoch < boundaryEpoch ? 'BEFORE_EFFECTIVE_BOUNDARY' : 'AFTER_EFFECTIVE_BOUNDARY',
+      },
+    ]);
+  }
+  if (
+    epoch(input.currentFacts.evaluatedAt) !== boundaryEpoch ||
+    epoch(input.currentFacts.openingFacts.evaluatedAt) !== boundaryEpoch
+  ) {
+    return authorizationBlocked(input, [
+      {
+        _tag: 'BOUNDARY_AUTHORIZATION_TIME_MISMATCH',
+        effectiveBoundary: input.readiness.transitionCandidate.effectiveBoundary,
+        reason: 'CURRENT_FACTS_NOT_EVALUATED_AT_BOUNDARY',
+      },
+    ]);
+  }
+
+  const currentReadiness = assessInventoryBackendCutoverReadiness(input.currentFacts);
+  if (Schema.is(InventoryBackendCutoverBlockedSchema)(currentReadiness)) {
+    return authorizationBlocked(input, currentReadiness.blockers);
+  }
+  if (currentReadiness.readinessFence.identity !== input.readiness.readinessFence.identity) {
+    return authorizationBlocked(input, [
+      {
+        _tag: 'STALE_READINESS_FENCE',
+        currentReadinessIdentity: currentReadiness.readinessFence.identity,
+        expectedReadinessIdentity: input.readiness.readinessFence.identity,
+      },
+    ]);
+  }
+
+  return {
+    _tag: 'AUTHORIZED',
+    authorityStatus: 'POST_CUTOVER_BACKEND_AUTHORITATIVE',
+    authorizedAt: input.authorizedAt,
+    readinessFence: currentReadiness.readinessFence,
+    transition: currentReadiness.transitionCandidate,
+  };
+};

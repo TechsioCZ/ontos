@@ -22,6 +22,8 @@ import {
   StockCorrectionRecordSchema,
   StockCorrectionSourceEvidenceIdSchema,
 } from '../../shared/domain/stock-correction.ts';
+import { OutboxPayloadSchema as StockPositionEvidenceChangedOutboxPayloadSchema } from '../../shared/outbox/commerce-inventory-stock-position-evidence-changed-v1.ts';
+import type { OutboxPayload as StockPositionEvidenceChangedOutboxPayload } from '../../shared/outbox/commerce-inventory-stock-position-evidence-changed-v1.ts';
 import { InventoryBackendConfigurationRefSchema } from '../../shared/resources/inventory-backend-configuration.ts';
 import { StockPositionRefSchema } from '../../shared/resources/stock-position.ts';
 import { inventoryBackendConfigurationPersistenceForScope } from '../persistence/inventory-backend-configuration-repository.ts';
@@ -36,6 +38,7 @@ import type { StockCorrectionService } from '../services/stock-correction.servic
 import { makeStockCorrectionService } from '../services/stock-correction.service.ts';
 // oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This owner-local constructor is bound inside the same generated transaction-scoped Action factory; expires: 2027-03-31.
 import { makeReservationShortageImpactService } from '../services/reservation-shortage-impact.service.ts';
+import { createCorrectStockPositionCommerceInventoryStockPositionEvidenceChangedV1OutboxMessage } from './correct-stock-position-commerce-inventory-stock-position-evidence-changed-v1.outbox-message.ts';
 
 export {
   CorrectStockPositionErrorSchema,
@@ -47,6 +50,7 @@ const ACTION_KEY = 'commerce.inventory.correct-stock-position';
 const MODULE_KEY = 'commerce.inventory';
 const APPLIED_EVENT = 'commerce.inventory.stock-position-corrected.v1';
 const INDETERMINATE_EVENT = 'commerce.inventory.stock-position-correction-indeterminate.v1';
+const STOCK_POSITION_EVIDENCE_CHANGED_EVENT = 'commerce.inventory.stock-position-evidence-changed.v1';
 const correctionEventPayloadSchema = Schema.Struct({ correction: StockCorrectionRecordSchema });
 export const CorrectStockPositionAuditEvidenceSchema = Schema.Struct({
   authorityConfigurationId: InventoryBackendConfigurationRefSchema.fields.resourceId,
@@ -65,6 +69,7 @@ export const CorrectStockPositionAuditEvidenceSchema = Schema.Struct({
 const domainEvents = {
   [APPLIED_EVENT]: correctionEventPayloadSchema,
   [INDETERMINATE_EVENT]: correctionEventPayloadSchema,
+  [STOCK_POSITION_EVIDENCE_CHANGED_EVENT]: StockPositionEvidenceChangedOutboxPayloadSchema,
 } as const;
 
 export const handleCorrectStockPosition = Effect.fn('CorrectStockPositionAction.handle')(function* handle(
@@ -86,7 +91,7 @@ export const handleCorrectStockPosition = Effect.fn('CorrectStockPositionAction.
     targetResourceType: payload.positionRef.resourceType,
   });
   if (result.outcome !== 'EXACT_REPLAY') {
-    const eventType: keyof typeof domainEvents = Match.value(result.correction).pipe(
+    const eventType: typeof APPLIED_EVENT | typeof INDETERMINATE_EVENT = Match.value(result.correction).pipe(
       Match.tag('APPLIED', (): typeof APPLIED_EVENT => APPLIED_EVENT),
       Match.tag('INDETERMINATE', (): typeof INDETERMINATE_EVENT => INDETERMINATE_EVENT),
       Match.exhaustive,
@@ -99,6 +104,36 @@ export const handleCorrectStockPosition = Effect.fn('CorrectStockPositionAction.
       subjectResourceId: payload.positionRef.resourceId,
       subjectResourceType: payload.positionRef.resourceType,
     });
+    const isMaterialEvidenceChange = Match.value(result.correction).pipe(
+      Match.tag('INDETERMINATE', () => true),
+      Match.tag('APPLIED', (correction) => correction.materialChange !== 'UNCHANGED'),
+      Match.exhaustive,
+    );
+    if (isMaterialEvidenceChange) {
+      const state = Match.value(result.correction).pipe(
+        Match.tag('APPLIED', () => 'CORRECTED' as const),
+        Match.tag('INDETERMINATE', () => 'INDETERMINATE' as const),
+        Match.exhaustive,
+      );
+      const eventPayload = {
+        ordering: { _tag: 'OWNER_AGGREGATE_REVISION' as const, revision: result.position.revision },
+        ownerReadOrProofKey: 'commerce.inventory.api.current-stock-evidence-for-availability' as const,
+        state,
+        subjectRef: result.position.ref,
+      } satisfies StockPositionEvidenceChangedOutboxPayload;
+      const committedEvent = yield* context.addDomainEvent({
+        eventType: STOCK_POSITION_EVIDENCE_CHANGED_EVENT,
+        payloadJson: eventPayload,
+        producerModuleKey: MODULE_KEY,
+        subjectModuleKey: MODULE_KEY,
+        subjectResourceId: result.position.ref.resourceId,
+        subjectResourceType: result.position.ref.resourceType,
+      });
+      yield* context.addOutboxMessage(
+        committedEvent,
+        createCorrectStockPositionCommerceInventoryStockPositionEvidenceChangedV1OutboxMessage(eventPayload),
+      );
+    }
   }
   yield* context.recordAuditEvidence({
     authorityConfigurationId: result.correction.authorityConfigurationRef.resourceId,
@@ -177,4 +212,9 @@ export const correctStockPositionAction = defineAction(
 );
 
 // <generated-outbox-message-exports>
+export { CorrectStockPositionCommerceInventoryStockPositionEvidenceChangedV1OutboxPayloadSchema } from './correct-stock-position-commerce-inventory-stock-position-evidence-changed-v1.outbox-message.ts';
+export { CorrectStockPositionCommerceInventoryStockPositionEvidenceChangedV1OutboxProducerModuleKey } from './correct-stock-position-commerce-inventory-stock-position-evidence-changed-v1.outbox-message.ts';
+export { CorrectStockPositionCommerceInventoryStockPositionEvidenceChangedV1OutboxTopic } from './correct-stock-position-commerce-inventory-stock-position-evidence-changed-v1.outbox-message.ts';
+export { createCorrectStockPositionCommerceInventoryStockPositionEvidenceChangedV1OutboxMessage } from './correct-stock-position-commerce-inventory-stock-position-evidence-changed-v1.outbox-message.ts';
+export type { CorrectStockPositionCommerceInventoryStockPositionEvidenceChangedV1OutboxPayload } from './correct-stock-position-commerce-inventory-stock-position-evidence-changed-v1.outbox-message.ts';
 // </generated-outbox-message-exports>

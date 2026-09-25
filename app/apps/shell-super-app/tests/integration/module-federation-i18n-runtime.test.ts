@@ -31,6 +31,14 @@ registerHooks({
 });
 
 describe('module-federation-i18n-runtime', () => {
+  it.effect('registers the Inventory widget remote from the generated topology contract', () =>
+    Effect.gen(function* registersInventoryRemote() {
+      const { default: shellConfig } = yield* Effect.promise(() => import(shellConfigUrl.href));
+
+      expect(shellConfig.remotes?.inventory).toBe('verticalInventory@http://localhost:4109/mf-manifest.json');
+    }),
+  );
+
   it.effect('Shell and Party Registry share the i18n runtime that owns the federated provider context', () =>
     Effect.gen(function* sharesFederatedI18nRuntime() {
       const [{ default: shellConfig }, { default: partyRegistryConfig }] = yield* Effect.promise(() =>

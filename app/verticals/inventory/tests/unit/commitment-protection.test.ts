@@ -1,7 +1,10 @@
 /* oxlint-disable sonarjs/no-nested-functions -- Focused in-memory owner ports keep each protection invariant explicit; expires: 2027-03-31. */
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
+import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { Effect, Option, Ref, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 
 import type {
   CommitmentProtection,
@@ -37,6 +40,10 @@ import { StockItemSchema } from '../../shared/domain/stock-item.ts';
 import { CommitmentProtectionRefSchema } from '../../shared/resources/commitment-protection.ts';
 import { ReservationConfirmationRefSchema } from '../../shared/resources/reservation-confirmation.ts';
 import { StockItemRefSchema } from '../../shared/resources/stock-item.ts';
+import {
+  establishCommitmentProtectionAction,
+  handleEstablishCommitmentProtection,
+} from '../../src/actions/establish-commitment-protection.action.ts';
 import type { CommitmentProtectionAuthority } from '../../src/services/commitment-protection-authority.ts';
 import { makeCommitmentProtectionService } from '../../src/services/commitment-protection.service.ts';
 import { makeInMemoryInventoryEffectLedger } from '../support/inventory-effect-ledger.ts';
@@ -470,6 +477,61 @@ describe('Inventory Commitment Protection', () => {
       expect(replay).toMatchObject({ reconciliationRequired: true, replayed: true });
       expect(atRisk.confirmation.reservation.requirements[0]?.stockItem.stockItemRef.resourceId).toBe(itemId);
       expect(atRisk).not.toHaveProperty('releasedAt');
+    }),
+  );
+
+  it.effect('publishes one committed Protection notice for the new revision and none for replay', () =>
+    Effect.gen(function* publishCommittedProtection() {
+      const confirmation = yield* buildConfirmation();
+      const harness = yield* makeHarness(confirmation);
+      yield* Ref.set(harness.observation, confirmedObservation(confirmation));
+      const fresh = yield* harness.service.establish(payload, context);
+      const protectedResult = yield* Schema.decodeUnknownEffect(CommitmentProtectionProtectedResultSchema)(fresh).pipe(
+        Effect.orDie,
+      );
+      const scope = trustVerifiedGatewayPrincipalContext({
+        authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        authContextRef: 'test:commitment-protection',
+        authMethod: 'api_key',
+        correlationId: 'commitment-protection-test',
+        legalEntityId,
+        principalId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        tenantId,
+      });
+      const runHandler = (result: typeof protectedResult) => {
+        const collector = createActionCollector(
+          establishCommitmentProtectionAction.descriptor.domainEvents,
+          'commerce.inventory',
+          establishCommitmentProtectionAction.descriptor.accessEvidencePolicy,
+        );
+        return handleEstablishCommitmentProtection(payload, {
+          actionInvocationId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          addDomainEvent: collector.addDomainEvent,
+          addOutboxMessage: collector.addOutboxMessage,
+          recordAuditEvidence: collector.recordAuditEvidence,
+          recordDataAccess: collector.recordDataAccess,
+          scope,
+          services: { ...harness.service, establish: () => Effect.succeed(result) },
+        }).pipe(Effect.map(() => collector.snapshot()));
+      };
+
+      const committed = yield* runHandler(protectedResult);
+      const replay = yield* runHandler({ ...protectedResult, replayed: true });
+
+      expect(committed.domainEvents.map(({ eventType }) => eventType)).toEqual([
+        'commerce.inventory.commitment-protection-changed.v1',
+      ]);
+      expect(committed.outboxMessages).toHaveLength(1);
+      expect(committed.outboxMessages[0]?.message).toMatchObject({
+        payloadJson: {
+          ordering: { _tag: 'OWNER_AGGREGATE_REVISION', revision: 1 },
+          state: 'PROTECTED',
+          subjectRef: protectionRef,
+        },
+        topic: 'commerce.inventory.commitment-protection-changed.v1',
+      });
+      expect(replay.domainEvents).toEqual([]);
+      expect(replay.outboxMessages).toEqual([]);
     }),
   );
 });

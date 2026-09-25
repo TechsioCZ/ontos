@@ -5,28 +5,16 @@ import {
   CatalogToStockBindingSchema,
   PurchaseDemandOccurrenceIdSchema,
 } from '../../shared/domain/catalog-to-stock-binding.ts';
-import {
-  establishCommitmentProtection,
-  markCommitmentProtectionAtRisk,
-} from '../../shared/domain/commitment-protection.ts';
+import { establishCommitmentProtection } from '../../shared/domain/commitment-protection.ts';
 import { InventoryBackendConfigurationSchema } from '../../shared/domain/inventory-backend-configuration.ts';
 import type { InventoryBackendConfiguration } from '../../shared/domain/inventory-backend-configuration.ts';
 import {
   EstablishInventoryReservationInputSchema,
-  RuntimeCommittedInventoryObligationSchema,
   establishInventoryReservation,
 } from '../../shared/domain/inventory-obligation.ts';
-import type {
-  InventoryPostCommitBindingAssessmentInput,
-  InventoryPostCommitBindingMismatchAssessment,
-  InventoryPostCommitReconciliationRejected,
-} from '../../shared/domain/inventory-post-commit-reservation-reconciliation.ts';
 import { PhysicalStockEffectRecordSchema } from '../../shared/domain/physical-stock-effect.ts';
 import type { PhysicalStockEffectRecord } from '../../shared/domain/physical-stock-effect.ts';
-import {
-  advanceReservationConfirmationHealth,
-  establishReservationConfirmation,
-} from '../../shared/domain/reservation-confirmation.ts';
+import { establishReservationConfirmation } from '../../shared/domain/reservation-confirmation.ts';
 import { AuthoritativeReservationEvidenceSchema } from '../../shared/domain/reservation-authority.ts';
 import {
   IndeterminateStockCorrectionSchema,
@@ -62,9 +50,6 @@ export interface InventoryOwnerAcceptanceStockCorrectionScenario {
 }
 
 export interface InventoryOwnerAcceptanceBindingCorrectionFactories {
-  readonly assessCurrentBinding: (
-    input: InventoryPostCommitBindingAssessmentInput,
-  ) => Effect.Effect<InventoryPostCommitBindingMismatchAssessment, InventoryPostCommitReconciliationRejected>;
   readonly correctStockPosition: (
     scenario: InventoryOwnerAcceptanceStockCorrectionScenario,
   ) => Effect.Effect<StockCorrectionResult, StockCorrectionError>;
@@ -146,6 +131,11 @@ const originalStockItem = Schema.decodeUnknownSync(StockItemSchema)({
   stockItemRef: originalItemRef,
   unitRef,
 });
+const correctedStockItem = Schema.decodeUnknownSync(StockItemSchema)({
+  ...originalStockItem,
+  createdAt: correctionObservedAt,
+  stockItemRef: correctedItemRef,
+});
 const originalBinding = Schema.decodeUnknownSync(CatalogToStockBindingSchema)({
   bindingRef: {
     moduleId: inventoryModuleId,
@@ -180,7 +170,7 @@ const authority = Schema.decodeUnknownSync(InventoryBackendConfigurationSchema)(
   tenantId,
 });
 
-const buildReservationLineage = Effect.gen(function* buildReservationLineage() {
+export const buildInventoryOwnerAcceptanceBindingCorrectionLineage = Effect.gen(function* buildReservationLineage() {
   const reservation = yield* establishInventoryReservation(
     Schema.decodeUnknownSync(EstablishInventoryReservationInputSchema)({
       authority,
@@ -268,74 +258,17 @@ const buildReservationLineage = Effect.gen(function* buildReservationLineage() {
   return { confirmation, protection, reservation };
 });
 
-const runBindingScenarios = (factories: InventoryOwnerAcceptanceBindingCorrectionFactories) =>
-  Effect.gen(function* executeBindingScenarios() {
-    const lineage = yield* buildReservationLineage;
-    const observation = {
-      _tag: 'BINDING_CORRECTION' as const,
-      correctionEvidenceRef: 'catalog-binding-correction:owner-acceptance-1',
-      effectiveAt: correctionObservedAt,
-    };
-    const atRiskConfirmation = yield* advanceReservationConfirmationHealth(lineage.confirmation, observation);
-    const atRiskProtection = yield* markCommitmentProtectionAtRisk(lineage.protection, observation);
-    const committed = Schema.decodeUnknownSync(RuntimeCommittedInventoryObligationSchema)({
-      ...lineage.reservation,
-      confirmationTerminationReleasesStock: false,
-      historicalBindingPolicy: 'PRESERVE_AND_RECONCILE',
-      lifecycleMeaning: 'COMMITTED_OBLIGATION',
-      obligationReductionCreatesOnHand: false,
-      orderProof: {
-        acceptedOrderId: 'owner-acceptance-order-1',
-        attemptId,
-        authority: 'ORDER_COMMIT_PROOF_AUTHORITY',
-        commitStatus: 'COMMITTED',
-        evidenceRef: 'owner-acceptance-order-proof-1',
-        observedAt: '2026-09-25T10:02:00.000Z',
-        reservationRef: lineage.reservation.ref,
-        tenantId,
-      },
-      physicalIssueBoundary: 'SEPARATE_INVENTORY_TRANSITION',
-      remainingQuantityConstraint: 'OWNER_GOVERNED_TRANSITION_REQUIRED',
-    });
-    const committedAssessment = yield* factories.assessCurrentBinding({
-      currentBinding: correctedBinding,
-      obligation: committed,
-      purchaseDemandOccurrenceId,
-    });
+export const inventoryOwnerAcceptanceBindingCorrectionFixture = {
+  authority,
+  correctedBinding,
+  correctedStockItem,
+  originalBinding,
+  originalStockItem,
+  purchaseDemandOccurrenceId,
+  selection,
+} as const;
 
-    return {
-      committed: {
-        currentStockItemId: committedAssessment.currentStockItemRef.resourceId,
-        exception: committedAssessment.exception,
-        historicalStockItemId: committedAssessment.historicalStockItemRef.resourceId,
-        obligationStockItemId:
-          committedAssessment.obligation.requirements[0]?.stockItem.stockItemRef.resourceId ?? 'missing',
-        orderRolledBack: committedAssessment.orderRolledBack,
-        replacementObligationCreated: committedAssessment.replacementObligationCreated,
-        retargeted: committedAssessment.retargeted,
-      },
-      preProtection: {
-        currentBindingStockItemId: correctedBinding.stockItemRef.resourceId,
-        healthState: atRiskConfirmation.health.state,
-        originalReservationStockItemId:
-          atRiskConfirmation.reservation.requirements[0]?.stockItem.stockItemRef.resourceId ?? 'missing',
-        releaseRecorded: 'releasedAt' in atRiskConfirmation,
-        retargeted:
-          atRiskConfirmation.reservation.requirements[0]?.stockItem.stockItemRef.resourceId !== originalItemId,
-      },
-      protected: {
-        currentBindingStockItemId: correctedBinding.stockItemRef.resourceId,
-        fenceStockItemId:
-          atRiskProtection.confirmation.reservation.requirements[0]?.stockItem.stockItemRef.resourceId ?? 'missing',
-        healthState: atRiskProtection.health.state,
-        reconciliationRequired: atRiskProtection.health.reconciliationRequired,
-        releaseRecorded: 'releasedAt' in atRiskProtection,
-        retargeted:
-          atRiskProtection.confirmation.reservation.requirements[0]?.stockItem.stockItemRef.resourceId !==
-          originalItemId,
-      },
-    } as const;
-  });
+// Binding correction acceptance runs against the production PostgreSQL factory in integration tests.
 
 const currentPosition = Schema.decodeUnknownSync(StockPositionSchema)({
   createdAt: authoritySelectedAt,
@@ -454,12 +387,10 @@ const runLateIssueCorrectionScenario = (factories: InventoryOwnerAcceptanceBindi
     } as const;
   });
 
-export const runInventoryOwnerAcceptanceBindingCorrectionScenarios = Effect.fn(
-  'InventoryOwnerAcceptanceBindingCorrectionScenarios.run',
-)(function* runInventoryOwnerAcceptanceBindingCorrectionScenarios(
+export const runInventoryOwnerAcceptanceLateIssueCorrectionScenario = Effect.fn(
+  'InventoryOwnerAcceptanceLateIssueCorrectionScenario.run',
+)(function* runInventoryOwnerAcceptanceLateIssueCorrectionScenario(
   factories: InventoryOwnerAcceptanceBindingCorrectionFactories,
 ) {
-  const binding = yield* runBindingScenarios(factories);
-  const correction = yield* runLateIssueCorrectionScenario(factories);
-  return { ...binding, correction } as const;
+  return yield* runLateIssueCorrectionScenario(factories);
 });

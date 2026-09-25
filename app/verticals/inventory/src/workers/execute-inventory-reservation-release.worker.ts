@@ -15,10 +15,15 @@ import {
   outboxProducerModuleKey,
   outboxTopic,
 } from '@app/inventory/outbox/commerce-inventory-inventory-reservation-release-requested-v1';
+import {
+  OutboxPayloadSchema as ReservationGuaranteeChangedPayloadSchema,
+  outboxTopic as reservationGuaranteeChangedTopic,
+} from '@app/inventory/outbox/commerce-inventory-reservation-guarantee-changed-v1';
 
 import {
   InventoryReservationReleaseRejected,
   IndeterminateReservationReleaseEffectSchema,
+  ReleasedReservationEffectSchema,
   ReservationReleaseEffectSchema,
   RequestedReleaseEffectSchema,
 } from '../../shared/domain/inventory-reservation-release.ts';
@@ -34,12 +39,20 @@ export class InventoryReservationReleaseExecution extends Context.Service<
 const workerKey = 'commerce.inventory.execute-inventory-reservation-release' as const;
 const moduleKey = 'commerce.inventory' as const;
 
-const completion = defineOutboxWorkerCompletion({
+const terminalCompletion = defineOutboxWorkerCompletion({
   consumerModuleKey: moduleKey,
   eventType: 'commerce.inventory.inventory-reservation-release-completed.v1',
   payloadSchema: ReservationReleaseEffectSchema,
   producerModuleKey: moduleKey,
   topic: 'commerce.inventory.inventory-reservation-release-completed.v1',
+  workerKey,
+});
+const reservationGuaranteeChanged = defineOutboxWorkerCompletion({
+  consumerModuleKey: moduleKey,
+  eventType: reservationGuaranteeChangedTopic,
+  payloadSchema: ReservationGuaranteeChangedPayloadSchema,
+  producerModuleKey: moduleKey,
+  topic: reservationGuaranteeChangedTopic,
   workerKey,
 });
 const reconciliationRedispatch = defineOutboxWorkerCompletion({
@@ -126,7 +139,24 @@ export const handleExecuteInventoryReservationRelease = Effect.fn('ExecuteInvent
                   });
                   return yield* Effect.void;
                 }
-                yield* scope.completionPublisher.publish(completion, {
+                if (Schema.is(ReleasedReservationEffectSchema)(current)) {
+                  yield* scope.completionPublisher.publish(reservationGuaranteeChanged, {
+                    completionId: request.mutationId,
+                    occurredAt: occurredAt(current),
+                    payloadJson: {
+                      ordering: { _tag: 'IMMUTABLE_OCCURRENCE_IDENTITY', occurrenceId: request.mutationId },
+                      ownerReadOrProofKey: 'commerce.inventory.api.inventory-reservation-detail',
+                      state: 'RELEASED',
+                      subjectRef: current.request.reservation.ref,
+                    },
+                    sourceActionInvocationId: request.sourceActionInvocationId,
+                    subjectModuleKey: current.request.reservation.ref.moduleId,
+                    subjectResourceId: current.request.reservation.ref.resourceId,
+                    subjectResourceType: current.request.reservation.ref.resourceType,
+                  });
+                  return yield* Effect.void;
+                }
+                yield* scope.completionPublisher.publish(terminalCompletion, {
                   completionId: request.mutationId,
                   occurredAt: occurredAt(current),
                   payloadJson: current,

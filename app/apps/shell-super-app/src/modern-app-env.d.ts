@@ -7,6 +7,10 @@ declare module 'catalog/Widget' {
   export default CatalogWidget;
 }
 
+declare module 'inventory/Widget' {
+  export { default } from '@app/inventory/Widget';
+}
+
 declare module 'partyRegistry/Page*' {
   const VerticalPage: React.FunctionComponent<{
     readonly routeParams: Readonly<Record<string, string>>;

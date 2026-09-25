@@ -22,6 +22,7 @@ import {
   commitmentProtectionPersistenceForScope,
   decodeCommitmentProtectionHistoryRows,
 } from '../../src/persistence/commitment-protection-repository.ts';
+import { inventoryCatalogToStockBindings } from '../../src/persistence/catalog-to-stock-binding-table.ts';
 import {
   inventoryCommitmentProtectionHistory,
   inventoryCommitmentProtections,
@@ -200,11 +201,21 @@ const makeProtection = Effect.gen(function* makeProtectionEffect() {
 
 const scope = { tenantId } as const;
 
+const currentBindingRows = [{ bindingId, stockItemId: itemId }];
+const lockingRows = () => {
+  const result = Effect.succeed(currentBindingRows);
+  return Object.assign(result, { limit: () => result });
+};
+type ProtectionSelectTable =
+  | typeof inventoryCatalogToStockBindings
+  | typeof inventoryCommitmentProtectionHistory
+  | typeof inventoryCommitmentProtections;
+
 const selectRows = (rows: readonly unknown[]) => ({
-  from: () => ({
+  from: (table: ProtectionSelectTable) => ({
     where: () => {
-      const result = Effect.succeed(rows);
-      return Object.assign(result, { limit: () => result, orderBy: () => result });
+      const result = Effect.succeed(table === inventoryCatalogToStockBindings ? currentBindingRows : rows);
+      return Object.assign(result, { for: lockingRows, limit: () => result, orderBy: () => result });
     },
   }),
 });
@@ -227,6 +238,7 @@ const insertProtectionTransaction = (protection: CommitmentProtection, insertedT
           : Effect.succeed([]),
     };
   },
+  select: () => selectRows([]),
 });
 
 const replayProtectionTransaction = (protection: CommitmentProtection) => ({
@@ -234,8 +246,11 @@ const replayProtectionTransaction = (protection: CommitmentProtection) => ({
   select: () =>
     selectRows([
       {
+        attemptId,
         authorityEffectId: protection.authorityEvidence.effectId,
+        confirmationId,
         protectionId: protection.ref.resourceId,
+        reservationId,
         snapshot: protection,
       },
     ]),
@@ -246,8 +261,11 @@ const siblingProtectionTransaction = (protection: CommitmentProtection) => ({
   select: () =>
     selectRows([
       {
+        attemptId,
         authorityEffectId: protection.authorityEvidence.effectId,
+        confirmationId,
         protectionId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        reservationId,
         snapshot: protection,
       },
     ]),

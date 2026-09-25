@@ -3,15 +3,22 @@ import { describe, expect, it } from 'effect-rstest';
 
 import {
   InventoryBackendCutoverAuthorityBoundaryMismatchSchema,
+  InventoryBackendCutoverAuthorizationBlockedSchema,
+  InventoryBackendCutoverAuthorizationTimeMismatchSchema,
+  InventoryBackendCutoverAuthorizedSchema,
   InventoryBackendCutoverBackendUnchangedSchema,
   InventoryBackendCutoverBlockedSchema,
   InventoryBackendCutoverConfigurationIdentityReusedSchema,
   InventoryBackendCutoverOpeningConfigurationMismatchSchema,
   InventoryBackendCutoverOpeningNotReadySchema,
   InventoryBackendCutoverProvisionalReservationSchema,
+  InventoryBackendCutoverReadinessFenceSchema,
+  InventoryBackendCutoverStaleReadinessFenceSchema,
   InventoryBackendCutoverReadySchema,
   InventoryBackendCutoverUnresolvedEffectSchema,
   InventoryBackendRetainedSchema,
+  assessInventoryBackendCutoverReadiness,
+  authorizeInventoryBackendCutover,
   evaluateInventoryBackendCutover,
 } from '../../shared/domain/inventory-backend-cutover.ts';
 import { InventoryBackendConfigurationSchema } from '../../shared/domain/inventory-backend-configuration.ts';
@@ -34,6 +41,7 @@ const positionId = '66666666-6666-4666-8666-666666666666';
 const unitId = '77777777-7777-4777-8777-777777777777';
 const customerConfigurationId = 'customer-configuration-primary';
 const boundary = '2026-09-25T10:00:00.000Z';
+const preBoundary = '2026-09-25T09:55:00.000Z';
 const evaluatedAt = '2026-09-25T10:05:00.000Z';
 
 const configuration = (
@@ -240,7 +248,224 @@ const unresolvedCreateEffect = Schema.decodeUnknownSync(InventoryEffectLedgerRec
   updatedAt: '2026-09-25T09:45:00.000Z',
 });
 
+const committed = Schema.decodeUnknownSync(InventoryObligationSchema)({
+  ...provisional,
+  confirmationTerminationReleasesStock: false,
+  historicalBindingPolicy: 'PRESERVE_AND_RECONCILE',
+  lifecycleMeaning: 'COMMITTED_OBLIGATION',
+  obligationReductionCreatesOnHand: false,
+  orderProof: {
+    acceptedOrderId: 'order-1',
+    attemptId: 'attempt-1',
+    authority: 'ORDER_COMMIT_PROOF_AUTHORITY',
+    commitStatus: 'COMMITTED',
+    evidenceRef: 'order-proof-1',
+    observedAt: '2026-09-25T09:10:00.000Z',
+    reservationRef,
+    tenantId,
+  },
+  physicalIssueBoundary: 'SEPARATE_INVENTORY_TRANSITION',
+  remainingQuantityConstraint: 'OWNER_GOVERNED_TRANSITION_REQUIRED',
+});
+
 describe('Inventory Backend cutover and reconciliation', () => {
+  it('can be READY before the boundary without authorizing the backend switch', () => {
+    const result = assessInventoryBackendCutoverReadiness({
+      ...replacement(opening({ evaluatedAt: preBoundary })),
+      evaluatedAt: preBoundary,
+    });
+
+    expect(Schema.is(InventoryBackendCutoverReadySchema)(result)).toBe(true);
+    if (Schema.is(InventoryBackendCutoverReadySchema)(result)) {
+      expect(result).toMatchObject({
+        authorityStatus: 'PRE_CUTOVER_BACKEND_REMAINS_AUTHORITATIVE',
+        evaluatedAt: preBoundary,
+      });
+      expect(result.transitionCandidate.preCutoverConfiguration).toEqual(pre);
+    }
+  });
+
+  it('binds READY to deterministic configuration and owner-fact fence evidence', () => {
+    const first = assessInventoryBackendCutoverReadiness(replacement());
+    const revised = assessInventoryBackendCutoverReadiness(
+      replacement(
+        opening({
+          legacyUncommittedHolds: [
+            {
+              customerConfigurationId: post.customerConfigurationId,
+              holdReference: 'legacy-hold-resolved',
+              state: {
+                _tag: 'RESOLVED',
+                disposition: 'RECONCILED',
+                ownerEvidenceRef: 'legacy-erp:hold-resolution',
+                resolvedAt: '2026-09-25T09:50:00.000Z',
+              },
+              tenantId: post.tenantId,
+            },
+          ],
+        }),
+      ),
+    );
+
+    expect(Schema.is(InventoryBackendCutoverReadySchema)(first)).toBe(true);
+    expect(Schema.is(InventoryBackendCutoverReadySchema)(revised)).toBe(true);
+    if (
+      Schema.is(InventoryBackendCutoverReadySchema)(first) &&
+      Schema.is(InventoryBackendCutoverReadySchema)(revised)
+    ) {
+      expect(Schema.is(InventoryBackendCutoverReadinessFenceSchema)(first.readinessFence)).toBe(true);
+      expect(first.readinessFence).toMatchObject({
+        postCutoverConfiguration: { configurationId: postConfigurationId, revision: 1 },
+        preCutoverConfiguration: { configurationId: preConfigurationId, revision: 1 },
+      });
+      expect(first.readinessFence.identity).not.toBe(revised.readinessFence.identity);
+    }
+  });
+
+  it('authorizes the A-to-B transition only after exact-boundary revalidation', () => {
+    const readiness = assessInventoryBackendCutoverReadiness({
+      ...replacement(opening({ evaluatedAt: preBoundary })),
+      evaluatedAt: preBoundary,
+    });
+
+    expect(Schema.is(InventoryBackendCutoverReadySchema)(readiness)).toBe(true);
+    if (Schema.is(InventoryBackendCutoverReadySchema)(readiness)) {
+      const result = authorizeInventoryBackendCutover({
+        authorizedAt: boundary,
+        currentFacts: { ...replacement(opening({ evaluatedAt: boundary })), evaluatedAt: boundary },
+        readiness,
+      });
+
+      expect(Schema.is(InventoryBackendCutoverAuthorizedSchema)(result)).toBe(true);
+      if (Schema.is(InventoryBackendCutoverAuthorizedSchema)(result)) {
+        expect(result).toMatchObject({
+          authorityStatus: 'POST_CUTOVER_BACKEND_AUTHORITATIVE',
+          authorizedAt: boundary,
+          readinessFence: readiness.readinessFence,
+        });
+        expect(result.transition.postCutoverAuthorityStartsAt).toBe(boundary);
+      }
+    }
+  });
+
+  it('rejects authorization before the effective boundary with a typed outcome', () => {
+    const readiness = assessInventoryBackendCutoverReadiness({
+      ...replacement(opening({ evaluatedAt: preBoundary })),
+      evaluatedAt: preBoundary,
+    });
+
+    expect(Schema.is(InventoryBackendCutoverReadySchema)(readiness)).toBe(true);
+    if (Schema.is(InventoryBackendCutoverReadySchema)(readiness)) {
+      const result = authorizeInventoryBackendCutover({
+        authorizedAt: preBoundary,
+        currentFacts: { ...replacement(opening({ evaluatedAt: preBoundary })), evaluatedAt: preBoundary },
+        readiness,
+      });
+
+      expect(Schema.is(InventoryBackendCutoverAuthorizationBlockedSchema)(result)).toBe(true);
+      if (Schema.is(InventoryBackendCutoverAuthorizationBlockedSchema)(result)) {
+        expect(result.authorityStatus).toBe('PRE_CUTOVER_BACKEND_REMAINS_AUTHORITATIVE');
+        const timing = result.blockers.find(Schema.is(InventoryBackendCutoverAuthorizationTimeMismatchSchema));
+        expect(timing).toMatchObject({ effectiveBoundary: boundary, reason: 'BEFORE_EFFECTIVE_BOUNDARY' });
+      }
+    }
+  });
+
+  it('rejects a late authorization attempt after the exact effective boundary', () => {
+    const readiness = assessInventoryBackendCutoverReadiness({
+      ...replacement(opening({ evaluatedAt: preBoundary })),
+      evaluatedAt: preBoundary,
+    });
+
+    expect(Schema.is(InventoryBackendCutoverReadySchema)(readiness)).toBe(true);
+    if (Schema.is(InventoryBackendCutoverReadySchema)(readiness)) {
+      const result = authorizeInventoryBackendCutover({
+        authorizedAt: evaluatedAt,
+        currentFacts: replacement(),
+        readiness,
+      });
+
+      expect(Schema.is(InventoryBackendCutoverAuthorizationBlockedSchema)(result)).toBe(true);
+      if (Schema.is(InventoryBackendCutoverAuthorizationBlockedSchema)(result)) {
+        const timing = result.blockers.find(Schema.is(InventoryBackendCutoverAuthorizationTimeMismatchSchema));
+        expect(timing).toMatchObject({ effectiveBoundary: boundary, reason: 'AFTER_EFFECTIVE_BOUNDARY' });
+      }
+    }
+  });
+
+  it('rejects pre-boundary facts presented later as boundary revalidation', () => {
+    const readiness = assessInventoryBackendCutoverReadiness({
+      ...replacement(opening({ evaluatedAt: preBoundary })),
+      evaluatedAt: preBoundary,
+    });
+
+    expect(Schema.is(InventoryBackendCutoverReadySchema)(readiness)).toBe(true);
+    if (Schema.is(InventoryBackendCutoverReadySchema)(readiness)) {
+      const result = authorizeInventoryBackendCutover({
+        authorizedAt: boundary,
+        currentFacts: { ...replacement(opening({ evaluatedAt: preBoundary })), evaluatedAt: preBoundary },
+        readiness,
+      });
+
+      expect(Schema.is(InventoryBackendCutoverAuthorizationBlockedSchema)(result)).toBe(true);
+      if (Schema.is(InventoryBackendCutoverAuthorizationBlockedSchema)(result)) {
+        const timing = result.blockers.find(Schema.is(InventoryBackendCutoverAuthorizationTimeMismatchSchema));
+        expect(timing).toMatchObject({
+          effectiveBoundary: boundary,
+          reason: 'CURRENT_FACTS_NOT_EVALUATED_AT_BOUNDARY',
+        });
+      }
+    }
+  });
+
+  it('rejects a stale readiness fence when otherwise-ready owner facts change', () => {
+    const readiness = assessInventoryBackendCutoverReadiness({
+      ...replacement(opening({ evaluatedAt: preBoundary })),
+      evaluatedAt: preBoundary,
+    });
+
+    expect(Schema.is(InventoryBackendCutoverReadySchema)(readiness)).toBe(true);
+    if (Schema.is(InventoryBackendCutoverReadySchema)(readiness)) {
+      const result = authorizeInventoryBackendCutover({
+        authorizedAt: boundary,
+        currentFacts: {
+          ...replacement(opening({ evaluatedAt: boundary, obligations: [committed] })),
+          evaluatedAt: boundary,
+        },
+        readiness,
+      });
+
+      expect(Schema.is(InventoryBackendCutoverAuthorizationBlockedSchema)(result)).toBe(true);
+      if (Schema.is(InventoryBackendCutoverAuthorizationBlockedSchema)(result)) {
+        expect(result.blockers.some(Schema.is(InventoryBackendCutoverStaleReadinessFenceSchema))).toBe(true);
+      }
+    }
+  });
+
+  it('blocks authorization when a new unresolved pre-cutover effect appears after READY', () => {
+    const readiness = assessInventoryBackendCutoverReadiness({
+      ...replacement(opening({ evaluatedAt: preBoundary })),
+      evaluatedAt: preBoundary,
+    });
+
+    expect(Schema.is(InventoryBackendCutoverReadySchema)(readiness)).toBe(true);
+    if (Schema.is(InventoryBackendCutoverReadySchema)(readiness)) {
+      const result = authorizeInventoryBackendCutover({
+        authorizedAt: boundary,
+        currentFacts: {
+          ...replacement(opening({ effectLedger: [unresolvedPhysicalEffect], evaluatedAt: boundary })),
+          evaluatedAt: boundary,
+        },
+        readiness,
+      });
+
+      expect(Schema.is(InventoryBackendCutoverAuthorizationBlockedSchema)(result)).toBe(true);
+      if (Schema.is(InventoryBackendCutoverAuthorizationBlockedSchema)(result)) {
+        expect(result.blockers.some(Schema.is(InventoryBackendCutoverUnresolvedEffectSchema))).toBe(true);
+      }
+    }
+  });
+
   it('keeps a supported selected backend without requiring migration or WMS replacement', () => {
     const result = evaluateInventoryBackendCutover({
       _tag: 'RETAIN_SELECTED_BACKEND',
@@ -256,12 +481,12 @@ describe('Inventory Backend cutover and reconciliation', () => {
     });
   });
 
-  it('approves one whole-configuration boundary with post-cutover authority and immutable history', () => {
+  it('assesses one whole-configuration transition candidate with immutable history', () => {
     const result = evaluateInventoryBackendCutover(replacement());
 
     expect(Schema.is(InventoryBackendCutoverReadySchema)(result)).toBe(true);
     if (Schema.is(InventoryBackendCutoverReadySchema)(result)) {
-      expect(result.transition).toMatchObject({
+      expect(result.transitionCandidate).toMatchObject({
         cutoverPurpose: 'PLANNED_BACKEND_REPLACEMENT_NOT_OUTAGE_RECOVERY',
         effectiveBoundary: boundary,
         latePreCutoverEvidencePolicy: 'HISTORICAL_OR_RECONCILIATION_ONLY',
@@ -300,32 +525,13 @@ describe('Inventory Backend cutover and reconciliation', () => {
   });
 
   it('preserves a proven committed obligation identity, original authority, and lineage verbatim', () => {
-    const committed = Schema.decodeUnknownSync(InventoryObligationSchema)({
-      ...provisional,
-      confirmationTerminationReleasesStock: false,
-      historicalBindingPolicy: 'PRESERVE_AND_RECONCILE',
-      lifecycleMeaning: 'COMMITTED_OBLIGATION',
-      obligationReductionCreatesOnHand: false,
-      orderProof: {
-        acceptedOrderId: 'order-1',
-        attemptId: 'attempt-1',
-        authority: 'ORDER_COMMIT_PROOF_AUTHORITY',
-        commitStatus: 'COMMITTED',
-        evidenceRef: 'order-proof-1',
-        observedAt: '2026-09-25T09:10:00.000Z',
-        reservationRef,
-        tenantId,
-      },
-      physicalIssueBoundary: 'SEPARATE_INVENTORY_TRANSITION',
-      remainingQuantityConstraint: 'OWNER_GOVERNED_TRANSITION_REQUIRED',
-    });
     const result = evaluateInventoryBackendCutover(replacement(opening({ obligations: [committed] })));
 
     expect(Schema.is(InventoryBackendCutoverReadySchema)(result)).toBe(true);
     if (Schema.is(InventoryBackendCutoverReadySchema)(result)) {
-      expect(result.transition.openingPacket.obligations).toEqual([committed]);
-      expect(result.transition.openingPacket.obligations[0]?.authority).toEqual(pre);
-      expect(result.transition.openingPacket.obligations[0]?.origin).toEqual(committed.origin);
+      expect(result.transitionCandidate.openingPacket.obligations).toEqual([committed]);
+      expect(result.transitionCandidate.openingPacket.obligations[0]?.authority).toEqual(pre);
+      expect(result.transitionCandidate.openingPacket.obligations[0]?.origin).toEqual(committed.origin);
     }
   });
 

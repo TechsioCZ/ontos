@@ -19,6 +19,7 @@ import type {
 import { InventoryObligationPersistenceUnavailable } from '../../shared/domain/inventory-obligation-persistence-unavailable.ts';
 import type { ImportedCommittedObligationRef } from '../../shared/resources/imported-committed-obligation.ts';
 import type { InventoryReservationRef } from '../../shared/resources/inventory-reservation.ts';
+import { currentBindingRequirementsMatch, lockBindingCorrectionScopes } from './binding-correction-serialization.ts';
 import {
   inventoryObligationAllocations,
   inventoryObligationCoverageTriggerContract,
@@ -468,6 +469,18 @@ export const inventoryObligationPersistenceForScope = (
     if (inserted === undefined) {
       return false;
     }
+    const bindingRequirements = obligation.requirements.map((requirement) => ({
+      bindingId: requirement.bindingRef.resourceId,
+      exactSelectionMeaning: requirement.exactSelectionMeaning,
+      stockItemId: requirement.stockItem.stockItemRef.resourceId,
+      tenantId: obligation.ref.tenantId,
+    }));
+    const bindingsRemainCurrent = yield* currentBindingRequirementsMatch(transaction, bindingRequirements).pipe(
+      Effect.mapError(unavailable),
+    );
+    if (!bindingsRemainCurrent) {
+      return yield* reject('INVALID_PERSISTED_OBLIGATION', obligation.ref.resourceId);
+    }
     yield* transaction
       .insert(inventoryObligationRequirements)
       .values(requirementValues(obligation))
@@ -487,6 +500,13 @@ export const inventoryObligationPersistenceForScope = (
     if (!Schema.is(ProvisionalInventoryReservationSchema)(obligation)) {
       return yield* reject('INVALID_PERSISTED_OBLIGATION', obligationId);
     }
+    yield* lockBindingCorrectionScopes(
+      transaction,
+      obligation.requirements.map((requirement) => ({
+        exactSelectionMeaning: requirement.exactSelectionMeaning,
+        tenantId: obligation.ref.tenantId,
+      })),
+    ).pipe(Effect.mapError(unavailable));
     const inserted = yield* persistNew(obligation);
     if (inserted) {
       return { obligation, outcome: 'ESTABLISHED' as const };
@@ -578,6 +598,13 @@ export const inventoryObligationPersistenceForScope = (
     if (!Schema.is(ImportedCommittedObligationSchema)(obligation)) {
       return yield* reject('INVALID_PERSISTED_OBLIGATION', obligationId);
     }
+    yield* lockBindingCorrectionScopes(
+      transaction,
+      obligation.requirements.map((requirement) => ({
+        exactSelectionMeaning: requirement.exactSelectionMeaning,
+        tenantId: obligation.ref.tenantId,
+      })),
+    ).pipe(Effect.mapError(unavailable));
     const inserted = yield* persistNew(obligation);
     if (inserted) {
       return { obligation, outcome: 'IMPORTED' as const };

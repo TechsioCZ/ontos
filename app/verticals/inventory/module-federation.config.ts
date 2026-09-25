@@ -17,7 +17,6 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     tsConfigPath: './tsconfig.mf-types.json',
   },
   exposes: {
-    './InventoryWidget': './src/components/inventory-widget.tsx',
     './Route': './src/federation-entry.tsx',
     './Widget': './src/components/inventory-widget.tsx',
   },
