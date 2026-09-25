@@ -312,8 +312,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/party-registry",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -635,8 +635,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/commerce-customer-context",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -975,8 +975,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/payment-term-catalog",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -1324,8 +1324,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/commerce-market-catalog",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -1655,8 +1655,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/catalog",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -1991,8 +1991,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/pricing",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -2331,8 +2331,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/storefront-registry",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -2671,8 +2671,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/price-group-catalog",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",

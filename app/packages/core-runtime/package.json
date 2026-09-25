@@ -41,10 +41,10 @@
   },
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
-    "@effect/platform-node": "4.0.0-rc.112",
-    "@effect/sql-pg": "4.0.0-rc.112",
+    "@effect/platform-node": "4.0.0-rc.117",
+    "@effect/sql-pg": "4.0.0-rc.117",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.0-rc.112",
+    "effect": "4.0.0-rc.117",
     "pg": "8.22.0"
   },
   "devDependencies": {

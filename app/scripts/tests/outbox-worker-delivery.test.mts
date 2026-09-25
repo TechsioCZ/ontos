@@ -208,7 +208,7 @@ it.live('bundles the real Party host including the production Effect HTTP health
     expect(artifact.sourceInputs.includes('packages/core-runtime/src/outbox/health.ts')).toBe(true);
     expect(bundle).toMatch(/@effect\/platform-node\/NodeHttpServer/u);
     expect(bundle).not.toMatch(/from ["']@effect\/platform-node["']/u);
-    expect(runtimePackage.dependencies['@effect/platform-node']).toBe('4.0.0-rc.112');
+    expect(runtimePackage.dependencies['@effect/platform-node']).toBe('4.0.0-rc.117');
   }),
 );
 

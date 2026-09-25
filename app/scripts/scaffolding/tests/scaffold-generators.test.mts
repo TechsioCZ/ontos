@@ -2491,7 +2491,7 @@ it.live(
           '@app/core-runtime': workspaceVersion,
           '@app/gateway-principal-verifier': workspaceVersion,
           '@app/shared-contracts': workspaceVersion,
-          effect: '4.0.0-rc.112',
+          effect: '4.0.0-rc.117',
           zeta: '1.0.0',
         });
         expect(packageJson.scripts['existing']).toBe(preservedFixtureValue);

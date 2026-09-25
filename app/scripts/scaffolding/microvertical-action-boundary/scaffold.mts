@@ -252,7 +252,7 @@ export const planActionBoundaryScaffold = (
           '@app/core-runtime': WORKSPACE_DEPENDENCY_VERSION,
           '@app/gateway-principal-verifier': WORKSPACE_DEPENDENCY_VERSION,
           '@app/shared-contracts': WORKSPACE_DEPENDENCY_VERSION,
-          effect: '4.0.0-rc.112',
+          effect: '4.0.0-rc.117',
         }),
       ),
     );
