@@ -89,10 +89,6 @@ const cloudflareDeployMode = getResultOrThrow(
   ),
 );
 const cloudflareDeployEnabled = optionContains(cloudflareDeployMode, 'cloudflare');
-const postgresProtocolCommonJsEntry = fileURLToPath(
-  new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')),
-);
-const postgresPoolCommonJsEntry = createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
 const cloudflareWorkerRemoteStubPath = fileURLToPath(
   new URL('src/api/cloudflare-worker-remote-stub.ts', import.meta.url),
 );
@@ -372,13 +368,6 @@ export default defineConfig(
             if (!cloudflareDeployEnabled) {
               return;
             }
-            const configuredAliases = config.resolve.alias;
-            config.resolve.alias =
-              configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
-            Object.assign(config.resolve.alias, {
-              'pg-pool$': postgresPoolCommonJsEntry,
-              'pg-protocol$': postgresProtocolCommonJsEntry,
-            });
             const configuredExternals = config.externals;
             config.externals = [cloudflareRuntimeExternal];
             if (configuredExternals !== undefined) {

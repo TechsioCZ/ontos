@@ -320,6 +320,20 @@ it.live(
       );
       const disconnectedReadiness = yield* facts(root);
       expect(disconnectedReadiness.some((fact) => fact.target === readinessConfig)).toBe(false);
+      write(
+        root,
+        packageFile,
+        original
+          .replace('ultramodern-create ultramodern typecheck', 'unrelated typecheck')
+          .replace(
+            '"ultramodern-create ultramodern performance-readiness"',
+            '"echo ultramodern-create ultramodern performance-readiness"',
+          )
+          .replace('"scripts":{', '"description":"ultramodern-create ultramodern typecheck","scripts":{'),
+      );
+      const describedOnly = yield* facts(root);
+      expect(describedOnly.some((fact) => fact.target === tsgoName)).toBe(false);
+      expect(describedOnly.some((fact) => fact.target === readinessConfig)).toBe(false);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

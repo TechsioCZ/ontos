@@ -20,7 +20,7 @@
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts price-group-catalog && modern dev",
     "build": "modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical price-group-catalog --target dist && ultramodern-create ultramodern public-surface --app price-group-catalog --target dist && cross-env MODERNJS_DEPLOY=node modern deploy --skip-build",
-    "cloudflare:build": "cross-env MODERNJS_DEPLOY=cloudflare modern build && node ../../scripts/build-api-only-cloudflare-worker.mts --vertical price-group-catalog --prefix /price-group-catalog-api && node ../../scripts/generate-ontos-module-contract.mts --vertical price-group-catalog --target cloudflare-dist && ultramodern-create ultramodern public-surface --app price-group-catalog --target cloudflare-dist && cross-env MODERNJS_DEPLOY=cloudflare modern deploy --skip-build && ultramodern-create ultramodern cloudflare-output-verify --app price-group-catalog",
+    "cloudflare:build": "cross-env MODERNJS_DEPLOY=cloudflare modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical price-group-catalog --target cloudflare-dist && ultramodern-create ultramodern public-surface --app price-group-catalog --target cloudflare-dist && cross-env MODERNJS_DEPLOY=cloudflare modern deploy --skip-build && ultramodern-create ultramodern cloudflare-output-verify --app price-group-catalog",
     "cloudflare:deploy": "cross-env ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS=true pnpm run cloudflare:build && wrangler deploy --config .output/wrangler.json",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app price-group-catalog",

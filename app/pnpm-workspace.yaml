@@ -1,23 +1,23 @@
 catalogs:
   ultramodern:
-    '@modern-js/adapter-rstest': 'npm:@bleedingdev/modern-js-adapter-rstest@3.9.0-ultramodern.13'
-    '@modern-js/app-tools': 'npm:@bleedingdev/modern-js-app-tools@3.9.0-ultramodern.13'
-    '@modern-js/app-tools-extensions': 'npm:@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.13'
-    '@modern-js/bff-effect': 'npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.13'
-    '@modern-js/boundary-debugger': 'npm:@bleedingdev/modern-js-boundary-debugger@3.9.0-ultramodern.13'
-    '@modern-js/code-tools': 'npm:@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.13'
-    '@modern-js/federation-runtime': 'npm:@bleedingdev/modern-js-federation-runtime@3.9.0-ultramodern.13'
-    '@modern-js/i18n-integration': 'npm:@bleedingdev/modern-js-i18n-integration@3.9.0-ultramodern.13'
-    '@modern-js/plugin-bff': 'npm:@bleedingdev/modern-js-plugin-bff@3.9.0-ultramodern.13'
-    '@modern-js/plugin-bff-build-extensions': 'npm:@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.13'
-    '@modern-js/plugin-bff-extensions': 'npm:@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.13'
-    '@modern-js/plugin-i18n': 'npm:@bleedingdev/modern-js-plugin-i18n@3.9.0-ultramodern.13'
-    '@modern-js/plugin-tanstack': 'npm:@bleedingdev/modern-js-plugin-tanstack@3.9.0-ultramodern.13'
-    '@modern-js/runtime': 'npm:@bleedingdev/modern-js-runtime@3.9.0-ultramodern.13'
-    '@modern-js/runtime-extensions': 'npm:@bleedingdev/modern-js-runtime-extensions@3.9.0-ultramodern.13'
-    '@modern-js/runtime-renderer-extensions': 'npm:@bleedingdev/modern-js-runtime-renderer-extensions@3.9.0-ultramodern.13'
-    '@modern-js/ultramodern-app-tools': 'npm:@bleedingdev/modern-js-ultramodern-app-tools@3.9.0-ultramodern.13'
-    '@modern-js/ultramodern-create': 'npm:@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.13'
+    '@modern-js/adapter-rstest': 'npm:@bleedingdev/modern-js-adapter-rstest@3.9.0-ultramodern.14'
+    '@modern-js/app-tools': 'npm:@bleedingdev/modern-js-app-tools@3.9.0-ultramodern.14'
+    '@modern-js/app-tools-extensions': 'npm:@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.14'
+    '@modern-js/bff-effect': 'npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.14'
+    '@modern-js/boundary-debugger': 'npm:@bleedingdev/modern-js-boundary-debugger@3.9.0-ultramodern.14'
+    '@modern-js/code-tools': 'npm:@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.14'
+    '@modern-js/federation-runtime': 'npm:@bleedingdev/modern-js-federation-runtime@3.9.0-ultramodern.14'
+    '@modern-js/i18n-integration': 'npm:@bleedingdev/modern-js-i18n-integration@3.9.0-ultramodern.14'
+    '@modern-js/plugin-bff': 'npm:@bleedingdev/modern-js-plugin-bff@3.9.0-ultramodern.14'
+    '@modern-js/plugin-bff-build-extensions': 'npm:@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.14'
+    '@modern-js/plugin-bff-extensions': 'npm:@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.14'
+    '@modern-js/plugin-i18n': 'npm:@bleedingdev/modern-js-plugin-i18n@3.9.0-ultramodern.14'
+    '@modern-js/plugin-tanstack': 'npm:@bleedingdev/modern-js-plugin-tanstack@3.9.0-ultramodern.14'
+    '@modern-js/runtime': 'npm:@bleedingdev/modern-js-runtime@3.9.0-ultramodern.14'
+    '@modern-js/runtime-extensions': 'npm:@bleedingdev/modern-js-runtime-extensions@3.9.0-ultramodern.14'
+    '@modern-js/runtime-renderer-extensions': 'npm:@bleedingdev/modern-js-runtime-renderer-extensions@3.9.0-ultramodern.14'
+    '@modern-js/ultramodern-app-tools': 'npm:@bleedingdev/modern-js-ultramodern-app-tools@3.9.0-ultramodern.14'
+    '@modern-js/ultramodern-create': 'npm:@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.14'
 
 packages:
   - apps/*
@@ -25,6 +25,8 @@ packages:
   - packages/*
 enableGlobalVirtualStore: false
 minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - '@bleedingdev/*'
 minimumReleaseAgeStrict: true
 minimumReleaseAgeIgnoreMissingTime: false
 trustPolicy: no-downgrade
@@ -50,7 +52,7 @@ overrides:
   effect: npm:@bleedingdev/effect@4.0.0-rc.117
   node-fetch: ^3.3.2
   '@tanstack/history': 1.162.4
-  zod: npm:@bleedingdev/zod@4.6.5
+  zod: 4.6.5
   '@effect/vitest': 4.0.0-rc.117
 allowBuilds:
   '@parcel/watcher': true

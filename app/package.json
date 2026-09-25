@@ -22,7 +22,7 @@
     "cloudflare:build": "ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json && ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json && pnpm -r --filter \"./verticals/*\" run cloudflare:build && pnpm --filter \"./apps/shell-super-app\" run cloudflare:build && pnpm mf:types --target cloudflare && pnpm cloudflare-output:verify && pnpm cloudflare:ssr-proof",
     "cloudflare:deploy": "pnpm -r --filter \"./verticals/*\" run cloudflare:deploy && pnpm --filter \"./apps/shell-super-app\" run cloudflare:deploy",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --out .codex/reports/cloudflare-version-proof/public-url-proof.json",
-    "cloudflare:ssr-proof": "node ./scripts/proof-workerd-ssr.mts",
+    "cloudflare:ssr-proof": "for output in apps/*/.output verticals/*/.output; do printf 'DATABASE_URL=postgresql://workerd-proof:workerd-proof@127.0.0.1:5432/workerd-proof\\nSPICEDB_ENDPOINT=127.0.0.1:50051\\nSPICEDB_INSECURE=true\\nSPICEDB_PRESHARED_KEY=workerd-proof\\n' > \"$output/.dev.vars\"; done && ultramodern-create ultramodern cloudflare-ssr-proof",
     "cloudflare-output:verify": "ultramodern-create ultramodern cloudflare-output-verify",
     "node:backend-federation:generate": "ultramodern-create ultramodern backend-federation-generate",
     "node:proof": "ultramodern-create ultramodern backend-federation-proof",
