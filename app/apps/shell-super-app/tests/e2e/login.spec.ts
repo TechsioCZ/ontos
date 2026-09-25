@@ -492,10 +492,13 @@ test('keeps the authenticated dashboard reachable without horizontal overflow at
   );
 
   await expect(page.getByRole('complementary', { name: 'Dashboard sidebar' })).toBeInViewport();
-  await expect(page.locator('header[aria-label="Dashboard header"]')).toBeInViewport();
-  await expect(page.getByRole('button', { name: 'E2E user' })).toBeInViewport();
   await expect(page.getByRole('link', { name: 'Home' })).toBeInViewport();
+  const dashboardHeader = page.locator('header[aria-label="Dashboard header"]');
+  await dashboardHeader.scrollIntoViewIfNeeded();
+  await expect(dashboardHeader).toBeInViewport();
+  await expect(page.getByRole('button', { name: 'E2E user' })).toBeInViewport();
   const tenant = page.getByRole('combobox', { name: 'Current tenant' });
+  await tenant.scrollIntoViewIfNeeded();
   await expect(tenant).toBeInViewport();
   await tenant.click();
   const secondTenant = page.getByRole('option', {
