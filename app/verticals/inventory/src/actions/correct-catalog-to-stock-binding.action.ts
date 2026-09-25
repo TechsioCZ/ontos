@@ -4,12 +4,7 @@
 import { createHash } from 'node:crypto';
 
 import type { ActionHandlerContext, OperationalScope, ReadServiceFactory } from '@app/core-runtime';
-import {
-  defineAction,
-  defineActionBusinessPermission,
-  defineActionResourcePermission,
-  defineTenantModuleEntrypoint,
-} from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 
 import {
@@ -335,10 +330,6 @@ export const correctCatalogToStockBindingAction = defineAction(
     owningModuleKey: MODULE_KEY,
     payloadSchema: CorrectCatalogToStockBindingPayloadSchema,
     policies: [],
-    resourcePermission: defineActionResourcePermission<CorrectCatalogToStockBindingPayload>((payload) => ({
-      permission: 'write',
-      resource: payload.bindingRef,
-    })),
     resultSchema: CorrectCatalogToStockBindingResultSchema,
     schemaVersion: '1',
   },

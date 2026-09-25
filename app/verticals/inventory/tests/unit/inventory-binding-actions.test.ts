@@ -127,7 +127,7 @@ describe('Catalog-to-Stock Binding Actions', () => {
     }
   });
 
-  it('requires the exact manage authority and conjunctive Resource write for the durable binding ref', () => {
+  it('requires the exact manage authority and keeps tenant-global correction free of a Legal Entity Resource gate', () => {
     const businessTarget = {
       permission: 'inventory.catalog_to_stock_binding.manage',
       target: {
@@ -150,7 +150,7 @@ describe('Catalog-to-Stock Binding Actions', () => {
       getActionResourcePermissionTargetResolver(establishCatalogToStockBindingAction)?.(establishPayload, scope),
       getActionResourcePermissionTargetResolver(correctCatalogToStockBindingAction)?.(correctPayload, scope),
       getActionResourcePermissionTargetResolver(endCatalogToStockBindingAction)?.(endPayload, scope),
-    ]).toEqual([resourceTarget, resourceTarget, resourceTarget]);
+    ]).toEqual([resourceTarget, undefined, resourceTarget]);
   });
 
   it('rejects a proposed binding identity outside the exact Selection Tenant at decoding', () => {
