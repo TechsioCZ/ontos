@@ -14,6 +14,7 @@ import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
 import {
+  hasCanonicalInventoryAuthorizationTarget,
   hasCanonicalPricingAuthorizationTargetIds,
   isBusinessPermissionTargetCompatible,
   toBusinessPermissionAccessObjectId,
@@ -77,6 +78,7 @@ const prepare = (
   const invalidScope =
     !isBusinessPermissionTargetCompatible({ permission: input.permission, target: input.target }) ||
     !hasCanonicalPricingAuthorizationTargetIds(input.target) ||
+    !hasCanonicalInventoryAuthorizationTarget(input.target) ||
     input.principal.tenantId !== input.target.tenantId ||
     input.principal.principalId.length === 0 ||
     (targetRequiresLegalEntity && input.target.legalEntityId.length === 0) ||

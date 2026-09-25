@@ -7,7 +7,8 @@
     "catalog": "http://localhost:4105/.well-known/ontos-module-manifest.json",
     "pricing": "http://localhost:4106/.well-known/ontos-module-manifest.json",
     "storefront-registry": "http://localhost:4107/.well-known/ontos-module-manifest.json",
-    "price-group-catalog": "http://localhost:4108/.well-known/ontos-module-manifest.json"
+    "price-group-catalog": "http://localhost:4108/.well-known/ontos-module-manifest.json",
+    "inventory": "http://localhost:4109/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -21,12 +22,14 @@
     "catalog": 4105,
     "pricing": 4106,
     "storefront-registry": 4107,
-    "price-group-catalog": 4108
+    "price-group-catalog": 4108,
+    "inventory": 4109
   },
   "manifests": {
     "party-registry": "http://localhost:4102/mf-manifest.json",
     "commerce-market-catalog": "http://localhost:4104/mf-manifest.json",
-    "catalog": "http://localhost:4105/mf-manifest.json"
+    "catalog": "http://localhost:4105/mf-manifest.json",
+    "inventory": "http://localhost:4109/mf-manifest.json"
   },
   "serverExecution": {
     "party-registry": {
@@ -437,6 +440,57 @@
           "buildMarker": "af022b7822b7562c"
         }
       }
+    },
+    "inventory": {
+      "apiBaseUrl": "http://localhost:4109/inventory-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/inventory",
+        "buildMarker": "d87a59b2fccc989f"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-inventory",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_INVENTORY",
+        "ssr": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js",
+          "routeManifest": ".output/server/route.json",
+          "ssrBundle": ".output/worker/index.js",
+          "assetsBinding": "ASSETS"
+        },
+        "zephyr": {
+          "runtime": "ssr-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_INVENTORY_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_INVENTORY_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_INVENTORY_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_INVENTORY_WORKER",
+          "serviceBindingEnv": "VERTICAL_INVENTORY_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_INVENTORY_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_INVENTORY_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalInventoryBackend",
+        "manifestEnv": "VERTICAL_INVENTORY_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4109/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4109/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/inventory",
+          "buildMarker": "d87a59b2fccc989f"
+        }
+      }
     }
   },
   "apis": {
@@ -447,6 +501,7 @@
     "catalog": "http://localhost:4105/catalog-api",
     "pricing": "http://localhost:4106/pricing-api",
     "storefront-registry": "http://localhost:4107/storefront-registry-api",
-    "price-group-catalog": "http://localhost:4108/price-group-catalog-api"
+    "price-group-catalog": "http://localhost:4108/price-group-catalog-api",
+    "inventory": "http://localhost:4109/inventory-api"
   }
 }

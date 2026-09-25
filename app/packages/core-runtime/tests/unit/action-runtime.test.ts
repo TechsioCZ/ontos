@@ -1932,6 +1932,113 @@ it.effect(
 );
 
 it.effect(
+  'enforces exact tenant-qualified Inventory Resource permissions and preserves the durable ResourceRef in evidence',
+  Effect.fn(function* testInventoryResourceBusinessPermission() {
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.stock.correct');
+    const InventoryResourceIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('InventoryResourceId'));
+    const TargetTenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('InventoryTargetTenantId'));
+    const InputSchema = Schema.Struct({
+      resourceId: InventoryResourceIdSchema,
+      targetTenantId: TargetTenantIdSchema,
+    });
+    let handlerCalls = 0;
+    const action = defineAction(
+      {
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'inventory.stock-correction.v1',
+        },
+        actionKey: 'commerce.inventory.correct-stock-position',
+        auditProfile: 'sensitive',
+        businessPermission: defineActionBusinessPermission<typeof InputSchema.Type>((payload) => ({
+          permission,
+          target: {
+            kind: 'inventory_resource',
+            resource: {
+              moduleId: 'commerce.inventory',
+              resourceId: payload.resourceId,
+              resourceType: 'commerce.inventory.stock-position',
+            },
+            tenantId: payload.targetTenantId,
+          },
+        })),
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'explicit' },
+          entrypointKey: 'commerce.inventory.correct-stock-position',
+          moduleKey: 'commerce.inventory',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'optional',
+        owningModuleKey: 'commerce.inventory',
+        payloadSchema: InputSchema,
+        policies: [],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () => {
+        handlerCalls += 1;
+        return Effect.void;
+      },
+    );
+    const resourceId = '70000000-0000-4000-8000-000000000001';
+    const payload = { resourceId, targetTenantId: principal.tenantId };
+    const run = (harness: Effect.Success<ReturnType<typeof makeHarness>>, input = payload) =>
+      harness.runtime.runAction({
+        payload: input,
+        principal,
+        registration: action,
+        transport: transport('inventory-resource-target'),
+      });
+
+    const allowed = yield* makeHarness({ businessPermissionDecision: 'allowed' });
+    yield* run(allowed);
+    expect(allowed.businessPermissionChecks).toEqual([
+      {
+        principal: { principalId: principal.principalId, tenantId: principal.tenantId },
+        targets: [
+          {
+            permission,
+            target: {
+              kind: 'inventory_resource',
+              resource: {
+                moduleId: 'commerce.inventory',
+                resourceId,
+                resourceType: 'commerce.inventory.stock-position',
+              },
+              tenantId: principal.tenantId,
+            },
+          },
+        ],
+      },
+    ]);
+    expect(allowed.flushed[0]?.transport).toEqual({
+      correlationId: 'correlation-inventory-resource-target',
+      idempotencyKey: 'inventory-resource-target',
+      targetModuleKey: 'commerce.inventory',
+      targetResourceId: resourceId,
+      targetResourceType: 'commerce.inventory.stock-position',
+    });
+
+    const denied = yield* makeHarness({ businessPermissionDecision: 'denied' });
+    expect(Predicate.isTagged(yield* Effect.flip(run(denied)), 'ActionPermissionDenied')).toBe(true);
+
+    for (const [invalidPayload, expectedTag] of [
+      [{ ...payload, targetTenantId: '00000000-0000-4000-8000-000000000099' }, 'ActionPermissionCheckError'],
+      [{ ...payload, resourceId: 'position-by-item-and-location' }, 'ActionPayloadValidationError'],
+    ] as const) {
+      const invalid = yield* makeHarness({ businessPermissionDecision: 'allowed' });
+      expect(Predicate.isTagged(yield* Effect.flip(run(invalid, invalidPayload)), expectedTag)).toBe(true);
+      expect(invalid.businessPermissionChecks).toHaveLength(0);
+    }
+    expect(handlerCalls).toBe(1);
+  }),
+);
+
+it.effect(
   'rejects a Pricing permission resolved onto a Counterparty target before checks, persistence, or handler code',
   Effect.fn(function* rejectMismatchedBusinessPermissionTarget() {
     const pricingPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');

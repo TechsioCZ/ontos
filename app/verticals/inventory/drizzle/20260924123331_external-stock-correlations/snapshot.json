@@ -1,0 +1,2822 @@
+{
+  "version": "8",
+  "dialect": "postgres",
+  "id": "840cbff4-dfb7-4480-b4be-781cc424be42",
+  "prevIds": [
+    "ea14141f-15fa-4289-b6f8-21c0bc346f7d"
+  ],
+  "ddl": [
+    {
+      "name": "inventory",
+      "entityType": "schemas"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "backend_configurations",
+      "entityType": "tables",
+      "schema": "inventory"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "catalog_to_stock_binding_history",
+      "entityType": "tables",
+      "schema": "inventory"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "catalog_to_stock_bindings",
+      "entityType": "tables",
+      "schema": "inventory"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "external_stock_correlations",
+      "entityType": "tables",
+      "schema": "inventory"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "stock_items",
+      "entityType": "tables",
+      "schema": "inventory"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "stock_location_revisions",
+      "entityType": "tables",
+      "schema": "inventory"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "stock_locations",
+      "entityType": "tables",
+      "schema": "inventory"
+    },
+    {
+      "isRlsEnabled": true,
+      "name": "stock_positions",
+      "entityType": "tables",
+      "schema": "inventory"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "backend_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "backend_kind",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "configuration_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "customer_configuration_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "exact_reservation_capability",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "selected_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "binding_history_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "binding_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "snapshot",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ended_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "binding_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "catalog_selection",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "exact_selection_meaning_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "exact_selection_kind",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_item_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_unit_module_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_unit_resource_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_unit_resource_type",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_unit_tenant_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "current_revision",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "correlation_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "customer_configuration_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer_backend_kind",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "issuer_backend_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "namespace",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "external_scope",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "identifier_kind",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "external_value",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_item_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_location_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'CURRENT'",
+      "generated": null,
+      "identity": null,
+      "name": "lifecycle_state",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_from",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "effective_to",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "owner_evidence_ref",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "confirmed_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "exact_selection_kind",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "exact_selection_meaning_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'CURRENT'",
+      "generated": null,
+      "identity": null,
+      "name": "lifecycle_state",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "retired_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_item_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_unit_module_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_unit_resource_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_unit_resource_type",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_unit_tenant_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "gen_random_uuid()",
+      "generated": null,
+      "identity": null,
+      "name": "stock_location_revision_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_location_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "snapshot",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "recorded_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_location_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "display_name",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "scope_kind",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "physical_site_keys",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "jsonb",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "address_evidence",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "lifecycle_state",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "successor_stock_location_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "transition_reason",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "transitioned_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "current_revision",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_position_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "tenant_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "customer_configuration_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_item_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_location_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_unit_module_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_unit_resource_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_unit_resource_type",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "stock_unit_tenant_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "'CURRENT'",
+      "generated": null,
+      "identity": null,
+      "name": "lifecycle_state",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "on_hand_state",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "numeric(38,9)",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "on_hand_amount",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "text",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "on_hand_evidence_ref",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "on_hand_observed_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "uuid",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "owner_configuration_id",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "1",
+      "generated": null,
+      "identity": null,
+      "name": "revision",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "ended_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "created_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "type": "timestamp with time zone",
+      "typeSchema": null,
+      "notNull": true,
+      "dimensions": 0,
+      "default": "now()",
+      "generated": null,
+      "identity": null,
+      "name": "updated_at",
+      "entityType": "columns",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "configuration_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_backend_configurations_scope_id_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "customer_configuration_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_backend_configurations_customer_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "binding_history_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_catalog_to_stock_binding_history_scope_id_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "binding_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "revision",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_catalog_to_stock_binding_history_revision_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "binding_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_catalog_to_stock_bindings_scope_id_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "exact_selection_meaning_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_catalog_to_stock_bindings_selection_meaning_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "stock_item_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_catalog_to_stock_bindings_stock_item_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "correlation_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_external_stock_correlations_scope_id_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "customer_configuration_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "issuer_backend_kind",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "issuer_backend_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "namespace",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "external_scope",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "identifier_kind",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "external_value",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"lifecycle_state\" = 'CURRENT' and \"effective_to\" is null",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_external_stock_correlations_current_key_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "stock_item_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_external_stock_correlations_item_idx",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "stock_location_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_external_stock_correlations_location_idx",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "stock_item_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_stock_items_scope_id_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "exact_selection_meaning_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_stock_items_exact_meaning_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "lifecycle_state",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": "\"lifecycle_state\" = 'CURRENT'",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_stock_items_current_idx",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "lifecycle_state",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_stock_locations_lifecycle_idx",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "stock_position_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_stock_positions_scope_id_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "customer_configuration_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "stock_item_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "stock_location_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": true,
+      "where": "\"lifecycle_state\" = 'CURRENT'",
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_stock_positions_current_scope_uk",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "stock_item_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_stock_positions_item_idx",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        {
+          "value": "tenant_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        },
+        {
+          "value": "stock_location_id",
+          "isExpression": false,
+          "asc": true,
+          "nullsFirst": false,
+          "opclass": null
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "with": "",
+      "method": "btree",
+      "concurrently": false,
+      "name": "inventory_stock_positions_location_idx",
+      "entityType": "indexes",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "binding_id"
+      ],
+      "schemaTo": "inventory",
+      "tableTo": "catalog_to_stock_bindings",
+      "columnsTo": [
+        "tenant_id",
+        "binding_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "inventory_catalog_to_stock_binding_history_binding_fk",
+      "entityType": "fks",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stock_item_id"
+      ],
+      "schemaTo": "inventory",
+      "tableTo": "stock_items",
+      "columnsTo": [
+        "tenant_id",
+        "stock_item_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "inventory_catalog_to_stock_bindings_stock_item_fk",
+      "entityType": "fks",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stock_item_id"
+      ],
+      "schemaTo": "inventory",
+      "tableTo": "stock_items",
+      "columnsTo": [
+        "tenant_id",
+        "stock_item_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "inventory_external_stock_correlations_item_fk",
+      "entityType": "fks",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stock_location_id"
+      ],
+      "schemaTo": "inventory",
+      "tableTo": "stock_locations",
+      "columnsTo": [
+        "tenant_id",
+        "stock_location_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "inventory_external_stock_correlations_location_fk",
+      "entityType": "fks",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stock_location_id"
+      ],
+      "schemaTo": "inventory",
+      "tableTo": "stock_locations",
+      "columnsTo": [
+        "tenant_id",
+        "stock_location_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "inventory_stock_location_revisions_location_fk",
+      "entityType": "fks",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "successor_stock_location_id"
+      ],
+      "schemaTo": "inventory",
+      "tableTo": "stock_locations",
+      "columnsTo": [
+        "tenant_id",
+        "stock_location_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "inventory_stock_locations_successor_fk",
+      "entityType": "fks",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stock_item_id"
+      ],
+      "schemaTo": "inventory",
+      "tableTo": "stock_items",
+      "columnsTo": [
+        "tenant_id",
+        "stock_item_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "inventory_stock_positions_item_fk",
+      "entityType": "fks",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stock_location_id"
+      ],
+      "schemaTo": "inventory",
+      "tableTo": "stock_locations",
+      "columnsTo": [
+        "tenant_id",
+        "stock_location_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "inventory_stock_positions_location_fk",
+      "entityType": "fks",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "owner_configuration_id"
+      ],
+      "schemaTo": "inventory",
+      "tableTo": "backend_configurations",
+      "columnsTo": [
+        "tenant_id",
+        "configuration_id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "RESTRICT",
+      "name": "inventory_stock_positions_backend_configuration_fk",
+      "entityType": "fks",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "columns": [
+        "configuration_id"
+      ],
+      "nameExplicit": false,
+      "name": "backend_configurations_pkey",
+      "schema": "inventory",
+      "table": "backend_configurations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "binding_history_id"
+      ],
+      "nameExplicit": false,
+      "name": "catalog_to_stock_binding_history_pkey",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "binding_id"
+      ],
+      "nameExplicit": false,
+      "name": "catalog_to_stock_bindings_pkey",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "correlation_id"
+      ],
+      "nameExplicit": false,
+      "name": "external_stock_correlations_pkey",
+      "schema": "inventory",
+      "table": "external_stock_correlations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "stock_item_id"
+      ],
+      "nameExplicit": false,
+      "name": "stock_items_pkey",
+      "schema": "inventory",
+      "table": "stock_items",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "stock_location_revision_id"
+      ],
+      "nameExplicit": false,
+      "name": "stock_location_revisions_pkey",
+      "schema": "inventory",
+      "table": "stock_location_revisions",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "stock_location_id"
+      ],
+      "nameExplicit": false,
+      "name": "stock_locations_pkey",
+      "schema": "inventory",
+      "table": "stock_locations",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "stock_position_id"
+      ],
+      "nameExplicit": false,
+      "name": "stock_positions_pkey",
+      "schema": "inventory",
+      "table": "stock_positions",
+      "entityType": "pks"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stock_location_revision_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "inventory_stock_location_revisions_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stock_location_id",
+        "revision"
+      ],
+      "nullsNotDistinct": false,
+      "name": "inventory_stock_location_revisions_number_uk",
+      "entityType": "uniques",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "nameExplicit": true,
+      "columns": [
+        "tenant_id",
+        "stock_location_id"
+      ],
+      "nullsNotDistinct": false,
+      "name": "inventory_stock_locations_scope_id_uk",
+      "entityType": "uniques",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "value": "length(btrim(\"backend_id\")) between 1 and 300 and length(btrim(\"customer_configuration_id\")) between 1 and 300",
+      "name": "inventory_backend_configurations_identity_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "value": "\"backend_kind\" in ('external_business_system', 'ontos_wms')",
+      "name": "inventory_backend_configurations_backend_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "value": "\"exact_reservation_capability\" in ('SUPPORTED', 'UNSUPPORTED') and (\"backend_kind\" <> 'ontos_wms' or \"exact_reservation_capability\" = 'SUPPORTED')",
+      "name": "inventory_backend_configurations_capability_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "value": "\"revision\" = 1",
+      "name": "inventory_backend_configurations_revision_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "value": "\"revision\" >= 1",
+      "name": "inventory_catalog_to_stock_binding_history_revision_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "value": "char_length(btrim(\"exact_selection_meaning_id\")) between 1 and 300 and \"exact_selection_kind\" in ('PRODUCT_VARIANT', 'PACKAGE_OPTION', 'SET_VARIANT', 'CONFIGURED_SELECTION')",
+      "name": "inventory_catalog_to_stock_bindings_meaning_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "value": "\"stock_unit_module_id\" = 'commerce.catalog' and \"stock_unit_resource_type\" = 'commerce.catalog.product-unit' and \"stock_unit_tenant_id\" = \"tenant_id\"",
+      "name": "inventory_catalog_to_stock_bindings_unit_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "value": "\"current_revision\" >= 1",
+      "name": "inventory_catalog_to_stock_bindings_revision_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "value": "length(btrim(\"customer_configuration_id\")) between 1 and 300 and \"issuer_backend_kind\" in ('external_business_system', 'ontos_wms') and length(btrim(\"issuer_backend_id\")) between 1 and 300 and length(btrim(\"namespace\")) between 1 and 300 and length(btrim(\"external_scope\")) between 1 and 300 and \"identifier_kind\" in ('ITEM', 'LOCATION') and length(btrim(\"external_value\")) between 1 and 300",
+      "name": "inventory_external_stock_correlations_key_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "value": "(\"identifier_kind\" = 'ITEM' and \"stock_item_id\" is not null and \"stock_location_id\" is null) or (\"identifier_kind\" = 'LOCATION' and \"stock_item_id\" is null and \"stock_location_id\" is not null)",
+      "name": "inventory_external_stock_correlations_target_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "value": "(\"lifecycle_state\" = 'CURRENT' and \"effective_to\" is null) or (\"lifecycle_state\" = 'ENDED' and \"effective_to\" is not null and \"effective_from\" < \"effective_to\")",
+      "name": "inventory_external_stock_correlations_lifecycle_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "value": "length(btrim(\"owner_evidence_ref\")) between 1 and 300",
+      "name": "inventory_external_stock_correlations_evidence_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "value": "\"revision\" >= 1",
+      "name": "inventory_external_stock_correlations_revision_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "value": "char_length(btrim(\"exact_selection_meaning_id\")) between 1 and 300 and \"exact_selection_kind\" in ('PRODUCT_VARIANT', 'PACKAGE_OPTION', 'SET_VARIANT', 'CONFIGURED_SELECTION')",
+      "name": "inventory_stock_items_meaning_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "value": "\"stock_unit_module_id\" = 'commerce.catalog' and \"stock_unit_resource_type\" = 'commerce.catalog.product-unit' and \"stock_unit_tenant_id\" = \"tenant_id\"",
+      "name": "inventory_stock_items_unit_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "value": "\"revision\" >= 1",
+      "name": "inventory_stock_items_revision_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "value": "\"lifecycle_state\" in ('CURRENT', 'RETIRED')",
+      "name": "inventory_stock_items_lifecycle_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "value": "(\"lifecycle_state\" = 'CURRENT' and \"retired_at\" is null) or (\"lifecycle_state\" = 'RETIRED' and \"retired_at\" is not null)",
+      "name": "inventory_stock_items_retirement_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "value": "\"revision\" >= 1",
+      "name": "inventory_stock_location_revisions_revision_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "value": "\"current_revision\" >= 1",
+      "name": "inventory_stock_locations_revision_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "value": "\"display_name\" = btrim(\"display_name\") and length(\"display_name\") between 1 and 300",
+      "name": "inventory_stock_locations_display_name_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "value": "\"scope_kind\" in ('PHYSICAL_SITE', 'LOGICAL_AGGREGATE')",
+      "name": "inventory_stock_locations_scope_kind_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "value": "jsonb_typeof(\"physical_site_keys\") = 'array' and jsonb_array_length(\"physical_site_keys\") <= 100 and (\"scope_kind\" <> 'PHYSICAL_SITE' or jsonb_array_length(\"physical_site_keys\") = 1)",
+      "name": "inventory_stock_locations_site_keys_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "value": "\"lifecycle_state\" in ('ACTIVE', 'RETIRED', 'REPLACED', 'MERGED')",
+      "name": "inventory_stock_locations_lifecycle_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "value": "((\"lifecycle_state\" in ('ACTIVE', 'RETIRED')) and \"successor_stock_location_id\" is null) or ((\"lifecycle_state\" in ('REPLACED', 'MERGED')) and \"successor_stock_location_id\" is not null and \"successor_stock_location_id\" <> \"stock_location_id\")",
+      "name": "inventory_stock_locations_successor_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "value": "(\"lifecycle_state\" = 'ACTIVE' and \"transition_reason\" is null and \"transitioned_at\" is null) or (\"lifecycle_state\" <> 'ACTIVE' and \"transition_reason\" = btrim(\"transition_reason\") and length(\"transition_reason\") between 1 and 1000 and \"transitioned_at\" is not null)",
+      "name": "inventory_stock_locations_transition_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "value": "\"customer_configuration_id\" = btrim(\"customer_configuration_id\") and length(\"customer_configuration_id\") between 1 and 300",
+      "name": "inventory_stock_positions_customer_configuration_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "value": "\"stock_unit_module_id\" = 'commerce.catalog' and \"stock_unit_resource_type\" = 'commerce.catalog.product-unit' and \"stock_unit_tenant_id\" = \"tenant_id\"",
+      "name": "inventory_stock_positions_unit_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "value": "\"lifecycle_state\" in ('CURRENT', 'HISTORICAL')",
+      "name": "inventory_stock_positions_lifecycle_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "value": "(\"lifecycle_state\" = 'CURRENT' and \"ended_at\" is null) or (\"lifecycle_state\" = 'HISTORICAL' and \"ended_at\" is not null)",
+      "name": "inventory_stock_positions_ended_at_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "value": "not (\"lifecycle_state\" = 'HISTORICAL' and \"on_hand_state\" = 'CURRENT')",
+      "name": "inventory_stock_positions_historical_on_hand_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "value": "\"on_hand_state\" in ('CURRENT', 'UNKNOWN', 'MISSING', 'STALE', 'INDETERMINATE')",
+      "name": "inventory_stock_positions_on_hand_state_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "value": "((\"on_hand_state\" in ('CURRENT', 'STALE')) and \"on_hand_amount\" is not null and \"on_hand_amount\" >= 0 and \"on_hand_evidence_ref\" is not null and \"on_hand_observed_at\" is not null) or ((\"on_hand_state\" in ('UNKNOWN', 'MISSING', 'INDETERMINATE')) and \"on_hand_amount\" is null and \"on_hand_evidence_ref\" is null and \"on_hand_observed_at\" is null)",
+      "name": "inventory_stock_positions_on_hand_value_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "value": "\"revision\" >= 1",
+      "name": "inventory_stock_positions_revision_ck",
+      "entityType": "checks",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"backend_configurations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_backend_configurations_tenant_select",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"inventory\".\"backend_configurations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_backend_configurations_tenant_insert",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"backend_configurations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"inventory\".\"backend_configurations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_backend_configurations_tenant_update",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"backend_configurations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_backend_configurations_tenant_delete",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "backend_configurations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"catalog_to_stock_binding_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_catalog_to_stock_binding_history_tenant_select",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"inventory\".\"catalog_to_stock_binding_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_catalog_to_stock_binding_history_tenant_insert",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"catalog_to_stock_binding_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"inventory\".\"catalog_to_stock_binding_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_catalog_to_stock_binding_history_tenant_update",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"catalog_to_stock_binding_history\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_catalog_to_stock_binding_history_tenant_delete",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "catalog_to_stock_binding_history"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"catalog_to_stock_bindings\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_catalog_to_stock_bindings_tenant_select",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"inventory\".\"catalog_to_stock_bindings\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_catalog_to_stock_bindings_tenant_insert",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"catalog_to_stock_bindings\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"inventory\".\"catalog_to_stock_bindings\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_catalog_to_stock_bindings_tenant_update",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"catalog_to_stock_bindings\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_catalog_to_stock_bindings_tenant_delete",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "catalog_to_stock_bindings"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"external_stock_correlations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_external_stock_correlations_tenant_select",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"inventory\".\"external_stock_correlations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_external_stock_correlations_tenant_insert",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"external_stock_correlations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"inventory\".\"external_stock_correlations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_external_stock_correlations_tenant_update",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"external_stock_correlations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_external_stock_correlations_tenant_delete",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "external_stock_correlations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"stock_items\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_stock_items_tenant_select",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"inventory\".\"stock_items\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_stock_items_tenant_insert",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"stock_items\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"inventory\".\"stock_items\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_stock_items_tenant_update",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"stock_items\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_stock_items_tenant_delete",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_items"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"stock_location_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_stock_location_revisions_tenant_select",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"inventory\".\"stock_location_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_stock_location_revisions_tenant_insert",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"stock_location_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"inventory\".\"stock_location_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_stock_location_revisions_tenant_update",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"stock_location_revisions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_stock_location_revisions_tenant_delete",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_location_revisions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"stock_locations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_stock_locations_tenant_select",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"inventory\".\"stock_locations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_stock_locations_tenant_insert",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"stock_locations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"inventory\".\"stock_locations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_stock_locations_tenant_update",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"stock_locations\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_stock_locations_tenant_delete",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_locations"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "SELECT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"stock_positions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_stock_positions_tenant_select",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "INSERT",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": null,
+      "withCheck": "\"inventory\".\"stock_positions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_stock_positions_tenant_insert",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "UPDATE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"stock_positions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": "\"inventory\".\"stock_positions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "name": "inventory_stock_positions_tenant_update",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_positions"
+    },
+    {
+      "as": "PERMISSIVE",
+      "for": "DELETE",
+      "roles": [
+        "ontos_runtime"
+      ],
+      "using": "\"inventory\".\"stock_positions\".\"tenant_id\" = nullif(current_setting('ontos.tenant_id', true), '')::uuid",
+      "withCheck": null,
+      "name": "inventory_stock_positions_tenant_delete",
+      "entityType": "policies",
+      "schema": "inventory",
+      "table": "stock_positions"
+    }
+  ],
+  "renames": []
+}

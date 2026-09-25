@@ -17,6 +17,8 @@ export { createPaymentTermCatalogClient, getPaymentTermCatalogReadiness } from '
 export type { PaymentTermCatalogClientOptions } from '@app/payment-term-catalog/api/client';
 export { createPriceGroupCatalogClient, getPriceGroupCatalogReadiness } from '@app/price-group-catalog/api/client';
 export type { PriceGroupCatalogClientOptions } from '@app/price-group-catalog/api/client';
+export { createInventoryClient, getInventoryReadiness } from '@app/inventory/api/client';
+export type { InventoryClientOptions } from '@app/inventory/api/client';
 export { createPricingClient, getPricingReadiness } from '@app/pricing/api/client';
 export type { PricingClientOptions } from '@app/pricing/api/client';
 export { createStorefrontRegistryClient, getStorefrontRegistryReadiness } from '@app/storefront-registry/api/client';

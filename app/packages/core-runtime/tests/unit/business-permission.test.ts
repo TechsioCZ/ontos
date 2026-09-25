@@ -79,6 +79,30 @@ it('accepts only the canonical tenant-only Pricing target kinds', () => {
   ).toThrow(/incompatible target scope/u);
 });
 
+it('accepts Inventory permissions only for exact Inventory Resource scope', () => {
+  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('inventory.stock.correct')).toBe('inventory.stock.correct');
+  expect(
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['inventory_resource'],
+      key: 'inventory.stock.correct',
+    }).allowedScopeKinds,
+  ).toEqual(['inventory_resource']);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['counterparty'],
+      key: 'inventory.stock.correct',
+    }),
+  ).toThrow(/incompatible target scope/u);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['inventory_resource'],
+    }),
+  ).toThrow(/incompatible target scope/u);
+});
+
 it('allows only explicit authorization projection state transitions', () => {
   expect(canTransitionAuthorizationMutation('PENDING_GRANT', 'ACTIVE')).toBe(true);
   expect(canTransitionAuthorizationMutation('ACTIVE', 'REVOKED')).toBe(false);

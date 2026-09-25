@@ -17,6 +17,7 @@ import { OperationalScopeResolver } from '../operations/context.ts';
 import {
   ContextAccess,
   LEGAL_ENTITY_PERMISSION_KEYS,
+  hasCanonicalInventoryAuthorizationTarget,
   hasCanonicalPricingAuthorizationTargetIds,
   isBusinessPermissionTargetCompatible,
   toBusinessPermissionAccessKey,
@@ -121,7 +122,8 @@ const businessPermissionTargetIsValid = (
     !stableTargetKey(target.businessPermission.permission) ||
     !stableTargetKey(business.tenantId) ||
     !isBusinessPermissionTargetCompatible(target.businessPermission) ||
-    !hasCanonicalPricingAuthorizationTargetIds(business)
+    !hasCanonicalPricingAuthorizationTargetIds(business) ||
+    !hasCanonicalInventoryAuthorizationTarget(business)
   ) {
     return false;
   }
@@ -131,6 +133,9 @@ const businessPermissionTargetIsValid = (
       scope?.trustedStorefrontId === undefined &&
       target.trustedStorefrontId === undefined
     );
+  }
+  if (business.kind === 'inventory_resource') {
+    return target.trustedStorefrontId === undefined;
   }
   return (
     stableTargetKey(business.legalEntityId) &&
@@ -324,15 +329,26 @@ const readBusinessTargetResourceId = (
   if (target.kind === 'counterparty_storefront') {
     return `${target.counterpartyId}:${target.storefrontId}`;
   }
-  return target.kind === 'pricing_catalog'
-    ? target.pricingCatalogId
-    : `${target.pricingCatalogId}:${target.priceGroupId}`;
+  if (target.kind === 'pricing_catalog') {
+    return target.pricingCatalogId;
+  }
+  if (target.kind === 'price_group') {
+    return `${target.pricingCatalogId}:${target.priceGroupId}`;
+  }
+  return target.resource.resourceId;
 };
 
 const targetMetadata = (target: ResolvedReadPermissionTarget) => {
   const canonical = canonicalPermissionTarget(target);
   if (canonical.kind === 'business_permission') {
     const business = canonical.businessPermission.target;
+    if (business.kind === 'inventory_resource') {
+      return {
+        targetModuleKey: business.resource.moduleId,
+        targetResourceId: business.resource.resourceId,
+        targetResourceType: business.resource.resourceType,
+      };
+    }
     return {
       targetModuleKey: canonical.businessPermission.permission,
       targetResourceId: readBusinessTargetResourceId(business),
@@ -378,17 +394,23 @@ const checkBusinessPermissionTarget = <AccessValue extends (typeof ContextAccess
   if (business.tenantId !== scope.tenantId) {
     return Effect.succeed('unavailable');
   }
-  if (
-    tenantOnlyPricingTarget
-      ? scope.legalEntityId !== undefined ||
-        scope.trustedStorefrontId !== undefined ||
-        target.trustedStorefrontId !== undefined
-      : business.legalEntityId !== scope.legalEntityId ||
-        (business.kind === 'counterparty_storefront'
-          ? scope.trustedStorefrontId !== business.storefrontId ||
-            target.trustedStorefrontId !== scope.trustedStorefrontId
-          : target.trustedStorefrontId !== undefined)
-  ) {
+  let scopeMismatch: boolean;
+  if (business.kind === 'inventory_resource') {
+    scopeMismatch = target.trustedStorefrontId !== undefined;
+  } else if (tenantOnlyPricingTarget) {
+    scopeMismatch =
+      scope.legalEntityId !== undefined ||
+      scope.trustedStorefrontId !== undefined ||
+      target.trustedStorefrontId !== undefined;
+  } else {
+    scopeMismatch =
+      business.legalEntityId !== scope.legalEntityId ||
+      (business.kind === 'counterparty_storefront'
+        ? scope.trustedStorefrontId !== business.storefrontId ||
+          target.trustedStorefrontId !== scope.trustedStorefrontId
+        : target.trustedStorefrontId !== undefined);
+  }
+  if (scopeMismatch) {
     return Effect.succeed('unavailable');
   }
   if (contextAccess.businessPermissions === undefined) {

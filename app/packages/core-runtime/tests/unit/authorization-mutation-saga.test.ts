@@ -16,6 +16,7 @@ const principalId = '40000000-0000-4000-8000-000000000001';
 const pricingCatalogId = '50000000-0000-4000-8000-000000000001';
 const priceGroupId = '60000000-0000-4000-8000-000000000001';
 const otherPriceGroupId = '60000000-0000-4000-8000-000000000002';
+const inventoryResourceId = '70000000-0000-4000-8000-000000000001';
 
 const intent = (
   operation: 'grant' | 'revoke' = 'grant',
@@ -297,6 +298,65 @@ it.effect('reconciles the exact tenant-only Price Group target and rejects a dif
             Effect.succeed({
               ...pricingIntent,
               businessTarget: { ...pricingIntent.businessTarget, priceGroupId: otherPriceGroupId },
+              state: 'ACTIVE',
+            }),
+        },
+      ),
+    );
+    expect(mismatch.code).toBe('authorization_mutation_final_state_invalid');
+  }),
+);
+
+it.effect('reconciles only the exact durable Inventory Resource intent', () =>
+  Effect.gen(function* reconcileInventoryResource() {
+    const inventoryPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.stock.correct');
+    const inventoryTarget = {
+      kind: 'inventory_resource' as const,
+      resource: {
+        moduleId: 'commerce.inventory' as const,
+        resourceId: inventoryResourceId,
+        resourceType: 'commerce.inventory.stock-position',
+      },
+      tenantId,
+    };
+    const inventoryIntent: AuthorizationMutationJournalEntry = {
+      ...intent(),
+      businessTarget: inventoryTarget,
+      permission: inventoryPermission,
+    };
+    const writes: unknown[] = [];
+    const result = yield* reconcileCommittedAuthorizationMutation(
+      inventoryIntent,
+      {
+        mutate: (input) =>
+          Effect.sync(() => {
+            writes.push(input);
+          }),
+      },
+      { finalize: () => Effect.succeed({ ...inventoryIntent, state: 'ACTIVE' }) },
+    );
+    expect(result.outcome).toBe('FINALIZED');
+    expect(writes).toEqual([
+      {
+        operation: 'grant',
+        permission: inventoryPermission,
+        principal: { principalId, tenantId },
+        target: inventoryIntent.businessTarget,
+      },
+    ]);
+
+    const mismatch = yield* Effect.flip(
+      reconcileCommittedAuthorizationMutation(
+        inventoryIntent,
+        { mutate: () => Effect.void },
+        {
+          finalize: () =>
+            Effect.succeed({
+              ...inventoryIntent,
+              businessTarget: {
+                ...inventoryTarget,
+                resource: { ...inventoryTarget.resource, resourceId: otherPriceGroupId },
+              },
               state: 'ACTIVE',
             }),
         },

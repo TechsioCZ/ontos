@@ -14,6 +14,7 @@ const legalEntityId = '30000000-0000-4000-8000-000000000001';
 const principalId = '40000000-0000-4000-8000-000000000001';
 const pricingCatalogId = '50000000-0000-4000-8000-000000000001';
 const priceGroupId = '60000000-0000-4000-8000-000000000001';
+const inventoryResourceId = '70000000-0000-4000-8000-000000000001';
 
 it.effect('writes the exact legal-entity and grantee relationships idempotently for a grant', () =>
   Effect.gen(function* grantBusinessPermission() {
@@ -141,6 +142,35 @@ it.effect('writes only the tenant scope and grantee for an exact Pricing Catalog
   }),
 );
 
+it.effect('writes tenant and grantee relationships for one exact Inventory Resource grant', () =>
+  Effect.gen(function* grantInventoryResourcePermission() {
+    const requests: v1.WriteRelationshipsRequest[] = [];
+    const service = makeBusinessPermissionRelationshipMutation({
+      writeRelationships: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return v1.WriteRelationshipsResponse.create({});
+        }),
+    });
+    yield* service.mutate({
+      operation: 'grant',
+      permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.stock.correct'),
+      principal: { principalId, tenantId },
+      target: {
+        kind: 'inventory_resource',
+        resource: {
+          moduleId: 'commerce.inventory',
+          resourceId: inventoryResourceId,
+          resourceType: 'commerce.inventory.stock-position',
+        },
+        tenantId,
+      },
+    });
+
+    expect(requests[0]?.updates.map(({ relationship }) => relationship?.relation)).toEqual(['tenant', 'grantee']);
+  }),
+);
+
 it.effect('fails closed before transport for cross-tenant or untrusted storefront input', () =>
   Effect.gen(function* rejectUntrustedScope() {
     let calls = 0;
@@ -217,6 +247,20 @@ it.effect('rejects incompatible permission targets and noncanonical Pricing iden
         permission: pricingPermission,
         principal: { principalId, tenantId },
         target: { kind: 'pricing_catalog' as const, pricingCatalogId: 'DEALER', tenantId },
+      },
+      {
+        operation: 'grant' as const,
+        permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.stock.correct'),
+        principal: { principalId, tenantId },
+        target: {
+          kind: 'inventory_resource' as const,
+          resource: {
+            moduleId: 'commerce.inventory' as const,
+            resourceId: inventoryResourceId,
+            resourceType: 'commerce.catalog.stock-position',
+          },
+          tenantId,
+        },
       },
     ];
 

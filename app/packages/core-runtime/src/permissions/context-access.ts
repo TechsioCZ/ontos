@@ -81,6 +81,15 @@ export type BusinessAccessTarget =
       priceGroupId: string;
       pricingCatalogId: string;
       tenantId: string;
+    }>
+  | Readonly<{
+      kind: 'inventory_resource';
+      resource: Readonly<{
+        moduleId: 'commerce.inventory';
+        resourceId: string;
+        resourceType: string;
+      }>;
+      tenantId: string;
     }>;
 
 const canonicalPricingAuthorizationResourceId = Schema.String.check(Schema.isUUID());
@@ -89,6 +98,22 @@ const canonicalPricingAuthorizationResourceId = Schema.String.check(Schema.isUUI
 export const PricingAuthorizationResourceIdSchema = canonicalPricingAuthorizationResourceId.pipe(
   Schema.brand('PricingAuthorizationResourceId'),
   Schema.decodeTo(canonicalPricingAuthorizationResourceId),
+);
+
+const canonicalInventoryAuthorizationResourceId = Schema.String.check(Schema.isUUID());
+const canonicalInventoryAuthorizationResourceType = Schema.String.check(
+  Schema.isPattern(/^commerce\.inventory\.[a-z][a-z0-9-]*$/u),
+);
+
+/** Durable Inventory resource identity. Location/item tuples and display keys are never valid targets. */
+export const InventoryAuthorizationResourceIdSchema = canonicalInventoryAuthorizationResourceId.pipe(
+  Schema.brand('InventoryAuthorizationResourceId'),
+  Schema.decodeTo(canonicalInventoryAuthorizationResourceId),
+);
+
+export const InventoryAuthorizationResourceTypeSchema = canonicalInventoryAuthorizationResourceType.pipe(
+  Schema.brand('InventoryAuthorizationResourceType'),
+  Schema.decodeTo(canonicalInventoryAuthorizationResourceType),
 );
 
 export interface BusinessPermissionAccessTarget {
@@ -102,6 +127,12 @@ export const hasCanonicalPricingAuthorizationTargetIds = (target: BusinessAccess
     : Schema.is(PricingAuthorizationResourceIdSchema)(target.pricingCatalogId) &&
       (target.kind !== 'price_group' || Schema.is(PricingAuthorizationResourceIdSchema)(target.priceGroupId));
 
+export const hasCanonicalInventoryAuthorizationTarget = (target: BusinessAccessTarget): boolean =>
+  target.kind !== 'inventory_resource' ||
+  (target.resource.moduleId === 'commerce.inventory' &&
+    Schema.is(InventoryAuthorizationResourceIdSchema)(target.resource.resourceId) &&
+    Schema.is(InventoryAuthorizationResourceTypeSchema)(target.resource.resourceType));
+
 /** Keeps every business Permission family on its declared authorization target vocabulary. */
 export const isBusinessPermissionTargetCompatible = ({
   permission,
@@ -112,6 +143,9 @@ export const isBusinessPermissionTargetCompatible = ({
   }
   if (permission.startsWith('retail.')) {
     return target.kind === 'retail_profile';
+  }
+  if (permission.startsWith('inventory.')) {
+    return target.kind === 'inventory_resource';
   }
   return (
     permission.startsWith('counterparty.') &&
@@ -232,16 +266,28 @@ const businessTargetParts = (target: BusinessAccessTarget): readonly string[] =>
   if (target.kind === 'counterparty_storefront') {
     return [target.tenantId, target.legalEntityId, target.kind, target.counterpartyId, target.storefrontId];
   }
-  return target.kind === 'pricing_catalog'
-    ? [target.tenantId, target.kind, target.pricingCatalogId]
-    : [target.tenantId, target.kind, target.pricingCatalogId, target.priceGroupId];
+  if (target.kind === 'pricing_catalog') {
+    return [target.tenantId, target.kind, target.pricingCatalogId];
+  }
+  if (target.kind === 'price_group') {
+    return [target.tenantId, target.kind, target.pricingCatalogId, target.priceGroupId];
+  }
+  return [
+    target.tenantId,
+    target.kind,
+    target.resource.moduleId,
+    target.resource.resourceType,
+    target.resource.resourceId,
+  ];
 };
 
 export const toBusinessPermissionAccessObjectId = (
   permission: BusinessPermissionCode,
   target: BusinessAccessTarget,
 ): string | undefined =>
-  isBusinessPermissionTargetCompatible({ permission, target }) && hasCanonicalPricingAuthorizationTargetIds(target)
+  isBusinessPermissionTargetCompatible({ permission, target }) &&
+  hasCanonicalPricingAuthorizationTargetIds(target) &&
+  hasCanonicalInventoryAuthorizationTarget(target)
     ? encodeObjectId([permission, ...businessTargetParts(target)])
     : undefined;
 
@@ -381,7 +427,9 @@ export const makeContextAccess = (client: SpiceDbPermissionClient): ContextAcces
       const alternatives = targets.map((target) => {
         const hasTrustedTenant = target.target.tenantId === principal.tenantId;
         const hasCompatibleTarget =
-          isBusinessPermissionTargetCompatible(target) && hasCanonicalPricingAuthorizationTargetIds(target.target);
+          isBusinessPermissionTargetCompatible(target) &&
+          hasCanonicalPricingAuthorizationTargetIds(target.target) &&
+          hasCanonicalInventoryAuthorizationTarget(target.target);
         const hasTrustedStorefront =
           target.target.kind !== 'counterparty_storefront' ||
           (trustedStorefrontId !== undefined && trustedStorefrontId === target.target.storefrontId);

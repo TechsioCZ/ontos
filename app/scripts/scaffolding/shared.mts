@@ -241,7 +241,13 @@ export interface ResourceScaffoldConfig {
 
 export interface PermissionScaffoldConfig {
   readonly permission: string;
-  readonly scope: 'counterparty' | 'counterparty_storefront' | 'price_group' | 'pricing_catalog' | 'retail_profile';
+  readonly scope:
+    | 'counterparty'
+    | 'counterparty_storefront'
+    | 'inventory_resource'
+    | 'price_group'
+    | 'pricing_catalog'
+    | 'retail_profile';
   readonly vertical: string;
 }
 

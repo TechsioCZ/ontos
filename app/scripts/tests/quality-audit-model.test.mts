@@ -375,6 +375,35 @@ it.live(
 );
 
 it.live(
+  'Drizzle reflection models modular table re-exports without consuming unrelated exports',
+  Effect.fn(function* testModularDrizzleSchema() {
+    const root = yield* fixture();
+    write(
+      root,
+      'src/inventory-schema.ts',
+      "import { pgSchema } from 'drizzle-orm/pg-core'; export const inventorySchema = pgSchema('inventory');",
+    );
+    write(
+      root,
+      'src/inventory-table.ts',
+      [
+        "import { text } from 'drizzle-orm/pg-core';",
+        "import { inventorySchema } from './inventory-schema.ts';",
+        "export const inventoryStockItems = inventorySchema.table.withRLS('stock_items', { id: text('id') });",
+        'export const unrelatedSchemaHelper = () => 7;',
+      ].join('\n'),
+    );
+    write(root, 'src/schema.ts', "export { inventoryStockItems, unrelatedSchemaHelper } from './inventory-table.ts';");
+    const model = yield* buildKnipModel(root, { entry: [indexFile] }).pipe(Effect.provide(NodeServices.layer));
+    const reflected = model.evidence
+      .filter((fact) => fact.reason.startsWith('Drizzle reflective schema consumer'))
+      .map((fact) => fact.target);
+    expect(reflected).toContain('src/schema.ts#inventoryStockItems');
+    expect(reflected).not.toContain('src/schema.ts#unrelatedSchemaHelper');
+  }),
+);
+
+it.live(
   'modeling fails on invalid source instead of silently losing consumer evidence',
   Effect.fn(function* testEffect4() {
     const root = yield* fixture();
