@@ -98,10 +98,10 @@ BEGIN
       OR (intent #>> '{request,backendConfigurationRef,resourceId}')::uuid IS DISTINCT FROM NEW.authority_configuration_id
       OR intent #>> '{request,backend}' IS DISTINCT FROM NEW.authority_backend_kind
       OR intent #>> '{request,backendId}' IS DISTINCT FROM NEW.authority_backend_id
-      OR intent #>> '{request,kind}' IS DISTINCT FROM CASE NEW.effect_kind
+      OR intent #>> '{request,kind}' IS DISTINCT FROM (CASE NEW.effect_kind
         WHEN 'PHYSICAL_RECEIPT' THEN 'RECEIPT'
         ELSE 'ISSUE'
-      END
+      END)
     THEN
       RAISE EXCEPTION USING ERRCODE = '23514', CONSTRAINT = 'inventory_effect_ledger_exact_scope_ck',
         MESSAGE = 'Physical Stock effect ledger scope does not match its canonical business intent';
@@ -145,12 +145,12 @@ BEGIN
       OR resolution_business_request IS DISTINCT FROM intent -> 'request'
       OR (
         NEW.effect_kind IN ('PHYSICAL_RECEIPT', 'PHYSICAL_ISSUE')
-        AND NEW.resolution_json #>> '{effect,request,kind}' IS DISTINCT FROM CASE NEW.effect_kind
+        AND NEW.resolution_json #>> '{effect,request,kind}' IS DISTINCT FROM (CASE NEW.effect_kind
           WHEN 'PHYSICAL_RECEIPT' THEN 'RECEIPT'
           ELSE 'ISSUE'
-        END
+        END)
       )
-      OR NEW.current_state IS DISTINCT FROM CASE NEW.effect_kind
+      OR NEW.current_state IS DISTINCT FROM (CASE NEW.effect_kind
         WHEN 'RESERVATION_CREATE' THEN CASE NEW.resolution_json #>> '{effect,_tag}'
           WHEN 'INDETERMINATE' THEN 'INDETERMINATE'
           WHEN 'RECONCILIATION_REQUIRED' THEN 'INDETERMINATE'
@@ -172,7 +172,7 @@ BEGIN
           WHEN 'APPLIED' THEN 'SUCCEEDED'
           WHEN 'REJECTED' THEN 'REJECTED'
         END
-      END
+      END)
     THEN
       RAISE EXCEPTION USING ERRCODE = '23514', CONSTRAINT = 'inventory_effect_ledger_exact_scope_ck',
         MESSAGE = 'Inventory effect resolution must preserve the exact business intent, kind, and owner effect identity';

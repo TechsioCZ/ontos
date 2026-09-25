@@ -175,10 +175,10 @@ BEGIN
       OR NEW.snapshot ->> 'ownerEvidenceRef' IS DISTINCT FROM NEW.owner_evidence_ref
       OR NEW.snapshot #>> '{authorityIssuer,backend}' IS DISTINCT FROM NEW.issuer_backend_kind
       OR NEW.snapshot #>> '{authorityIssuer,backendId}' IS DISTINCT FROM NEW.issuer_backend_id
-      OR NEW.snapshot #>> '{authorityIssuer,origin}' IS DISTINCT FROM CASE NEW.issuer_backend_kind
+      OR NEW.snapshot #>> '{authorityIssuer,origin}' IS DISTINCT FROM (CASE NEW.issuer_backend_kind
         WHEN 'external_business_system' THEN 'EXTERNAL_BUSINESS_SYSTEM'
         ELSE 'ONTOS_WMS'
-      END
+      END)
       OR pg_catalog.jsonb_typeof(NEW.snapshot -> 'safeReleaseProof') IS DISTINCT FROM 'object'
       OR (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(NEW.snapshot -> 'safeReleaseProof')) <> 2
       OR NEW.snapshot #>> '{safeReleaseProof,order,_tag}' IS DISTINCT FROM 'NOT_COMMITTED_CLOSED'

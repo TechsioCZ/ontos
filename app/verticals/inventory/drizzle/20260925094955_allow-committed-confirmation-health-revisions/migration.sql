@@ -226,10 +226,10 @@ BEGIN
     OR NEW.snapshot #>> '{authorityEvidence,effectId}' IS DISTINCT FROM NEW.authority_effect_id
     OR NEW.snapshot #>> '{authorityEvidence,issuer,backend}' IS DISTINCT FROM NEW.issuer_backend_kind
     OR NEW.snapshot #>> '{authorityEvidence,issuer,backendId}' IS DISTINCT FROM NEW.issuer_backend_id
-    OR NEW.snapshot #>> '{authorityEvidence,issuer,origin}' IS DISTINCT FROM CASE NEW.issuer_backend_kind
+    OR NEW.snapshot #>> '{authorityEvidence,issuer,origin}' IS DISTINCT FROM (CASE NEW.issuer_backend_kind
       WHEN 'external_business_system' THEN 'EXTERNAL_BUSINESS_SYSTEM'
       ELSE 'ONTOS_WMS'
-    END
+    END)
     OR NEW.snapshot #>> '{authorityEvidence,evidence,tenantId}' IS DISTINCT FROM NEW.tenant_id::text
     OR NEW.snapshot #>> '{authorityEvidence,evidence,reservationId}' IS DISTINCT FROM NEW.reservation_id::text
     OR NEW.snapshot #>> '{authorityEvidence,evidence,attemptId}' IS DISTINCT FROM NEW.attempt_id
@@ -392,11 +392,11 @@ BEGIN
       AND (NEW.snapshot #>> '{health,observation,effectiveAt}')::timestamptz >= NEW.expires_at
     )
     OR (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(NEW.snapshot #> '{health,observation}'))
-      IS DISTINCT FROM CASE observation_tag
+      IS DISTINCT FROM (CASE observation_tag
         WHEN 'DEFINITIVE_REVOCATION' THEN 4
         WHEN 'VALIDITY_ELAPSED' THEN 2
         ELSE 3
-      END
+      END)
   THEN
     RAISE EXCEPTION USING
       ERRCODE = '23514',

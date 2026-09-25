@@ -128,10 +128,10 @@ BEGIN
     AND selected.backend_id = NEW.issuer_backend_id
   FOR KEY SHARE;
   IF NOT FOUND
-    OR NEW.snapshot #>> '{authorityEvidence,issuer,origin}' IS DISTINCT FROM CASE NEW.issuer_backend_kind
+    OR NEW.snapshot #>> '{authorityEvidence,issuer,origin}' IS DISTINCT FROM (CASE NEW.issuer_backend_kind
       WHEN 'external_business_system' THEN 'EXTERNAL_BUSINESS_SYSTEM'
       WHEN 'ontos_wms' THEN 'ONTOS_WMS'
-    END
+    END)
   THEN
     RAISE EXCEPTION USING ERRCODE = '23514', CONSTRAINT = 'inventory_commitment_protections_exact_authority_ck',
       MESSAGE = 'Commitment Protection must preserve the exact selected backend authority';
@@ -534,13 +534,13 @@ BEGIN
           OR NEW.resolution_json #>> '{effect,protection,authorityEvidence,operation}' IS DISTINCT FROM 'COMMITMENT_PROTECTION'
         )
       )
-      OR NEW.current_state IS DISTINCT FROM CASE NEW.effect_kind
+      OR NEW.current_state IS DISTINCT FROM (CASE NEW.effect_kind
         WHEN 'RESERVATION_CREATE' THEN CASE NEW.resolution_json #>> '{effect,_tag}' WHEN 'INDETERMINATE' THEN 'INDETERMINATE' WHEN 'RECONCILIATION_REQUIRED' THEN 'INDETERMINATE' WHEN 'ESTABLISHED' THEN 'SUCCEEDED' WHEN 'RESOLVED_NO_RESERVATION' THEN 'REJECTED' END
         WHEN 'RESERVATION_RELEASE' THEN CASE NEW.resolution_json #>> '{effect,_tag}' WHEN 'INDETERMINATE' THEN 'INDETERMINATE' WHEN 'RELEASED' THEN 'SUCCEEDED' WHEN 'NOT_RELEASABLE' THEN 'REJECTED' END
         WHEN 'ESTABLISH_COMMITMENT_PROTECTION' THEN CASE NEW.resolution_json #>> '{effect,_tag}' WHEN 'PROTECTED' THEN 'SUCCEEDED' WHEN 'NOT_PROTECTABLE' THEN 'REJECTED' END
         WHEN 'PHYSICAL_RECEIPT' THEN CASE NEW.resolution_json #>> '{effect,_tag}' WHEN 'INDETERMINATE' THEN 'INDETERMINATE' WHEN 'APPLIED' THEN 'SUCCEEDED' WHEN 'REJECTED' THEN 'REJECTED' END
         WHEN 'PHYSICAL_ISSUE' THEN CASE NEW.resolution_json #>> '{effect,_tag}' WHEN 'INDETERMINATE' THEN 'INDETERMINATE' WHEN 'APPLIED' THEN 'SUCCEEDED' WHEN 'REJECTED' THEN 'REJECTED' END
-      END THEN
+      END) THEN
       RAISE EXCEPTION USING ERRCODE = '23514', CONSTRAINT = 'inventory_effect_ledger_exact_scope_ck',
         MESSAGE = 'Inventory effect resolution must preserve exact business intent, kind, identity, and terminal meaning';
     END IF;

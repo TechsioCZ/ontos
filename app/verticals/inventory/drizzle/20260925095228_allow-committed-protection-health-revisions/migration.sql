@@ -41,10 +41,10 @@ BEGIN
     AND selected.backend_id = NEW.issuer_backend_id
   FOR KEY SHARE;
   IF NOT FOUND
-    OR NEW.snapshot #>> '{authorityEvidence,issuer,origin}' IS DISTINCT FROM CASE NEW.issuer_backend_kind
+    OR NEW.snapshot #>> '{authorityEvidence,issuer,origin}' IS DISTINCT FROM (CASE NEW.issuer_backend_kind
       WHEN 'external_business_system' THEN 'EXTERNAL_BUSINESS_SYSTEM'
       WHEN 'ontos_wms' THEN 'ONTOS_WMS'
-    END
+    END)
   THEN
     RAISE EXCEPTION USING ERRCODE = '23514', CONSTRAINT = 'inventory_commitment_protections_exact_authority_ck',
       MESSAGE = 'Commitment Protection must preserve the exact selected backend authority';

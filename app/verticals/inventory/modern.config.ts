@@ -1,3 +1,6 @@
+import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+
 import { defineConfig } from '@modern-js/app-tools';
 import type { AppToolsUserConfig } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
@@ -10,8 +13,14 @@ import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { Config, Option, Result, Schema } from 'effect';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
-import { createZephyrRspackPlugin } from '../../packages/shared-contracts/tooling/modern-config.ts';
+import {
+  createWorkerSsrPlugins,
+  createZephyrRspackPlugin,
+  resolveCloudflareExternal,
+} from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { ultramodernLocalisedUrls } from './src/routes/ultramodern-route-metadata';
+
+Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
 const nonEmptyBuildStringSchema = Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)));
 const getOptionalBuildConfig = (name: string): string | undefined => {
@@ -33,6 +42,18 @@ const cloudflareDeployMode = Result.getOrThrow(
   ),
 );
 const cloudflareDeployEnabled = Option.contains(cloudflareDeployMode, 'cloudflare');
+const resolvePostgresProtocolCommonJsEntry = () =>
+  fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')));
+const resolvePostgresPoolCommonJsEntry = () => createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
+const resolveEffectApiSourceDirectory = () => fileURLToPath(new URL('api/', import.meta.url));
+/* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
+const cloudflareRuntimeExternal = (
+  request: { dependencyType?: string; request?: string },
+  callback: (error?: Error, result?: string | string[], type?: 'module-import') => void,
+) => {
+  callback(...resolveCloudflareExternal(request, cloudflareDeployEnabled));
+};
+/* oxlint-enable promise/prefer-await-to-callbacks */
 
 const zephyrRspackPlugin = () =>
   createZephyrRspackPlugin({
@@ -268,6 +289,35 @@ export default defineConfig(
           chain.output
             .uniqueName('verticalInventory')
             .chunkLoadingGlobal('__ULTRAMODERN_VERTICAL_INVENTORY_LOADED_CHUNKS__');
+        },
+        rspack: (config, { environment, rspack }) => {
+          if (!cloudflareDeployEnabled) {
+            return;
+          }
+          const configuredAliases = config.resolve.alias;
+          config.resolve.alias =
+            configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
+          Object.assign(config.resolve.alias, {
+            'pg-pool$': resolvePostgresPoolCommonJsEntry(),
+            'pg-protocol$': resolvePostgresProtocolCommonJsEntry(),
+          });
+          const configuredExternals = config.externals;
+          config.externals = [cloudflareRuntimeExternal];
+          if (configuredExternals !== undefined) {
+            config.externals.push(
+              ...(Array.isArray(configuredExternals) ? configuredExternals : [configuredExternals]),
+            );
+          }
+          if (environment.name === 'workerSSR') {
+            const effectApiSourceDirectory = resolveEffectApiSourceDirectory();
+            const configuredNode = config.node;
+            config.node = configuredNode === false || configuredNode === undefined ? {} : configuredNode;
+            Object.assign(config.node, {
+              __dirname: false,
+              __filename: false,
+            });
+            config.plugins.push(...createWorkerSsrPlugins(rspack, effectApiSourceDirectory));
+          }
         },
         tsChecker: {
           typescript: {
