@@ -23,7 +23,7 @@ BEGIN
     OR (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(NEW.snapshot #> '{reservation,authority,selection}')) <> 4
     OR (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(NEW.snapshot -> 'authorityEvidence')) <> 5
     OR (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(NEW.snapshot #> '{authorityEvidence,issuer}')) <> 3
-    OR (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(NEW.snapshot #> '{authorityEvidence,evidence}')) <> 7
+    OR (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(NEW.snapshot #> '{authorityEvidence,evidence}')) <> 8
     OR (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(NEW.snapshot -> 'health')) <> 2
     OR (SELECT pg_catalog.count(*) FROM pg_catalog.jsonb_object_keys(NEW.snapshot -> 'issuanceRank')) <> 3
     OR pg_catalog.jsonb_typeof(NEW.snapshot #> '{reservation,requirements}') IS DISTINCT FROM 'array'

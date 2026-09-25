@@ -904,6 +904,9 @@ it('ships generated owner history and explicit immutable-identity hardening', ()
   expect(committedConfirmationRevision).toContain("reservation.lifecycle_meaning = 'COMMITTED_OBLIGATION'");
   expect(committedConfirmationRevision).toContain("TG_OP = 'INSERT'");
   expect(committedConfirmationRevision).toContain("TG_OP = 'UPDATE'");
+  expect(committedConfirmationRevision).toContain(
+    "jsonb_object_keys(NEW.snapshot #> '{authorityEvidence,evidence}')) <> 8",
+  );
   expect(committedConfirmationRevision).not.toContain('CREATE TRIGGER');
   expect(committedProtectionRevision).toContain(
     'CREATE OR REPLACE FUNCTION "inventory"."enforce_commitment_protection_scope"()',
@@ -947,6 +950,7 @@ it('ships generated owner history and explicit immutable-identity hardening', ()
   expect(reservationConfirmation).toContain("reservation.lifecycle_meaning = 'PROVISIONAL_RESERVATION'");
   expect(reservationConfirmation).toContain("authority.exact_reservation_capability = 'SUPPORTED'");
   expect(reservationConfirmation).toContain("NEW.snapshot #> '{authorityEvidence,evidence,allocations}'");
+  expect(reservationConfirmation).toContain("jsonb_object_keys(NEW.snapshot #> '{authorityEvidence,evidence}')) <> 8");
   expect(reservationConfirmation).toContain("TG_OP = 'INSERT'");
   expect(reservationConfirmation).toContain("'{health,observation,correctionEvidenceRef}'");
   expect(reservationConfirmation).toContain("'{health,observation,ownerEvidenceRef}'");

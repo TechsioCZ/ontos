@@ -546,14 +546,24 @@ it.live(
                 tenantId: otherTenantId,
               },
             ]);
-            yield* transaction.insert(inventoryReservationConfirmationHistory).values({
-              confirmationId: base.confirmation.ref.resourceId,
-              healthState: base.confirmation.health.state,
-              revision: 2,
-              snapshot: base.confirmation,
-              tenantId,
-              transitionedAt: new Date('2026-09-25T10:04:00.000Z'),
-            });
+            yield* transaction.insert(inventoryReservationConfirmationHistory).values([
+              {
+                confirmationId: base.confirmation.ref.resourceId,
+                healthState: base.confirmation.health.state,
+                revision: 1,
+                snapshot: base.confirmation,
+                tenantId,
+                transitionedAt: new Date(base.confirmation.health.observation.effectiveAt),
+              },
+              {
+                confirmationId: base.confirmation.ref.resourceId,
+                healthState: base.confirmation.health.state,
+                revision: 2,
+                snapshot: base.confirmation,
+                tenantId,
+                transitionedAt: new Date('2026-09-25T10:04:00.000Z'),
+              },
+            ]);
           }),
         );
 
@@ -679,6 +689,7 @@ it.live(
                 and(
                   eq(inventoryReservationConfirmationHistory.tenantId, tenantId),
                   eq(inventoryReservationConfirmationHistory.confirmationId, base.confirmation.ref.resourceId),
+                  eq(inventoryReservationConfirmationHistory.revision, 2),
                 ),
               );
           }),
