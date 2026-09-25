@@ -8,7 +8,14 @@ import { NodeFileSystem } from '@effect/platform-node';
 import { Array as EffectArray, Config, Effect, Exit, FileSystem, ManagedRuntime, Option, Order, Schema } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import type { Scope } from 'effect/Scope';
-import { Headers as MiniflareHeaders, Log, LogLevel, Miniflare, Response as MiniflareResponse } from 'miniflare';
+import {
+  convertV4MiniflareOptions,
+  Headers as MiniflareHeaders,
+  Log,
+  LogLevel,
+  Miniflare,
+  Response as MiniflareResponse,
+} from 'miniflare';
 import type { Request as MiniflareRequest, RequestInit as MiniflareRequestInit } from 'miniflare';
 
 const DISTRIBUTED_SSR_FRAGMENT_REQUEST_HEADER = 'x-modern-js-fragment-request';
@@ -240,7 +247,6 @@ interface ProofWorkerOptions {
       readonly has_user_worker: boolean;
       readonly invoke_user_worker_ahead_of_assets: boolean;
     };
-    readonly workerName: string;
   };
   readonly bindings: Readonly<Record<string, string>>;
   readonly compatibilityDate: Wrangler['compatibility_date'];
@@ -734,7 +740,6 @@ const createWorkerConfiguration = (
           has_user_worker: true,
           invoke_user_worker_ahead_of_assets: assets.run_worker_first !== false,
         },
-        workerName: name,
       },
       bindings: {
         ...app.wrangler.vars,
@@ -1077,10 +1082,12 @@ const startTargetServer = (
     }
     const runtime =
       app.kind === 'vertical'
-        ? new Miniflare({
-            log: new Log(LogLevel.ERROR),
-            workers: [configuration],
-          })
+        ? new Miniflare(
+            convertV4MiniflareOptions({
+              log: new Log(LogLevel.ERROR),
+              workers: [configuration],
+            }),
+          )
         : miniflare;
     const server = http.createServer(createTargetRequestListener(apps, app, runtime, failedServices));
     yield* listen(server, app.port);
@@ -1573,7 +1580,7 @@ const runShellProof = (
     const executions = workerConfigurations.map(({ executionEvidence }) => executionEvidence);
     const executionByAppId = new Map(apps.map((app, index) => [app.id, executions[index]]));
     const workers = workerConfigurations.map(({ options }) => options);
-    const miniflare = new Miniflare({ log: new Log(LogLevel.ERROR), workers });
+    const miniflare = new Miniflare(convertV4MiniflareOptions({ log: new Log(LogLevel.ERROR), workers }));
     const shellWorkerName = yield* workerName(shell);
     yield* Effect.addFinalizer(() =>
       Effect.tryPromise({
