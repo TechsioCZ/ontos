@@ -330,7 +330,6 @@ interface RspackConfiguration {
   externals?: unknown;
   node?: false | object;
   plugins: unknown[];
-  resolve: { alias?: false | object };
 }
 
 /* oxlint-disable anti-slop/no-unknown-returns -- Rspack supplies opaque plugin constructors; their instances are forwarded unchanged to its generic plugin collection and are never inspected here. */
@@ -352,12 +351,6 @@ const createCloudflareRspack = (cloudflareDeployEnabled: boolean, sourceDirector
     if (!cloudflareDeployEnabled) {
       return;
     }
-    const configuredAliases = config.resolve.alias;
-    config.resolve.alias = configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
-    Object.assign(config.resolve.alias, {
-      'pg-pool$': createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool'),
-      'pg-protocol$': fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json'))),
-    });
     const configuredExternals = config.externals;
     const nextExternals = [cloudflareRuntimeExternal];
     if (configuredExternals !== undefined) {

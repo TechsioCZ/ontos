@@ -67,6 +67,7 @@
         "global_fetch_strictly_public"
       ],
       "assetsBinding": "ASSETS",
+      "distributedSsrProofRoutes": [],
       "routes": {
         "ssr": "/en",
         "mfManifest": "/mf-manifest.json",

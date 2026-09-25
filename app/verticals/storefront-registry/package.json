@@ -10,7 +10,7 @@
   },
   "scripts": {
     "build": "modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical storefront-registry --target dist && ultramodern-create ultramodern public-surface --app storefront-registry --target dist && cross-env MODERNJS_DEPLOY=node modern deploy --skip-build",
-    "cloudflare:build": "cross-env MODERNJS_DEPLOY=cloudflare modern build && node ../../scripts/build-api-only-cloudflare-worker.mts --vertical storefront-registry --prefix /storefront-registry-api && node ../../scripts/generate-ontos-module-contract.mts --vertical storefront-registry --target cloudflare-dist && ultramodern-create ultramodern public-surface --app storefront-registry --target cloudflare-dist && cross-env MODERNJS_DEPLOY=cloudflare modern deploy --skip-build && ultramodern-create ultramodern cloudflare-output-verify --app storefront-registry",
+    "cloudflare:build": "cross-env MODERNJS_DEPLOY=cloudflare modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical storefront-registry --target cloudflare-dist && ultramodern-create ultramodern public-surface --app storefront-registry --target cloudflare-dist && cross-env MODERNJS_DEPLOY=cloudflare modern deploy --skip-build && ultramodern-create ultramodern cloudflare-output-verify --app storefront-registry",
     "cloudflare:deploy": "cross-env ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS=true pnpm run cloudflare:build && wrangler deploy --config .output/wrangler.json",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app storefront-registry",

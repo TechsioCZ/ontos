@@ -209,6 +209,21 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         ? yield* fs.readFileString(path.join(appRoot, file))
         : undefined;
     });
+    const rootScriptInvokes = Effect.fn('QualityAudit.rootScriptInvokes')(function* rootScriptInvokes(
+      manifestText: string | undefined,
+      frameworkCommand: string,
+    ) {
+      if (manifestText === undefined) {
+        return false;
+      }
+      const manifest = yield* Schema.decodeUnknownEffect(Manifest)(manifestText);
+      return Object.values(manifest.scripts ?? {}).some((script) =>
+        script.split('&&').some((step) => {
+          const command = step.trim();
+          return command === frameworkCommand || command.startsWith(`${frameworkCommand} `);
+        }),
+      );
+    });
     const shellEvidence = Effect.fn('QualityAudit.shellEvidence')(function* shellEvidence(
       command: string,
       prefix: string,
@@ -448,7 +463,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         'node_modules/@modern-js/ultramodern-create/templates/workspace-scripts/ultramodern-typecheck.mjs',
       );
       const usesTsgo =
-        typecheck?.includes('ultramodern-create ultramodern typecheck') === true &&
+        (yield* rootScriptInvokes(typecheck, 'ultramodern-create ultramodern typecheck')) &&
         vendorTypecheck?.includes('resolveEffectTsgoCompiler({') === true &&
         vendorTypecheck.includes("from: pathToFileURL(join(workspaceRoot, 'package.json'))");
       if (usesTsgo && typecheck !== undefined) {
@@ -498,7 +513,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         'node_modules/@modern-js/ultramodern-create/templates/workspace-scripts/ultramodern-performance-readiness.mjs';
       const vendor = yield* read(vendorFile);
       if (
-        readiness?.includes('ultramodern-create ultramodern performance-readiness') === true &&
+        (yield* rootScriptInvokes(readiness, 'ultramodern-create ultramodern performance-readiness')) &&
         vendor?.includes('pathToFileURL(path.join(root, configPath)).href') === true &&
         vendor.includes('import(moduleUrl)')
       ) {
