@@ -374,7 +374,17 @@ it.live(
           },
         );
 
-        const base = yield* buildInventoryOwnerAcceptanceBindingCorrectionLineage;
+        const fixtureLineage = yield* buildInventoryOwnerAcceptanceBindingCorrectionLineage;
+        // The production Action uses the live clock, so this acceptance fixture must remain live when the test runs.
+        const liveExpiry = '9999-12-31T23:59:59.999Z';
+        const base = {
+          confirmation: replaceStrings(ReservationConfirmationSchema, fixtureLineage.confirmation, {
+            '2026-09-25T12:00:00.000Z': liveExpiry,
+          }),
+          protection: replaceStrings(CommitmentProtectionSchema, fixtureLineage.protection, {
+            '2026-09-25T12:00:00.000Z': liveExpiry,
+          }),
+        };
         const secondConfirmation = replaceStrings(ReservationConfirmationSchema, base.confirmation, {
           '99999999-9999-4999-8999-999999999999': '99999999-9999-4999-8999-999999999992',
           'cccccccc-cccc-4ccc-8ccc-cccccccccccc': 'cccccccc-cccc-4ccc-8ccc-ccccccccccc2',

@@ -76,6 +76,15 @@ it('declares Price Group deployment variables for Cloudflare proof and stage pro
   );
 });
 
+it('declares the Inventory public URL for Cloudflare proof', () => {
+  const workflow = readFileSync(
+    new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url),
+    'utf-8',
+  );
+
+  expect(workflow).toContain('ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid');
+});
+
 it('starts a dedicated Price Group worker that drains durable pending projections after restart', () => {
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
   const worker = serviceBlock(zeropsYaml, 'price-group-catalog-worker');
