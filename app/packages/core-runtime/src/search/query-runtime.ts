@@ -21,6 +21,5 @@ export interface CoreSearchQueryRuntimeService {
 /** Core-owned query port returns hits without private searchable evidence. */
 export class CoreSearchQueryRuntime extends Context.Service<CoreSearchQueryRuntime, CoreSearchQueryRuntimeService>()(
   // Preserve the public Context identity after splitting the service into its owning module.
-  // @effect-diagnostics-next-line deterministicKeys:off
   '@app/core-runtime/search/projection/CoreSearchQueryRuntime',
 ) {}

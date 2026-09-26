@@ -4,7 +4,6 @@ import { v1 } from '@authzed/authzed-node';
 import { and, eq, inArray } from 'drizzle-orm';
 import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
 import { makeActionRepository } from '../../src/actions/repository.ts';
 import { makeActionRuntime } from '../../src/actions/runtime.ts';
@@ -47,7 +46,7 @@ import { makeContextAccess } from '../../src/permissions/context-access.ts';
 import { makeActionPermissionService, toSpiceDbActionObjectId } from '../../src/permissions/service.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 const staffAuthenticationNamespaceId = Schema.decodeSync(AuthenticationNamespaceIdSchema)('test.staff.better-auth.v1');
@@ -92,20 +91,18 @@ const relationship = (
     }),
   });
 
-const acquireIdentityPool = (connectionString: string) =>
-  Effect.acquireRelease(
-    Effect.sync(() => new Pool({ connectionString })),
-    (pool) => Effect.promise(() => pool.end()).pipe(Effect.orDie),
-  );
-
 it.live('runs identity mutations and tenant-isolated administration through live Action and Read runtimes', () =>
   Effect.gen(function* identityRuntimeIntegration() {
     const connections = yield* loadDatabaseConnectionPair();
     const spiceDbConfiguration = yield* loadSpiceDbConfig();
-    const adminPool = yield* acquireIdentityPool(connections.admin.connectionString);
-    const runtimePool = yield* acquireIdentityPool(connections.runtime.connectionString);
-    const admin = yield* makeTestDatabaseFromPool(adminPool, coreRelations);
-    const runtimeDatabase = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
+    const admin = yield* makeTestDatabaseFromClient(
+      yield* makeTestPgClient(connections.admin.connectionString),
+      coreRelations,
+    );
+    const runtimeDatabase = yield* makeTestDatabaseFromClient(
+      yield* makeTestPgClient(connections.runtime.connectionString),
+      coreRelations,
+    );
     const principalManagementRepository = principalManagementRepositoryFromTransaction(
       runtimeDatabase,
       staffAuthenticationNamespaceId,

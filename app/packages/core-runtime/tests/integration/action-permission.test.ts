@@ -46,7 +46,8 @@ import {
 } from '../../src/permissions/service.ts';
 import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
-import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
+import { makeCoreDatabase } from '../../src/db/client.ts';
+import { injectStatementFaults } from '../support/database-faults.ts';
 import { TestWriteError } from '../support/permission-write-error.ts';
 
 class PermissionAdmin extends Context.Service<PermissionAdmin, ReturnType<typeof v1.NewClient>>()(
@@ -157,7 +158,7 @@ const withDatabase = <Value, Error, Requirements>(
   Effect.scoped(
     Effect.gen(function* databaseScope() {
       const configuration = yield* loadDatabaseConfig();
-      const database = yield* makeFaultInjectableCoreDatabase(configuration);
+      const database = yield* makeCoreDatabase(configuration);
       return yield* operation(database);
     }),
   );
@@ -523,7 +524,7 @@ const withDenialPersistenceFailure = (
     database.executor.transaction((current) => {
       const prefix = stage === 'audit' ? 'insert into "core"."audit_events"' : 'update "core"."action_invocations"';
       return operation(current).pipe(
-        Effect.provideService(TestQueryHook, (statement) =>
+        injectStatementFaults((statement) =>
           statement.startsWith(prefix)
             ? Effect.fail(
                 new SqlError({

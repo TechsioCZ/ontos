@@ -56,8 +56,9 @@ import { ContextAccess } from '../../src/permissions/context-access.ts';
 import { reservePrincipalBindingAction } from '../../src/modules/actions/reserve-principal-binding.action.ts';
 import { testOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
-import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
-import { makeTestDatabaseFromPool, testDatabasePools } from '../support/database.ts';
+import { makeCoreDatabase } from '../../src/db/client.ts';
+import { injectStatementFaults } from '../support/database-faults.ts';
+import { makeTestDatabaseFromClient, testDatabaseClients } from '../support/database.ts';
 
 const namespaceId = Schema.decodeSync(AuthenticationNamespaceRegistrationSchema.fields.authenticationNamespaceId)(
   'test.integration.provider',
@@ -111,14 +112,14 @@ type ActionDatabase = Parameters<typeof makeActionRuntime>[0];
 
 type BindingStatusTransitionTarget = Exclude<Schema.Schema.Type<typeof AuthBindingStatusSchema>, 'pending'>;
 
-type TestCoreDatabase = Effect.Success<ReturnType<typeof makeTestDatabaseFromPool<typeof coreRelations>>>;
+type TestCoreDatabase = Effect.Success<ReturnType<typeof makeTestDatabaseFromClient<typeof coreRelations>>>;
 
 /** Seeds one tenant with tenant-scoped cleanup registered as a finalizer; reused across the tests below. */
 const makeTenantFixture = (label: string) =>
   Effect.gen(function* seedExternalIdentityTenant() {
-    const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-    const admin = yield* makeTestDatabaseFromPool(adminPool, coreRelations);
-    const database = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
+    const { admin: adminClient, runtime } = yield* testDatabaseClients;
+    const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+    const database = yield* makeTestDatabaseFromClient(runtime, coreRelations);
     const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(randomUUID());
     const cleanup = Effect.gen(function* cleanupExternalIdentityFixtures() {
       yield* admin.delete(principalAuthBindings).where(eq(principalAuthBindings.tenantId, tenantId));
@@ -186,7 +187,7 @@ const withOutboxInsertFailure = (database: ActionDatabase): ActionDatabase => {
   const transaction: ActionDatabase['executor']['transaction'] = (operation) =>
     database.executor.transaction((currentTransaction) =>
       operation(currentTransaction).pipe(
-        Effect.provideService(TestQueryHook, (statement) =>
+        injectStatementFaults((statement) =>
           statement.startsWith('insert into "core"."outbox_messages"')
             ? Effect.fail(
                 new SqlError({
@@ -534,7 +535,7 @@ it.live('runs the generated reservation through ActionRuntime with atomic eviden
   Effect.scoped(
     Effect.gen(function* governedExternalIdentityActionIntegration() {
       const configuration = yield* loadDatabaseConfig();
-      const database = yield* makeFaultInjectableCoreDatabase(configuration);
+      const database = yield* makeCoreDatabase(configuration);
       const tenantId = yield* Schema.decodeEffect(TenantIdSchema)(randomUUID());
       const actorPrincipalId = yield* Schema.decodeEffect(PrincipalIdSchema)(randomUUID());
       const actor = systemActionPrincipal(tenantId, actorPrincipalId);

@@ -3,8 +3,6 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { Scope } from 'effect';
 import { Context, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
-import type { PoolConfig } from 'pg';
-import { Pool } from 'pg';
 
 import type { DatabaseConfigValue } from './config.ts';
 import { DatabaseConfig } from './config.ts';
@@ -24,10 +22,6 @@ export class CoreDatabase extends Context.Service<
   }
 >()('@app/core-runtime/db/client/CoreDatabase') {}
 
-export interface PoolResource {
-  readonly end: () => Promise<void>;
-}
-
 const connectionFailure = (reason: string, cause: unknown): DatabaseConnectionError =>
   Object.defineProperty(new DatabaseConnectionError({ reason }), 'cause', {
     configurable: false,
@@ -36,38 +30,18 @@ const connectionFailure = (reason: string, cause: unknown): DatabaseConnectionEr
     writable: false,
   });
 
-export const acquirePoolResource = <Resource extends PoolResource>(
-  acquire: () => Resource,
-): Effect.Effect<Resource, DatabaseConnectionError, Scope.Scope> =>
-  Effect.acquireRelease(
-    Effect.try({
-      catch: (cause) => connectionFailure('Unable to initialize the PostgreSQL connection pool', cause),
-      try: acquire,
-    }),
-    // pg overloads end(callback); invoke it with no arguments so the AbortSignal is never a callback.
-    // eslint-disable-next-line typescript/promise-function-async -- Effect owns this foreign Promise boundary.
-    (pool) => Effect.promise(() => pool.end()),
-  );
-
-export type PoolFactory = (configuration: PoolConfig) => Pool;
-
-const defaultPoolFactory: PoolFactory = (configuration) => new Pool(configuration);
-
 export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* makeDatabase(
   configuration: DatabaseConfigValue & {
+    readonly maxConnections?: number;
     readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
   },
-  poolFactory: PoolFactory = defaultPoolFactory,
 ): Effect.fn.Return<(typeof CoreDatabase)['Service'], DatabaseConnectionError, Scope.Scope> {
   const poolConfiguration = yield* configureDatabasePool(
     Redacted.make(configuration.connectionString),
     configuration.poolDeadlines,
   );
-  const pool = yield* acquirePoolResource(() => poolFactory(poolConfiguration));
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.fromPool({
-    acquire: Effect.succeed(pool),
-  }).pipe(
+  const client = yield* PgClient.make({ ...poolConfiguration, maxConnections: configuration.maxConnections }).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError((cause) => connectionFailure('Unable to initialize the native PostgreSQL client', cause)),
   );

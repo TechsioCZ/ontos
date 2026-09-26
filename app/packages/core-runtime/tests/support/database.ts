@@ -1,67 +1,73 @@
 import { PgClient } from '@effect/sql-pg';
 import type { AnyRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Effect, Layer } from 'effect';
+import { Effect, Layer, Redacted } from 'effect';
 import type { Context } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
-import { Pool } from 'pg';
 
-import { acquirePoolResource } from '../../src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations } from '../../src/db/schema.ts';
+import { scriptedPgClientLayer } from '../../src/testing/scripted-pg-client.ts';
 import { testSqlConnection } from './sql-connection.ts';
 
-/** Native SQL connection fixture; Drizzle and Effect own query and transaction execution. */
+/** Scripted SQL connection fixture; Drizzle and Effect own query and transaction execution. */
 export const makeTestDatabase = (
   execute: (sql: string, params: readonly unknown[]) => Effect.Effect<readonly object[], SqlError>,
 ) =>
   Effect.scoped(
-    Effect.gen(function* makeNativeTestDatabase() {
-      const connection = testSqlConnection(execute);
-      const reactivity = yield* Reactivity.make;
-      const client = yield* PgClient.makeWith({
-        acquirer: Effect.succeed(connection),
-        config: {},
-        listenAcquirer: Effect.die('This fixture does not support notifications'),
-        transactionAcquirer: Effect.succeed(connection),
-      }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity), Effect.orDie);
-      return yield* makeWithDefaults({ relations: coreRelations }).pipe(
-        Effect.provideService(PgClient.PgClient, client),
-      );
-    }),
+    makeWithDefaults({ relations: coreRelations }).pipe(
+      Effect.provide(scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute)))),
+      Effect.provide(Reactivity.layer),
+    ),
   );
 
-/** The caller owns the pool and keeps this scope open until its tests finish. */
-export const makeTestDatabaseFromPool = <Relations extends AnyRelations>(pool: Pool, relations: Relations) =>
-  Effect.gen(function* makePoolTestDatabase() {
-    const reactivity = yield* Reactivity.make;
-    const client = yield* PgClient.fromPool({
-      acquire: Effect.succeed(pool),
-    }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity));
-    return yield* makeWithDefaults({ relations }).pipe(Effect.provideService(PgClient.PgClient, client));
-  });
+/** The caller owns the client and keeps its scope open until its tests finish. */
+export const makeTestDatabaseFromClient = <Relations extends AnyRelations>(
+  client: PgClient.PgClient,
+  relations: Relations,
+) => makeWithDefaults({ relations }).pipe(Effect.provideService(PgClient.PgClient, client));
 
-export type TestDatabaseFromPool<Relations extends AnyRelations> = Effect.Success<
-  ReturnType<typeof makeTestDatabaseFromPool<Relations>>
+export type TestDatabaseFromClient<Relations extends AnyRelations> = Effect.Success<
+  ReturnType<typeof makeTestDatabaseFromClient<Relations>>
 >;
 
 /**
- * Layer-shaped `makeTestDatabaseFromPool`, for non-test-file consumers (e.g. shared fixtures)
+ * Layer-shaped `makeTestDatabaseFromClient`, for non-test-file consumers (e.g. shared fixtures)
  * that must depend on the contextual service rather than importing the constructor directly.
  */
-export const layerTestDatabaseFromPool = <Relations extends AnyRelations, Self>(
-  key: Context.Key<Self, TestDatabaseFromPool<Relations>>,
-  pool: Pool,
+export const layerTestDatabaseFromClient = <Relations extends AnyRelations, Self>(
+  key: Context.Key<Self, TestDatabaseFromClient<Relations>>,
+  client: PgClient.PgClient,
   relations: Relations,
-) => Layer.effect(key, makeTestDatabaseFromPool(pool, relations));
+) => Layer.effect(key, makeTestDatabaseFromClient(client, relations));
 
-/** Fresh pools per execution; the caller's scope releases them after test cleanup. */
-export const testDatabasePools = Effect.gen(function* acquireTestDatabasePools() {
-  const connections = yield* loadDatabaseConnectionPair();
-  const admin = yield* acquirePoolResource(() => new Pool({ connectionString: connections.admin.connectionString }));
-  const runtimePool = yield* acquirePoolResource(
-    () => new Pool({ connectionString: connections.runtime.connectionString }),
+/** Scoped native PostgreSQL client; the caller's scope closes its pool after test cleanup. */
+export const makeTestPgClient = Effect.fn('TestDatabase.makeTestPgClient')(function* makeTestPgClient(
+  connectionString: string,
+  options: Omit<PgClient.PgPoolConfig, 'url'> = {},
+) {
+  const reactivity = yield* Reactivity.make;
+  return yield* PgClient.make({ ...options, url: Redacted.make(connectionString) }).pipe(
+    Effect.provideService(Reactivity.Reactivity, reactivity),
   );
-  return { admin, runtimePool };
+});
+
+/** Scoped single-session client, for tests that observe one backend or hold an explicit transaction. */
+export const makeTestPgSession = Effect.fn('TestDatabase.makeTestPgSession')(function* makeTestPgSession(
+  connectionString: string,
+  options: Omit<PgClient.PgClientConfig, 'url'> = {},
+) {
+  const reactivity = yield* Reactivity.make;
+  return yield* PgClient.makeClient({ ...options, url: Redacted.make(connectionString) }).pipe(
+    Effect.provideService(Reactivity.Reactivity, reactivity),
+  );
+});
+
+/** Fresh native clients per execution; the caller's scope releases them after test cleanup. */
+export const testDatabaseClients = Effect.gen(function* acquireTestDatabaseClients() {
+  const connections = yield* loadDatabaseConnectionPair();
+  const admin = yield* makeTestPgClient(connections.admin.connectionString);
+  const runtime = yield* makeTestPgClient(connections.runtime.connectionString);
+  return { admin, runtime };
 });

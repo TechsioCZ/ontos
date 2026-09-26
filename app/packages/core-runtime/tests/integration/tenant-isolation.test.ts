@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 import { getTableConfig, pgSchema, text, uuid } from 'drizzle-orm/pg-core';
+import type { PgClient } from '@effect/sql-pg';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import type { PoolClient, QueryResult, QueryResultRow } from 'pg';
-import { Pool } from 'pg';
 
 import {
   AuthenticationNamespaceIdSchema,
@@ -36,7 +35,8 @@ import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '..
 import type { ReadHandlerContext } from '../../src/reads/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
+import { makeTestDatabaseFromClient, makeTestPgClient, makeTestPgSession } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 type DatabaseQueryFailureSelf = typeof DatabaseQueryFailureContract.Type;
@@ -46,26 +46,27 @@ const DatabaseQueryFailureContract = Schema.TaggedStruct('DatabaseQueryFailure',
 const DatabaseQueryFailure = Schema.TaggedError<DatabaseQueryFailureSelf>()('DatabaseQueryFailure', {
   code: Schema.String,
 });
-const DatabaseErrorCode = Schema.Struct({ code: Schema.String });
-const queryEffect = <Row extends QueryResultRow = QueryResultRow>(
-  client: Pool | PoolClient,
+const queryEffect = <Row extends object>(
+  client: PgClient.PgClient,
   statement: string,
-  parameters?: readonly unknown[],
-): Effect.Effect<QueryResult<Row>> => Effect.promise(() => client.query<Row>(statement, [...(parameters ?? [])]));
-const queryTryEffect = <Row extends QueryResultRow = QueryResultRow>(
-  client: Pool | PoolClient,
+  parameters: readonly unknown[] = [],
+): Effect.Effect<readonly Row[]> => client.unsafe<Row>(statement, parameters).pipe(Effect.orDie);
+const queryTryEffect = <Row extends object>(
+  client: PgClient.PgClient,
   statement: string,
-  parameters?: readonly unknown[],
-): Effect.Effect<QueryResult<Row>, DatabaseQueryFailureSelf> =>
-  Effect.tryPromise({
-    catch: (error) => {
-      const decoded = Schema.decodeUnknownOption(DatabaseErrorCode)(error);
-      return new DatabaseQueryFailure({
-        code: Option.isSome(decoded) ? decoded.value.code : 'unknown',
-      });
-    },
-    try: () => client.query<Row>(statement, [...(parameters ?? [])]),
-  });
+  parameters: readonly unknown[] = [],
+): Effect.Effect<readonly Row[], DatabaseQueryFailureSelf> =>
+  client.unsafe<Row>(statement, parameters).pipe(
+    Effect.mapError(
+      (failure) =>
+        new DatabaseQueryFailure({
+          code: Option.match(findPostgresFailure(failure), {
+            onNone: () => 'unknown',
+            onSome: ({ code }) => code,
+          }),
+        }),
+    ),
+  );
 
 const effectAccessor =
   <Value>(effect: Effect.Effect<Value>) =>
@@ -128,20 +129,9 @@ it('declares the composite same-tenant parent keys used by isolation foreign key
 it.live('runtime RLS isolates tenant and legal-entity rows and never leaks transaction scope', () =>
   Effect.gen(function* runtimeRlsIsolation() {
     const connections = yield* loadDatabaseConnectionPair();
-    const admin = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-      (pool) => Effect.promise(() => pool.end()),
-    );
-    const runtime = yield* Effect.acquireRelease(
-      Effect.sync(
-        () =>
-          new Pool({
-            connectionString: connections.runtime.connectionString,
-            max: 1,
-          }),
-      ),
-      (pool) => Effect.promise(() => pool.end()),
-    );
+    const admin = yield* makeTestPgClient(connections.admin.connectionString);
+    // One physical session proves the transaction-local scope never leaks to its next statement.
+    const runtime = yield* makeTestPgSession(connections.runtime.connectionString);
     const schema = `isolation_${randomUUID().replaceAll('-', '')}`;
     const tenantA = randomUUID();
     const tenantB = randomUUID();
@@ -206,59 +196,61 @@ it.live('runtime RLS isolates tenant and legal-entity rows and never leaks trans
     `,
         [schema],
       );
-      expect(catalog.rows[0]).toEqual({
+      expect(catalog[0]).toEqual({
         policy_count: 4,
         relforcerowsecurity: true,
         relrowsecurity: true,
       });
 
       const unscopedRows = yield* queryEffect(runtime, `select * from ${schema}.records`);
-      expect(unscopedRows.rowCount).toBe(0);
-      const client = yield* Effect.promise(() => runtime.connect());
+      expect(unscopedRows.length).toBe(0);
       yield* Effect.gen(function* scopedRuntimeQueries() {
-        yield* queryEffect(client, 'begin');
+        yield* queryEffect(runtime, 'begin');
         yield* queryEffect(
-          client,
+          runtime,
           "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)",
           [tenantA, entityA],
         );
-        const entityARows = yield* queryEffect<{ value: string }>(client, `select value from ${schema}.records`);
-        expect(entityARows.rows).toEqual([{ value: 'entity-a' }]);
+        const entityARows = yield* queryEffect<{ value: string }>(runtime, `select value from ${schema}.records`);
+        expect(entityARows).toEqual([{ value: 'entity-a' }]);
         const foreignUpdate = yield* queryEffect(
-          client,
-          `update ${schema}.records set value = 'hacked' where value = 'tenant-b'`,
+          runtime,
+          `update ${schema}.records set value = 'hacked' where value = 'tenant-b' returning value`,
         );
-        expect(foreignUpdate.rowCount).toBe(0);
-        const foreignDelete = yield* queryEffect(client, `delete from ${schema}.records where value = 'entity-b'`);
-        expect(foreignDelete.rowCount).toBe(0);
+        expect(foreignUpdate.length).toBe(0);
+        const foreignDelete = yield* queryEffect(
+          runtime,
+          `delete from ${schema}.records where value = 'entity-b' returning value`,
+        );
+        expect(foreignDelete.length).toBe(0);
         const forbiddenInsert = yield* Effect.flip(
           queryTryEffect(
-            client,
+            runtime,
             `insert into ${schema}.records (tenant_id, legal_entity_id, resource_id, value) values ($1, $2, $3, 'forbidden')`,
             [tenantB, entityC, randomUUID()],
           ),
         );
         expect(forbiddenInsert.code).toBe('42501');
-        yield* queryEffect(client, 'rollback');
+        yield* queryEffect(runtime, 'rollback');
 
-        yield* queryEffect(client, 'begin');
+        yield* queryEffect(runtime, 'begin');
         yield* queryEffect(
-          client,
+          runtime,
           "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)",
           [tenantA, entityB],
         );
-        const entityBRows = yield* queryEffect<{ value: string }>(client, `select value from ${schema}.records`);
-        expect(entityBRows.rows).toEqual([{ value: 'entity-b' }]);
-        yield* queryEffect(client, 'commit');
-      }).pipe(Effect.ensuring(Effect.sync(() => client.release())));
+        const entityBRows = yield* queryEffect<{ value: string }>(runtime, `select value from ${schema}.records`);
+        expect(entityBRows).toEqual([{ value: 'entity-b' }]);
+        yield* queryEffect(runtime, 'commit');
+      });
 
       const resetRows = yield* queryEffect(runtime, `select * from ${schema}.records`);
-      expect(resetRows.rowCount).toBe(0);
+      expect(resetRows.length).toBe(0);
       const protectedRows = yield* queryEffect<{ value: string }>(
         admin,
         `select value from ${schema}.records order by value`,
       );
-      expect(protectedRows.rows).toEqual([{ value: 'entity-a' }, { value: 'entity-b' }, { value: 'tenant-b' }]);
+      expect(protectedRows).toEqual([{ value: 'entity-a' }, { value: 'entity-b' }, { value: 'tenant-b' }]);
     });
     const release = queryEffect(admin, `drop schema if exists ${schema} cascade`);
     yield* exercise.pipe(Effect.ensuring(release));
@@ -268,15 +260,11 @@ it.live('runtime RLS isolates tenant and legal-entity rows and never leaks trans
 it.live('an unscoped owner repository remains isolated inside a governed read transaction', () =>
   Effect.gen(function* governedReadIsolation() {
     const connections = yield* loadDatabaseConnectionPair();
-    const admin = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-      (pool) => Effect.promise(() => pool.end()),
+    const admin = yield* makeTestPgClient(connections.admin.connectionString);
+    const runtimeDatabase = yield* makeTestDatabaseFromClient(
+      yield* makeTestPgClient(connections.runtime.connectionString),
+      coreRelations,
     );
-    const runtimePool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: connections.runtime.connectionString })),
-      (pool) => Effect.promise(() => pool.end()),
-    );
-    const runtimeDatabase = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
     const schemaName = `governed_isolation_${randomUUID().replaceAll('-', '')}`;
     const ownerSchema = pgSchema(schemaName);
     const records = ownerSchema.table('records', {
@@ -475,11 +463,7 @@ it.live('an unscoped owner repository remains isolated inside a governed read tr
 it.live('PostgreSQL rejects cross-tenant entity, principal, and Action references', () =>
   Effect.gen(function* crossTenantForeignKeys() {
     const connections = yield* loadDatabaseConnectionPair();
-    const admin = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-      (pool) => Effect.promise(() => pool.end()),
-    );
-    const client = yield* Effect.promise(() => admin.connect());
+    const client = yield* makeTestPgSession(connections.admin.connectionString);
     const tenantA = randomUUID();
     const tenantB = randomUUID();
     const entityA = randomUUID();
@@ -523,7 +507,7 @@ it.live('PostgreSQL rejects cross-tenant entity, principal, and Action reference
         [tenantB, principalB, invocationA],
       );
     });
-    const release = queryEffect(client, 'rollback').pipe(Effect.ensuring(Effect.sync(() => client.release())));
+    const release = queryEffect(client, 'rollback');
     yield* exercise.pipe(Effect.ensuring(release));
   }),
 );

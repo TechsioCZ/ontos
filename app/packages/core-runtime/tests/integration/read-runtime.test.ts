@@ -10,7 +10,7 @@ import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoin
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
 import { defineRead } from '../../src/reads/definition.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
-import { makeTestDatabaseFromPool, testDatabasePools } from '../support/database.ts';
+import { makeTestDatabaseFromClient, testDatabaseClients } from '../support/database.ts';
 import { openModuleEntrypointGateway } from '../support/open-module-entrypoint-gateway.ts';
 
 it('standalone governed-read evidence permits no Action invocation and requires outcome fields', () => {
@@ -24,8 +24,8 @@ it('standalone governed-read evidence permits no Action invocation and requires 
 
 it.live('commits live allowed evidence before releasing a governed read result', () =>
   Effect.gen(function* readRuntime1() {
-    const { admin, runtimePool } = yield* testDatabasePools;
-    const runtimeDatabase = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
+    const { admin, runtime: runtimeClient } = yield* testDatabaseClients;
+    const runtimeDatabase = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
     const tenantId = randomUUID();
     const principalId = randomUUID();
     const readKey = `core.shell.integration.${randomUUID()}`;
@@ -63,25 +63,19 @@ it.live('commits live allowed evidence before releasing a governed read result',
 
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* readRuntime2() {
-        yield* Effect.promise(() =>
-          admin.query('delete from core.data_access_events where tenant_id = $1', [tenantId]),
-        );
-        yield* Effect.promise(() => admin.query('delete from core.principals where tenant_id = $1', [tenantId]));
-        yield* Effect.promise(() => admin.query('delete from core.tenants where tenant_id = $1', [tenantId]));
+        yield* admin.unsafe('delete from core.data_access_events where tenant_id = $1', [tenantId]);
+        yield* admin.unsafe('delete from core.principals where tenant_id = $1', [tenantId]);
+        yield* admin.unsafe('delete from core.tenants where tenant_id = $1', [tenantId]);
       }).pipe(Effect.orDie),
     );
 
-    yield* Effect.promise(() =>
-      admin.query(
-        `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Read runtime tenant', 'active', 'en')`,
-        [tenantId, `read-runtime-${tenantId}`],
-      ),
+    yield* admin.unsafe(
+      `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Read runtime tenant', 'active', 'en')`,
+      [tenantId, `read-runtime-${tenantId}`],
     );
-    yield* Effect.promise(() =>
-      admin.query(
-        `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $2, 'system', 'Read runtime principal', 'active')`,
-        [principalId, tenantId],
-      ),
+    yield* admin.unsafe(
+      `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $2, 'system', 'Read runtime principal', 'active')`,
+      [principalId, tenantId],
     );
     const contextAccess = {
       legalEntities: () => Effect.succeed([]),
@@ -113,19 +107,17 @@ it.live('commits live allowed evidence before releasing a governed read result',
         transport: { correlationId },
       }),
     ).toEqual(['visible']);
-    const evidence = yield* Effect.promise(() =>
-      admin.query<{
-        action_invocation_id: null;
-        outcome: string;
-        outcome_code: string;
-        query_hash: null;
-        result_count: number;
-      }>(
-        `select action_invocation_id, outcome, outcome_code, query_hash, result_count from core.data_access_events where tenant_id = $1 and evidence_policy_key = $2`,
-        [tenantId, `${readKey}.v1`],
-      ),
+    const evidence = yield* admin.unsafe<{
+      action_invocation_id: null;
+      outcome: string;
+      outcome_code: string;
+      query_hash: null;
+      result_count: number;
+    }>(
+      `select action_invocation_id, outcome, outcome_code, query_hash, result_count from core.data_access_events where tenant_id = $1 and evidence_policy_key = $2`,
+      [tenantId, `${readKey}.v1`],
     );
-    expect(evidence.rows).toEqual([
+    expect(evidence).toEqual([
       {
         action_invocation_id: null,
         outcome: 'allowed',

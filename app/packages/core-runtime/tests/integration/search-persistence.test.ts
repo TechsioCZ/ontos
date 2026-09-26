@@ -1,25 +1,24 @@
 import { randomUUID } from 'node:crypto';
 
-import { Effect, Function as Fn, Schema, Predicate } from 'effect';
+import type { PgClient } from '@effect/sql-pg';
+import { Effect, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
-import type { Pool, QueryResult, QueryResultRow } from 'pg';
 
 import { coreRelations } from '../../src/db/schema.ts';
 import { makePostgresCoreSearchProjectionStore } from '../../src/search/persistence.ts';
 import { CoreSearchProjectionStore, createCoreSearchQueryRuntime } from '../../src/search/projection.ts';
-import { makeTestDatabaseFromPool, testDatabasePools } from '../support/database.ts';
+import { makeTestDatabaseFromClient, testDatabaseClients } from '../support/database.ts';
 
-const queryEffect = <Row extends QueryResultRow = QueryResultRow>(
-  client: Pool,
+const queryEffect = <Row extends object>(
+  client: PgClient.PgClient,
   statement: string,
-  parameters?: readonly unknown[],
-): Effect.Effect<QueryResult<Row>> =>
-  Effect.suspend(() => Effect.promise(Fn.constant(client.query<Row>(statement, [...(parameters ?? [])]))));
+  parameters: readonly unknown[] = [],
+) => client.unsafe<Row>(statement, parameters);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 it.live('durably rebuilds tenant projections with tombstones and selected-Legal-Entity filtering', () =>
   Effect.gen(function* searchPersistenceIntegration() {
-    const { admin, runtimePool } = yield* testDatabasePools;
+    const { admin, runtime } = yield* testDatabaseClients;
     const tenantId = randomUUID();
     const otherTenantId = randomUUID();
     const legalEntityId = randomUUID();
@@ -35,7 +34,7 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
       tenantId,
     };
     const store = makePostgresCoreSearchProjectionStore({
-      executor: yield* makeTestDatabaseFromPool(runtimePool, coreRelations),
+      executor: yield* makeTestDatabaseFromClient(runtime, coreRelations),
     });
     const search = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     const partyDocument = (resourceId: string, projectionVersion: string, title: string) => ({
@@ -183,7 +182,7 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
     yield* store.replace(emptyRebuild);
     // A fresh service instance must observe the durable floor, not process-local state.
     const restarted = makePostgresCoreSearchProjectionStore({
-      executor: yield* makeTestDatabaseFromPool(runtimePool, coreRelations),
+      executor: yield* makeTestDatabaseFromClient(runtime, coreRelations),
     });
     const restartedSearch = yield* createCoreSearchQueryRuntime.pipe(
       Effect.provideService(CoreSearchProjectionStore, restarted),
@@ -214,11 +213,11 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
     const rebuiltFloorHits = yield* floorSearch();
     expect(rebuiltFloorHits.length).toBe(1);
     const rebuildRows = yield* queryEffect(
-      runtimePool,
+      runtime,
       `select rebuild_version from core.search_projection_rebuilds where tenant_id = $1`,
       [tenantId],
     );
-    expect(rebuildRows.rowCount).toBe(0);
+    expect(rebuildRows.length).toBe(0);
     const counterpartyHits = yield* search.search({
       includeArchived: false,
       moduleId: 'party.registry',
@@ -239,11 +238,11 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
     ).toEqual([]);
 
     const runtimeRows = yield* queryEffect(
-      runtimePool,
+      runtime,
       `select source_resource_id from core.search_index_entries where tenant_id = $1`,
       [tenantId],
     );
-    expect(runtimeRows.rowCount).toBe(0);
+    expect(runtimeRows.length).toBe(0);
     const stored = yield* queryEffect<{
       deleted: boolean;
       projection_version: string;
@@ -252,6 +251,6 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
       `select deleted, projection_version::text from core.search_index_entries where tenant_id = $1 and source_resource_id = $2`,
       [tenantId, removedPartyId],
     );
-    expect(stored.rows).toEqual([{ deleted: true, projection_version: '2' }]);
+    expect(stored).toEqual([{ deleted: true, projection_version: '2' }]);
   }),
 );
