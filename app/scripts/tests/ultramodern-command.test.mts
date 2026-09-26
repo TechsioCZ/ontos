@@ -47,7 +47,10 @@ it.live(
     const createBin = path.join(fixture, createFilename);
     writeFileSync(createBin, 'process.exitCode = 7;');
     mkdirSync(path.join(fixture, 'topology'));
-    writeFileSync(path.join(fixture, 'topology/reference-topology.json'), '{"shell":{"id":"shell"},"verticals":[]}');
+    writeFileSync(
+      path.join(fixture, 'topology/reference-topology.json'),
+      '{"shell":{"id":"shell","path":"apps/shell"},"verticals":[]}',
+    );
     const result = yield* invokeWrapper(
       routeGeneratorScript,
       {
@@ -75,7 +78,7 @@ const routeFixture = Effect.fn(function* routeFixture(scope: string) {
   writeFileSync(
     path.join(fixture, 'topology/reference-topology.json'),
     JSON.stringify({
-      shell: { id: 'shell' },
+      shell: { id: 'shell', path: 'apps/shell' },
       verticals: [{ id: 'inventory', path: ownerPath }],
     }),
   );

@@ -37,7 +37,7 @@ const RouteMetadataModuleSchema = Schema.Struct({
 });
 
 const TopologySchema = Schema.Struct({
-  shell: Schema.Struct({ id: Schema.String }),
+  shell: Schema.Struct({ id: Schema.String, path: Schema.String }),
   verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),
 });
 
@@ -238,7 +238,7 @@ const program = Effect.gen(function* generateTanstackRoutesEffect() {
   );
   const appFlagIndex = forwardedArgs.indexOf('--app');
   const selectedAppId = appFlagIndex === -1 ? undefined : forwardedArgs[appFlagIndex + 1];
-  const selectedApps = [{ id: topology.shell.id, path: `apps/${topology.shell.id}` }, ...topology.verticals].filter(
+  const selectedApps = [topology.shell, ...topology.verticals].filter(
     (app) => selectedAppId === undefined || selectedAppId === app.id,
   );
 
