@@ -6,6 +6,7 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/catalog-client.ts",
+    "./api/quantity-preparation-client": "./src/api/quantity-preparation-client.ts",
     "./domain/catalog-open-selection-population": "./shared/domain/catalog-open-selection-population.ts",
     "./domain/catalog-revision-reference": "./shared/domain/catalog-revision-reference.ts",
     "./domain/catalog-selection-assessment": "./shared/domain/catalog-selection-assessment.ts",

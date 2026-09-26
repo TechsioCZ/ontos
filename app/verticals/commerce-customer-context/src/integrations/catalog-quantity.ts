@@ -1,4 +1,4 @@
-import { executeQuantityPreparationWithAuthorization } from '@app/catalog/api/client';
+import { executeQuantityPreparationWithAuthorization } from '@app/catalog/api/quantity-preparation-client';
 import { Effect, Option, Redacted, Schema } from 'effect';
 
 import {
