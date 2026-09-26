@@ -5,8 +5,8 @@ import { expect, it } from 'effect-rstest';
 import { randomUUID } from 'node:crypto';
 
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { catalogRelations, products, productTypeUntypedDecisions } from '../../src/database/schema.ts';
 import type { CatalogTransaction } from '../../src/database/types.ts';
@@ -52,9 +52,9 @@ const payloadFor = (decisionState: 'CONFIRMED' | 'REVOKED', expectedDecisionRevi
 it.live('appends and isolates explicit Product Type absence decisions in PostgreSQL', () =>
   Effect.scoped(
     Effect.gen(function* productTypeUntypedDecisionPostgres() {
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, catalogRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, catalogRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, catalogRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, catalogRelations);
       const withTenant = <Value, Failure>(
         scopedTenantId: string,
         operation: (transaction: CatalogTransaction) => Effect.Effect<Value, Failure>,

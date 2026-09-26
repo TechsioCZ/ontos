@@ -16,7 +16,7 @@ export const EligibleMarketTuplesRequestSchema = Schema.Struct({
   sellingLegalEntityRestriction: Schema.optionalKey(SellingLegalEntityRefSchema),
   storefrontRef: StorefrontRefSchema,
   subject: Schema.optionalKey(PurchasingSubjectRefSchema),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type EligibleMarketTuplesRequest = typeof EligibleMarketTuplesRequestSchema.Type;
 export const EligibleMarketTuplesResponseSchema = Schema.Union([
   EligibleMarketTupleSetSchema,
@@ -24,7 +24,7 @@ export const EligibleMarketTuplesResponseSchema = Schema.Union([
     outcome: Schema.Literal('MARKET_ELIGIBILITY_UNAVAILABLE'),
     reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500), Schema.isTrimmed()),
     retryable: Schema.Literal(true),
-  }).annotate({ parseOptions: { onExcessProperty: 'error' } }),
+  }),
 ]);
 export type EligibleMarketTuplesResponse = typeof EligibleMarketTuplesResponseSchema.Type;
 

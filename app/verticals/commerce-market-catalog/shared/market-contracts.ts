@@ -6,7 +6,6 @@ import { MarketRefSchema } from './resources/market.ts';
 import { MarketDefinitionRevisionRefSchema } from './resources/market-definition-revision.ts';
 import { StorefrontAssociationRefSchema } from './resources/storefront-association.ts';
 
-const strict = { parseOptions: { onExcessProperty: 'error' as const } };
 const boundedText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500), Schema.isTrimmed());
 const shortCode = Schema.String.check(
   Schema.isMinLength(2),
@@ -54,31 +53,29 @@ export const SellingLegalEntityRefSchema = Schema.Struct({
   resourceId: SellingLegalEntityResourceIdSchema,
   resourceType: Schema.Literal('core.identity.legal-entity'),
   tenantId: SellingLegalEntityTenantIdSchema,
-}).annotate(strict);
+});
 
 export const StorefrontRefSchema = Schema.Struct({
   appId: StorefrontAppIdSchema,
   tenantId: StorefrontTenantIdSchema,
-}).annotate(strict);
+});
 
 export const EffectivePeriodSchema = Schema.Struct({
   endsAt: Schema.optionalKey(Schema.DateTimeUtcFromString),
   startsAt: Schema.DateTimeUtcFromString,
-})
-  .check(
-    Schema.makeFilter(({ endsAt, startsAt }) =>
-      endsAt === undefined || DateTime.toEpochMillis(endsAt) > DateTime.toEpochMillis(startsAt)
-        ? undefined
-        : { issue: 'endsAt must be later than startsAt', path: ['endsAt'] },
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ endsAt, startsAt }) =>
+    endsAt === undefined || DateTime.toEpochMillis(endsAt) > DateTime.toEpochMillis(startsAt)
+      ? undefined
+      : { issue: 'endsAt must be later than startsAt', path: ['endsAt'] },
+  ),
+);
 export type EffectivePeriod = typeof EffectivePeriodSchema.Type;
 
 export const JurisdictionRefSchema = Schema.Struct({
   code: Schema.String.check(Schema.isMinLength(2), Schema.isMaxLength(40), Schema.isTrimmed()),
   kind: Schema.Literals(['COUNTRY', 'REGION', 'JURISDICTION']),
-}).annotate(strict);
+});
 
 const uniqueValues = <A>(values: readonly A[]) =>
   new Set(values).size === values.length ? undefined : 'values must be unique';
@@ -105,22 +102,20 @@ export const MarketDefinitionSchema = Schema.Struct({
   revision: positiveRevision,
   sellingLegalEntityRef: SellingLegalEntityRefSchema,
   supportedLocales,
-})
-  .check(
-    Schema.makeFilter(({ definitionRevisionRef, marketRef, previousDefinitionRevisionRef, sellingLegalEntityRef }) =>
-      marketRef.tenantId === sellingLegalEntityRef.tenantId &&
-      definitionRevisionRef.tenantId === marketRef.tenantId &&
-      (previousDefinitionRevisionRef === undefined || previousDefinitionRevisionRef.tenantId === marketRef.tenantId)
-        ? undefined
-        : 'Market, revisions, and Selling Legal Entity must belong to the same Tenant',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ definitionRevisionRef, marketRef, previousDefinitionRevisionRef, sellingLegalEntityRef }) =>
+    marketRef.tenantId === sellingLegalEntityRef.tenantId &&
+    definitionRevisionRef.tenantId === marketRef.tenantId &&
+    (previousDefinitionRevisionRef === undefined || previousDefinitionRevisionRef.tenantId === marketRef.tenantId)
+      ? undefined
+      : 'Market, revisions, and Selling Legal Entity must belong to the same Tenant',
+  ),
+);
 
 export const AssociationProvenanceSchema = Schema.Struct({
   kind: Schema.Literals(['CONFIGURATION_ACTION', 'MIGRATION', 'ROLLBACK']),
   reference: boundedText,
-}).annotate(strict);
+});
 
 export const StorefrontAssociationDefinitionSchema = Schema.Struct({
   associationRef: StorefrontAssociationRefSchema,
@@ -133,21 +128,19 @@ export const StorefrontAssociationDefinitionSchema = Schema.Struct({
   revision: positiveRevision,
   sellingLegalEntityRef: SellingLegalEntityRefSchema,
   storefrontRef: StorefrontRefSchema,
-})
-  .check(
-    Schema.makeFilter(
-      ({ associationRef, marketDefinitionRevisionRef, marketRef, sellingLegalEntityRef, storefrontRef }) => {
-        const { tenantId } = marketRef;
-        return associationRef.tenantId === tenantId &&
-          marketDefinitionRevisionRef.tenantId === tenantId &&
-          sellingLegalEntityRef.tenantId === tenantId &&
-          storefrontRef.tenantId === tenantId
-          ? undefined
-          : 'Association, Market revision, Market, seller, and Storefront must belong to the same Tenant';
-      },
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(
+    ({ associationRef, marketDefinitionRevisionRef, marketRef, sellingLegalEntityRef, storefrontRef }) => {
+      const { tenantId } = marketRef;
+      return associationRef.tenantId === tenantId &&
+        marketDefinitionRevisionRef.tenantId === tenantId &&
+        sellingLegalEntityRef.tenantId === tenantId &&
+        storefrontRef.tenantId === tenantId
+        ? undefined
+        : 'Association, Market revision, Market, seller, and Storefront must belong to the same Tenant';
+    },
+  ),
+);
 
 const PurchasingSubjectTenantIdSchema = checkedUuid.pipe(
   Schema.brand('CommerceMarketPurchasingSubjectTenantId'),
@@ -171,43 +164,41 @@ const RetailCustomerProfileRefSchema = Schema.Struct({
   resourceId: RetailCustomerProfileResourceIdSchema,
   resourceType: Schema.Literal('commerce.customer-context.retail-customer-profile'),
   tenantId: PurchasingSubjectTenantIdSchema,
-}).annotate(strict);
+});
 
 const CounterpartyPurchasingProfileRefSchema = Schema.Struct({
   moduleId: Schema.Literal('commerce.customer-context'),
   resourceId: CounterpartyPurchasingProfileResourceIdSchema,
   resourceType: Schema.Literal('commerce.customer-context.counterparty-purchasing-profile'),
   tenantId: PurchasingSubjectTenantIdSchema,
-}).annotate(strict);
+});
 
 const CounterpartyRefSchema = Schema.Struct({
   moduleId: Schema.Literal('party.registry'),
   resourceId: CounterpartyResourceIdSchema,
   resourceType: Schema.Literal('party.registry.counterparty'),
   tenantId: PurchasingSubjectTenantIdSchema,
-}).annotate(strict);
+});
 
 export const PurchasingSubjectKindSchema = Schema.Literals(['GUEST', 'RETAIL_PROFILE', 'COUNTERPARTY']);
 
 export const PurchasingSubjectRefSchema = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal('GUEST'), subjectRef: boundedText }).annotate(strict),
+  Schema.Struct({ kind: Schema.Literal('GUEST'), subjectRef: boundedText }),
   Schema.Struct({
     kind: Schema.Literal('RETAIL_PROFILE'),
     profileRef: RetailCustomerProfileRefSchema,
-  }).annotate(strict),
+  }),
   Schema.Struct({
     counterpartyRef: CounterpartyRefSchema,
     kind: Schema.Literal('COUNTERPARTY'),
     profileRef: CounterpartyPurchasingProfileRefSchema,
-  })
-    .check(
-      Schema.makeFilter(({ counterpartyRef, profileRef }) =>
-        counterpartyRef.tenantId === profileRef.tenantId
-          ? undefined
-          : 'Counterparty and Purchasing Profile must belong to the same Tenant',
-      ),
-    )
-    .annotate(strict),
+  }).check(
+    Schema.makeFilter(({ counterpartyRef, profileRef }) =>
+      counterpartyRef.tenantId === profileRef.tenantId
+        ? undefined
+        : 'Counterparty and Purchasing Profile must belong to the same Tenant',
+    ),
+  ),
 ]);
 
 export const SafeSubjectRestrictionEvidenceSchema = Schema.Struct({
@@ -217,7 +208,7 @@ export const SafeSubjectRestrictionEvidenceSchema = Schema.Struct({
   ownerRevision: boundedText,
   profileState: Schema.Literal('ACTIVE'),
   subjectKind: PurchasingSubjectKindSchema,
-}).annotate(strict);
+});
 
 export const EligibleMarketTupleSchema = Schema.Struct({
   associationRef: StorefrontAssociationRefSchema,
@@ -226,17 +217,15 @@ export const EligibleMarketTupleSchema = Schema.Struct({
   marketDefinitionRevisionRef: MarketDefinitionRevisionRefSchema,
   marketRef: MarketRefSchema,
   sellingLegalEntityRef: SellingLegalEntityRefSchema,
-})
-  .check(
-    Schema.makeFilter(({ associationRef, marketDefinitionRevisionRef, marketRef, sellingLegalEntityRef }) =>
-      associationRef.tenantId === marketRef.tenantId &&
-      marketDefinitionRevisionRef.tenantId === marketRef.tenantId &&
-      sellingLegalEntityRef.tenantId === marketRef.tenantId
-        ? undefined
-        : 'Eligible tuple references must belong to the same Tenant',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ associationRef, marketDefinitionRevisionRef, marketRef, sellingLegalEntityRef }) =>
+    associationRef.tenantId === marketRef.tenantId &&
+    marketDefinitionRevisionRef.tenantId === marketRef.tenantId &&
+    sellingLegalEntityRef.tenantId === marketRef.tenantId
+      ? undefined
+      : 'Eligible tuple references must belong to the same Tenant',
+  ),
+);
 export type EligibleMarketTuple = typeof EligibleMarketTupleSchema.Type;
 
 export const EligibleMarketTupleSetSchema = Schema.Struct({
@@ -246,7 +235,7 @@ export const EligibleMarketTupleSetSchema = Schema.Struct({
   nextApplicabilityBoundary: Schema.optionalKey(Schema.DateTimeUtcFromString),
   outcome: Schema.Literal('ELIGIBLE_MARKET_TUPLES'),
   tuples: Schema.Array(EligibleMarketTupleSchema),
-}).annotate(strict);
+});
 export type EligibleMarketTupleSet = typeof EligibleMarketTupleSetSchema.Type;
 
 const resolved = Schema.Struct({
@@ -261,17 +250,15 @@ const resolved = Schema.Struct({
   selectedTuple: EligibleMarketTupleSchema,
   selectionSource: Schema.Literals(['EXPLICIT', 'BOOTSTRAP_DEFAULT', 'SOLE_ELIGIBLE']),
   subjectRestrictionEvidence: Schema.optionalKey(SafeSubjectRestrictionEvidenceSchema),
-})
-  .check(
-    Schema.makeFilter(({ associationRevision, marketDefinitionRevisionRef, selectedTuple }) =>
-      associationRevision === selectedTuple.associationRevision &&
-      marketDefinitionRevisionRef.resourceId === selectedTuple.marketDefinitionRevisionRef.resourceId &&
-      marketDefinitionRevisionRef.tenantId === selectedTuple.marketDefinitionRevisionRef.tenantId
-        ? undefined
-        : 'Resolved revision evidence must match the selected eligible tuple',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ associationRevision, marketDefinitionRevisionRef, selectedTuple }) =>
+    associationRevision === selectedTuple.associationRevision &&
+    marketDefinitionRevisionRef.resourceId === selectedTuple.marketDefinitionRevisionRef.resourceId &&
+    marketDefinitionRevisionRef.tenantId === selectedTuple.marketDefinitionRevisionRef.tenantId
+      ? undefined
+      : 'Resolved revision evidence must match the selected eligible tuple',
+  ),
+);
 
 const selectionRequired = Schema.Struct({
   choices: Schema.Array(EligibleMarketTupleSchema).check(Schema.isMinLength(2)),
@@ -280,25 +267,23 @@ const selectionRequired = Schema.Struct({
   evaluatedAt: Schema.DateTimeUtcFromString,
   nextApplicabilityBoundary: Schema.optionalKey(Schema.DateTimeUtcFromString),
   outcome: Schema.Literal('MARKET_SELECTION_REQUIRED'),
-})
-  .check(
-    Schema.makeFilter(({ choices }) => {
-      const materialTupleKeys = choices.map(
-        ({ channel, marketRef, sellingLegalEntityRef }) =>
-          `${sellingLegalEntityRef.resourceId}\u0000${marketRef.resourceId}\u0000${channel}`,
-      );
-      return new Set(materialTupleKeys).size === materialTupleKeys.length
-        ? undefined
-        : 'Market selection choices must contain distinct seller, Market, and Channel tuples';
-    }),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ choices }) => {
+    const materialTupleKeys = choices.map(
+      ({ channel, marketRef, sellingLegalEntityRef }) =>
+        `${sellingLegalEntityRef.resourceId}\u0000${marketRef.resourceId}\u0000${channel}`,
+    );
+    return new Set(materialTupleKeys).size === materialTupleKeys.length
+      ? undefined
+      : 'Market selection choices must contain distinct seller, Market, and Channel tuples';
+  }),
+);
 
 const knownResolutionFailure = <Tag extends string>(tag: Tag) =>
   Schema.Struct({
     outcome: Schema.Literal(tag),
     reason: boundedText,
-  }).annotate(strict);
+  });
 
 export const MarketResolutionOutcomeSchema = Schema.Union([
   resolved,
@@ -311,6 +296,6 @@ export const MarketResolutionOutcomeSchema = Schema.Union([
     outcome: Schema.Literal('MARKET_ELIGIBILITY_UNAVAILABLE'),
     reason: boundedText,
     retryable: Schema.Literal(true),
-  }).annotate(strict),
+  }),
 ]);
 export type MarketResolutionOutcome = typeof MarketResolutionOutcomeSchema.Type;

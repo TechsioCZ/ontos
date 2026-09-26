@@ -1,42 +1,24 @@
 import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { acquirePoolResource, makePartyDatabase } from '../../src/db/client.ts';
+import { makePartyDatabase } from '../../src/db/client.ts';
 
-it.effect('finalizes the Party Registry pool when its Effect scope closes', () =>
+it.effect('keeps Party Registry client configuration failure in the typed error channel', () =>
   Effect.gen(function* testScenario1() {
-    let finalized = false;
-    yield* Effect.scoped(
-      acquirePoolResource(() => ({
-        end: () => {
-          finalized = true;
-          return Promise.resolve();
-        },
-      })),
-    );
-    expect(finalized).toBe(true);
-  }),
-);
-
-it.effect('keeps Party Registry pool acquisition failure in the typed error channel', () =>
-  Effect.gen(function* testScenario2() {
     const error = yield* Effect.flip(
       Effect.scoped(
-        makePartyDatabase(
-          {
-            connectionString: 'postgresql://ontos_runtime:test@localhost:5433/ontos',
-            database: 'ontos',
-            host: 'localhost',
-            port: 5433,
-            user: 'ontos_runtime',
-          },
-          () => {
-            throw new Error('pool construction failed');
-          },
-        ),
+        makePartyDatabase({
+          connectionString: 'postgresql://ontos_runtime:test@localhost:5433/ontos?statement_timeout=1',
+          database: 'ontos',
+          host: 'localhost',
+          port: 5433,
+          user: 'ontos_runtime',
+        }),
       ),
     );
     expect(Predicate.isTagged(error, 'PartyDatabaseConnectionError')).toBe(true);
-    expect(error.reason).toBe('Unable to initialize the Party Registry PostgreSQL connection pool');
+    expect(error.reason).toBe(
+      'Database URL deadline parameters and startup options are unsupported; use poolDeadlines',
+    );
   }),
 );

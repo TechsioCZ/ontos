@@ -14,8 +14,8 @@ import {
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
@@ -79,9 +79,9 @@ const contextAccess: ContextAccessService = {
 it.live('commits a scheduled retirement with server-trusted acceptance chronology through the Action runtime', () =>
   Effect.scoped(
     Effect.gen(function* scheduledRetirementAction() {
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, priceGroupCatalogRelations);
-      const database = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, priceGroupCatalogRelations);
+      const database = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>
@@ -163,7 +163,6 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
           effectiveFrom,
           effectiveTo: null,
           expectedCatalogRevision: 0,
-          meaningFingerprint: 'a'.repeat(64),
           reason: 'Create the Price Group used by the scheduled retirement proof.',
         },
         principal,

@@ -1,8 +1,9 @@
-// @effect-diagnostics asyncFunction:off globalConsole:off nodeBuiltinImport:off -- Operator-only database verification adapts the PostgreSQL driver at the infrastructure edge; expires: 2027-03-31.
+// @effect-diagnostics globalConsole:off nodeBuiltinImport:off -- Operator-only database verification adapts the PostgreSQL driver at the infrastructure edge; expires: 2027-03-31.
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { Array as EffectArray, Console, Effect, Exit, Order, Schema } from 'effect';
-import { Client } from 'pg';
+import { PgClient } from '@effect/sql-pg';
+import { Array as EffectArray, Console, Effect, Exit, Order, Redacted, Schema } from 'effect';
+import { Reactivity } from 'effect/unstable/reactivity';
 
 import { compareCatalogTables } from '../src/database/catalog.ts';
 import { CATALOG_SCHEMA_NAME, CATALOG_TABLES } from '../src/database/schema.ts';
@@ -56,47 +57,32 @@ const pointersAreCurrent = (pointers: {
 
 const verification = Effect.gen(function* verifyCatalogDatabase() {
   const configuration = yield* loadDatabaseConnectionPair();
-  const client = yield* Effect.acquireRelease(
-    Effect.tryPromise({
-      catch: () => new CatalogSchemaVerificationError({ reason: 'Unable to connect to the Catalog database' }),
-      try: async () => {
-        const connection = new Client({ connectionString: configuration.admin.connectionString });
-        await connection.connect();
-        return connection;
-      },
-    }),
-    (connection) => Effect.promise(async () => await connection.end()),
+  const client = yield* PgClient.makeClient({ url: Redacted.make(configuration.admin.connectionString) }).pipe(
+    Effect.mapError(() => new CatalogSchemaVerificationError({ reason: 'Unable to connect to the Catalog database' })),
   );
+  const inspect = <Row extends object>(reason: string, statement: string) =>
+    client.unsafe<Row>(statement).pipe(Effect.mapError(() => new CatalogSchemaVerificationError({ reason })));
   // Typed Drizzle definitions define the complete inventory; catalog queries verify deployment metadata only.
   for (const table of CATALOG_TABLES) {
     const config = getTableConfig(table);
-    yield* Effect.tryPromise({
-      catch: () => new CatalogSchemaVerificationError({ reason: `Catalog table ${config.name} is unavailable` }),
-      try: async () => await client.query(`select * from "catalog"."${config.name}" limit 0`),
-    });
+    yield* inspect(`Catalog table ${config.name} is unavailable`, `select * from "catalog"."${config.name}" limit 0`);
   }
-  const tables = yield* Effect.tryPromise({
-    catch: () => new CatalogSchemaVerificationError({ reason: 'Unable to inspect Catalog tables' }),
-    try: async () =>
-      await client.query<{ table_name: string }>(
-        "select table_name from information_schema.tables where table_schema = 'catalog' and table_type = 'BASE TABLE' order by table_name",
-      ),
-  });
-  const difference = compareCatalogTables(tables.rows.map((row) => `${CATALOG_SCHEMA_NAME}.${row.table_name}`));
+  const tables = yield* inspect<{ table_name: string }>(
+    'Unable to inspect Catalog tables',
+    "select table_name from information_schema.tables where table_schema = 'catalog' and table_type = 'BASE TABLE' order by table_name",
+  );
+  const difference = compareCatalogTables(tables.map((row) => `${CATALOG_SCHEMA_NAME}.${row.table_name}`));
   if (difference.missing.length > 0 || difference.unexpected.length > 0) {
     yield* new CatalogSchemaVerificationError({
       reason: `Catalog table mismatch; missing=[${difference.missing.join(', ')}], unexpected=[${difference.unexpected.join(', ')}]`,
     });
   }
-  const columns = yield* Effect.tryPromise({
-    catch: () => new CatalogSchemaVerificationError({ reason: 'Unable to inspect Catalog columns' }),
-    try: async () =>
-      await client.query<{ column_name: string; table_name: string }>(
-        "select table_name, column_name from information_schema.columns where table_schema = 'catalog' order by table_name, column_name",
-      ),
-  });
+  const columns = yield* inspect<{ column_name: string; table_name: string }>(
+    'Unable to inspect Catalog columns',
+    "select table_name, column_name from information_schema.columns where table_schema = 'catalog' order by table_name, column_name",
+  );
   const actualColumns = EffectArray.sort(
-    columns.rows.map((row) => `${row.table_name}.${row.column_name}`),
+    columns.map((row) => `${row.table_name}.${row.column_name}`),
     Order.String,
   );
   if (
@@ -107,18 +93,17 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
       reason: 'Catalog column inventory does not match the typed schema',
     });
   }
-  const infrastructure = yield* Effect.tryPromise({
-    catch: () => new CatalogSchemaVerificationError({ reason: 'Unable to inspect Catalog security metadata' }),
-    try: async () =>
-      await client.query<{
-        forced_rls: number;
-        foreign_key_count: number;
-        journal_count: number;
-        policy_count: number;
-        result_snapshot_guard_count: number;
-        trigger_count: number;
-        validated_combination_count: number;
-      }>(`select
+  const infrastructure = yield* inspect<{
+    forced_rls: number;
+    foreign_key_count: number;
+    journal_count: number;
+    policy_count: number;
+    result_snapshot_guard_count: number;
+    trigger_count: number;
+    validated_combination_count: number;
+  }>(
+    'Unable to inspect Catalog security metadata',
+    `select
       (select count(*)::integer from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='catalog' and c.relkind='r' and c.relrowsecurity and c.relforcerowsecurity) forced_rls,
       (select count(*)::integer from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='drizzle' and c.relname='__drizzle_migrations_catalog') journal_count,
       (select count(*)::integer from pg_policy p join pg_class c on c.oid=p.polrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='catalog') policy_count,
@@ -128,9 +113,9 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
           and t.tgname='catalog_result_snapshots_append_only' and t.tgenabled='O'
           and (t.tgtype & 16) = 16 and (t.tgtype & 8) = 8) result_snapshot_guard_count,
       (select count(*)::integer from pg_constraint k join pg_class c on c.oid=k.conrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='catalog' and k.contype='f') foreign_key_count,
-      (select count(*)::integer from pg_constraint k join pg_class c on c.oid=k.conrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='catalog' and c.relname='product_variants' and k.conname='catalog_product_variants_combination_ck' and k.convalidated) validated_combination_count`),
-  });
-  const [row] = infrastructure.rows;
+      (select count(*)::integer from pg_constraint k join pg_class c on c.oid=k.conrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='catalog' and c.relname='product_variants' and k.conname='catalog_product_variants_combination_ck' and k.convalidated) validated_combination_count`,
+  );
+  const [row] = infrastructure;
   const expectedPolicyCount = CATALOG_TABLES.reduce((count, table) => count + getTableConfig(table).policies.length, 0);
   const expectedForeignKeyCount = CATALOG_TABLES.reduce(
     (count, table) => count + getTableConfig(table).foreignKeys.length,
@@ -167,71 +152,63 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
       reason: 'Catalog RLS, journal, trigger, or foreign-key inventory differs from its migration',
     });
   }
-  const skuIndex = yield* Effect.tryPromise({
-    catch: () => new CatalogSchemaVerificationError({ reason: 'Unable to inspect Catalog SKU uniqueness' }),
-    try: async () =>
-      await client.query<{ index_definition: string }>(`select pg_get_indexdef(i.indexrelid) index_definition
+  const skuIndex = yield* inspect<{ index_definition: string }>(
+    'Unable to inspect Catalog SKU uniqueness',
+    `select pg_get_indexdef(i.indexrelid) index_definition
         from pg_index i join pg_class c on c.oid=i.indexrelid
         join pg_namespace n on n.oid=c.relnamespace
-        where n.nspname='catalog' and c.relname='catalog_sku_reservations_binary_code_uk' and i.indisunique and i.indisvalid`),
-  });
-  if (
-    skuIndex.rows.length !== 1 ||
-    !skuIndex.rows[0]?.index_definition.includes('(tenant_id, normalized_code COLLATE "C")')
-  ) {
+        where n.nspname='catalog' and c.relname='catalog_sku_reservations_binary_code_uk' and i.indisunique and i.indisvalid`,
+  );
+  if (skuIndex.length !== 1 || !skuIndex[0]?.index_definition.includes('(tenant_id, normalized_code COLLATE "C")')) {
     yield* new CatalogSchemaVerificationError({ reason: 'Catalog SKU tenant-wide binary uniqueness is absent' });
   }
-  const skuCodes = yield* Effect.tryPromise({
-    catch: () => new CatalogSchemaVerificationError({ reason: 'Unable to inspect Catalog SKU normalization' }),
-    try: async () =>
-      await client.query<{ display_code: string; normalized_code: string }>(`select display_code, normalized_code
+  const skuCodes = yield* inspect<{ display_code: string; normalized_code: string }>(
+    'Unable to inspect Catalog SKU normalization',
+    `select display_code, normalized_code
         from catalog.commercial_sku_reservations
         union all
-        select display_code, normalized_code from catalog.commercial_sku_assignment_revisions`),
-  });
-  if (
-    skuCodes.rows.some(({ display_code, normalized_code }) => display_code.trim().toUpperCase() !== normalized_code)
-  ) {
+        select display_code, normalized_code from catalog.commercial_sku_assignment_revisions`,
+  );
+  if (skuCodes.some(({ display_code, normalized_code }) => display_code.trim().toUpperCase() !== normalized_code)) {
     yield* new CatalogSchemaVerificationError({
       reason: 'Catalog SKU normalization differs from the application rule',
     });
   }
-  const currentPointers = yield* Effect.tryPromise({
-    catch: () => new CatalogSchemaVerificationError({ reason: 'Unable to inspect Catalog revision pointers' }),
-    try: async () =>
-      await client.query<{
-        assignment_mismatch: number;
-        attribute_definition_mismatch: number;
-        attribute_value_mismatch: number;
-        axis_mismatch: number;
-        brand_mismatch: number;
-        category_mismatch: number;
-        commercial_gtin_mismatch: number;
-        commercial_sku_mismatch: number;
-        configuration_activation_mismatch: number;
-        configuration_definition_mismatch: number;
-        controlled_value_mismatch: number;
-        counter_mismatch: number;
-        manufacturer_mismatch: number;
-        media_assignment_mismatch: number;
-        media_set_mismatch: number;
-        package_mismatch: number;
-        package_option_mismatch: number;
-        package_unit_mismatch: number;
-        package_unit_reference_mismatch: number;
-        product_brand_mismatch: number;
-        product_locale_mismatch: number;
-        product_size_usage_mismatch: number;
-        relationship_mismatch: number;
-        set_composition_mismatch: number;
-        source_override_mismatch: number;
-        type_mismatch: number;
-        unit_rule_mismatch: number;
-        variant_axis_integrity_mismatch: number;
-        variant_locale_mismatch: number;
-        variant_mismatch: number;
-        variant_unit_mismatch: number;
-      }>(`select
+  const currentPointers = yield* inspect<{
+    assignment_mismatch: number;
+    attribute_definition_mismatch: number;
+    attribute_value_mismatch: number;
+    axis_mismatch: number;
+    brand_mismatch: number;
+    category_mismatch: number;
+    commercial_gtin_mismatch: number;
+    commercial_sku_mismatch: number;
+    configuration_activation_mismatch: number;
+    configuration_definition_mismatch: number;
+    controlled_value_mismatch: number;
+    counter_mismatch: number;
+    manufacturer_mismatch: number;
+    media_assignment_mismatch: number;
+    media_set_mismatch: number;
+    package_mismatch: number;
+    package_option_mismatch: number;
+    package_unit_mismatch: number;
+    package_unit_reference_mismatch: number;
+    product_brand_mismatch: number;
+    product_locale_mismatch: number;
+    product_size_usage_mismatch: number;
+    relationship_mismatch: number;
+    set_composition_mismatch: number;
+    source_override_mismatch: number;
+    type_mismatch: number;
+    unit_rule_mismatch: number;
+    variant_axis_integrity_mismatch: number;
+    variant_locale_mismatch: number;
+    variant_mismatch: number;
+    variant_unit_mismatch: number;
+  }>(
+    'Unable to inspect Catalog revision pointers',
+    `select
       (select count(*)::integer from catalog.commercial_sku_reservations s where not exists
         (select 1 from catalog.commercial_sku_assignment_revisions r
           where r.tenant_id=s.tenant_id and r.normalized_code=s.normalized_code
@@ -515,16 +492,16 @@ const verification = Effect.gen(function* verifyCatalogDatabase() {
           and e.change_kind in ('CREATED','RENAMED','MOVED','RETIRED')), 0)
         or h.assignment_revision <> coalesce((select max(e.assignment_revision)
           from catalog.product_category_events e where e.tenant_id=h.tenant_id
-          and e.change_kind in ('ASSIGNED','UNASSIGNED')), 0)) counter_mismatch`),
-  });
-  const [pointers] = currentPointers.rows;
+          and e.change_kind in ('ASSIGNED','UNASSIGNED')), 0)) counter_mismatch`,
+  );
+  const [pointers] = currentPointers;
   if (pointers === undefined || !pointersAreCurrent(pointers)) {
     yield* new CatalogSchemaVerificationError({
       reason: 'Catalog Current revision pointers or category counters differ from durable events',
     });
   }
   yield* Console.log('Verified Catalog database schema, columns, and security metadata');
-}).pipe(Effect.scoped, Effect.tapError(Console.error));
+}).pipe(Effect.scoped, Effect.provide(Reactivity.layer), Effect.tapError(Console.error));
 
 const exit = await Effect.runPromiseExit(verification);
 process.exitCode = Exit.isFailure(exit) ? 1 : 0;

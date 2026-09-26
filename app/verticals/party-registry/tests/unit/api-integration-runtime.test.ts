@@ -362,12 +362,32 @@ it.live(
           validTo: '2026-09-07T00:00:00.000Z',
         },
         '/party-registry/actions/create-party': { candidate },
+        // Sampled DateTimeUtc values include extended years that the canonical ISO wire format rejects.
+        '/party-registry/actions/create-party-relationship': {
+          fromPartyRef: partyRef,
+          provenance: { method: 'TEST', source: 'runtime-assembly-proof' },
+          relationshipType: 'CONTACT_PERSON_OF',
+          toPartyRef: { ...partyRef, resourceId: 'ab000000-0000-4000-8000-000000000001' },
+          validFrom: '2026-09-07T00:00:00.000Z',
+          validTo: null,
+        },
         '/party-registry/actions/end-contact-point': {
           contactPointRef,
           effectiveEnd: '2026-09-07T00:00:00.000Z',
           provenance: contactPointProvenance,
           reason: 'Runtime assembly proof',
           target: { type: 'WHOLE_CONTACT_POINT' },
+        },
+        '/party-registry/actions/end-party-relationship': {
+          effectiveAt: '2026-09-07T00:00:00.000Z',
+          expectedRevision: 1,
+          provenance: { method: 'TEST', source: 'runtime-assembly-proof' },
+          relationshipRef: {
+            moduleId: 'party.registry',
+            resourceId: 'aa000000-0000-4000-8000-000000000001',
+            resourceType: 'party.registry.party-relationship',
+            tenantId: principal.tenantId,
+          },
         },
         '/party-registry/actions/match-party': { candidate },
         '/party-registry/actions/update-party': {

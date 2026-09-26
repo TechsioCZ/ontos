@@ -5,8 +5,8 @@ import { expect, it } from 'effect-rstest';
 import { randomUUID } from 'node:crypto';
 
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { assessCatalogSelection } from '../../shared/domain/catalog-selection-assessment.ts';
 import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
@@ -78,9 +78,9 @@ const basisOf = (evidence: CatalogSelectionOwnerAssessmentResult) =>
 it.live('re-assesses a changed deciding source for the same Selection identity without reusing stale evidence', () =>
   Effect.scoped(
     Effect.gen(function* catalogSelectionSourceChange() {
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, catalogRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, catalogRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, catalogRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, catalogRelations);
       const withTenant = <Value, Failure>(
         operation: (transaction: CatalogTransaction) => Effect.Effect<Value, Failure>,
       ) =>

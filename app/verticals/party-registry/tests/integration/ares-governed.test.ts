@@ -8,10 +8,12 @@ import { ConfigProvider, Context, DateTime, Effect, Layer, Match, Option, Redact
 import { assert, expect, it } from 'effect-rstest';
 import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/unstable/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
-import { Pool } from 'pg';
 
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { aresLookupReadApiLive } from '../../api/ares-lookup-read-server.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import {
@@ -83,7 +85,6 @@ const rawSubject = {
 };
 const emptyRequestContext = Context.makeUnsafe<unknown>(new Map());
 const lookupIco = Schema.decodeSync(AresSubjectLookupIcoSchema)('27074358');
-const endPool = (pool: Pool) => Effect.promise(() => pool.end());
 
 it.live(
   'exported ARES coordinator uses real authorized HTTP commands, canonical persistence and reviewed correction',
@@ -105,11 +106,8 @@ it.live(
         }).pipe(Effect.orDie),
         (resource) => resource.close().pipe(Effect.orDie),
       );
-      const pool = yield* Effect.acquireRelease(
-        Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-        endPool,
-      );
-      const admin = yield* makeTestDatabaseFromPool(pool, partyRelations);
+      const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
+      const admin = yield* makeTestDatabaseFromClient(adminClient, partyRelations);
       const managerWithLegalEntity = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
       const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
       const kid = `ares-live-${randomUUID()}`;

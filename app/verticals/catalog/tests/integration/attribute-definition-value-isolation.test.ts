@@ -5,8 +5,8 @@ import { expect, it } from 'effect-rstest';
 import { randomUUID } from 'node:crypto';
 
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   attributeDefinitions,
@@ -48,9 +48,9 @@ it.live('keeps two Products using one material definition independent in Current
       const typeId = randomUUID();
       const p1 = randomUUID();
       const p2 = randomUUID();
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, catalogRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, catalogRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, catalogRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, catalogRelations);
       const scopeFor = (tenantId: string) => ({
         ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
           authContextRef: 'job:attribute-isolation-test:run:1',

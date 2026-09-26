@@ -10,10 +10,10 @@ import { getActionHandler, getActionServiceFactory } from '../../../../packages/
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   AssociateStorefrontPayloadSchema,
   associateStorefrontAction,
@@ -80,7 +80,7 @@ const storefrontOwnerResponse = Schema.decodeUnknownSync(CurrentStorefrontApplic
 
 const storefrontAuthority = makeCurrentStorefrontApplicationAuthority(() => Effect.succeed(storefrontOwnerResponse));
 
-type MarketCatalogTestDatabase = TestDatabaseFromPool<typeof coreRelations>;
+type MarketCatalogTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
 const scoped = <Value, Failure>(
   database: MarketCatalogTestDatabase,
   operation: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure>,
@@ -95,9 +95,9 @@ const scoped = <Value, Failure>(
 it.live('persists and reads the Czech Launch Market fixture through owner Action factories', () =>
   Effect.scoped(
     Effect.gen(function* czechLaunchMarketFixturePostgres() {
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, coreRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>
