@@ -21,6 +21,7 @@ import {
   toModuleAccessObjectId,
 } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import {
+  acquireOutlivingCleanup,
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
@@ -160,9 +161,7 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
     );
     const coreClient = yield* makeTestPgClient(connectionString, { connectTimeout, startupParameters });
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
-    const { adapter, executor: authDatabase } = yield* makeAuthDatabase({
-      connectionString,
-    });
+    const { adapter, executor: authDatabase } = yield* acquireOutlivingCleanup(makeAuthDatabase({ connectionString }));
     const authentication = betterAuth({
       baseURL,
       database: adapter,

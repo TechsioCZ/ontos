@@ -62,7 +62,7 @@ import { COMMERCE_PORTAL_AUTH_POLICY, parseCommercePortalAuthConfig } from '../.
 import type { CommercePortalAuthConfigValue } from '../../api/portal-auth/provider/config.ts';
 import { CommercePortalAuthMfaApi } from '../../shared/portal-auth/mfa-api.ts';
 import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 const ORIGIN = 'https://commerce.example.test';
 const BASE_PATH = '/api/portal-auth';

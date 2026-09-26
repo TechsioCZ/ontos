@@ -135,7 +135,7 @@ import {
   makeCounterpartyInvitationRealm,
 } from '../support/counterparty-invitation-acceptance.ts';
 import { makeCapturingCounterpartyInvitationProofDelivery } from '../support/counterparty-invitation-proof-capture.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
  * The enrollment start path through the deployed composition, on real PostgreSQL.

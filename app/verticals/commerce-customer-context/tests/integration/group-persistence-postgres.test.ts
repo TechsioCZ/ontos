@@ -18,7 +18,6 @@ import {
   customerSettingRevisions,
 } from '../../src/database/schema.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 const tenantId = 'c7000000-0000-4000-8000-000000000001';
 const legalEntityId = 'c7000000-0000-4000-8000-000000000002';
@@ -68,10 +67,8 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
   Effect.scoped(
     Effect.gen(function* postgresAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminClient = yield* acquireOutlivingCleanup(makeTestPgClient(connections.admin.connectionString));
-      const runtimeClient = yield* acquireOutlivingCleanup(
-        makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 }),
-      );
+      const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
+      const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 });
       const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
       const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 

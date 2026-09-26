@@ -18,7 +18,7 @@ import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { session, user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
  * The portal realm never answers a question it was not asked: runs against the real composition

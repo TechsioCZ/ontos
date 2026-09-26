@@ -45,7 +45,6 @@ import {
   EnrollmentTransitionKeySchema,
 } from '../../shared/enrollment-contracts.ts';
 import type { EnrollmentAttemptSnapshot, EnrollmentOwnerOperationSnapshot } from '../../shared/enrollment-contracts.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 /**
  * Reconciling the two Commerce-owned Retail self-enrollment transitions after their Action response
@@ -278,9 +277,7 @@ type OwnerDatabase = TestDatabaseFromClient<typeof commerceCustomerContextRelati
 /** The runtime role, the only role a governed Action ever reaches an owner routine through. */
 const ownerDatabase = Effect.gen(function* acquireOwnerDatabase() {
   const connections = yield* loadDatabaseConnectionPair();
-  const runtimeClient = yield* acquireOutlivingCleanup(
-    makeTestPgClient(connections.runtime.connectionString, { maxConnections: 2 }),
-  );
+  const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 2 });
   return yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 });
 

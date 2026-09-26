@@ -25,7 +25,7 @@ import { session as staffSession, user as staffUser } from '../../../../apps/she
 import { makeAuthenticationService } from '../../../../apps/shell-super-app/api/auth/service.ts';
 import type { AuthenticationService } from '../../../../apps/shell-super-app/api/auth/service.ts';
 import { makePrincipalResolverDouble } from '../../../../apps/shell-super-app/tests/support/identity-service-doubles.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
  * Two realms, two audiences, no shared admission. Both realms are the production Better Auth

@@ -24,7 +24,6 @@ import {
   marketAffectedUseAssessmentRepositoryForInvoker,
   marketRetirementReservationForTransaction,
 } from '../../src/persistence/market-retirement-persistence.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 const firstTenantId = 'e4100000-0000-4000-8000-000000000001';
 const firstLegalEntityId = 'e4100000-0000-4000-8000-000000000002';
@@ -367,7 +366,7 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* reservationReleaseAcceptance() {
-        const { admin: adminClient, runtime: runtimeClient } = yield* acquireOutlivingCleanup(testDatabaseClients);
+        const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
         const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
         const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
         const cleanup = cleanupReservations(admin);
@@ -549,7 +548,7 @@ it.live(
 it.live('makes COMMIT terminal and idempotent for the exact Action retry', () =>
   Effect.scoped(
     Effect.gen(function* reservationCommitAcceptance() {
-      const { admin: adminClient, runtime: runtimeClient } = yield* acquireOutlivingCleanup(testDatabaseClients);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
       const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
       const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
       const cleanup = cleanupReservations(admin);
@@ -615,7 +614,7 @@ it.live('makes COMMIT terminal and idempotent for the exact Action retry', () =>
 it.live('serializes a purchase-proposal source mutation racing RESERVE without admitting stale evidence', () =>
   Effect.scoped(
     Effect.gen(function* localSourceRaceAcceptance() {
-      const { admin: adminClient, runtime: runtimeClient } = yield* acquireOutlivingCleanup(testDatabaseClients);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
       const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
       const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
       const cleanup = cleanupReservations(admin);

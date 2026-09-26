@@ -81,7 +81,7 @@ import {
   readCounterpartyInvitationRow,
 } from '../support/counterparty-invitation-acceptance.ts';
 import type { CounterpartyInvitationRealm } from '../support/counterparty-invitation-acceptance.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
  * The Counterparty invitation enrollment journey, end to end on the deployed composition.

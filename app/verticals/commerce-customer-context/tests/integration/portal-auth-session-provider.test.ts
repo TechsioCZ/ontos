@@ -37,7 +37,7 @@ import {
 import { makeCommercePortalAuthSessionStore } from '../../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { CommercePortalAuthSessionApi } from '../../shared/portal-auth/session-api.ts';
 import { CommercePortalAuthAudit, unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 const ORIGIN = 'http://localhost:3020';
 const requestContext = Context.makeUnsafe<unknown>(new Map());

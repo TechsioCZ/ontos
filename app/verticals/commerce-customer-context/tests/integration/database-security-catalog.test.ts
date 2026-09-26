@@ -12,7 +12,6 @@ import {
   COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY,
   commerceCustomerContextRelations,
 } from '../../src/database/schema.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 const runtimeRole = 'ontos_runtime';
 const securityDefinerSearchPath = 'search_path=pg_catalog, commerce_customer_context, pg_temp';
@@ -217,9 +216,7 @@ it.live('governs the Commerce Customer Context schema through forced RLS and rou
   Effect.scoped(
     Effect.gen(function* databaseSecurityCatalog() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminClient = yield* acquireOutlivingCleanup(
-        makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 }),
-      );
+      const adminClient = yield* makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 });
       const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
       const schema = COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME;
 

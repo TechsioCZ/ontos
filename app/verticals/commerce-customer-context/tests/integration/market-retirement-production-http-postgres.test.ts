@@ -46,7 +46,6 @@ import {
 } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
 import type { AcceptanceGatewayIssuer } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
 import { jsonBody } from '../support/response.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 const ORIGIN = 'http://commerce-customer-context.retirement.test';
 const AUDIENCE = 'commerce-customer-context';
@@ -371,7 +370,7 @@ it.live(
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
-        const { admin: adminClient } = yield* acquireOutlivingCleanup(testDatabaseClients);
+        const { admin: adminClient } = yield* testDatabaseClients;
         const database = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
         yield* activateCustomerContext(database, fixture.tenantId);
         const cleanup = cleanupOwnerRows(database, fixture.tenantId);
@@ -521,7 +520,7 @@ it.live(
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
-        const { admin: adminClient } = yield* acquireOutlivingCleanup(testDatabaseClients);
+        const { admin: adminClient } = yield* testDatabaseClients;
         const database = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
         yield* activateCustomerContext(database, fixture.tenantId);
         const cleanup = cleanupOwnerRows(database, fixture.tenantId);
@@ -615,7 +614,7 @@ it.live(
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
-        const { admin: adminClient } = yield* acquireOutlivingCleanup(testDatabaseClients);
+        const { admin: adminClient } = yield* testDatabaseClients;
         const database = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
         yield* activateCustomerContext(database, fixture.tenantId);
         const cleanup = cleanupOwnerRows(database, fixture.tenantId);
