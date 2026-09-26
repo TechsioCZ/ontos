@@ -26,6 +26,7 @@ const WorkspaceContract = Schema.fromJsonString(
     shell: Schema.Struct({
       deliveryUnit: Schema.optionalKey(Schema.Struct({ unitId: Schema.String })),
       id: Schema.String,
+      path: Schema.String,
     }),
     verticals: Schema.Array(
       Schema.Struct({
@@ -720,7 +721,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         );
         rootCohortEvidence(contractText, rootManifest, cohort);
         yield* patchedRootEvidence(contractText, rootManifest);
-        for (const app of [{ ...contract.shell, path: `apps/${contract.shell.id}` }, ...contract.verticals]) {
+        for (const app of [contract.shell, ...contract.verticals]) {
           if (!isContainedDirectory(app.path)) {
             continue;
           }

@@ -445,7 +445,7 @@ const makeFixture = Effect.fn(function* mergedScenario1(
     root,
     'topology/reference-topology.json',
     JSON.stringify({
-      shell: { id: 'shell-super-app' },
+      shell: { id: 'shell-super-app', path: 'apps/shell-super-app' },
       verticals: [
         { id: 'inventory-stock', path: INVENTORY_VERTICAL_PATH },
         ...(includeParty === true ? [{ id: PARTY_DEPLOYMENT_ID, path: 'verticals/party-registry' }] : []),
@@ -2006,7 +2006,7 @@ export const stockLevelsRead = defineRead({ accessKind: 'report', entrypoint: st
       root,
       'topology/reference-topology.json',
       JSON.stringify({
-        shell: { id: 'shell-super-app' },
+        shell: { id: 'shell-super-app', path: 'apps/shell-super-app' },
         verticals: [{ id: INVENTORY_RUNTIME_ID, path: INVENTORY_VERTICAL_PATH }],
       }),
     );
