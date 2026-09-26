@@ -53,7 +53,7 @@ import {
   readEnrollmentAcceptanceOperations,
   startEnrollmentAcceptanceAttempt,
 } from '../support/enrollment-acceptance-fixture.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
  * Better Auth can commit the account row and still lose its answer — a timed-out call, an unusable

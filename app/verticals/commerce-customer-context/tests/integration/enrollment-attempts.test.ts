@@ -58,7 +58,6 @@ import {
   portalEnrollmentAttempts,
   portalEnrollmentOwnerOperations,
 } from '../../src/database/schema.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('d6000000-0000-4000-8000-000000000001');
 const principalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)('d6000000-0000-4000-8000-000000000002');
@@ -207,10 +206,8 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
   Effect.scoped(
     Effect.gen(function* postgresAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminClient = yield* acquireOutlivingCleanup(makeTestPgClient(connections.admin.connectionString));
-      const runtimeClient = yield* acquireOutlivingCleanup(
-        makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 }),
-      );
+      const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
+      const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 });
       const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
       const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 
@@ -614,10 +611,8 @@ it.live('reconciles a FAILED owner_reconciliation_required outcome instead of re
   Effect.scoped(
     Effect.gen(function* reconcileOwnerRequiredFailureAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminClient = yield* acquireOutlivingCleanup(makeTestPgClient(connections.admin.connectionString));
-      const runtimeClient = yield* acquireOutlivingCleanup(
-        makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 }),
-      );
+      const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
+      const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 });
       const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
       const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 
@@ -790,10 +785,8 @@ it.live("rejects a cross-Tenant read of another Tenant's enrollment Attempt and 
   Effect.scoped(
     Effect.gen(function* crossTenantReadRejected() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminClient = yield* acquireOutlivingCleanup(makeTestPgClient(connections.admin.connectionString));
-      const runtimeClient = yield* acquireOutlivingCleanup(
-        makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 }),
-      );
+      const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
+      const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 });
       const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
       const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 

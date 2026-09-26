@@ -52,7 +52,7 @@ import {
   readCounterpartyInvitationRow,
 } from '../support/counterparty-invitation-acceptance.ts';
 import type { CounterpartyInvitationRealm } from '../support/counterparty-invitation-acceptance.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
  * The claimability gate a COUNTERPARTY_INVITATION start must clear before it spends any budget or

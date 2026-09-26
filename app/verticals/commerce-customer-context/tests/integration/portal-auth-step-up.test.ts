@@ -13,7 +13,7 @@ import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/a
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { makeCommercePortalAuthStepUpChallengeStore } from '../../api/portal-auth/provider/step-up/index.ts';
 import type { CommercePortalAuthStepUpChallengeStore } from '../../api/portal-auth/provider/step-up/index.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 const ORIGIN = 'https://portal.example.test';
 const SECRET = 's'.repeat(64);

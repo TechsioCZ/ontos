@@ -19,7 +19,7 @@ import {
 import type { CommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit.ts';
 import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/audit-contracts.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 const ORIGIN = 'https://portal.example.test';
 const SECRET = 's'.repeat(64);

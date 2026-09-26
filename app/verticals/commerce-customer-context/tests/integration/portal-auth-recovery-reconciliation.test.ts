@@ -21,7 +21,7 @@ import {
   makeCommercePortalAuthRecoveryReconciliation,
 } from '../../api/portal-auth/provider/recovery/index.ts';
 import type { CommercePortalAuthRecoveryStore } from '../../api/portal-auth/provider/recovery/index.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 const ORIGIN = 'https://portal.example.test';
 const SECRET = 's'.repeat(64);

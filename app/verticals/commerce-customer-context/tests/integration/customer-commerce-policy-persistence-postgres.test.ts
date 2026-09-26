@@ -9,7 +9,6 @@ import {
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 const tenantId = 'd3300000-0000-4000-8000-000000000001';
 const otherTenantId = 'd3300000-0000-4000-8000-000000000002';
@@ -265,7 +264,7 @@ type AssignmentPayload = ReturnType<typeof assignmentPayload>;
 it.live('enforces immutable temporal policy history, typed scopes, assignment integrity, and CAS persistence', () =>
   Effect.scoped(
     Effect.gen(function* postgresPolicyAcceptance() {
-      const { admin: adminClient, runtime: runtimeClient } = yield* acquireOutlivingCleanup(testDatabaseClients);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
       const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
       const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 

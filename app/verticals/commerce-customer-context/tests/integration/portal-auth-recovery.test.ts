@@ -62,7 +62,7 @@ import {
   COMMERCE_PORTAL_AUTH_PUBLIC_BASE_PATH,
 } from '../../shared/deployment-paths.ts';
 import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
-import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 const ORIGIN = 'https://portal.example.test';
 const EMAIL = 'recovery-integration@example.test';
