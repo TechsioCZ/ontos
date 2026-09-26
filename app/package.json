@@ -111,8 +111,7 @@
     "@authzed/authzed-node": "1.6.1",
     "@effect/sql-pg": "4.0.0-rc.117",
     "better-auth": "1.7.2",
-    "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "pg": "8.22.0"
+    "drizzle-orm": "1.0.0-rc.5-ab785fc"
   },
   "devDependencies": {
     "@effect/opentelemetry": "4.0.0-rc.117",
@@ -130,7 +129,6 @@
     "@oxlint/plugins": "1.81.0",
     "@rstest/core": "0.11.12",
     "@types/node": "^26.4.1",
-    "@types/pg": "8.20.0",
     "@typescript/native": "npm:typescript@7.0.2",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "@vercel/nft": "0.29.2",
