@@ -1,8 +1,12 @@
 import { eq, sql } from 'drizzle-orm';
+import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { DateTime, Effect, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { normalizeOfficialIdentifier } from '../../shared/domain/identifier-contracts.ts';
 import { partySubjectKeyFromString } from '../../shared/domain/identity-contracts.ts';
@@ -27,9 +31,13 @@ const principalId = 'bc200000-0000-4000-8000-000000000001';
 
 it.live('real PostgreSQL identity locks serialize concurrent exact creates and repeated identifier acceptance', () =>
   Effect.gen(function* identityConcurrencyTest() {
+    const connections = yield* loadDatabaseConnectionPair();
     const { admin, runtime } = yield* openBoundaryDatabases(
-      (pool) => makeTestDatabaseFromPool(pool, partyRelations),
-      2,
+      (client) => makeTestDatabaseFromClient(client, partyRelations),
+      {
+        admin: yield* makeTestPgClient(connections.admin.connectionString),
+        runtime: yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 2 }),
+      },
     );
     const cleanup = purgeFixtureRows(
       [

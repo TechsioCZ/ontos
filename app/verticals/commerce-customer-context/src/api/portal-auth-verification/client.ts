@@ -95,7 +95,7 @@ export const verifyCommercePortalAuthentication = (
   CommercePortalAuthVerificationClientUnavailable | Schema.SchemaError,
   CommercePortalAuthVerificationClient
 > =>
-  Schema.decodeUnknownEffect(CommercePortalAuthVerificationRequestSchema)(request).pipe(
+  Schema.decodeUnknownEffect(CommercePortalAuthVerificationRequestSchema, { onExcessProperty: 'error' })(request).pipe(
     Effect.flatMap((decodedRequest) =>
       Effect.service(CommercePortalAuthVerificationClient).pipe(
         Effect.flatMap((client) => client.verify(decodedRequest, options)),

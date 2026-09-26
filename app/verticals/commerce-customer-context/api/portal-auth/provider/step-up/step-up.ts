@@ -170,9 +170,9 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
     const issue = Effect.fn('CommercePortalAuthStepUp.issue')(function* issueEffect(
       input: Schema.Codec.Encoded<typeof CommercePortalAuthStepUpIssueInputSchema>,
     ): Effect.fn.Return<CommercePortalAuthStepUpRequired, CommercePortalAuthStepUpFailure> {
-      const request = yield* Schema.decodeEffect(CommercePortalAuthStepUpIssueInputSchema)(input).pipe(
-        Effect.mapError((cause) => invalidRequest(cause)),
-      );
+      const request = yield* Schema.decodeEffect(CommercePortalAuthStepUpIssueInputSchema, {
+        onExcessProperty: 'error',
+      })(input).pipe(Effect.mapError((cause) => invalidRequest(cause)));
       const sessionId = yield* parseCommerceSessionReference(request.sessionRef).pipe(
         Effect.mapError((cause) => invalidRequest(cause)),
       );
@@ -211,9 +211,9 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
         expiresAt,
         outcome: 'STEP_UP_REQUIRED' as const,
       } satisfies CommercePortalAuthStepUpRequired;
-      const issued = yield* Schema.decodeEffect(CommercePortalAuthStepUpRequiredSchema)(result).pipe(
-        Effect.mapError((cause) => unavailable('challenge-result', cause)),
-      );
+      const issued = yield* Schema.decodeEffect(CommercePortalAuthStepUpRequiredSchema, { onExcessProperty: 'error' })(
+        result,
+      ).pipe(Effect.mapError((cause) => unavailable('challenge-result', cause)));
       return issued;
     });
 
@@ -223,9 +223,9 @@ export const makeCommercePortalAuthStepUp = Effect.fn('CommercePortalAuthStepUp.
       },
     ): Effect.fn.Return<CommercePortalAuthStepUpVerificationResult, CommercePortalAuthStepUpFailure> {
       const { headers, ...encodedInput } = input;
-      const request = yield* Schema.decodeEffect(CommercePortalAuthStepUpVerifyInputSchema)(encodedInput).pipe(
-        Effect.mapError((cause) => invalidRequest(cause)),
-      );
+      const request = yield* Schema.decodeEffect(CommercePortalAuthStepUpVerifyInputSchema, {
+        onExcessProperty: 'error',
+      })(encodedInput).pipe(Effect.mapError((cause) => invalidRequest(cause)));
       const sessionId = yield* parseCommerceSessionReference(request.sessionRef).pipe(
         Effect.mapError((cause) => invalidRequest(cause)),
       );

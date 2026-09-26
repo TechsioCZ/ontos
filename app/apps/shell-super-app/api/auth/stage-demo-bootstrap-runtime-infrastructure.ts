@@ -160,10 +160,10 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
 
 export { ensureAuthUser as ensureStageDemoAuthUser };
 
-const optionalString = (name: string) => Config.option(Config.string(name)).pipe(Config.map(Option.getOrUndefined));
+const optionalString = (name: string) => Config.option(Config.String(name)).pipe(Config.map(Option.getOrUndefined));
 
 const optionalSecret = (name: string) =>
-  Config.option(Config.redacted(name)).pipe(Config.map(Option.map(Redacted.value)), Config.map(Option.getOrUndefined));
+  Config.option(Config.Redacted(name)).pipe(Config.map(Option.map(Redacted.value)), Config.map(Option.getOrUndefined));
 
 const loadStageDemoEnvironment = Effect.fn('StageDemoBootstrapRuntimeInfrastructure.loadStageDemoEnvironment')(
   function* loadStageDemoEnvironmentEffect() {

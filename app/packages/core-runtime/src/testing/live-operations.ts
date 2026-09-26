@@ -1,7 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { eq } from 'drizzle-orm';
 import { Context, Duration, Effect, Exit, Layer, Random, Redacted, Schema, Scope } from 'effect';
-import { Pool } from 'pg';
 
 import { ActionCommitIndeterminate, ActionTransactionError } from '../actions/errors.ts';
 import type { ActionRepositoryService } from '../actions/repository.ts';
@@ -375,12 +374,11 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       return yield* fixtureFailure('Live test fixtures require disposable localhost services');
     }
 
-    const pool = new Pool({ connectionString: runtimeConnectionString, max: 8 });
     const databaseScope = yield* Scope.make();
     const databaseConfiguration = yield* parseDatabaseConfig({
       DATABASE_URL: runtimeConnectionString,
     }).pipe(Effect.mapError((cause) => fixtureFailure('Invalid database configuration', cause)));
-    const { executor } = yield* makeCoreDatabase(databaseConfiguration, () => pool).pipe(
+    const { executor } = yield* makeCoreDatabase({ ...databaseConfiguration, maxConnections: 8 }).pipe(
       Scope.provide(databaseScope),
       Effect.mapError((cause) => fixtureFailure('Unable to initialize fixture database', cause)),
     );

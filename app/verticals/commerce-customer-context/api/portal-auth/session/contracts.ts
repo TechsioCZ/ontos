@@ -52,29 +52,31 @@ const SessionReasonSchema = Schema.Literals([
 ]);
 
 export const CommercePortalAuthSignInInputSchema = Schema.Struct({
+  // Better Auth would redirect to a caller-chosen `callbackURL`; the portal refuses the key outright.
+  callbackURL: Schema.optionalKey(Schema.Never),
   email: EmailSchema,
   password: PasswordSchema,
   rememberMe: Schema.optionalKey(Schema.Boolean),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CommercePortalAuthSignInInput = typeof CommercePortalAuthSignInInputSchema.Type;
 
 export const CommercePortalAuthSessionReferenceInputSchema = Schema.Struct({
   expectedProviderSubjectId: Schema.optionalKey(UserIdSchema),
   sessionRef: CommerceSessionReferenceSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CommercePortalAuthSessionReferenceInput = typeof CommercePortalAuthSessionReferenceInputSchema.Type;
 
 export const CommercePortalAuthSessionRotationInputSchema = Schema.Struct({
   expectedProviderSubjectId: Schema.optionalKey(UserIdSchema),
   reason: SessionReasonSchema,
   sessionRef: CommerceSessionReferenceSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CommercePortalAuthSessionRotationInput = typeof CommercePortalAuthSessionRotationInputSchema.Type;
 type CommercePortalAuthSessionRotationReason = typeof SessionReasonSchema.Type;
 
 export const CommercePortalAuthAccountSubjectInputSchema = Schema.Struct({
   providerSubjectId: UserIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export interface CommercePortalAuthSessionRecord {
   /**
@@ -127,7 +129,7 @@ export const CommercePortalAuthSessionEvidenceSchema = Schema.Struct({
   sessionRef: CommerceSessionReferenceSchema,
   subjectType: Schema.Literal('user'),
   updatedAt: Schema.Date,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export type CommercePortalAuthSessionOutcome =
   | {

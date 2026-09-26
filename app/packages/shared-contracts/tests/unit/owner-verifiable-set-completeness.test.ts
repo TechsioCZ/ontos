@@ -7,7 +7,10 @@ import {
 } from '../../src/index.ts';
 import type { OwnerVerifiableSetCompletenessEvidenceEncoded } from '../../src/index.ts';
 
-const decodeEvidence = Schema.decodeUnknownSync(OwnerVerifiableSetCompletenessEvidenceSchema);
+// Evidence is a closed cross-owner envelope; receiving boundaries decode it with closed parse options.
+const decodeEvidence = Schema.decodeUnknownSync(OwnerVerifiableSetCompletenessEvidenceSchema, {
+  onExcessProperty: 'error',
+});
 const encodeEvidence = Schema.encodeSync(OwnerVerifiableSetCompletenessEvidenceSchema);
 
 const exactPredicateEvidence = {

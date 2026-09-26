@@ -99,7 +99,9 @@ export const commerceEnrollmentProofServiceForTransaction = (
         policyVersion: COMMERCE_ENROLLMENT_PROOF_POLICY_VERSION,
         revision: attempt.revision,
       };
-      return yield* Schema.decodeEffect(EnrollmentProofSchema)(proof).pipe(Effect.mapError((cause) => rejected(cause)));
+      return yield* Schema.decodeEffect(EnrollmentProofSchema, { onExcessProperty: 'error' })(proof).pipe(
+        Effect.mapError((cause) => rejected(cause)),
+      );
     }),
   };
 };

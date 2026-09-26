@@ -52,6 +52,7 @@ import {
   readCounterpartyInvitationRow,
 } from '../support/counterparty-invitation-acceptance.ts';
 import type { CounterpartyInvitationRealm } from '../support/counterparty-invitation-acceptance.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
  * The claimability gate a COUNTERPARTY_INVITATION start must clear before it spends any budget or
@@ -72,8 +73,8 @@ const START_ACTION_KEY = 'commerce.customer-context.start-portal-enrollment';
 /** A COUNTERPARTY_INVITATION start also runs the claim-transition Action on the Storefront's behalf. */
 const CLAIM_TRANSITION_ACTION_KEY = 'commerce.customer-context.claim-portal-enrollment-transition';
 
-const providerDatabaseUrl = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 /** Resend is answered locally: creation now awaits delivery, so the transport must accept. */
@@ -172,13 +173,17 @@ const deployedRuntime = (gateway: AcceptanceGatewayIssuer) =>
 
 const portalAccountsFor = Effect.fnUntraced(function* portalAccountsFor(email: string) {
   const databaseUrl = yield* providerDatabaseUrl;
-  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  const database = yield* acquireOutlivingCleanup(
+    makeCommercePortalAuthDatabase({ connectionString: databaseUrl }),
+  ).pipe(Effect.orDie);
   return yield* database.executor.select({ id: user.id }).from(user).where(eq(user.email, email)).pipe(Effect.orDie);
 });
 
 const removePortalAccountsOnClose = Effect.fnUntraced(function* removePortalAccountsOnClose(email: string) {
   const databaseUrl = yield* providerDatabaseUrl;
-  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  const database = yield* acquireOutlivingCleanup(
+    makeCommercePortalAuthDatabase({ connectionString: databaseUrl }),
+  ).pipe(Effect.orDie);
   yield* Effect.addFinalizer(() =>
     database.executor
       .transaction((transaction) =>

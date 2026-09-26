@@ -64,7 +64,7 @@ export const decodeOwnerOutcome = (
   code: string,
   reason: string,
 ): Effect.Effect<CommerceEnrollmentOwnerEffectOutcome, CommerceEnrollmentOwnerEffectError> =>
-  Schema.decodeUnknownEffect(CommerceEnrollmentOwnerEffectOutcomeSchema)(draft).pipe(
+  Schema.decodeUnknownEffect(CommerceEnrollmentOwnerEffectOutcomeSchema, { onExcessProperty: 'error' })(draft).pipe(
     Effect.mapError((cause) => ownerUnavailable(code, reason, cause)),
   );
 
@@ -73,7 +73,7 @@ export const decodeOwnerResolution = (
   code: string,
   reason: string,
 ): Effect.Effect<ReconcileEnrollmentResolution, CommerceEnrollmentOwnerEffectError> =>
-  Schema.decodeUnknownEffect(ReconcileEnrollmentResolutionSchema)(draft).pipe(
+  Schema.decodeUnknownEffect(ReconcileEnrollmentResolutionSchema, { onExcessProperty: 'error' })(draft).pipe(
     Effect.mapError((cause) => ownerUnavailable(code, reason, cause)),
   );
 

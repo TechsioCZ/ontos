@@ -50,7 +50,8 @@ it('rejects terminal resurrection and fabricated no-op status events', () => {
 });
 
 it('keeps the generated message JSON-safe and rejects provider or workflow data', () => {
-  const decode = Schema.decodeUnknownSync(StatusChangedSchema);
+  // The Action collector and the Outbox runtime decode published payloads with these options.
+  const decode = Schema.decodeUnknownSync(StatusChangedSchema, { onExcessProperty: 'error' });
   const payload = { data: { ...identity, bindingRevision: 2, newStatus: 'revoked', previousStatus: 'active' } };
   const decoded = decode(payload);
   expect(statusMessage(decoded)).toEqual({

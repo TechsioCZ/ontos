@@ -11,15 +11,13 @@ export const ActiveApplicationCompositionSnapshotSchema = Schema.Struct({
   composition: ApplicationCompositionSchema,
   observedAt: Schema.DateTimeUtcFromString,
   validUntil: Schema.DateTimeUtcFromString,
-})
-  .check(
-    Schema.makeFilter(({ observedAt, validUntil }) =>
-      DateTime.toEpochMillis(validUntil) > DateTime.toEpochMillis(observedAt)
-        ? undefined
-        : 'active Application Composition validity must end after it was observed',
-    ),
-  )
-  .annotate({ parseOptions: { onExcessProperty: 'error' } });
+}).check(
+  Schema.makeFilter(({ observedAt, validUntil }) =>
+    DateTime.toEpochMillis(validUntil) > DateTime.toEpochMillis(observedAt)
+      ? undefined
+      : 'active Application Composition validity must end after it was observed',
+  ),
+);
 export type ActiveApplicationCompositionSnapshot = typeof ActiveApplicationCompositionSnapshotSchema.Type;
 
 export interface ActiveApplicationCompositionServiceContract {
@@ -46,7 +44,7 @@ const unavailableActiveApplicationComposition = (cause: unknown): ActiveApplicat
     reason: 'The active Application Composition snapshot is unavailable or invalid',
   });
 
-const configuredActiveApplicationCompositionSnapshot = Config.string(
+const configuredActiveApplicationCompositionSnapshot = Config.String(
   'ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON',
 ).pipe(
   Effect.flatMap((encoded) =>

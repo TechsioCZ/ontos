@@ -11,7 +11,7 @@ import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/comme
 
 const appDirectory = fileURLToPath(new URL('../', import.meta.url));
 const { spawn } = process.getBuiltinModule('node:child_process');
-const migratorPort = Config.int('MIGRATOR_PORT').pipe(Config.withDefault(8080));
+const migratorPort = Config.Int('MIGRATOR_PORT').pipe(Config.withDefault(8080));
 
 class MigratorError extends Error {
   /**

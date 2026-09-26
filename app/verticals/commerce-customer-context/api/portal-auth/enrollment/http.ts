@@ -628,6 +628,7 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
   yield* requireTrustedOrigin(request.headers, () => commercePortalAuthEnrollmentUntrustedOriginProblem);
   const input: CommercePortalAuthEnrollmentStartInput = yield* Schema.decodeEffect(
     CommercePortalAuthEnrollmentStartInputSchema,
+    { onExcessProperty: 'error' },
   )(payload).pipe(Effect.mapError(commercePortalAuthEnrollmentInvalidProblem));
   const email = input.email.trim().toLowerCase();
   // Verified before any budget is spent; every budget below is keyed by the Principal it names, not

@@ -18,6 +18,7 @@ import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { session, user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
  * The portal realm never answers a question it was not asked: runs against the real composition
@@ -28,8 +29,8 @@ const ORIGIN = 'http://localhost:3020';
 const SECRET = 'n'.repeat(64);
 const PASSWORD = 'P'.repeat(24);
 
-const providerDatabaseUrl = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 const realmConfiguration = Effect.gen(function* realmConfiguration() {
@@ -80,7 +81,7 @@ const makeEnrolledAccount = Effect.fnUntraced(function* makeEnrolledAccount(
   caseName: string,
 ): Effect.fn.Return<EnrolledAccount, unknown, Scope.Scope> {
   const configuration = yield* realmConfiguration;
-  const database = yield* makeCommercePortalAuthDatabase(configuration);
+  const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
   const email = `non-enumeration-${caseName}-${randomUUID()}@example.test`;
   const auth = yield* makeCommercePortalAuth({
     configuration,

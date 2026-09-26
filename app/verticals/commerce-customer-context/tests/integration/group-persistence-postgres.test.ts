@@ -2,10 +2,11 @@ import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
-import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   commerceCustomerContextRelations,
   customerGroupLifecyclePeriods,
@@ -66,14 +67,10 @@ it.live('preserves Customer Group temporal, replay, and concurrency invariants i
   Effect.scoped(
     Effect.gen(function* postgresAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquirePoolResource(
-        () => new Pool({ connectionString: connections.admin.connectionString }),
-      );
-      const runtimePool = yield* acquirePoolResource(
-        () => new Pool({ connectionString: connections.runtime.connectionString, max: 4 }),
-      );
-      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
+      const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
+      const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 });
+      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>

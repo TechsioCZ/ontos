@@ -1,9 +1,9 @@
 import { Config, Schema } from 'effect';
 
 // Public configuration: no credential in sight.
-export const Issuer = Config.string('ONTOS_GATEWAY_ISSUER');
-export const PublicJwks = Config.string('ONTOS_GATEWAY_PUBLIC_JWKS');
-export const PoolSize = Config.integer('DATABASE_POOL_SIZE');
+export const Issuer = Config.String('ONTOS_GATEWAY_ISSUER');
+export const PublicJwks = Config.String('ONTOS_GATEWAY_PUBLIC_JWKS');
+export const PoolSize = Config.Int('DATABASE_POOL_SIZE');
 
 // Credential-shaped names whose shape is not an unstructured string.
 // Set/Map collections of contribution *keys* are names, not credential bags.

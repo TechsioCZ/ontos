@@ -6,10 +6,9 @@ import type { PlatformError } from 'effect/PlatformError';
 
 import { hasCompleteGeneratedModuleApiSeam } from './generated-governed-http-boundary.mts';
 import { configuredMicroVerticalApiStem } from '@modern-js/code-tools/microvertical-api-boundary';
+import { strictEffectRuntimeTopologyViolation } from '@modern-js/code-tools/strict-effect-runtime';
 import {
   privateOwnerImportViolation,
-  strictEffectRuntimeTopologyViolation,
-  usesStrictRpcRuntimeTopology,
   unconstrainedHttpApiContractSchemaViolation,
 } from './ultramodern-api-boundary-rules.mts';
 
@@ -104,7 +103,7 @@ const listWorkspaceFiles = (
 const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const workspaceRoot = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(path.resolve()));
+  const workspaceRoot = yield* Config.String('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(path.resolve()));
   const failures: string[] = [];
   const sourceByFile = new Map<string, string>();
 
@@ -344,20 +343,11 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     Effect.gen(function* assertApiRuntimeEffect() {
       if (yield* exists(apiEntry)) {
         const entry = yield* readText(apiEntry);
-        const usesRpcRuntime = usesStrictRpcRuntimeTopology(entry, topologyResolverFor(apiEntry));
         const runtimeTopologyViolation = strictEffectRuntimeTopologyViolation(entry, topologyResolverFor(apiEntry));
         if (runtimeTopologyViolation !== undefined) {
           fail(`${apiEntry}: ${runtimeTopologyViolation}.`);
         }
         assertContains(apiEntry, entry, /\bLayer\b/u, 'must compose dependencies with Effect Layer.');
-        if (!usesRpcRuntime) {
-          assertContains(
-            apiEntry,
-            entry,
-            /from ['"]\.\.\/shared\/api\.ts['"]/u,
-            'must import the contract from ../shared/api.ts.',
-          );
-        }
       }
     });
 

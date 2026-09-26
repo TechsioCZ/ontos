@@ -26,8 +26,8 @@ import { jsonBody } from '../support/response.ts';
 const ORIGIN = 'http://localhost:3020';
 const SECRET = 'c'.repeat(64);
 
-const providerDatabaseUrl = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 const configuredRuntime = Effect.acquireRelease(

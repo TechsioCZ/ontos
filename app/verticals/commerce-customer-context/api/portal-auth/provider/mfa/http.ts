@@ -41,7 +41,7 @@ import type {
 } from './contracts.ts';
 import {
   commercePortalAuthMfaChallengeExpiredProblem,
-  commercePortalAuthMfaInvalidRequestProblem,
+  commercePortalAuthMfaInvalidProblem,
   commercePortalAuthMfaNotFreshProblem,
   commercePortalAuthMfaProblemForFailure,
   commercePortalAuthMfaRateLimitedProblem,
@@ -457,9 +457,9 @@ const verifyBackupCode = Effect.fn('CommercePortalAuthMfaHttp.verifyBackupCode')
  * body, and forward the outcome. `toBody` carries the one difference between routes — most decode
  * through a `Schema`, `confirmEnable` needs none.
  */
-const adminCall = <Payload, Body, ResponseBody, E, R>(
+const adminCall = <Payload, Body, ResponseBody, R>(
   name: string,
-  toBody: (payload: Payload) => Effect.Effect<Body, E, R>,
+  toBody: (payload: Payload) => Effect.Effect<Body, Schema.SchemaError, R>,
   invoke: (
     call: CommercePortalAuthMfaCall,
     body: Body,
@@ -471,7 +471,9 @@ const adminCall = <Payload, Body, ResponseBody, E, R>(
     // stale-session caller must never learn whether their request body would otherwise decode.
     const body = yield* Effect.succeed(call).pipe(
       Effect.andThen(() => toBody(payload)),
-      Effect.mapError(commercePortalAuthMfaInvalidRequestProblem),
+      // The parse issue can quote the submitted password back, so only its tag is kept: the published
+      // problem is encoded closed and carries exactly its declared fields.
+      Effect.catchTag('SchemaError', () => Effect.fail(commercePortalAuthMfaInvalidProblem)),
     );
     return yield* forwardMfaOutcome(invoke(call, body));
   });

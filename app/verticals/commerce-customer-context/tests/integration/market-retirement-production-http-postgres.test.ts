@@ -28,10 +28,10 @@ import { expect, it } from 'effect-rstest';
 
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   makeCommerceCustomerContextApiRuntime,
   productionActionRuntimeLive,
@@ -54,7 +54,7 @@ const KEY_ID = 'market-retirement-owner-acceptance';
 const ACTION_KEY = 'commerce.customer-context.reserve-market-retirement';
 const COMPOSITION_REVISION = 'a'.repeat(64);
 
-type CommerceCustomerContextDatabase = TestDatabaseFromPool<typeof commerceCustomerContextRelations>;
+type CommerceCustomerContextDatabase = TestDatabaseFromClient<typeof commerceCustomerContextRelations>;
 type VerifiedAssessment = Extract<MarketAffectedUseAssessmentResponse, { readonly outcome: 'VERIFIED' }>;
 
 interface AcceptanceClockRow extends Record<string, unknown> {
@@ -370,8 +370,8 @@ it.live(
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
-        const { admin: adminPool } = yield* testDatabasePools;
-        const database = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
+        const { admin: adminClient } = yield* testDatabaseClients;
+        const database = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
         yield* activateCustomerContext(database, fixture.tenantId);
         const cleanup = cleanupOwnerRows(database, fixture.tenantId);
         yield* cleanup();
@@ -520,8 +520,8 @@ it.live(
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
-        const { admin: adminPool } = yield* testDatabasePools;
-        const database = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
+        const { admin: adminClient } = yield* testDatabaseClients;
+        const database = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
         yield* activateCustomerContext(database, fixture.tenantId);
         const cleanup = cleanupOwnerRows(database, fixture.tenantId);
         yield* cleanup();
@@ -614,8 +614,8 @@ it.live(
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
-        const { admin: adminPool } = yield* testDatabasePools;
-        const database = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
+        const { admin: adminClient } = yield* testDatabaseClients;
+        const database = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
         yield* activateCustomerContext(database, fixture.tenantId);
         const cleanup = cleanupOwnerRows(database, fixture.tenantId);
         yield* cleanup();

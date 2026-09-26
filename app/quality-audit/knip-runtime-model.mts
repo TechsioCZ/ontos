@@ -3,11 +3,11 @@ import { parse as parseJsonc } from 'jsonc-parser';
 import type { ParseError } from 'jsonc-parser';
 import { parseSync } from 'oxc-parser';
 
-import { hasUltramodernDispatch } from '../scripts/shared/ultramodern-wrapper-source.mts';
 import type { KnipModelEvidence } from './knip-model.mts';
 
 const EFFECT_TSGO = '@effect/tsgo';
 const EFFECT_PLUGIN = '@effect/language-service';
+const PACKAGE_MANIFEST = 'package.json';
 const Manifest = Schema.fromJsonString(
   Schema.Struct({
     dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -17,54 +17,40 @@ const Manifest = Schema.fromJsonString(
   }),
 );
 const InstalledPackage = Schema.fromJsonString(Schema.Struct({ name: Schema.String, version: Schema.String }));
-const WORKSPACE_CONTRACT = '.modernjs/ultramodern.json';
-const CONTRACT_GENERATOR = '@modern-js/create';
+const WORKSPACE_CONTRACT = 'topology/reference-topology.json';
 const GENERATOR_PACKAGE = '@modern-js/ultramodern-create';
-const GENERATOR_WORKSPACE_MANIFEST = `node_modules/${GENERATOR_PACKAGE}/dist/cjs/ultramodern-workspace/package-json.cjs`;
-const WORKSPACE_VALIDATOR = 'scripts/validate-ultramodern-workspace.mts';
-const VALIDATOR_TEMPLATE = `node_modules/${GENERATOR_PACKAGE}/templates/workspace-scripts/validate-ultramodern-workspace.mjs.handlebars`;
 const BUILD_FACADE_EXPORTS = ['ultramodernApiMarker', 'ultramodernDeliveryUnit', 'ultramodernUiMarker'];
 const ROUTE_MANIFEST_EXPORTS = ['ultramodernLocalisedUrls', 'ultramodernRouteMetadata', 'ultramodernRouteNamespace'];
-const sourceModuleExtension = /\.[cm]?tsx?$/u;
 const WorkspaceContract = Schema.fromJsonString(
   Schema.Struct({
-    generator: Schema.optional(Schema.Struct({ package: Schema.optional(Schema.String) })),
-    tooling: Schema.optional(Schema.Struct({ wrappers: Schema.optional(Schema.Record(Schema.String, Schema.String)) })),
-    topology: Schema.optional(
+    shell: Schema.Struct({
+      deliveryUnit: Schema.optionalKey(Schema.Struct({ unitId: Schema.String })),
+      id: Schema.String,
+      path: Schema.String,
+    }),
+    verticals: Schema.Array(
       Schema.Struct({
-        apps: Schema.optional(
-          Schema.Array(
-            Schema.Struct({
-              deliveryUnit: Schema.optional(Schema.Struct({ unitId: Schema.String })),
-              path: Schema.String,
-            }),
-          ),
-        ),
+        deliveryUnit: Schema.optionalKey(Schema.Struct({ unitId: Schema.String })),
+        path: Schema.String,
       }),
     ),
   }),
 );
-type ContractApp = typeof WorkspaceContract.Type extends { readonly topology?: { readonly apps?: infer Apps } }
-  ? NonNullable<Apps> extends readonly (infer App)[]
-    ? App
-    : never
-  : never;
+interface ContractApp {
+  readonly deliveryUnit?: { readonly unitId: string };
+  readonly path: string;
+}
+const ReleaseCohort = Schema.fromJsonString(
+  Schema.Struct({
+    packages: Schema.Array(Schema.Struct({ sourceName: Schema.String })),
+  }),
+);
 const isContainedDirectory = (value: string): boolean =>
   value.length > 0 && !value.includes('..') && !value.startsWith('/');
-const isContainedSourceModule = (value: string): boolean =>
-  isContainedDirectory(value) && sourceModuleExtension.test(value);
 const declaredNames = (source: string, names: readonly string[]): readonly string[] =>
   names.filter((name) => new RegExp(String.raw`^export\s+const\s+${name}\b`, 'mu').test(source));
 const declaredCohort = (manifest: typeof Manifest.Type, cohort: readonly string[]): readonly string[] =>
   cohort.filter((name) => (manifest.dependencies?.[name] ?? manifest.devDependencies?.[name]) !== undefined);
-/** Root dependencies the installed workspace validator asserts on every `validate` run. */
-const validatedRootDependencies = (validator: string): readonly string[] => [
-  ...new Set(
-    [...validator.matchAll(/rootPackage\.devDependencies\?\.\['(?<name>[^']+)'\]/gu)].flatMap(
-      (match) => match.groups?.name ?? [],
-    ),
-  ),
-];
 /** Exact `name@version` specifiers pnpm patches, which the declaring manifest must pin. */
 const patchedSpecifiers = (workspaceYaml: string): readonly string[] => {
   const section = workspaceYaml.split('\npatchedDependencies:')[1]?.split(/\n(?=\S)/u)[0] ?? '';
@@ -78,13 +64,6 @@ const pinnedPatchedDependencies = (manifest: typeof Manifest.Type, specifiers: r
     const declared = manifest.dependencies?.[name] ?? manifest.devDependencies?.[name];
     return declared === version ? [name] : [];
   });
-const generatedCohortPackages = (source: string): readonly string[] => [
-  ...new Set(
-    [...source.matchAll(/\)\('(?<name>@modern-js\/[\w.-]+)',\s*packageSource\)/gu)].flatMap(
-      (match) => match.groups?.name ?? [],
-    ),
-  ),
-];
 const documentsBuiltInPlugin = (readme: string): boolean =>
   readme.includes('A wrapper around [TypeScript-Go]') &&
   readme.includes('Adding the `@effect/tsgo` dependency to your project.') &&
@@ -212,7 +191,7 @@ export const workspaceDirectories = Effect.fn('QualityAudit.knipWorkspaces')(fun
       continue;
     }
     for (const name of yield* fs.readDirectory(location)) {
-      if (yield* fs.exists(path.join(location, name, 'package.json'))) {
+      if (yield* fs.exists(path.join(location, name, PACKAGE_MANIFEST))) {
         workspaces.push(`${directory}/${name}`);
       }
     }
@@ -230,6 +209,21 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       return (yield* fs.exists(path.join(appRoot, file)))
         ? yield* fs.readFileString(path.join(appRoot, file))
         : undefined;
+    });
+    const rootScriptInvokes = Effect.fn('QualityAudit.rootScriptInvokes')(function* rootScriptInvokes(
+      manifestText: string | undefined,
+      frameworkCommand: string,
+    ) {
+      if (manifestText === undefined) {
+        return false;
+      }
+      const manifest = yield* Schema.decodeUnknownEffect(Manifest)(manifestText);
+      return Object.values(manifest.scripts ?? {}).some((script) =>
+        script.split('&&').some((step) => {
+          const command = step.trim();
+          return command === frameworkCommand || command.startsWith(`${frameworkCommand} `);
+        }),
+      );
     });
     const shellEvidence = Effect.fn('QualityAudit.shellEvidence')(function* shellEvidence(
       command: string,
@@ -427,10 +421,34 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         }
       }
     });
+    const routeScaffoldEvidence = Effect.fn('QualityAudit.routeScaffoldEvidence')(function* routeScaffoldEvidence() {
+      const file = 'scripts/scaffolding/cli.mts';
+      const source = uncomment(file, yield* read(file));
+      const target = 'scripts/generate-tanstack-routes.mts';
+      const marker = "path.join(workspaceRoot, 'scripts', 'generate-tanstack-routes.mts')";
+      if (
+        source !== undefined &&
+        source.includes(marker) &&
+        source.includes("ChildProcess.make(process.execPath, [script, '--app', appId]") &&
+        (yield* read(target)) !== undefined
+      ) {
+        evidence.push(
+          at(
+            file,
+            source,
+            source.indexOf(marker),
+            '.',
+            'file',
+            target,
+            'Codesmith route refresh invokes this app-owned script',
+          ),
+        );
+      }
+    });
     const tsgoDocumentation = Effect.fn('QualityAudit.tsgoDocumentation')(function* tsgoDocumentation() {
       const readme = yield* read('node_modules/@effect/tsgo/README.md');
       const installedText = yield* read('node_modules/@effect/tsgo/package.json');
-      const rootText = yield* read('package.json');
+      const rootText = yield* read(PACKAGE_MANIFEST);
       if (readme === undefined || installedText === undefined || rootText === undefined) {
         return false;
       }
@@ -440,13 +458,13 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       return installed.name === EFFECT_TSGO && pinned === installed.version && documentsBuiltInPlugin(readme);
     });
     const tsgoEvidence = Effect.fn('QualityAudit.tsgoEvidence')(function* tsgoEvidence() {
-      const typecheckFile = 'scripts/ultramodern-typecheck.mts';
+      const typecheckFile = PACKAGE_MANIFEST;
       const typecheck = yield* read(typecheckFile);
       const vendorTypecheck = yield* read(
         'node_modules/@modern-js/ultramodern-create/templates/workspace-scripts/ultramodern-typecheck.mjs',
       );
       const usesTsgo =
-        hasUltramodernDispatch(typecheck, 'typecheck', yield* read('scripts/shared/ultramodern-command.mts')) &&
+        (yield* rootScriptInvokes(typecheck, 'ultramodern-create ultramodern typecheck')) &&
         vendorTypecheck?.includes('resolveEffectTsgoCompiler({') === true &&
         vendorTypecheck.includes("from: pathToFileURL(join(workspaceRoot, 'package.json'))");
       if (usesTsgo && typecheck !== undefined) {
@@ -454,7 +472,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
           at(
             typecheckFile,
             typecheck,
-            typecheck.indexOf("'typecheck'"),
+            typecheck.indexOf('ultramodern-create ultramodern typecheck'),
             '.',
             'dependency',
             EFFECT_TSGO,
@@ -490,17 +508,13 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       }
     });
     const readinessEvidence = Effect.fn('QualityAudit.readinessEvidence')(function* readinessEvidence() {
-      const readinessFile = 'scripts/ultramodern-performance-readiness.mts';
+      const readinessFile = PACKAGE_MANIFEST;
       const readiness = yield* read(readinessFile);
       const vendorFile =
         'node_modules/@modern-js/ultramodern-create/templates/workspace-scripts/ultramodern-performance-readiness.mjs';
       const vendor = yield* read(vendorFile);
       if (
-        hasUltramodernDispatch(
-          readiness,
-          'performance-readiness',
-          yield* read('scripts/shared/ultramodern-command.mts'),
-        ) &&
+        (yield* rootScriptInvokes(readiness, 'ultramodern-create ultramodern performance-readiness')) &&
         vendor?.includes('pathToFileURL(path.join(root, configPath)).href') === true &&
         vendor.includes('import(moduleUrl)')
       ) {
@@ -563,56 +577,15 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
     // The installed generator owns the framework cohort a generated workspace
     // must declare. Read the emitted contract as source; never execute it.
     const cohortPackages = Effect.fn('QualityAudit.cohortPackages')(function* cohortPackages() {
-      const source = yield* read(GENERATOR_WORKSPACE_MANIFEST);
-      return source === undefined ? [] : generatedCohortPackages(source);
+      const source = yield* read('node_modules/@modern-js/ultramodern-create/release-cohort.json');
+      if (source === undefined) {
+        return [];
+      }
+      const cohort = yield* Schema.decodeUnknownEffect(ReleaseCohort)(source);
+      return cohort.packages.map((item) => item.sourceName);
     });
     // The delegated `validate` command rejects a root that drops these, so they
     // are required workspace dependencies even though no repository source imports them.
-    const validatorRootEvidence = Effect.fn('QualityAudit.validatorRootEvidence')(function* validatorRootEvidence(
-      contractText: string,
-    ) {
-      const validator = yield* read(VALIDATOR_TEMPLATE);
-      const dispatches = hasUltramodernDispatch(
-        yield* read(WORKSPACE_VALIDATOR),
-        'validate',
-        yield* read('scripts/shared/ultramodern-command.mts'),
-      );
-      if (validator === undefined || !dispatches) {
-        return;
-      }
-      for (const name of validatedRootDependencies(validator)) {
-        evidence.push(
-          contractFact(
-            contractText,
-            CONTRACT_GENERATOR,
-            '.',
-            'dependency',
-            name,
-            `Installed workspace validator rejects a root that does not declare ${name}`,
-          ),
-        );
-      }
-    });
-    const wrapperEvidence = Effect.fn('QualityAudit.wrapperEvidence')(function* wrapperEvidence(
-      contractText: string,
-      wrappers: Readonly<Record<string, string>>,
-    ) {
-      for (const [wrapper, target] of Object.entries(wrappers)) {
-        if (!isContainedSourceModule(target) || (yield* read(target)) === undefined) {
-          continue;
-        }
-        evidence.push(
-          contractFact(
-            contractText,
-            target,
-            '.',
-            'file',
-            target,
-            `Workspace contract tooling.wrappers.${wrapper} invokes this repository wrapper for the framework command`,
-          ),
-        );
-      }
-    });
     const buildFacadeEvidence = Effect.fn('QualityAudit.buildFacadeEvidence')(function* buildFacadeEvidence(
       contractText: string,
       app: ContractApp,
@@ -673,16 +646,12 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
     });
     // Under the isolated store an aliased framework package resolves its own
     // cohort siblings from the workspace root, so the root must declare them.
-    const rootCohortEvidence = Effect.fn('QualityAudit.rootCohortEvidence')(function* rootCohortEvidence(
-      contractText: string,
-      root: typeof Manifest.Type,
-      cohort: readonly string[],
-    ) {
+    const rootCohortEvidence = (contractText: string, root: typeof Manifest.Type, cohort: readonly string[]) => {
       for (const name of declaredCohort(root, cohort)) {
         evidence.push(
           contractFact(
             contractText,
-            CONTRACT_GENERATOR,
+            WORKSPACE_CONTRACT,
             '.',
             'dependency',
             name,
@@ -690,7 +659,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
           ),
         );
       }
-    });
+    };
     // A patched dependency only keeps its patched identity while the declaring
     // manifest pins the exact version pnpm patches.
     const patchedRootEvidence = Effect.fn('QualityAudit.patchedRootEvidence')(function* patchedRootEvidence(
@@ -705,7 +674,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
         evidence.push(
           contractFact(
             contractText,
-            CONTRACT_GENERATOR,
+            WORKSPACE_CONTRACT,
             '.',
             'dependency',
             name,
@@ -746,18 +715,13 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
           return;
         }
         const contract = yield* Schema.decodeUnknownEffect(WorkspaceContract)(contractText);
-        if (contract.generator?.package !== CONTRACT_GENERATOR) {
-          return;
-        }
-        yield* wrapperEvidence(contractText, contract.tooling?.wrappers ?? {});
-        yield* validatorRootEvidence(contractText);
         const cohort = yield* cohortPackages();
         const rootManifest = yield* Schema.decodeUnknownEffect(Manifest)(
-          yield* fs.readFileString(path.join(appRoot, 'package.json')),
+          yield* fs.readFileString(path.join(appRoot, PACKAGE_MANIFEST)),
         );
-        yield* rootCohortEvidence(contractText, rootManifest, cohort);
+        rootCohortEvidence(contractText, rootManifest, cohort);
         yield* patchedRootEvidence(contractText, rootManifest);
-        for (const app of contract.topology?.apps ?? []) {
+        for (const app of [contract.shell, ...contract.verticals]) {
           if (!isContainedDirectory(app.path)) {
             continue;
           }
@@ -787,6 +751,7 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       yield* federationEvidence(prefix, workspace);
     }
     yield* zeropsEvidence();
+    yield* routeScaffoldEvidence();
     yield* tsgoEvidence();
     yield* readinessEvidence();
     yield* lefthookEvidence();

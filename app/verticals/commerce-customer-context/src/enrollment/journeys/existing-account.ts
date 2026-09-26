@@ -162,7 +162,7 @@ export const existingAccountJourneyDefinitionFor = (
 const ExistingAccountEnrollmentSubjectSchema = Schema.Struct({
   accountSubject: CommercePortalAccountSubjectSchema,
   targetTenantId: EnrollmentTenantIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /**
  * Stable business intent of one Existing-account Core identity transition. No credential, no
@@ -175,7 +175,7 @@ const ExistingAccountEnrollmentTransitionIntentSchema = Schema.Struct({
   portalEnrollmentAttemptId: Schema.toEncoded(EnrollmentAttemptIdSchema),
   subject: ExistingAccountEnrollmentSubjectSchema,
   transitionKey: Schema.toEncoded(EnrollmentTransitionKeySchema),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type ExistingAccountEnrollmentTransitionIntent = typeof ExistingAccountEnrollmentTransitionIntentSchema.Type;
 
 const canonicalIntentJsonSchema = Schema.fromJsonString(ExistingAccountEnrollmentTransitionIntentSchema);

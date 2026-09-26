@@ -176,7 +176,7 @@ const runCommand = ({ write }: { readonly write: boolean }) =>
   });
 const command = Command.make(
   'generate-zerops-provider-deployment',
-  { write: Flag.boolean('write').pipe(Flag.withDefault(false)) },
+  { write: Flag.Boolean('write').pipe(Flag.withDefault(false)) },
   runCommand,
 );
 if (import.meta.main) {

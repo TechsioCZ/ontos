@@ -1,6 +1,7 @@
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Context, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
+import { HttpApi } from 'effect/unstable/httpapi';
 import { expect, it } from 'effect-rstest';
 
 import type { OTPOptions } from 'better-auth/plugins/two-factor';
@@ -117,6 +118,9 @@ const runMfa = <ResultValue>(
     Effect.flatMap((service) => invoke(service)),
   );
 
+// The published MFA API decodes request bodies with these options (`shared/portal-auth/mfa-api.ts`).
+const publishedMfaParseOptions = Context.getOrUndefined(CommercePortalAuthMfaApi.annotations, HttpApi.ParseOptions);
+
 it.effect('configures the installed two-factor plugin with the Commerce policy', () =>
   Effect.sync(() => {
     const plugin = createCommercePortalAuthTwoFactorPlugin({
@@ -214,7 +218,10 @@ it.effect('keeps a trusted-device flag decodable so the owner problem is the rej
 it.effect('rejects excess MFA payload fields at the published boundary', () =>
   Effect.gen(function* excessPayloadFieldsRejected() {
     const result = yield* Effect.result(
-      Schema.decodeUnknownEffect(CommercePortalAuthMfaVerifyBackupCodeBodySchema)({
+      Schema.decodeUnknownEffect(
+        CommercePortalAuthMfaVerifyBackupCodeBodySchema,
+        publishedMfaParseOptions,
+      )({
         code: 'backup-1',
         unexpected: 'field',
       }),
@@ -352,7 +359,10 @@ it.effect('refuses a backup-code session-control flag before the one-time creden
   };
   return Effect.gen(function* backupCodeSessionControlRefused() {
     const rejected = yield* Effect.result(
-      Schema.decodeUnknownEffect(CommercePortalAuthMfaVerifyBackupCodeBodySchema)({
+      Schema.decodeUnknownEffect(
+        CommercePortalAuthMfaVerifyBackupCodeBodySchema,
+        publishedMfaParseOptions,
+      )({
         code: 'backup-1',
         disableSession: true,
       }),

@@ -1034,13 +1034,13 @@ export const runScaffoldEffect = Effect.fn('runScaffold')(function* runScaffoldE
   return { kind: 'generated', result };
 });
 
-const optionalTextFlag = (name: string) => Flag.string(name).pipe(Flag.optional);
-const forwardedArguments = Argument.variadic(Argument.string('forwarded flags'));
+const optionalTextFlag = (name: string) => Flag.String(name).pipe(Flag.optional);
+const forwardedArguments = Argument.variadic(Argument.String('forwarded flags'));
 const cliFlags = {
   accessFiltering: optionalTextFlag(ACCESS_FILTERING_FLAG),
   action: optionalTextFlag('action'),
   authorization: optionalTextFlag('authorization'),
-  core: Flag.boolean('core').pipe(Flag.withDefault(false)),
+  core: Flag.Boolean('core').pipe(Flag.withDefault(false)),
   kind: optionalTextFlag('kind'),
   legalEntityScope: optionalTextFlag(LEGAL_ENTITY_SCOPE_FLAG),
   module: optionalTextFlag('module'),
@@ -1110,8 +1110,8 @@ const cliSubcommands = scaffoldCommandValues.map((command) =>
 
 const cliRoot = Command.make('scaffold').pipe(Command.withSubcommands(cliSubcommands));
 
-const customHelp = GlobalFlag.action({
-  flag: Flag.boolean('help').pipe(Flag.withAlias('h')),
+const customHelp = GlobalFlag.Action({
+  flag: Flag.Boolean('help').pipe(Flag.withAlias('h')),
   run: (_enabled, { commandPath }) => {
     const command = commandPath.at(-1);
     return command !== undefined && isScaffoldCommand(command)

@@ -601,11 +601,8 @@ const requireRouteEntrypoint = (
   });
 
 const TopologyMetadataSchema = Schema.Struct({
-  topology: Schema.optionalKey(
-    Schema.Struct({
-      apps: Schema.optionalKey(Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String }))),
-    }),
-  ),
+  shell: Schema.Struct({ id: Schema.String, path: Schema.String }),
+  verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),
 });
 const decodeTopologyMetadata = Schema.decodeUnknownEffect(Schema.fromJsonString(TopologyMetadataSchema));
 
@@ -619,14 +616,17 @@ const readTopologyOwners = (root: string) =>
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const metadata = yield* fileSystem
-      .readFileString(path.join(root, '.modernjs/ultramodern.json'), 'utf-8')
+      .readFileString(path.join(root, 'topology/reference-topology.json'), 'utf-8')
       .pipe(Effect.flatMap(decodeTopologyMetadata));
-    return new Map((metadata.topology?.apps ?? []).map((app) => [app.path.replaceAll('\\', '/'), app.id]));
+    return new Map([
+      [metadata.shell.path.replaceAll('\\', '/'), metadata.shell.id],
+      ...metadata.verticals.map((app) => [app.path.replaceAll('\\', '/'), app.id] as const),
+    ]);
   });
 
 const readSourceRevision = (root: string) =>
   Effect.gen(function* readSourceRevisionEffect() {
-    const configured = yield* Config.option(Config.string('ULTRAMODERN_SOURCE_REVISION'));
+    const configured = yield* Config.option(Config.String('ULTRAMODERN_SOURCE_REVISION'));
     if (Option.isSome(configured)) {
       return configured.value;
     }
@@ -1328,7 +1328,7 @@ const [, invokedPath] = process.argv;
 if (invokedPath !== undefined && invokedPath === import.meta.filename) {
   const main = Effect.gen(function* moduleEntrypointBoundaryMain() {
     const path = yield* Path.Path;
-    const root = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(
+    const root = yield* Config.String('ULTRAMODERN_WORKSPACE_ROOT').pipe(
       Config.withDefault(path.resolve(import.meta.dirname, '..')),
     );
     yield* checkModuleEntrypointBoundariesEffect(root);

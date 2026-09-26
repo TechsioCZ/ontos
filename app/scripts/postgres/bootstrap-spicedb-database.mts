@@ -1,8 +1,10 @@
+/// <reference types="node" />
+
 import { NodeFileSystem } from '@effect/platform-node';
+import { PgClient } from '@effect/sql-pg';
 import { Config, ConfigProvider, Console, Effect, Exit, Match, Redacted, Schema } from 'effect';
 import type { FileSystem } from 'effect';
-import { Client } from 'pg';
-import type { QueryResult, QueryResultRow } from 'pg';
+import { Reactivity } from 'effect/unstable/reactivity';
 
 import { APP_ENV_PATH } from '../../packages/core-runtime/src/environment/workspace-environment.ts';
 import { parseSpiceDbDatabaseBootstrapConfig } from '../../packages/core-runtime/src/install/spicedb-database-config.ts';
@@ -21,15 +23,14 @@ const bootstrapFailure = (reason: string, cause?: unknown): SpiceDbDatabaseBoots
 
 const quoteLiteral = (value: string): string => `'${value.replaceAll("'", "''")}'`;
 
-const query = <Row extends QueryResultRow = QueryResultRow>(
-  client: Client,
+const query = <Row extends object>(
+  client: PgClient.PgClient,
   text: string,
-  values?: unknown[],
-): Effect.Effect<QueryResult<Row>, SpiceDbDatabaseBootstrapError> =>
-  Effect.tryPromise({
-    catch: (cause) => bootstrapFailure('SpiceDB PostgreSQL bootstrap query failed', cause),
-    try: async () => await client.query<Row>(text, values),
-  });
+  values?: readonly string[],
+): Effect.Effect<readonly Row[], SpiceDbDatabaseBootstrapError> =>
+  client
+    .unsafe<Row>(text, values)
+    .pipe(Effect.mapError((cause) => bootstrapFailure('SpiceDB PostgreSQL bootstrap query failed', cause)));
 
 const loadRootConfiguration = (): Effect.Effect<
   SpiceDbDatabaseBootstrapConfig,
@@ -52,7 +53,7 @@ const loadRootConfiguration = (): Effect.Effect<
 
     const provider = ConfigProvider.orElse(ConfigProvider.fromEnv({ preserveEmptyStrings: true }), fileProvider);
     const [adminUrl, spiceDbUrl] = yield* Effect.all(
-      [Config.redacted('DATABASE_ADMIN_URL').parse(provider), Config.redacted('SPICEDB_DATABASE_URL').parse(provider)],
+      [Config.Redacted('DATABASE_ADMIN_URL').parse(provider), Config.Redacted('SPICEDB_DATABASE_URL').parse(provider)],
       { concurrency: 1 },
     ).pipe(
       Effect.mapError((cause) => bootstrapFailure('SpiceDB PostgreSQL bootstrap configuration is invalid', cause)),
@@ -68,26 +69,13 @@ const loadRootConfiguration = (): Effect.Effect<
     });
   });
 
-const connectAdmin = (connectionString: Redacted.Redacted): Effect.Effect<Client, SpiceDbDatabaseBootstrapError> =>
-  Effect.tryPromise({
-    catch: (cause) => bootstrapFailure('Unable to connect to the administrative PostgreSQL database', cause),
-    try: async () => {
-      const client = new Client({
-        connectionString: Redacted.value(connectionString),
-      });
-      await client.connect();
-      return client;
-    },
-  });
-
-const closeAdmin = (client: Client): Effect.Effect<void, SpiceDbDatabaseBootstrapError> =>
-  Effect.tryPromise({
-    catch: (cause) => bootstrapFailure('Unable to close the administrative PostgreSQL connection', cause),
-    try: async () => await client.end(),
-  });
+const connectAdmin = (connectionString: Redacted.Redacted) =>
+  PgClient.makeClient({ url: connectionString }).pipe(
+    Effect.mapError((cause) => bootstrapFailure('Unable to connect to the administrative PostgreSQL database', cause)),
+  );
 
 const bootstrapDatabase = (
-  client: Client,
+  client: PgClient.PgClient,
   configuration: SpiceDbDatabaseBootstrapConfig,
 ): Effect.Effect<void, SpiceDbDatabaseBootstrapError> =>
   Effect.gen(function* bootstrapDatabaseEffect() {
@@ -99,7 +87,7 @@ const bootstrapDatabase = (
     const password = quoteLiteral(configuration.password);
     yield* query(
       client,
-      (role.rows[0]?.exists ?? false)
+      (role[0]?.exists ?? false)
         ? `alter role spicedb login password ${password} nosuperuser nocreatedb nocreaterole noinherit nobypassrls`
         : `create role spicedb login password ${password} nosuperuser nocreatedb nocreaterole noinherit nobypassrls`,
     );
@@ -111,22 +99,24 @@ const bootstrapDatabase = (
        where datname = $1`,
       [configuration.database],
     );
-    if (database.rows.length === 0) {
+    if (database.length === 0) {
       yield* query(client, 'create database spicedb owner spicedb');
-    } else if (database.rows[0]?.owner !== configuration.user) {
+    } else if (database[0]?.owner !== configuration.user) {
       yield* bootstrapFailure('Existing spicedb database must be owned by the spicedb role');
     }
   });
 
 const main = Effect.gen(function* mainEffect() {
   const configuration = yield* loadRootConfiguration();
-  yield* Effect.acquireUseRelease(
-    connectAdmin(Redacted.make(configuration.adminUrl)),
-    (client) => bootstrapDatabase(client, configuration),
-    closeAdmin,
-  );
+  const client = yield* connectAdmin(Redacted.make(configuration.adminUrl));
+  yield* bootstrapDatabase(client, configuration);
   yield* Console.log('Verified least-privilege PostgreSQL database and role for SpiceDB');
-}).pipe(Effect.tapError((failure) => Console.error(failure.reason)));
+}).pipe(
+  Effect.scoped,
+  Effect.tapError((failure) => Console.error(failure.reason)),
+);
 
-const exit = await Effect.runPromiseExit(Effect.provide(main, NodeFileSystem.layer));
+const exit = await Effect.runPromiseExit(
+  main.pipe(Effect.provide(NodeFileSystem.layer), Effect.provide(Reactivity.layer)),
+);
 process.exitCode = Exit.isFailure(exit) ? 1 : 0;

@@ -89,10 +89,6 @@ const cloudflareDeployMode = getResultOrThrow(
   ),
 );
 const cloudflareDeployEnabled = optionContains(cloudflareDeployMode, 'cloudflare');
-const postgresProtocolCommonJsEntry = fileURLToPath(
-  new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')),
-);
-const postgresPoolCommonJsEntry = createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
 const cloudflareWorkerRemoteStubPath = fileURLToPath(
   new URL('src/api/cloudflare-worker-remote-stub.ts', import.meta.url),
 );
@@ -116,17 +112,13 @@ const appId = 'shell-super-app';
 const moduleFederationConfigPath = fileURLToPath(new URL('module-federation.config.ts', import.meta.url));
 const referenceTopologyPath = fileURLToPath(new URL('../../topology/reference-topology.json', import.meta.url));
 const referenceTopology = getResultOrThrow(
-  decodeUnknownResult(fromJsonString(DeploymentAllowlistTopologySchema), {
-    onExcessProperty: 'preserve',
-  })(readFileSync(referenceTopologyPath, 'utf-8')),
+  decodeUnknownResult(fromJsonString(DeploymentAllowlistTopologySchema))(readFileSync(referenceTopologyPath, 'utf-8')),
 );
 const developmentOverlayPath = fileURLToPath(
   new URL('../../topology/local-overlays/development.json', import.meta.url),
 );
 const developmentOverlay = getResultOrThrow(
-  decodeUnknownResult(fromJsonString(DeploymentAllowlistOverlaySchema), {
-    onExcessProperty: 'preserve',
-  })(readFileSync(developmentOverlayPath, 'utf-8')),
+  decodeUnknownResult(fromJsonString(DeploymentAllowlistOverlaySchema))(readFileSync(developmentOverlayPath, 'utf-8')),
 );
 const moduleDeploymentAllowlist = createModuleDeploymentAllowlistBuildInput({
   cloudflareDeployEnabled,
@@ -377,13 +369,6 @@ export default defineConfig(
             if (!cloudflareDeployEnabled) {
               return;
             }
-            const configuredAliases = config.resolve.alias;
-            config.resolve.alias =
-              configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
-            Object.assign(config.resolve.alias, {
-              'pg-pool$': postgresPoolCommonJsEntry,
-              'pg-protocol$': postgresProtocolCommonJsEntry,
-            });
             const configuredExternals = config.externals;
             config.externals = [cloudflareRuntimeExternal];
             if (configuredExternals !== undefined) {

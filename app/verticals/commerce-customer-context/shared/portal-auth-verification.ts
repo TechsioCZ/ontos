@@ -21,7 +21,7 @@ export const CommercePortalAuthVerificationRequestSchema = Schema.Struct({
   audience: boundedReference,
   operation: Schema.Literal(COMMERCE_PORTAL_AUTH_VERIFY_OPERATION),
   operationRef: boundedReference,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export type CommercePortalAuthVerificationRequest = typeof CommercePortalAuthVerificationRequestSchema.Type;
 

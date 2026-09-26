@@ -4,12 +4,13 @@ import { ActionAuthorizationPreflightDatabaseLive, CorePersistenceLive, Database
 import { sql } from 'drizzle-orm';
 import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
-import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { ExternalIdentityClient } from '../../../../packages/shared-contracts/src/external-identity-client.ts';
 import type { ExternalIdentityClientPort } from '../../../../packages/shared-contracts/src/external-identity-client.ts';
 import { CommercePortalAuthAccountLookupService } from '../../api/portal-auth/provider/account-lookup-service.ts';
@@ -271,15 +272,13 @@ interface RoutineRow extends Record<string, unknown> {
   readonly payload: { readonly profileRef?: { readonly resourceId: string } } | null;
 }
 
-type OwnerDatabase = TestDatabaseFromPool<typeof commerceCustomerContextRelations>;
+type OwnerDatabase = TestDatabaseFromClient<typeof commerceCustomerContextRelations>;
 
 /** The runtime role, the only role a governed Action ever reaches an owner routine through. */
 const ownerDatabase = Effect.gen(function* acquireOwnerDatabase() {
   const connections = yield* loadDatabaseConnectionPair();
-  const runtimePool = yield* acquirePoolResource(
-    () => new Pool({ connectionString: connections.runtime.connectionString, max: 2 }),
-  );
-  return yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
+  const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 2 });
+  return yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 });
 
 const scopedRoutineCall = (

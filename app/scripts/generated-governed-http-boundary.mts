@@ -15,6 +15,7 @@ import { toCamelCase, toPascalCase, isCodePosition, maskNonCode } from './scaffo
 
 const GOVERNED_API_SLOT_END = '// </generated-governed-http-api-additions>';
 const GOVERNED_API_SLOT_START = '// <generated-governed-http-api-additions>';
+const BFF_ASSEMBLY_MODULE = '@modern-js/bff-effect/assembly';
 const GOVERNED_HTTP_RUNTIME_MODULE = '@app/shared-contracts/server/effect-bff-runtime';
 const GOVERNED_READ_HTTP_MODULE = '@app/core-runtime/http/governed-read';
 const CORE_RUNTIME_MODULE = '@app/core-runtime';
@@ -622,7 +623,7 @@ const slotIsMountedByAssembler = (
     definition.includes('...') ||
     objectPropertyValue(definition, 'api') !== expectedApi ||
     !hasExactlyOne(maskNonCode(source), /\bassembleEffectBffRuntime\(/gu) ||
-    !hasExactValueImport(source, 'assembleEffectBffRuntime', GOVERNED_HTTP_RUNTIME_MODULE)
+    !hasExactValueImport(source, 'assembleEffectBffRuntime', BFF_ASSEMBLY_MODULE)
   ) {
     return false;
   }

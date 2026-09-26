@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
 import {
   bindApiKey,
@@ -14,7 +13,7 @@ import {
 } from '../../src/auth/principal-management.ts';
 import { loadDatabaseConfig } from '../../src/db/config.ts';
 import { coreRelations, principalAuthBindings, principals, tenants } from '../../src/db/schema.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
 
 const staffAuthenticationNamespaceId = 'test.staff.better-auth.v1';
@@ -24,11 +23,10 @@ it.live('persists managed key lifecycle without credential material and enforces
     const tenantId = randomUUID();
     const providerKeyId = `better-auth-principal-management-${randomUUID()}`;
     const configuration = yield* loadDatabaseConfig();
-    const pool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: configuration.connectionString })),
-      (ownedPool) => Effect.promise(() => ownedPool.end()).pipe(Effect.orDie),
+    const database = yield* makeTestDatabaseFromClient(
+      yield* makeTestPgClient(configuration.connectionString),
+      coreRelations,
     );
-    const database = yield* makeTestDatabaseFromPool(pool, coreRelations);
     const cleanup = purgeFixtureRows([
       database.delete(principalAuthBindings).where(eq(principalAuthBindings.providerSubjectId, providerKeyId)),
       database.delete(principals).where(eq(principals.tenantId, tenantId)),

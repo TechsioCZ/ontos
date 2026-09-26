@@ -6,8 +6,6 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { Scope } from 'effect';
 import { Context, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
-import type { PoolConfig } from 'pg';
-import { Pool } from 'pg';
 
 import { PriceGroupCatalogDatabaseConnectionError } from './connection-error.ts';
 import { priceGroupCatalogRelations } from './schema.ts';
@@ -18,40 +16,23 @@ export class PriceGroupCatalogDatabase extends Context.Service<
   { readonly executor: PriceGroupCatalogDatabaseExecutor }
 >()('@app/price-group-catalog/database/client/PriceGroupCatalogDatabase') {}
 
-export interface PriceGroupCatalogPoolResource {
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- pg owns this foreign driver finalizer shape.
-  readonly end: () => Promise<void>;
-}
-
 const connectionFailure = (cause: unknown): PriceGroupCatalogDatabaseConnectionError =>
   Object.defineProperty(
     new PriceGroupCatalogDatabaseConnectionError({
-      reason: 'Unable to initialize the Price Group Catalog PostgreSQL connection pool',
+      reason: 'Unable to initialize the Price Group Catalog PostgreSQL client',
     }),
     'cause',
     { value: cause },
   );
-
-export const acquirePriceGroupCatalogPool = <Resource extends PriceGroupCatalogPoolResource>(
-  acquire: () => Resource,
-): Effect.Effect<Resource, PriceGroupCatalogDatabaseConnectionError, Scope.Scope> =>
-  Effect.acquireRelease(
-    Effect.try({ catch: connectionFailure, try: acquire }),
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect.promise owns this foreign Promise boundary.
-    (pool) => Effect.promise(() => pool.end()),
-  );
-
-export type PriceGroupCatalogPoolFactory = (configuration: PoolConfig) => Pool;
-const defaultPoolFactory: PriceGroupCatalogPoolFactory = (configuration) => new Pool(configuration);
 
 type ContextServiceContract<Service> =
   Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;
 
 export const makePriceGroupCatalogDatabase = Effect.fn('PriceGroupCatalogDatabase.make')(function* makeDatabase(
   configuration: ContextServiceContract<typeof DatabaseConfig> & {
+    readonly maxConnections?: number;
     readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
   },
-  poolFactory: PriceGroupCatalogPoolFactory = defaultPoolFactory,
 ): Effect.fn.Return<
   ContextServiceContract<typeof PriceGroupCatalogDatabase>,
   PriceGroupCatalogDatabaseConnectionError,
@@ -61,9 +42,8 @@ export const makePriceGroupCatalogDatabase = Effect.fn('PriceGroupCatalogDatabas
     Redacted.make(configuration.connectionString),
     configuration.poolDeadlines,
   ).pipe(Effect.mapError((error) => new PriceGroupCatalogDatabaseConnectionError({ reason: error.reason })));
-  const pool = yield* acquirePriceGroupCatalogPool(() => poolFactory(poolConfiguration));
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
+  const client = yield* PgClient.make({ ...poolConfiguration, maxConnections: configuration.maxConnections }).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );

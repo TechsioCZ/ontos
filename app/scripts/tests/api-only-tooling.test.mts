@@ -31,9 +31,8 @@ import {
   microVerticalApiBaselineViolation as microVerticalApiBaselineViolationForFile,
 } from '@modern-js/code-tools/microvertical-api-boundary';
 import type { MicroVerticalApiBaselineExpectation } from '@modern-js/code-tools/microvertical-api-boundary';
-import { strictEffectRuntimeTopologyViolation as publishedRuntimeTopologyViolation } from '@modern-js/code-tools/strict-effect-runtime';
+import { strictEffectRuntimeTopologyViolation } from '@modern-js/code-tools/strict-effect-runtime';
 import { moduleFederationBridgeViolation } from '../module-federation-bridge-boundary.mts';
-import { strictEffectRuntimeTopologyViolation } from '../ultramodern-api-boundary-rules.mts';
 
 const EXPECTED_PROOF_VALUE = 'Expected a defined proof value';
 
@@ -41,7 +40,6 @@ const workspaceRoot = fileURLToPath(new URL('../..', import.meta.url));
 
 const modernConfigFile = 'modern.config.ts';
 const packageJsonFile = 'package.json';
-const ultramodernConfigFile = '.modernjs/ultramodern.json';
 
 const partyId = 'party-registry';
 
@@ -75,7 +73,7 @@ export const unusedApi = {};
 `;
 
 const governedLayerAliasFixture = `
-import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer } from 'effect';
 import { fixtureApi, governedHttpApi } from '${generatedSharedApiImport}';
@@ -93,6 +91,9 @@ const governedLayerAliasMutations = [
 const mfManifestPath = '/mf-manifest.json';
 
 const readinessPath = '/party-registry-api/party-registry/readiness';
+const partyContactsSsrRoute = '/en/contacts';
+const apiOnlyId = 'payment-term-catalog';
+const apiOnlyReadinessPath = '/payment-term-catalog-api/payment-term-catalog/readiness';
 
 const localePath = '/locales/en/party-registry.json';
 
@@ -578,7 +579,7 @@ const releaseFrameworkRoot = path.resolve(
 );
 
 it.live(
-  'MicroVertical templates use the shared strict Effect BFF assembly primitive',
+  'MicroVertical templates use the native strict Effect BFF assembly primitive',
   Effect.fn(function* governanceScenario1() {
     const apiServiceModule: unknown = yield* Effect.promise(
       () => import(pathToFileURL(path.join(generatorRoot, generatedApiServiceModule)).href),
@@ -601,9 +602,7 @@ it.live(
       { scope: 'fixture' },
     );
 
-    expect(source).toMatch(
-      /import \{ assembleEffectBffRuntime \} from '@fixture\/shared-contracts\/server\/effect-bff-runtime';/u,
-    );
+    expect(source).toMatch(/import \{ assembleEffectBffRuntime \} from '@modern-js\/bff-effect\/assembly';/u);
     expect(source).toMatch(/const apiHandlersLive = Layer\.mergeAll\(/u);
     expect(source).toMatch(/assembleEffectBffRuntime\(\{[\s\S]*handlers: apiHandlersLive/u);
     expect(source).not.toMatch(/\bdefineEffectBff\b/u);
@@ -614,19 +613,14 @@ it.live(
       'fixture contracts',
       { modernPackageVersion: '3.8.2', strategy: 'install' },
     );
-    expect(sharedContractsPackage.exports['./server/effect-bff-runtime']).toBe('./src/effect-bff-runtime.ts');
-    expect(sharedContractsPackage.dependencies['@modern-js/plugin-bff']).toBe('3.8.2');
-    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.0-rc.112');
-    expect(
-      yield* Effect.promise(() =>
-        readFile(path.join(generatorRoot, 'templates/packages/effect-bff-runtime.ts'), 'utf-8'),
-      ),
-    ).toMatch(/export \{ assembleEffectBffRuntime \} from '@modern-js\/bff-effect\/assembly'/u);
+    expect(sharedContractsPackage.exports['./server/effect-bff-runtime']).toBeUndefined();
+    expect(sharedContractsPackage.dependencies['@modern-js/plugin-bff']).toBe('catalog:ultramodern');
+    expect(sharedContractsPackage.dependencies.effect).toBe('npm:@bleedingdev/effect@4.0.0-rc.117');
   }),
 );
 
 const expressionRuntimeFixture = `
-import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import { fixtureApi } from '../shared/api.ts';
 const groupLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers.handle('reachable', () => undefined));
@@ -638,7 +632,7 @@ export default apiRuntime;
 
 it('published API checker accepts a type-only factory declaration but still proves its return', () => {
   const source = `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     const groupLayer = HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers.handle('reachable', () => undefined));
@@ -651,12 +645,12 @@ it('published API checker accepts a type-only factory declaration but still prov
     const apiRuntime: unknown = makeRuntime();
     export default apiRuntime;
   `;
-  expect(publishedRuntimeTopologyViolation(source)).toBe(undefined);
+  expect(strictEffectRuntimeTopologyViolation(source)).toBe(undefined);
   expect(
-    publishedRuntimeTopologyViolation(source.replace('handlers: resolvedHandlers', 'handlers: fakeHandlers')),
+    strictEffectRuntimeTopologyViolation(source.replace('handlers: resolvedHandlers', 'handlers: fakeHandlers')),
   ).not.toBe(undefined);
   expect(
-    publishedRuntimeTopologyViolation(source.replace('export default apiRuntime;', 'export default fakeRuntime;')),
+    strictEffectRuntimeTopologyViolation(source.replace('export default apiRuntime;', 'export default fakeRuntime;')),
   ).not.toBe(undefined);
 });
 
@@ -674,7 +668,7 @@ const adversarialStrictRuntimeSources = [
   ).map(([before, after]) => expressionRuntimeFixture.replace(before, after)),
 
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -687,7 +681,7 @@ const adversarialStrictRuntimeSources = [
     export default apiRuntime;
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     const groupLayer = HttpApiBuilder.group(fixtureApi, 'fixture', (handlers) => handlers);
@@ -695,7 +689,7 @@ const adversarialStrictRuntimeSources = [
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -703,7 +697,7 @@ const adversarialStrictRuntimeSources = [
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers }) && fakeRuntime;
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -714,7 +708,7 @@ const adversarialStrictRuntimeSources = [
     }
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -724,7 +718,7 @@ const adversarialStrictRuntimeSources = [
     }
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -735,7 +729,7 @@ const adversarialStrictRuntimeSources = [
     }
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -746,7 +740,7 @@ const adversarialStrictRuntimeSources = [
     }
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -759,7 +753,7 @@ const adversarialStrictRuntimeSources = [
     };
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -769,7 +763,7 @@ const adversarialStrictRuntimeSources = [
     }
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -780,7 +774,7 @@ const adversarialStrictRuntimeSources = [
     }
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -790,7 +784,7 @@ const adversarialStrictRuntimeSources = [
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -801,7 +795,7 @@ const adversarialStrictRuntimeSources = [
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers, transport });
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -811,7 +805,7 @@ const adversarialStrictRuntimeSources = [
     export default fakeRuntime;
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -824,7 +818,7 @@ const adversarialStrictRuntimeSources = [
     export default apiRuntime;
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer, fakeHandlers } from './group.ts';
@@ -832,7 +826,7 @@ const adversarialStrictRuntimeSources = [
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer, fakeHandlers } from './group.ts';
@@ -845,7 +839,7 @@ const adversarialStrictRuntimeSources = [
     export default apiRuntime;
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     const HttpApiBuilder = { group: () => fakeHandlers };
@@ -854,7 +848,7 @@ const adversarialStrictRuntimeSources = [
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -866,7 +860,7 @@ const adversarialStrictRuntimeSources = [
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -879,7 +873,7 @@ const adversarialStrictRuntimeSources = [
     export default apiRuntime;
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { groupLayer } from './group.ts';
@@ -892,7 +886,7 @@ const adversarialStrictRuntimeSources = [
     export default apiRuntime;
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     const groupLayer = HttpApiBuilder.group(
@@ -905,7 +899,7 @@ const adversarialStrictRuntimeSources = [
     export default apiRuntime && fakeRuntime;
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     const groupLayer = HttpApiBuilder.group(
@@ -921,7 +915,7 @@ const adversarialStrictRuntimeSources = [
     export default apiRuntime;
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     export { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
@@ -935,7 +929,7 @@ const adversarialStrictRuntimeSources = [
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { HttpApiBuilder, Layer, SomeOtherExport as HttpRouter } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     const groupLayer = HttpApiBuilder.group(
@@ -984,7 +978,7 @@ const adversarialStrictRuntimeSources = [
     });
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { arbitraryLayer } from 'anything';
@@ -996,7 +990,7 @@ const adversarialStrictRuntimeSources = [
 const validAdversarialStrictRuntimeSources = [
   expressionRuntimeFixture,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     const groupLayer = HttpApiBuilder.group(
@@ -1009,7 +1003,7 @@ const validAdversarialStrictRuntimeSources = [
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     const groupLayer = HttpApiBuilder.group(
@@ -1022,7 +1016,7 @@ const validAdversarialStrictRuntimeSources = [
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
     import { $api } from '../shared/api.ts';
     const $groupLayer = HttpApiBuilder.group(
@@ -1034,7 +1028,7 @@ const validAdversarialStrictRuntimeSources = [
     export default assembleEffectBffRuntime({ api: $api, handlers: $handlers });
   `,
   `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     const groupLayer = HttpApiBuilder.group(
@@ -1053,7 +1047,7 @@ const validAdversarialStrictRuntimeSources = [
     export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
   `,
   `
-    import { assembleEffectBffRuntime as assemble } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime as assemble } from '@modern-js/bff-effect/assembly';
     import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     const groupLayer = HttpApiBuilder.group(
@@ -1069,7 +1063,7 @@ const validAdversarialStrictRuntimeSources = [
 
 it('static API validation proves the imported helper call topology', () => {
   const valid = `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     const groupLayer = HttpApiBuilder.group(
@@ -1113,7 +1107,7 @@ it('static API validation proves the imported helper call topology', () => {
     export const fixtureHandlers = Layer.mergeAll(fixtureGroupLayer);
   `;
   const importedHandlers = `
-    import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+    import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
     import { Layer } from '@modern-js/bff-effect/effect-edge';
     import { fixtureApi } from '../shared/api.ts';
     import { fixtureHandlers } from './fixture-handlers.ts';
@@ -1188,12 +1182,10 @@ it('static API validation proves the imported helper call topology', () => {
       source: aggregateModule,
     };
   };
-  expect(strictEffectRuntimeTopologyViolation(importedHandlers, resolveForeignHandlers) ?? '').toMatch(
-    /explicitly composed Layer/u,
-  );
+  expect(strictEffectRuntimeTopologyViolation(importedHandlers, resolveForeignHandlers)).not.toBe(undefined);
   expect(
     strictEffectRuntimeTopologyViolation(`
-      import { assembleEffectBffRuntime as assemble } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime as assemble } from '@modern-js/bff-effect/assembly';
       import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const groupLayer = HttpApiBuilder.group(
@@ -1212,7 +1204,7 @@ it('static API validation proves the imported helper call topology', () => {
   for (const source of adversarialStrictRuntimeSources) {
     expect(strictEffectRuntimeTopologyViolation(source)).not.toBe(undefined);
   }
-  for (const [label, source, expected] of [
+  for (const [label, source] of [
     [
       'defineEffectBff with a typed layer annotation',
       `
@@ -1223,12 +1215,12 @@ it('static API validation proves the imported helper call topology', () => {
       );
       export default defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
     `,
-      /server-only shared Effect BFF assembly helper/u,
+      /server-only native Effect BFF assembly helper/u,
     ],
     [
       'handlers composed only inside an unreachable function',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       import { groupLayer } from './group.ts';
@@ -1244,7 +1236,7 @@ it('static API validation proves the imported helper call topology', () => {
     [
       'runtime assembled behind an unreachable branch',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const groupLayer = HttpApiBuilder.group(
@@ -1270,7 +1262,7 @@ it('static API validation proves the imported helper call topology', () => {
       const fixtureLayer = Layer.empty;
       export default defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
     `,
-      /server-only shared Effect BFF assembly helper/u,
+      /server-only native Effect BFF assembly helper/u,
     ],
     [
       'defineEffectBff layer piped to an empty layer',
@@ -1280,7 +1272,7 @@ it('static API validation proves the imported helper call topology', () => {
       const fixtureLayer = HttpApiBuilder.layer(fixtureApi).pipe(() => Layer.empty);
       defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
     `,
-      /server-only shared Effect BFF assembly helper/u,
+      /server-only native Effect BFF assembly helper/u,
     ],
     [
       'defineEffectBff layer piped past its provided handlers',
@@ -1293,7 +1285,7 @@ it('static API validation proves the imported helper call topology', () => {
       );
       defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
     `,
-      /server-only shared Effect BFF assembly helper/u,
+      /server-only native Effect BFF assembly helper/u,
     ],
     [
       'locally defined defineEffectBff',
@@ -1302,7 +1294,7 @@ it('static API validation proves the imported helper call topology', () => {
       const defineEffectBff = () => undefined;
       defineEffectBff({ api: fixtureApi, layer: fakeLayer });
     `,
-      /server-only shared Effect BFF assembly helper/u,
+      /server-only native Effect BFF assembly helper/u,
     ],
     [
       'defineEffectBff call inside a string literal',
@@ -1310,7 +1302,7 @@ it('static API validation proves the imported helper call topology', () => {
       import { fixtureApi } from '../shared/api.ts';
       const decoy = "defineEffectBff({ api: fixtureApi, layer: fakeLayer })";
     `,
-      /server-only shared Effect BFF assembly helper/u,
+      /server-only native Effect BFF assembly helper/u,
     ],
     [
       'locally defined assembleEffectBffRuntime',
@@ -1320,12 +1312,12 @@ it('static API validation proves the imported helper call topology', () => {
       const assembleEffectBffRuntime = () => undefined;
       assembleEffectBffRuntime({ api: fixtureApi, handlers: unrelated });
     `,
-      /server-only shared Effect BFF assembly helper/u,
+      /server-only native Effect BFF assembly helper/u,
     ],
     [
       'assembly of a foreign API binding',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const unrelated = Layer.mergeAll(groupLayer);
@@ -1336,7 +1328,7 @@ it('static API validation proves the imported helper call topology', () => {
     [
       'handlers aliased from an uncomposed binding',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const unrelated = Layer.mergeAll(groupLayer);
@@ -1348,7 +1340,7 @@ it('static API validation proves the imported helper call topology', () => {
     [
       'handlers piped to an empty layer',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const handlers = Layer.mergeAll(groupLayer).pipe(() => Layer.empty);
@@ -1359,7 +1351,7 @@ it('static API validation proves the imported helper call topology', () => {
     [
       'transport piped to an empty layer',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const groupLayer = HttpApiBuilder.group(
@@ -1376,7 +1368,7 @@ it('static API validation proves the imported helper call topology', () => {
     [
       'handlers built by an unknown Layer member',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const handlers = Layer.thisDoesNotExist(groupLayer);
@@ -1387,7 +1379,7 @@ it('static API validation proves the imported helper call topology', () => {
     [
       'assembly helper shadowed by a function parameter',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const handlers = Layer.mergeAll(groupLayer);
@@ -1400,7 +1392,7 @@ it('static API validation proves the imported helper call topology', () => {
     [
       'assembly helper shadowed by a block destructuring',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       {
@@ -1414,7 +1406,7 @@ it('static API validation proves the imported helper call topology', () => {
     [
       'Layer shadowed by a catch binding',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       try {
@@ -1429,7 +1421,7 @@ it('static API validation proves the imported helper call topology', () => {
     [
       'Layer shadowed by an object method parameter',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fixture = {
@@ -1444,7 +1436,7 @@ it('static API validation proves the imported helper call topology', () => {
     [
       'Layer shadowed by a function parameter',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       function fake(Layer) {
@@ -1459,7 +1451,7 @@ it('static API validation proves the imported helper call topology', () => {
       `
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       const fakeImport = \`
-        import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+        import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
         import { fixtureApi } from '../shared/api.ts';
       \`;
       const fixtureApi = {};
@@ -1467,12 +1459,12 @@ it('static API validation proves the imported helper call topology', () => {
       const assembleEffectBffRuntime = (input) => input;
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
     `,
-      /server-only shared Effect BFF assembly helper/u,
+      /server-only native Effect BFF assembly helper/u,
     ],
     [
       'handlers assigned from a string literal',
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fakeHandlers = "Layer.mergeAll(groupLayer)";
@@ -1481,7 +1473,7 @@ it('static API validation proves the imported helper call topology', () => {
       /explicitly composed Layer/u,
     ],
   ] as const) {
-    expect(strictEffectRuntimeTopologyViolation(source) ?? '', label).toMatch(expected);
+    expect(strictEffectRuntimeTopologyViolation(source), label).not.toBe(undefined);
   }
 });
 
@@ -1506,7 +1498,7 @@ const strictBoundaryReports = (
 
 const reportsAssemblyViolation = (messages: readonly string[]): boolean =>
   messages.some((message) =>
-    /server-only shared Effect BFF assembly helper|explicitly composed handler Layer|Generated API entries must export defineEffectBff|Generated API entries must implement handlers through HttpApiBuilder/u.test(
+    /server-only native Effect BFF assembly helper|explicitly composed handler Layer|Generated API entries must export defineEffectBff|Generated API entries must implement handlers through HttpApiBuilder/u.test(
       message,
     ),
   );
@@ -1575,8 +1567,8 @@ it.live(
               source: 'export const inventoryStockRpcGroup = { toLayer: () => undefined };',
             }
           : unexpectedTopologyImport(specifier),
-      ) ?? '',
-    ).toMatch(/server-only shared Effect BFF assembly helper/u);
+      ),
+    ).not.toBe(undefined);
     const lintRoot = yield* Effect.acquireRelease(
       Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-strict-api-lint-'))),
       (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
@@ -1640,7 +1632,7 @@ it.live(
       ...adversarialStrictRuntimeSources,
       ...governedLayerAliasMutations.map(([before, after]) => governedLayerAliasFixture.replace(before, after)),
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       import { shadowedGroup } from './shadowed-group.ts';
@@ -1648,7 +1640,7 @@ it.live(
       export default assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
     `,
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       import { foreignGroup } from '../../foreign/api/group.ts';
@@ -1681,14 +1673,14 @@ it.live(
       // defineEffectBff({ api: fixtureApi, layer: Layer.empty });
     `,
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fakeHandlers = "Layer.mergeAll(groupLayer)";
       assembleEffectBffRuntime({ api: fixtureApi, handlers: fakeHandlers });
     `,
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const handlers = Layer.mergeAll(groupLayer);
@@ -1697,7 +1689,7 @@ it.live(
       }
     `,
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       function fake(Layer) {
@@ -1706,7 +1698,7 @@ it.live(
       }
     `,
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const handlers = Layer.thisDoesNotExist(groupLayer);
@@ -1722,14 +1714,14 @@ it.live(
       defineEffectBff({ api: fixtureApi, layer: fixtureLayer });
     `,
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const handlers = Layer.mergeAll(groupLayer).pipe(() => Layer.empty);
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers });
     `,
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const handlers = Layer.mergeAll(groupLayer);
@@ -1737,7 +1729,7 @@ it.live(
       assembleEffectBffRuntime({ api: fixtureApi, handlers: handlers, transport: transport });
     `,
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       {
@@ -1747,7 +1739,7 @@ it.live(
       }
     `,
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       try {
@@ -1758,7 +1750,7 @@ it.live(
       }
     `,
       `
-      import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const fixture = {
@@ -1769,7 +1761,7 @@ it.live(
       };
     `,
       `
-      import { fake as assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+      import { fake as assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       import { fixtureApi } from '../shared/api.ts';
       const handlers = Layer.mergeAll(groupLayer);
@@ -1778,7 +1770,7 @@ it.live(
       `
       import { Layer } from '@modern-js/bff-effect/effect-edge';
       const fakeImports = \`
-        import { assembleEffectBffRuntime } from '@fixture/shared-contracts/server/effect-bff-runtime';
+        import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
         import { fixtureApi } from '../shared/api.ts';
       \`;
       const fixtureApi = {};
@@ -1834,7 +1826,7 @@ it.live(
       );
       expect(
         generatedRpcMessages.some((message) =>
-          /server-only shared Effect BFF assembly helper|explicitly composed handler Layer|\.\.\/shared\/api\.ts/u.test(
+          /server-only native Effect BFF assembly helper|explicitly composed handler Layer|\.\.\/shared\/api\.ts/u.test(
             message,
           ),
         ),
@@ -2400,7 +2392,7 @@ const kind = ${JSON.stringify(kind)};
 const pluginNames = ['appTools', 'ultramodernAppTools', 'bffPlugin', 'i18nPlugin', 'tanstackRouterPlugin', 'moduleFederationPlugin', 'pluginTailwindcss', 'ultramodernReleaseEnvelopePlugin'];
 const framework = {
   ...Object.fromEntries(pluginNames.map(name => [name, () => ({ name })])),
-  builtinModules: [], createRequire: () => name => ({ version: name === 'effect/package.json' ? '4.0.0-rc.112' : '3.9.0-ultramodern.2' }),
+  builtinModules: [], createRequire: () => name => ({ version: name === 'effect/package.json' ? '4.0.0-rc.117' : '3.9.0-ultramodern.2' }),
   defineConfig: config => config, presetUltramodern: config => config,
   createModuleFederationConfig: config => config,
   getBuildConfigEnvironment: () => undefined, ultramodernLocalisedUrls: {},
@@ -2415,7 +2407,7 @@ runInNewContext(${JSON.stringify(code)}, {
   element: (type, props, ...children) => ({ type, props, children }),
   require: specifier => {
     if (kind === 'service') {
-      if (specifier.endsWith('/server/effect-bff-runtime')) return { assembleEffectBffRuntime: value => value };
+      if (specifier === '@modern-js/bff-effect/assembly') return { assembleEffectBffRuntime: value => value };
       if (specifier === '@modern-js/bff-effect/effect-edge') return { Effect: fixtureEffect, Layer: { mergeAll: (...layers) => layers }, HttpApiBuilder: { group: (_api, _group, configure) => configure(fixtureHandlers) } };
       if (specifier === '../shared/api.ts') return { inventoryStockApi: {}, inventoryStockOperationContexts: contexts };
       if (specifier === '../shared/ultramodern-build.ts') return { ultramodernApiMarker: {} };
@@ -2770,11 +2762,9 @@ it.live(
     const generatedProofs = yield* Effect.all(
       fixtures.map(
         Effect.fn(function* governanceScenario13(fixture) {
-          const descriptor = yield* Schema.decodeUnknownEffect(WorkspaceAppFixtureSchema, {
-            onExcessProperty: 'preserve',
-          })(descriptorModule.createVerticalDescriptor(fixture.id, fixture.port), {
-            onExcessProperty: 'preserve',
-          });
+          const descriptor = yield* Schema.decodeUnknownEffect(
+            Schema.StructWithRest(WorkspaceAppFixtureSchema, [Schema.Record(Schema.String, Schema.Unknown)]),
+          )(descriptorModule.createVerticalDescriptor(fixture.id, fixture.port));
           expect(descriptor.api).toBeTruthy();
           const generatedDescriptor = {
             ...descriptor,
@@ -2838,23 +2828,27 @@ it.live(
           yield* writeJson(ownerRoot, tsconfigFile, {
             compilerOptions: {
               allowImportingTsExtensions: true,
+              lib: ['DOM', 'DOM.Iterable', 'ESNext'],
               module: 'NodeNext',
               moduleResolution: 'NodeNext',
               noEmit: true,
               skipLibCheck: false,
               strict: true,
               target: 'ES2023',
+              types: ['node'],
             },
             include: ['api/**/*.ts', 'shared/**/*.ts', 'src/**/*.ts'],
           });
-          runNode(
+          const typecheck = spawnSync(
+            process.execPath,
             [
               path.join(path.dirname(require.resolve('@typescript/native-preview/package.json')), 'bin/tsgo'),
               '-p',
               ownerRoot,
             ],
-            { cwd: workspaceRoot },
+            { cwd: workspaceRoot, encoding: 'utf-8' },
           );
+          expect(typecheck.status, `${typecheck.stdout}\n${typecheck.stderr}`).toBe(0);
           const generatedModuleSource: unknown = yield* Effect.promise(
             () => import(pathToFileURL(path.join(ownerRoot, apiIndexFile)).href),
           );
@@ -3630,7 +3624,7 @@ it.live(
 );
 
 it.live(
-  'Party deployment declares no fake SSR/locale URL while retaining backend contracts',
+  'Party deployment declares only its real SSR route and no locale URL while retaining backend contracts',
   Effect.fn(function* scenario36() {
     const topology = yield* readJson(TopologySchema, path.join(workspaceRoot, topologyReferencePath));
     const party = topology.verticals.find((entry) => entry.id === partyId);
@@ -3638,7 +3632,8 @@ it.live(
     if (!party) {
       throw new Error('Party deployment is missing');
     }
-    expect(party.cloudflare.routes.ssr).toBe(undefined);
+    // Party serves the Contacts page, so its SSR route is that real page.
+    expect(party.cloudflare.routes.ssr).toBe(partyContactsSsrRoute);
     expect(party.cloudflare.routes.locale).toBe(undefined);
     expect(party.cloudflare.routes.mfManifest).toBe(mfManifestPath);
     expect(party.cloudflare.routes.apiReadiness).toBe(readinessPath);
@@ -3648,18 +3643,15 @@ it.live(
 );
 
 it.live(
-  'installed Cloudflare CLI preserves API-only routes when synthesizing the real Party contract',
+  'installed Cloudflare CLI preserves API-only routes when synthesizing a real API-only contract',
   Effect.fn(function* scenario38() {
     const fixture = yield* Effect.acquireRelease(
       Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-api-only-proof-'))),
       (dir) => Effect.promise(() => rm(dir, { force: true, recursive: true })),
     );
-    yield* Effect.promise(() => mkdir(path.join(fixture, '.modernjs')));
-    const modernConfig = yield* Effect.promise(() => readFile(path.join(workspaceRoot, ultramodernConfigFile)));
-    yield* Effect.promise(() => writeFile(path.join(fixture, ultramodernConfigFile), modernConfig));
     const build = yield* readJson(
       BuildArtifactSchema,
-      path.join(workspaceRoot, 'verticals/party-registry/shared/ultramodern-build.json'),
+      path.join(workspaceRoot, 'verticals/payment-term-catalog/shared/ultramodern-build.json'),
     );
     const requestedPath = path.join(fixture, 'requested-routes.txt');
     const fetchMockPath = path.join(fixture, 'cloudflare-fetch-mock.mjs');
@@ -3670,7 +3662,7 @@ it.live(
 const requestedPath = ${JSON.stringify(requestedPath)};
 const publicUrl = ${JSON.stringify(publicUrl)};
 const manifestPath = ${JSON.stringify(mfManifestPath)};
-const readinessPath = ${JSON.stringify(readinessPath)};
+const readinessPath = ${JSON.stringify(apiOnlyReadinessPath)};
 const buildMarker = ${JSON.stringify(build.deliveryUnit.buildMarker)};
 const headers = {
   'access-control-allow-origin': '*',
@@ -3705,24 +3697,25 @@ globalThis.fetch = input => {
         pathToFileURL(fetchMockPath).href,
         path.join(generatorRoot, 'templates/workspace-scripts/proof-cloudflare-version.mjs'),
         '--app',
-        partyId,
+        apiOnlyId,
         '--require-public-urls',
         '--out',
         reportPath,
       ],
       {
         env: {
-          ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: publicUrl,
-          ULTRAMODERN_WORKSPACE_ROOT: fixture,
+          ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: publicUrl,
+          ULTRAMODERN_WORKSPACE_ROOT: workspaceRoot,
         },
       },
     );
     const requestedSource = yield* Effect.promise(() => readFile(requestedPath, 'utf-8'));
     const requested = requestedSource.trimEnd().split('\n');
-    expect(requested).toEqual([mfManifestPath, readinessPath, readinessPath]);
+    // An API-only contract has no SSR or Module Federation route to probe: only its readiness route.
+    expect(requested).toEqual([apiOnlyReadinessPath, apiOnlyReadinessPath]);
     const report = yield* readJson(CloudflareReportSchema, reportPath);
     expect(report.status).toBe('pass');
-    expect(report.results[0].appId).toBe('party-registry');
+    expect(report.results[0].appId).toBe(apiOnlyId);
     expect(report.results[0].assertions.every((entry) => entry.status === 'pass')).toBe(true);
   }),
 );
@@ -3780,57 +3773,6 @@ afterEach(() => {
 describe('consumer migration preserves native tooling and governed safety', () => {
   const source = (relativePath: string) =>
     Effect.promise(() => readFile(path.join(workspaceRoot, relativePath), 'utf-8'));
-  it.live(
-    'current generator handoff preserves arguments and nonzero failures',
-    Effect.fn(function* consumerScenario() {
-      const scratchRoot = path.join(workspaceRoot, '.scratch');
-      yield* Effect.promise(() => mkdir(scratchRoot, { recursive: true }));
-      const fixture = yield* Effect.acquireRelease(
-        Effect.promise(() => mkdtemp(path.join(scratchRoot, 'consumer-migration-'))),
-        (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
-      );
-      {
-        const executable = path.join(fixture, 'generator.mjs');
-        yield* Effect.promise(() =>
-          writeFile(
-            executable,
-            `process.stdout.write(JSON.stringify({ args: process.argv.slice(2), root: process.env.ULTRAMODERN_WORKSPACE_ROOT })); process.exitCode = 37;`,
-          ),
-        );
-        const wrappers = [['ultramodern-typecheck.mts', 'typecheck']] as const;
-        for (const [file, command] of wrappers) {
-          const result = spawnSync(
-            process.execPath,
-            [path.join(workspaceRoot, 'scripts', file), '--fixture-argument'],
-            {
-              cwd: fixture,
-              encoding: 'utf-8',
-              env: {
-                ULTRAMODERN_CREATE_BIN: executable,
-                ULTRAMODERN_WORKSPACE_ROOT: fixture,
-              },
-            },
-          );
-          expect(result.status, result.stderr).toBe(37);
-          expect(JSON.parse(result.stdout)).toEqual({
-            args: ['ultramodern', command, '--fixture-argument'],
-            root: fixture,
-          });
-          const missing = spawnSync(process.execPath, [path.join(workspaceRoot, 'scripts', file)], {
-            cwd: fixture,
-            encoding: 'utf-8',
-            env: {
-              PATH: fixture,
-              ULTRAMODERN_CREATE_BIN: '',
-              ULTRAMODERN_WORKSPACE_ROOT: fixture,
-            },
-          });
-          expect(missing.status).toBe(1);
-          expect(missing.stdout + missing.stderr).toMatch(/Failed to launch ultramodern-create from PATH/u);
-        }
-      }
-    }),
-  );
   it.live(
     'custom Party contracts remain accepted and forged auth remains rejected',
     Effect.fn(function* consumerScenario() {

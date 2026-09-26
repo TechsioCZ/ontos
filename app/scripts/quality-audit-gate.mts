@@ -167,7 +167,7 @@ export const validateQualityAuditSummary = Effect.fn('qualityAuditGate.validate'
 const cli = Command.make(
   'quality-audit-gate',
   {
-    summary: Flag.string('summary').pipe(Flag.withDefault('.codex/reports/quality-audit/summary.json')),
+    summary: Flag.String('summary').pipe(Flag.withDefault('.codex/reports/quality-audit/summary.json')),
   },
   ({ summary }) =>
     Effect.gen(function* qualityAuditGateCommand() {

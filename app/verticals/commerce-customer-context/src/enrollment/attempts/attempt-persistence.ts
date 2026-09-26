@@ -656,7 +656,7 @@ const addOptionalProperty = <Value extends object>(target: Value, key: string, v
 const decodeAttemptSnapshot = (
   value: typeof EnrollmentAttemptSnapshotSchema.Encoded,
 ): Effect.Effect<EnrollmentAttemptSnapshot, CommerceEnrollmentAttemptError> =>
-  Schema.decodeEffect(EnrollmentAttemptSnapshotSchema)(value).pipe(
+  Schema.decodeEffect(EnrollmentAttemptSnapshotSchema, { onExcessProperty: 'error' })(value).pipe(
     Effect.mapError((cause) => invalidWithCause('The persisted Enrollment Attempt snapshot is invalid', cause)),
   );
 
@@ -724,7 +724,7 @@ const mapAttempt = (
 const decodeOwnerOperationSnapshot = (
   value: typeof EnrollmentOwnerOperationSnapshotSchema.Encoded,
 ): Effect.Effect<EnrollmentOwnerOperationSnapshot, CommerceEnrollmentAttemptError> =>
-  Schema.decodeEffect(EnrollmentOwnerOperationSnapshotSchema)(value).pipe(
+  Schema.decodeEffect(EnrollmentOwnerOperationSnapshotSchema, { onExcessProperty: 'error' })(value).pipe(
     Effect.mapError((cause) => invalidWithCause('The persisted owner transition journal snapshot is invalid', cause)),
   );
 
@@ -789,7 +789,7 @@ const CompleteOperationRowFieldsSchema = Schema.Struct({
   required: Schema.Boolean,
   status: EnrollmentOwnerOperationStatusSchema,
   transitionKey: EnrollmentTransitionKeySchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 const mapOptionalTimestamp = (value: Date | string | null): string | undefined =>
   value === null ? undefined : mapTimestamp(value);

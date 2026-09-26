@@ -292,7 +292,9 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
       return yield* descriptorFailure(`claimed delivery references unknown worker ${claim.workerKey}`);
     }
     const decoded = yield* Effect.exit(
-      Schema.decodeUnknownEffect(registration.descriptor.payloadSchema)(claim.payloadJson),
+      Schema.decodeUnknownEffect(registration.descriptor.payloadSchema, { onExcessProperty: 'error' })(
+        claim.payloadJson,
+      ),
     );
     if (Exit.isFailure(decoded)) {
       const decodeError = new OutboxPayloadDecodeError({

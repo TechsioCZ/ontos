@@ -33,17 +33,17 @@ const MfaMethodFieldSchema = Schema.optionalKey(Schema.Literal('totp'));
 /** Request payloads are closed at the public boundary; excess fields are a decoding failure. */
 const CommercePortalAuthMfaSendOtpBodySchema = Schema.Struct({
   trustDevice: TrustDeviceSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export const CommercePortalAuthMfaVerifyTotpBodySchema = Schema.Struct({
   code: VerificationCodeSchema,
   trustDevice: TrustDeviceSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 const CommercePortalAuthMfaVerifyOtpBodySchema = Schema.Struct({
   code: VerificationCodeSchema,
   trustDevice: TrustDeviceSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /**
  * `disableSession` is deliberately not published. Better Auth consumes the backup code *before* it
@@ -56,7 +56,7 @@ const CommercePortalAuthMfaVerifyOtpBodySchema = Schema.Struct({
 export const CommercePortalAuthMfaVerifyBackupCodeBodySchema = Schema.Struct({
   code: BackupCodeSchema,
   trustDevice: TrustDeviceSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /**
  * Administrative bodies. `enable`/`disable`/`regenerate-backup-codes`/`totp-uri` all reverify the
@@ -72,20 +72,20 @@ const CommercePortalAuthMfaEnableBodySchema = Schema.Struct({
   issuer: MfaIssuerFieldSchema,
   method: MfaMethodFieldSchema,
   password: MfaPasswordFieldSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 const CommercePortalAuthMfaConfirmEnableBodySchema = Schema.Struct({
   code: VerificationCodeSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 const CommercePortalAuthMfaDisableBodySchema = Schema.Struct({
   password: MfaPasswordFieldSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /** Shared by `regenerate-backup-codes` and `totp-uri`: both reverify the password alone. */
 const CommercePortalAuthMfaPasswordBodySchema = Schema.Struct({
   password: MfaPasswordFieldSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export type CommercePortalAuthMfaSendOtpBody = typeof CommercePortalAuthMfaSendOtpBodySchema.Type;
 export type CommercePortalAuthMfaVerifyTotpBody = typeof CommercePortalAuthMfaVerifyTotpBodySchema.Type;
@@ -95,12 +95,12 @@ export type CommercePortalAuthMfaConfirmEnableBody = typeof CommercePortalAuthMf
 
 export const CommercePortalAuthMfaStatusResultSchema = Schema.Struct({
   status: Schema.Boolean,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /** A successful verification changes provider session state; the provider token never crosses this seam. */
 export const CommercePortalAuthMfaVerificationResultSchema = Schema.Struct({
   status: Schema.Literal(true),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export type CommercePortalAuthMfaStatusResult = typeof CommercePortalAuthMfaStatusResultSchema.Type;
 export type CommercePortalAuthMfaVerificationResult = typeof CommercePortalAuthMfaVerificationResultSchema.Type;
@@ -117,16 +117,16 @@ export const CommercePortalAuthMfaEnableResultSchema = Schema.Union([
     method: Schema.Literal('totp'),
     totpURI: Schema.String,
   }),
-]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+]);
 
 export const CommercePortalAuthMfaBackupCodesResultSchema = Schema.Struct({
   backupCodes: Schema.Array(Schema.String),
   status: Schema.Boolean,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export const CommercePortalAuthMfaTotpUriResultSchema = Schema.Struct({
   totpURI: Schema.String,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export type CommercePortalAuthMfaEnableResult = typeof CommercePortalAuthMfaEnableResultSchema.Type;
 export type CommercePortalAuthMfaBackupCodesResult = typeof CommercePortalAuthMfaBackupCodesResultSchema.Type;
@@ -273,4 +273,7 @@ export type CommercePortalAuthMfaGroupContract = HttpApiGroup.HttpApiGroup<
 
 const CommercePortalAuthMfaGroup: CommercePortalAuthMfaGroupContract = commercePortalAuthMfaGroupDefinition;
 
-export const CommercePortalAuthMfaApi = HttpApi.make('CommercePortalAuthMfaApi').add(CommercePortalAuthMfaGroup);
+/** Request bodies are decoded closed: an undeclared field is a rejected request. */
+export const CommercePortalAuthMfaApi = HttpApi.make('CommercePortalAuthMfaApi')
+  .add(CommercePortalAuthMfaGroup)
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });

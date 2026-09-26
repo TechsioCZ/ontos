@@ -62,6 +62,7 @@ import {
   COMMERCE_PORTAL_AUTH_PUBLIC_BASE_PATH,
 } from '../../shared/deployment-paths.ts';
 import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 const ORIGIN = 'https://portal.example.test';
 const EMAIL = 'recovery-integration@example.test';
@@ -70,8 +71,8 @@ const REPLACEMENT_PASSWORD = 'R'.repeat(24);
 /** Below the realm's own minimum, so Better Auth refuses it before it reads its token row. */
 const SHORT_PASSWORD = 'R'.repeat(4);
 const SECRET = 's'.repeat(64);
-const DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 const EMAIL_VERIFICATION_IDENTIFIER_PREFIX = 'commerce-email-verification:';
 const bytesToHex = (bytes: Uint8Array): string =>
@@ -166,7 +167,7 @@ const makeRecoveryFixture = Effect.fn('CommercePortalAuthRecoveryIntegration.mak
     COMMERCE_PORTAL_AUTH_SECRET: SECRET,
     COMMERCE_PORTAL_AUTH_URL: ORIGIN,
   });
-  const database = yield* makeCommercePortalAuthDatabase(configuration);
+  const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
   const store = yield* makeCommercePortalAuthRecoveryStore(database.executor).pipe(
     Effect.provideService(Crypto.Crypto, recoveryCrypto),
   );

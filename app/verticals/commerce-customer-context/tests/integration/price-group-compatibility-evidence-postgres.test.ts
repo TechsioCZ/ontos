@@ -3,8 +3,8 @@ import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
@@ -35,9 +35,9 @@ const one = <Row>(rows: readonly Row[]): Row => {
 it.live('round-trips canonical compatibility evidence while preserving legacy rows', () =>
   Effect.scoped(
     Effect.gen(function* compatibilityEvidenceRoundTrip() {
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
       const cleanup = () =>
         admin.transaction((transaction) =>
           Effect.gen(function* cleanFixtureScope() {

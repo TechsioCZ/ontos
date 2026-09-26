@@ -34,16 +34,12 @@ const CommercePortalAuthStepUpRequiredWireSchema = Schema.Struct({
   challengeId: CommercePortalAuthStepUpWireChallengeIdSchema,
   expiresAt: Schema.Date,
   outcome: Schema.Literal('STEP_UP_REQUIRED'),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /**
  * An issue request has no caller-provided identity or policy fields. `Schema.Record(String, Never)`
- * (design §1.4's named alternative to `Schema.Struct({}).annotate({ parseOptions: { onExcessProperty:
- * 'error' } })`), not the zero-field struct: Effect v4's struct parser only runs its excess-property
- * check when the struct declares at least one property signature (`SchemaAST.ts`'s object fallback
- * parser gates that check on the compiled `expectedKeysSet`), so a zero-field
- * `Schema.Struct({}).annotate(...)` silently accepts any body. The empty record has no such gap: any
- * key fails against `Schema.Never`, `{}` still decodes.
+ * (design §1.4's named alternative to a zero-field struct) is closed by its own shape rather than by
+ * the decoder's `onExcessProperty` option: any key fails against `Schema.Never`, `{}` still decodes.
  */
 const CommercePortalAuthStepUpHttpIssueBodySchema = Schema.Record(Schema.String, Schema.Never);
 
@@ -51,7 +47,7 @@ const CommercePortalAuthStepUpHttpIssueBodySchema = Schema.Record(Schema.String,
 const CommercePortalAuthStepUpHttpVerifyBodySchema = Schema.Struct({
   challengeId: CommercePortalAuthStepUpWireChallengeIdSchema,
   code: Schema.String.check(Schema.isPattern(/^[0-9]{6}$/u)),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export type CommercePortalAuthStepUpHttpIssueBody = typeof CommercePortalAuthStepUpHttpIssueBodySchema.Type;
 export type CommercePortalAuthStepUpHttpVerifyBody = typeof CommercePortalAuthStepUpHttpVerifyBodySchema.Type;
@@ -59,7 +55,7 @@ export type CommercePortalAuthStepUpHttpVerifyBody = typeof CommercePortalAuthSt
 /** Verification success carries only the outcome; the replacement session travels as a cookie. */
 const CommercePortalAuthStepUpCompletedResponseSchema = Schema.Struct({
   outcome: Schema.Literal('STEP_UP_COMPLETED'),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export const CommercePortalAuthStepUpInvalidProblemSchema = makeProblemDetailsSchema(
   'CommercePortalAuthStepUpInvalidProblem',
@@ -138,5 +134,7 @@ export type CommercePortalAuthStepUpGroupContract = HttpApiGroup.HttpApiGroup<
 
 const CommercePortalAuthStepUpGroup: CommercePortalAuthStepUpGroupContract = commercePortalAuthStepUpGroupDefinition;
 
-export const CommercePortalAuthStepUpApi =
-  HttpApi.make('CommercePortalAuthStepUpApi').add(CommercePortalAuthStepUpGroup);
+/** Request bodies are decoded closed: an undeclared field is a rejected request. */
+export const CommercePortalAuthStepUpApi = HttpApi.make('CommercePortalAuthStepUpApi')
+  .add(CommercePortalAuthStepUpGroup)
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });

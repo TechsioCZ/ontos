@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 
-import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { DateTime, Deferred, Effect, Layer, Schema, Stream } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
@@ -34,6 +33,7 @@ import type { TenantModuleState } from '../modules/tenant-module-state-service.t
 import { makeOperationalScopeResolver } from '../operations/context.ts';
 import { OperationContextUnavailable } from '../operations/errors.ts';
 import type { ContextAccessDecision, ContextAccessService } from '../permissions/context-access.ts';
+import { scriptedPgClientLayer } from './scripted-pg-client.ts';
 
 const actionTestServiceBinding: unique symbol = Symbol('test-action-service-binding');
 const querySchema = Schema.Union([Schema.String, Schema.Struct({ text: Schema.String })]);
@@ -303,16 +303,10 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
   });
   const database = yield* Effect.scoped(
     Effect.gen(function* makeTestDatabase() {
-      const reactivity = yield* Reactivity.make;
-      const client = yield* PgClient.makeWith({
-        acquirer: acquireConnection,
-        config: {},
-        listenAcquirer: Effect.die('Notifications are unavailable in the Action test harness'),
-        transactionAcquirer: acquireConnection,
-      }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity), Effect.orDie);
       return {
         executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(
-          Effect.provideService(PgClient.PgClient, client),
+          Effect.provide(scriptedPgClientLayer(acquireConnection)),
+          Effect.provide(Reactivity.layer),
         ),
       };
     }),

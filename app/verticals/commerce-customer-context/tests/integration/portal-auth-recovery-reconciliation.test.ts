@@ -21,11 +21,12 @@ import {
   makeCommercePortalAuthRecoveryReconciliation,
 } from '../../api/portal-auth/provider/recovery/index.ts';
 import type { CommercePortalAuthRecoveryStore } from '../../api/portal-auth/provider/recovery/index.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 const ORIGIN = 'https://portal.example.test';
 const SECRET = 's'.repeat(64);
-const DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 const bytesToHex = (bytes: Uint8Array): string =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
@@ -57,7 +58,7 @@ const makeResetLedgerHarness = Effect.fn('CommercePortalAuthRecoveryIntegration.
       COMMERCE_PORTAL_AUTH_SECRET: SECRET,
       COMMERCE_PORTAL_AUTH_URL: ORIGIN,
     });
-    const database = yield* makeCommercePortalAuthDatabase(configuration);
+    const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
     const store = yield* makeCommercePortalAuthRecoveryStore(database.executor).pipe(
       Effect.provideService(Crypto.Crypto, recoveryCrypto),
     );
@@ -91,7 +92,7 @@ const makeReconciliationFixture = Effect.fn('CommercePortalAuthRecoveryReconcili
       COMMERCE_PORTAL_AUTH_SECRET: SECRET,
       COMMERCE_PORTAL_AUTH_URL: ORIGIN,
     });
-    const database = yield* makeCommercePortalAuthDatabase(configuration);
+    const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
     const now = yield* DateTime.nowAsDate;
     const originalUserId = `recon-${caseName}-original-${randomUUID()}`;
     const rebindingUserId = `recon-${caseName}-rebinding-${randomUUID()}`;

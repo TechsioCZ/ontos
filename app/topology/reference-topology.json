@@ -5,7 +5,9 @@
   "preset": "presetUltramodern",
   "shell": {
     "id": "shell-super-app",
+    "path": "apps/shell-super-app",
     "kind": "shell",
+    "portEnv": "SHELL_SUPER_APP_PORT",
     "package": "@app/shell-super-app",
     "verticalRefs": ["party-registry", "commerce-market-catalog", "catalog", "inventory"],
     "authentication": {
@@ -54,6 +56,7 @@
       "compatibilityDate": "2026-06-02",
       "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
       "assetsBinding": "ASSETS",
+      "distributedSsrProofRoutes": [],
       "routes": {
         "ssr": "/en",
         "mfManifest": "/mf-manifest.json",
@@ -123,7 +126,6 @@
         }
       },
       "evidence": {
-        "proofScript": "scripts/proof-cloudflare-version.mts",
         "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
       }
     },
@@ -252,8 +254,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/party-registry",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -323,7 +325,11 @@
         "compatibilityDate": "2026-06-02",
         "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
         "assetsBinding": "ASSETS",
+        "distributedSsrProofRoutes": [
+          "/en/contacts"
+        ],
         "routes": {
+          "ssr": "/en/contacts",
           "mfManifest": "/mf-manifest.json",
           "apiReadiness": "/party-registry-api/party-registry/readiness"
         },
@@ -391,7 +397,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -512,8 +517,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/commerce-customer-context",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -607,9 +612,6 @@
         "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
         "assetsBinding": "ASSETS",
         "routes": {
-          "ssr": "/en",
-          "mfManifest": "/mf-manifest.json",
-          "locale": "/locales/en/commerce-customer-context.json",
           "apiReadiness": "/commerce-customer-context-api/commerce-customer-context/readiness"
         },
         "security": {
@@ -676,7 +678,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -797,8 +798,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/payment-term-catalog",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -892,9 +893,6 @@
         "compatibilityFlags": ["nodejs_compat", "global_fetch_strictly_public"],
         "assetsBinding": "ASSETS",
         "routes": {
-          "ssr": "/en",
-          "mfManifest": "/mf-manifest.json",
-          "locale": "/locales/en/payment-term-catalog.json",
           "apiReadiness": "/payment-term-catalog-api/payment-term-catalog/readiness"
         },
         "security": {
@@ -961,7 +959,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -1089,8 +1086,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/commerce-market-catalog",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -1230,7 +1227,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -1358,8 +1354,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/catalog",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -1515,7 +1511,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -1636,8 +1631,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/pricing",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -1797,7 +1792,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -1918,8 +1912,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/storefront-registry",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -2079,7 +2073,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -2200,8 +2193,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/price-group-catalog",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -2361,7 +2354,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -2489,8 +2481,8 @@
         "compatibility": {
           "contractVersion": "microvertical-server-effect-v1",
           "packageName": "@app/inventory",
-          "effectVersion": "4.0.0-rc.112",
-          "moduleFederationVersion": "2.9.0"
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.1"
         },
         "cache": {
           "cloudflareSnapshot": "immutable",
@@ -2653,7 +2645,6 @@
           }
         },
         "evidence": {
-          "proofScript": "scripts/proof-cloudflare-version.mts",
           "reportDefault": ".codex/reports/cloudflare-version-proof/public-url-proof.json"
         },
         "jsonSmokeChecks": [
@@ -2721,7 +2712,11 @@
     }
   ],
   "validation": {
-    "script": "scripts/validate-ultramodern-workspace.mts",
-    "commands": ["pnpm i18n:boundaries", "pnpm api:check", "pnpm module-entrypoints:check", "pnpm contract:check"]
+    "commands": [
+      "pnpm i18n:boundaries",
+      "pnpm api:check",
+      "pnpm module-entrypoints:check",
+      "pnpm contract:check"
+    ]
   }
 }

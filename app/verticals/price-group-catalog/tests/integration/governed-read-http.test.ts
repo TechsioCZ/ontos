@@ -263,8 +263,8 @@ const GatewayPrivateJwkSchema = Schema.Struct({
 
 const makeProductionAssertion = (audience = 'price-group-catalog') =>
   Effect.gen(function* signConfiguredPriceGroupReadAssertion() {
-    const configuredIssuer = yield* Config.string('ONTOS_GATEWAY_ISSUER');
-    const encodedPrivateJwk = yield* Config.redacted('ONTOS_GATEWAY_PRIVATE_JWK');
+    const configuredIssuer = yield* Config.String('ONTOS_GATEWAY_ISSUER');
+    const encodedPrivateJwk = yield* Config.Redacted('ONTOS_GATEWAY_PRIVATE_JWK');
     const privateJwk = yield* Schema.decodeEffect(Schema.fromJsonString(GatewayPrivateJwkSchema))(
       Redacted.value(encodedPrivateJwk),
     );

@@ -36,19 +36,9 @@ const RouteMetadataModuleSchema = Schema.Struct({
   routeMeta: Schema.optionalKey(RouteMetadataSchema),
 });
 
-const UltramodernConfigSchema = Schema.Struct({
-  topology: Schema.optionalKey(
-    Schema.Struct({
-      apps: Schema.optionalKey(
-        Schema.Array(
-          Schema.Struct({
-            id: Schema.String,
-            path: Schema.String,
-          }),
-        ),
-      ),
-    }),
-  ),
+const TopologySchema = Schema.Struct({
+  shell: Schema.Struct({ id: Schema.String, path: Schema.String }),
+  verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),
 });
 
 const PackageConfigSchema = Schema.Struct({
@@ -69,7 +59,7 @@ class RouteGenerationError extends Schema.TaggedError<RouteGenerationError>()('R
 
 const failure = (reason: string): RouteGenerationError => new RouteGenerationError({ reason });
 
-const decodeUltramodernConfig = Schema.decodeUnknownEffect(Schema.fromJsonString(UltramodernConfigSchema));
+const decodeTopology = Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema));
 const decodePackageConfig = Schema.decodeUnknownEffect(Schema.fromJsonString(PackageConfigSchema));
 const encodeJsonString = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(RouteMetadataValueSchema, { space: 2 }));
@@ -239,16 +229,16 @@ const program = Effect.gen(function* generateTanstackRoutesEffect() {
     moduleUrl: import.meta.url,
   });
   const { forwardedArgs, workspaceRoot } = invocation;
-  const ultramodernConfigPath = path.join(workspaceRoot, '.modernjs/ultramodern.json');
-  const ultramodernConfigText = yield* fileSystem
-    .readFileString(ultramodernConfigPath)
-    .pipe(Effect.mapError(() => failure(`Unable to read ${ultramodernConfigPath}`)));
-  const ultramodernConfig = yield* decodeUltramodernConfig(ultramodernConfigText).pipe(
-    Effect.mapError(() => failure(`${ultramodernConfigPath} is invalid`)),
+  const topologyPath = path.join(workspaceRoot, 'topology/reference-topology.json');
+  const topologyText = yield* fileSystem
+    .readFileString(topologyPath)
+    .pipe(Effect.mapError(() => failure(`Unable to read ${topologyPath}`)));
+  const topology = yield* decodeTopology(topologyText).pipe(
+    Effect.mapError(() => failure(`${topologyPath} is invalid`)),
   );
   const appFlagIndex = forwardedArgs.indexOf('--app');
   const selectedAppId = appFlagIndex === -1 ? undefined : forwardedArgs[appFlagIndex + 1];
-  const selectedApps = (ultramodernConfig.topology?.apps ?? []).filter(
+  const selectedApps = [topology.shell, ...topology.verticals].filter(
     (app) => selectedAppId === undefined || selectedAppId === app.id,
   );
 

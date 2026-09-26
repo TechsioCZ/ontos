@@ -913,164 +913,6 @@ const scopedVariables = (facts: SourceFacts, offset: number): ReadonlyMap<string
   return variables;
 };
 
-const requiredSourceEvidence = (facts: SourceFacts): KnipModelEvidence[] => {
-  const evidence: KnipModelEvidence[] = [];
-  const requiredPaths = unwrap(facts.variables.get('requiredPaths'), facts.variables);
-  if (requiredPaths?.type === 'ArrayExpression') {
-    for (const element of requiredPaths.elements) {
-      const target = staticString(element ?? undefined, facts.variables);
-      if (target !== undefined && sourceExtension.test(target)) {
-        evidence.push(
-          evidenceAt(
-            facts,
-            '.',
-            'file',
-            target,
-            element?.start ?? 0,
-            'Workspace validator requiredPaths checks this source file; named exports remain audited',
-          ),
-        );
-      }
-    }
-  }
-  return evidence;
-};
-
-const isAppBuildTemplate = (argument: Node | undefined): boolean =>
-  argument?.type === 'TemplateLiteral' &&
-  argument.expressions.length === 1 &&
-  argument.expressions[0]?.type === 'Identifier' &&
-  argument.expressions[0].name === 'appPath' &&
-  argument.quasis[1]?.value.cooked === '/shared/ultramodern-build.ts';
-
-const configuredBuildDirectories = (facts: SourceFacts, field: string): string[] => {
-  const contract = objectExpression(facts.variables.get('workspaceValidationContractDefinition'), facts.variables);
-  const topology = objectExpression(objectValue(contract, 'topology'), facts.variables);
-  const compact = objectExpression(objectValue(topology, 'compactConfig'), facts.variables);
-  const collection = field === 'apps' ? objectValue(compact, 'apps') : objectValue(contract, field);
-  const array = unwrap(collection, facts.variables);
-  if (array?.type !== 'ArrayExpression') {
-    return [];
-  }
-  return array.elements.flatMap((element) => {
-    const target = staticString(
-      objectValue(objectExpression(element ?? undefined, facts.variables), 'path'),
-      facts.variables,
-    );
-    return target === undefined ? [] : [target];
-  });
-};
-
-const buildSourceScope = (source: Node | undefined, variables: ReadonlyMap<string, Node>): Node | undefined => {
-  const reader = unwrap(source, variables);
-  if (reader?.type !== 'CallExpression' || reader.callee.type !== 'Identifier' || reader.callee.name !== 'readText') {
-    return undefined;
-  }
-  const [argument] = reader.arguments;
-  if (argument?.type !== 'TemplateLiteral' || argument.quasis[1]?.value.cooked !== '/shared/ultramodern-build.ts') {
-    return undefined;
-  }
-  return argument.expressions[0];
-};
-
-const buildSourceDirectories = (
-  source: Node | undefined,
-  variables: ReadonlyMap<string, Node>,
-  facts: SourceFacts,
-): string[] => {
-  const expression = buildSourceScope(source, variables);
-  if (expression?.type === 'Identifier' && expression.name === 'appPath') {
-    return configuredBuildDirectories(facts, 'apps');
-  }
-  if (
-    expression?.type !== 'MemberExpression' ||
-    expression.computed ||
-    propertyName(expression.property) !== 'path' ||
-    expression.object.type !== 'Identifier'
-  ) {
-    return [];
-  }
-  const collections = new Map([
-    ['vertical', 'fullStackVerticals'],
-    ['shell', 'additionalShells'],
-  ]);
-  const collection = collections.get(expression.object.name);
-  return collection === undefined ? [] : configuredBuildDirectories(facts, collection);
-};
-
-const validatedBuildExport = (
-  node: Extract<Node, { type: 'CallExpression' }>,
-  variables: ReadonlyMap<string, Node>,
-): { name: string; source: Node } | undefined => {
-  if (node.callee.type === 'Identifier' && node.callee.name === 'assertBuildFacadeExport') {
-    const name = staticString(node.arguments[1], variables);
-    const [source] = node.arguments;
-    return name === undefined || source === undefined ? undefined : { name, source };
-  }
-  if (node.callee.type !== 'MemberExpression' || propertyName(node.callee.property) !== 'includes') {
-    return undefined;
-  }
-  const expected = staticString(node.arguments[0], variables);
-  const { name } = expected?.match(/^export const (?<name>[A-Za-z_$][A-Za-z0-9_$]*)\b/u)?.groups ?? {};
-  return name === undefined ? undefined : { name, source: node.callee.object };
-};
-
-const namedBuildEvidence = (facts: SourceFacts): KnipModelEvidence[] => {
-  const evidence: KnipModelEvidence[] = [];
-  const recordBuildExport = (node: Extract<Node, { type: 'CallExpression' }>) => {
-    const variables = scopedVariables(facts, node.start);
-    const contract = validatedBuildExport(node, variables);
-    if (contract === undefined) {
-      return;
-    }
-    for (const directory of buildSourceDirectories(contract.source, variables, facts)) {
-      evidence.push(
-        evidenceAt(
-          facts,
-          '.',
-          'export',
-          `${directory}/shared/ultramodern-build.ts#${contract.name}`,
-          node.start,
-          'Workspace validator verifies this exact named build facade export',
-        ),
-      );
-    }
-  };
-  new Visitor({ CallExpression: recordBuildExport }).visit(facts.program);
-  return evidence;
-};
-
-const validatorEvidence = (facts: SourceFacts): KnipModelEvidence[] => {
-  if (facts.file !== 'scripts/validate-ultramodern-workspace.mts') {
-    return [];
-  }
-  const evidence = [...requiredSourceEvidence(facts), ...namedBuildEvidence(facts)];
-  const appPaths = configuredBuildDirectories(facts, 'apps');
-  const recordValidatorCall = (node: Extract<Node, { type: 'CallExpression' }>) => {
-    if (node.callee.type !== 'Identifier') {
-      return;
-    }
-    const [argument] = node.arguments;
-    if (node.callee.name !== 'readText' || !isAppBuildTemplate(argument)) {
-      return;
-    }
-    for (const appPath of appPaths) {
-      evidence.push(
-        evidenceAt(
-          facts,
-          '.',
-          'file',
-          `${appPath}/shared/ultramodern-build.ts`,
-          node.start,
-          'Workspace validator reads build source for each declared topology.compactConfig.apps path',
-        ),
-      );
-    }
-  };
-  new Visitor({ CallExpression: recordValidatorCall }).visit(facts.program);
-  return evidence;
-};
-
 const isChildProcessMake = (node: Node): boolean =>
   node.type === 'MemberExpression' &&
   !node.computed &&
@@ -1101,7 +943,6 @@ const sourceEvidence = (
     ...federationEvidence(facts, workspace),
     ...generatedActionContractEvidence(facts, workspace),
     ...generatedActionGatewayEvidence(facts, workspace),
-    ...validatorEvidence(facts),
   ];
   const manualCommand = `Usage: node ${facts.file} `;
   if (
@@ -1147,27 +988,6 @@ const sourceEvidence = (
             result.push(evidenceAt(facts, workspace, 'file', target, node.start, 'Node subprocess source argument'));
           }
         }
-      }
-    }
-  };
-  const recordConfiguredFile = (node: Extract<Node, { type: 'CallExpression' }>) => {
-    if (
-      facts.file === 'scripts/validate-ultramodern-workspace.mts' &&
-      node.callee.type === 'Identifier' &&
-      node.callee.name === 'readText'
-    ) {
-      const target = staticString(node.arguments[0], scopedVariables(facts, node.start));
-      if (target !== undefined) {
-        result.push(
-          evidenceAt(
-            facts,
-            workspace,
-            'file',
-            target,
-            node.start,
-            'Workspace validator reads source text; exports are not marked used',
-          ),
-        );
       }
     }
   };
@@ -1224,7 +1044,6 @@ const sourceEvidence = (
   };
   const recordCall = (node: Extract<Node, { type: 'CallExpression' }>) => {
     recordSubprocess(node);
-    recordConfiguredFile(node);
     recordLintConfig(node);
   };
   new Visitor({

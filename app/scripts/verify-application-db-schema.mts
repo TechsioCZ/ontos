@@ -1,8 +1,10 @@
+/// <reference types="node" />
+
 import { fileURLToPath } from 'node:url';
 
-import { Array as EffectArray, Console, Effect, Exit, Option, Order, Schema } from 'effect';
-import { Client } from 'pg';
-import type { QueryResult, QueryResultRow } from 'pg';
+import { PgClient } from '@effect/sql-pg';
+import { Array as EffectArray, Console, Effect, Exit, Option, Order, Redacted, Schema } from 'effect';
+import { Reactivity } from 'effect/unstable/reactivity';
 
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import { loadOptionalCommercePortalAuthDatabaseConfig } from '../verticals/commerce-customer-context/scripts/portal-auth-database-config.mts';
@@ -50,15 +52,12 @@ class ApplicationDatabaseVerificationError extends Schema.TaggedError<Applicatio
 const verificationFailure = (reason: string, cause?: unknown): ApplicationDatabaseVerificationError =>
   new ApplicationDatabaseVerificationError(cause === undefined ? { reason } : { cause, reason });
 
-const query = <Row extends QueryResultRow>(
-  client: Client,
+const query = <Row extends object>(
+  client: PgClient.PgClient,
   text: string,
   reason: string,
-): Effect.Effect<QueryResult<Row>, ApplicationDatabaseVerificationError> =>
-  Effect.tryPromise({
-    catch: (cause) => verificationFailure(reason, cause),
-    try: async () => await client.query<Row>(text),
-  });
+): Effect.Effect<readonly Row[], ApplicationDatabaseVerificationError> =>
+  client.unsafe<Row>(text).pipe(Effect.mapError((cause) => verificationFailure(reason, cause)));
 
 const orderedValuesMatch = (actual: readonly string[], expected: readonly string[]): boolean =>
   actual.length === expected.length && actual.every((value, index) => value === expected[index]);
@@ -92,7 +91,7 @@ const applicationCatalogExpectation = (
   };
 };
 
-const verifyApplicationCatalog = (client: Client, expected: ApplicationCatalogExpectation) =>
+const verifyApplicationCatalog = (client: PgClient.PgClient, expected: ApplicationCatalogExpectation) =>
   Effect.gen(function* verifyApplicationCatalogEffect() {
     // PostgreSQL catalogs have no Drizzle table model. This verification-only query
     // exact-matches every application schema and independent migration journal.
@@ -121,8 +120,8 @@ const verifyApplicationCatalog = (client: Client, expected: ApplicationCatalogEx
       `,
       'Unable to verify the application migration journals',
     );
-    const actualSchemas = schemas.rows.map((row) => row.schema_name);
-    const actualJournals = journals.rows.map((row) => row.table_name);
+    const actualSchemas = schemas.map((row) => row.schema_name);
+    const actualJournals = journals.map((row) => row.table_name);
 
     if (!orderedValuesMatch(actualSchemas, expected.schemas)) {
       yield* verificationFailure(
@@ -191,27 +190,12 @@ const main = Effect.gen(function* verifyApplicationDatabase() {
     Effect.mapError((failure) => verificationFailure(failure.reason)),
   );
   const expected = applicationCatalogExpectation(configuration.admin, commerceConfiguration);
-  yield* Effect.acquireUseRelease(
-    Effect.gen(function* acquireAdministrativeClient() {
-      const client = yield* Effect.try({
-        catch: (cause) => verificationFailure('Unable to create the administrative PostgreSQL client', cause),
-        try: () =>
-          new Client({
-            connectionString: configuration.admin.connectionString,
-          }),
-      });
-      yield* Effect.tryPromise({
-        catch: (cause) => verificationFailure('Unable to connect to the administrative PostgreSQL database', cause),
-        try: async () => await client.connect(),
-      });
-      return client;
-    }),
-    (client) => verifyApplicationCatalog(client, expected),
-    (client) =>
-      Effect.tryPromise({
-        catch: (cause) => verificationFailure('Unable to close the administrative PostgreSQL connection', cause),
-        try: async () => await client.end(),
-      }),
+  yield* PgClient.makeClient({ url: Redacted.make(configuration.admin.connectionString) }).pipe(
+    Effect.mapError((cause) =>
+      verificationFailure('Unable to connect to the administrative PostgreSQL database', cause),
+    ),
+    Effect.flatMap((client) => verifyApplicationCatalog(client, expected)),
+    Effect.scoped,
   );
 
   yield* Console.log('Verified exact application schemas and migration journals');
@@ -226,7 +210,13 @@ const main = Effect.gen(function* verifyApplicationDatabase() {
   if (Option.isSome(commerceConfiguration)) {
     yield* verifyCommercePortalAuthOwnerSchema;
   }
-}).pipe(Effect.tapError((failure) => Console.error(failure.reason)));
+}).pipe(
+  Effect.provide(Reactivity.layer),
+  Effect.tapError((failure) => Console.error(failure.reason)),
+);
 
 const exit = await Effect.runPromiseExit(main);
-process.exitCode = Exit.isFailure(exit) ? 1 : 0;
+// Imported owner verifiers report their own failure through `process.exitCode`; never reset it to success.
+if (Exit.isFailure(exit)) {
+  process.exitCode = 1;
+}

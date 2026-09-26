@@ -13,11 +13,12 @@ import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/a
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { makeCommercePortalAuthStepUpChallengeStore } from '../../api/portal-auth/provider/step-up/index.ts';
 import type { CommercePortalAuthStepUpChallengeStore } from '../../api/portal-auth/provider/step-up/index.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 const ORIGIN = 'https://portal.example.test';
 const SECRET = 's'.repeat(64);
-const DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 type ProviderDatabase = (typeof CommercePortalAuthDatabase)['Service'];
@@ -84,7 +85,7 @@ const makeFixture = Effect.fn('CommercePortalAuthStepUpIntegration.makeFixture')
     COMMERCE_PORTAL_AUTH_SECRET: SECRET,
     COMMERCE_PORTAL_AUTH_URL: ORIGIN,
   });
-  const database = yield* makeCommercePortalAuthDatabase(configuration);
+  const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
   const now = yield* DateTime.nowAsDate;
   const fixture: StepUpStoreFixture = {
     challengeHash: `step-up-${caseName}-${randomUUID()}`,

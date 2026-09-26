@@ -280,7 +280,7 @@ export const rule = defineRule({
       throwInConfigurationParser:
         'Audit A3: configuration parsers must not throw. This `throw` sits in a function that reads the ' +
         'environment (or takes an environment record), so missing or malformed values are signalled synchronously rather than through Config. Model the value with ' +
-        '`Config.string`/`Config.integer`/`Config.redacted`/`Config.schema(...)` so absence and malformation ' +
+        '`Config.String`/`Config.Int`/`Config.Redacted`/`Config.schema(...)` so absence and malformation ' +
         'are typed `ConfigError`s decoded by the root `ConfigProvider`, or return ' +
         '`Effect.fail(new XConfigError({ reason: ... }))` from an `Effect`-returning parser.',
       throwInConfigurationHelper:

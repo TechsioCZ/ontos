@@ -1,8 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { Context, Effect } from 'effect';
-import { Pool } from 'pg';
 
-import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
   actionInvocations,
@@ -18,8 +16,9 @@ import {
   tenantModuleStates,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
-import { layerTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { layerTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { acquireFixturePgClient } from './fixture-pg-client.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 import type { CounterpartyInvitationRealm } from './counterparty-invitation-acceptance.ts';
 
@@ -31,7 +30,7 @@ import type { CounterpartyInvitationRealm } from './counterparty-invitation-acce
 
 const COMMERCE_MODULE_KEY = 'commerce.customer-context';
 
-class CoreRealmDatabase extends Context.Service<CoreRealmDatabase, TestDatabaseFromPool<typeof coreRelations>>()(
+class CoreRealmDatabase extends Context.Service<CoreRealmDatabase, TestDatabaseFromClient<typeof coreRelations>>()(
   '@app/commerce-customer-context/tests/support/CoreRealmDatabase',
 ) {}
 
@@ -40,11 +39,9 @@ export const seedCounterpartyInvitationCoreRealm = Effect.fnUntraced(function* s
   realm: CounterpartyInvitationRealm,
 ) {
   const connections = yield* loadDatabaseConnectionPair();
-  const adminPool = yield* acquirePoolResource(
-    () => new Pool({ connectionString: connections.admin.connectionString, max: 2 }),
-  );
+  const adminClient = yield* acquireFixturePgClient(connections.admin.connectionString, 2);
   const admin = yield* CoreRealmDatabase.pipe(
-    Effect.provide(layerTestDatabaseFromPool(CoreRealmDatabase, adminPool, coreRelations)),
+    Effect.provide(layerTestDatabaseFromClient(CoreRealmDatabase, adminClient, coreRelations)),
   );
   const cleanup = Effect.gen(function* removeCoreRows() {
     for (const table of [

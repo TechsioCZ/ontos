@@ -42,17 +42,13 @@ const CommerceQuantityPurchasingContextSchema = Schema.Struct({
   sellingLegalEntityId: CustomerCommercePolicySellingLegalEntityIdSchema,
   storefrontId: CustomerCommercePolicyStorefrontIdSchema,
   tenantId: CustomerCommercePolicyTenantIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 type CommerceQuantityPurchasingContext = typeof CommerceQuantityPurchasingContextSchema.Type;
 
 const CommerceQuantityResolutionSubjectSchema = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal('GUEST') }).annotate({ parseOptions: { onExcessProperty: 'error' } }),
-  Schema.Struct({ kind: Schema.Literal('RETAIL'), profileRef: RetailCustomerProfileRefSchema }).annotate({
-    parseOptions: { onExcessProperty: 'error' },
-  }),
-  Schema.Struct({ kind: Schema.Literal('COUNTERPARTY'), profileRef: CounterpartyPurchasingProfileRefSchema }).annotate({
-    parseOptions: { onExcessProperty: 'error' },
-  }),
+  Schema.Struct({ kind: Schema.Literal('GUEST') }),
+  Schema.Struct({ kind: Schema.Literal('RETAIL'), profileRef: RetailCustomerProfileRefSchema }),
+  Schema.Struct({ kind: Schema.Literal('COUNTERPARTY'), profileRef: CounterpartyPurchasingProfileRefSchema }),
 ]);
 export type CommerceQuantityResolutionSubject = typeof CommerceQuantityResolutionSubjectSchema.Type;
 
@@ -77,7 +73,7 @@ type CommerceQuantityResolutionRequest = typeof CommerceQuantityResolutionReques
 const CommerceQuantityConstraintEvidenceSchema = Schema.Struct({
   envelope: QuantityEnvelopeSchema,
   ruleRevisionId: stableReference,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 const CommerceQuantityLineEvidenceSchema = Schema.Struct({
   basis: CommerceQuantityBasisSchema,
@@ -91,7 +87,7 @@ const CommerceQuantityLineEvidenceSchema = Schema.Struct({
   requestedQuantity: ExactPositiveCommerceQuantitySchema,
   winningEnvelope: QuantityEnvelopeSchema,
   winningRuleRevisionId: stableReference,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export const CommerceQuantityPermittedSchema = Schema.TaggedStruct('COMMERCE_QUANTITY_PERMITTED', {
   assignmentCompleteness: Schema.toEncoded(OwnerVerifiableSetCompletenessEvidenceSchema),

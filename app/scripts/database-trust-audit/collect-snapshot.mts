@@ -1,14 +1,13 @@
+import type { PgClient } from '@effect/sql-pg';
 import { Effect, Schema } from 'effect';
-import type { Client, ClientBase, QueryResult, QueryResultRow } from 'pg';
 
 import {
   assertDatabaseSessionIdentities,
   assertSameDatabaseTarget,
   DatabaseSessionIdentityError,
   DatabaseTargetMismatchError,
-  getEffectiveDatabaseEndpoint,
 } from './report.mts';
-import type { DatabaseTrustBoundarySnapshot } from './report.mts';
+import type { DatabaseTargetIdentity, DatabaseTrustBoundarySnapshot } from './report.mts';
 
 interface RoleRow {
   readonly bypass_rls: boolean;
@@ -163,24 +162,25 @@ class DatabaseTrustBoundarySnapshotError extends Schema.TaggedError<DatabaseTrus
 type DatabaseSessionIdentityFailure = InstanceType<typeof DatabaseSessionIdentityError>;
 type DatabaseTargetMismatchFailure = InstanceType<typeof DatabaseTargetMismatchError>;
 
-const query = <Row extends QueryResultRow>(
-  client: ClientBase,
+const query = <Row extends object>(
+  client: PgClient.PgClient,
   statement: string,
-  values: unknown[] = [],
-): Effect.Effect<QueryResult<Row>, DatabaseTrustBoundarySnapshotError> =>
-  Effect.tryPromise({
-    catch: () =>
-      new DatabaseTrustBoundarySnapshotError({
-        code: 'database_query_failed',
-        reason: 'database trust-boundary query failed',
-      }),
-    try: async () => await client.query<Row>(statement, values),
-  });
+  values: readonly unknown[] = [],
+): Effect.Effect<readonly Row[], DatabaseTrustBoundarySnapshotError> =>
+  client.unsafe<Row>(statement, values).pipe(
+    Effect.mapError(
+      () =>
+        new DatabaseTrustBoundarySnapshotError({
+          code: 'database_query_failed',
+          reason: 'database trust-boundary query failed',
+        }),
+    ),
+  );
 
 export const hasTrustedContextValue = (value: string | null): boolean => value !== null && value.length > 0;
 
 const probeSettingEffect = Effect.fn('probeSetting')(function* probeSetting(
-  client: ClientBase,
+  client: PgClient.PgClient,
   setting: 'ontos.legal_entity_id' | 'ontos.tenant_id',
   value: string,
 ) {
@@ -188,12 +188,12 @@ const probeSettingEffect = Effect.fn('probeSetting')(function* probeSetting(
   const settable = yield* Effect.gen(function* probeTrustedContextSetting() {
     yield* query(client, 'select set_config($1, $2, true)', [setting, value]);
     const current = yield* query<SettingRow>(client, 'select current_setting($1, true) as value', [setting]);
-    const [currentRow] = current.rows;
+    const [currentRow] = current;
     return currentRow?.value === value;
   }).pipe(Effect.catch(() => Effect.succeed(false)));
   yield* query(client, 'rollback');
   const after = yield* query<SettingRow>(client, 'select current_setting($1, true) as value', [setting]);
-  const [afterRow] = after.rows;
+  const [afterRow] = after;
   return {
     retainedAfterRollback: hasTrustedContextValue(afterRow?.value ?? null),
     settable,
@@ -201,8 +201,12 @@ const probeSettingEffect = Effect.fn('probeSetting')(function* probeSetting(
 });
 
 export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSnapshotEffect(
-  admin: Client,
-  runtime: Client,
+  admin: PgClient.PgClient,
+  runtime: PgClient.PgClient,
+  endpoints: {
+    readonly admin: Pick<DatabaseTargetIdentity, 'configuredHost' | 'configuredPort'>;
+    readonly runtime: Pick<DatabaseTargetIdentity, 'configuredHost' | 'configuredPort'>;
+  },
 ): Effect.fn.Return<
   DatabaseTrustBoundarySnapshot,
   DatabaseSessionIdentityFailure | DatabaseTargetMismatchFailure | DatabaseTrustBoundarySnapshotError
@@ -217,16 +221,16 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
     [query<DatabaseTargetRow>(admin, targetQuery), query<DatabaseTargetRow>(runtime, targetQuery)],
     { concurrency: 'unbounded' },
   );
-  const [administrativeTargetRow] = administrativeTarget.rows;
-  const [runtimeTargetRow] = runtimeTarget.rows;
+  const [administrativeTargetRow] = administrativeTarget;
+  const [runtimeTargetRow] = runtimeTarget;
   if (administrativeTargetRow === undefined || runtimeTargetRow === undefined) {
     return yield* new DatabaseTrustBoundarySnapshotError({
       code: 'database_target_identity_unavailable',
       reason: 'database target identity is unavailable',
     });
   }
-  const administrativeEndpoint = getEffectiveDatabaseEndpoint(admin);
-  const runtimeEndpoint = getEffectiveDatabaseEndpoint(runtime);
+  const administrativeEndpoint = endpoints.admin;
+  const runtimeEndpoint = endpoints.runtime;
   yield* Effect.try({
     catch: (cause) =>
       Schema.is(DatabaseTargetMismatchError)(cause)
@@ -289,7 +293,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
      where rolname = $1`,
     [runtimeRole],
   );
-  const [roleRow] = role.rows;
+  const [roleRow] = role;
   if (roleRow === undefined) {
     return yield* new DatabaseTrustBoundarySnapshotError({
       code: 'runtime_role_absent',
@@ -465,7 +469,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
        has_database_privilege($1, current_database(), 'TEMPORARY') as temporary`,
     [runtimeRole],
   );
-  const [databaseRow] = database.rows;
+  const [databaseRow] = database;
   if (databaseRow === undefined) {
     return yield* new DatabaseTrustBoundarySnapshotError({
       code: 'database_privilege_unavailable',
@@ -487,7 +491,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
      order by namespace.nspname`,
     [runtimeRole],
   );
-  const schemaNames = schemas.rows.map(({ schema }) => schema);
+  const schemaNames = schemas.map(({ schema }) => schema);
   const routines = yield* query<RoutinePrivilegeRow>(
     admin,
     `select
@@ -1079,7 +1083,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
       create: databaseRow.create,
       temporary: databaseRow.temporary,
     },
-    defaultPrivileges: defaultPrivileges.rows.map((privilege) => ({
+    defaultPrivileges: defaultPrivileges.map((privilege) => ({
       grantable: privilege.grantable,
       grantee: privilege.grantee,
       objectType: privilege.object_type,
@@ -1088,8 +1092,8 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
       schema: privilege.schema,
       source: privilege.source,
     })),
-    grantOptions: grantOptions.rows.map(({ grant_option }) => grant_option),
-    memberships: memberships.rows.map((membership) => ({
+    grantOptions: grantOptions.map(({ grant_option }) => grant_option),
+    memberships: memberships.map((membership) => ({
       attributes: {
         bypassRls: membership.bypass_rls,
         canCreateDatabases: membership.can_create_databases,
@@ -1114,7 +1118,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
       role: membership.role,
       securityDefinerRoutines: membership.security_definer_routines,
     })),
-    parameterPrivileges: parameterPrivileges.rows.map((privilege) => ({
+    parameterPrivileges: parameterPrivileges.map((privilege) => ({
       alterSystem: privilege.alter_system,
       parameter: privilege.parameter,
       set: privilege.set,
@@ -1129,7 +1133,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
       replication: roleRow.replication,
       superuser: roleRow.superuser,
     },
-    routines: routines.rows.map((routine) => ({
+    routines: routines.map((routine) => ({
       executable: routine.executable,
       identityArguments: routine.identity_arguments,
       kind: routine.kind,
@@ -1139,8 +1143,8 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
       securityDefiner: routine.security_definer,
     })),
     runtimeRole,
-    schemas: schemas.rows,
-    sequences: sequences.rows.map((sequence) => ({
+    schemas,
+    sequences: sequences.map((sequence) => ({
       owner: sequence.owner,
       privileges: {
         select: sequence.select,
@@ -1150,7 +1154,7 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
       schema: sequence.schema,
       sequence: sequence.sequence,
     })),
-    tables: tables.rows.map((table) => ({
+    tables: tables.map((table) => ({
       deletable: table.deletable,
       insertable: table.insertable,
       kind: table.kind,
@@ -1183,6 +1187,6 @@ export const collectSnapshot = Effect.fn('collectSnapshot')(function* collectSna
       tenantSettingSettable: tenant.settable,
       transactionLocal: true,
     },
-    types: types.rows,
+    types,
   };
 });

@@ -2,10 +2,11 @@ import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Array as EffectArray, Effect, Order } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
-import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgSession,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   PRICE_GROUP_CATALOG_SCHEMA_NAME,
   PRICE_GROUP_CATALOG_TABLE_INVENTORY,
@@ -110,10 +111,8 @@ it.live('governs the Price Group Catalog with forced RLS and no direct runtime t
   Effect.scoped(
     Effect.gen(function* databaseSecurityCatalog() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquirePoolResource(
-        () => new Pool({ connectionString: connections.admin.connectionString, max: 1 }),
-      );
-      const admin = yield* makeTestDatabaseFromPool(adminPool, priceGroupCatalogRelations);
+      const adminSession = yield* makeTestPgSession(connections.admin.connectionString);
+      const admin = yield* makeTestDatabaseFromClient(adminSession, priceGroupCatalogRelations);
       const schema = PRICE_GROUP_CATALOG_SCHEMA_NAME;
 
       const tables = yield* admin.execute<{ enabled: boolean; forced: boolean; name: string }>(

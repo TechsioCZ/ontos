@@ -3,7 +3,6 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { DateTime, Option, Schema, SchemaGetter } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
-const strict = { parseOptions: { onExcessProperty: 'error' as const } };
 const boundedText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 const checkedUuid = Schema.String.check(Schema.isUUID(), Schema.isTrimmed());
 
@@ -30,8 +29,8 @@ export const StorefrontRegistryInstantSchema = Schema.String.check(
   }),
 ).pipe(
   Schema.decode({
-    decode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
-    encode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
+    decode: SchemaGetter.dateTimeUtcFromInput<string>().pipe(SchemaGetter.map(DateTime.formatIso)),
+    encode: SchemaGetter.dateTimeUtcFromInput<string>().pipe(SchemaGetter.map(DateTime.formatIso)),
   }),
   Schema.toEncoded,
 );
@@ -41,7 +40,7 @@ export const CurrentStorefrontApplicationRequestSchema = Schema.Struct({
   requestedChannel: StorefrontChannelSchema,
   storefrontAppId: StorefrontApplicationIdSchema,
   tenantId: StorefrontRegistryTenantIdSchema,
-}).annotate(strict);
+});
 export type CurrentStorefrontApplicationRequest = typeof CurrentStorefrontApplicationRequestSchema.Type;
 
 const requestIdentity = {
@@ -61,15 +60,13 @@ const toEpochMillis = (instant: string) => DateTime.toEpochMillis(DateTime.makeU
 export const StorefrontApplicationEffectiveIntervalSchema = Schema.Struct({
   effectiveFrom: StorefrontRegistryInstantSchema,
   effectiveTo: Schema.optionalKey(StorefrontRegistryInstantSchema),
-})
-  .check(
-    Schema.makeFilter(({ effectiveFrom, effectiveTo }) =>
-      effectiveTo === undefined || toEpochMillis(effectiveFrom) < toEpochMillis(effectiveTo)
-        ? undefined
-        : 'Effective interval end must be after its start',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ effectiveFrom, effectiveTo }) =>
+    effectiveTo === undefined || toEpochMillis(effectiveFrom) < toEpochMillis(effectiveTo)
+      ? undefined
+      : 'Effective interval end must be after its start',
+  ),
+);
 
 export const CurrentStorefrontApplicationCurrentSchema = Schema.Struct({
   ...requestIdentity,
@@ -80,31 +77,29 @@ export const CurrentStorefrontApplicationCurrentSchema = Schema.Struct({
   observedAt: StorefrontRegistryInstantSchema,
   outcome: Schema.Literal('CURRENT'),
   ownerRevision: boundedText,
-})
-  .check(
-    Schema.makeFilter(({ allowedChannels: channels, requestedChannel }) =>
-      channels.includes(requestedChannel) ? undefined : 'Current application must allow the requested channel',
-    ),
-    Schema.makeFilter(({ effectiveAt, effectiveInterval, nextApplicabilityBoundary, observedAt }) => {
-      const evaluated = toEpochMillis(effectiveAt);
-      const from = toEpochMillis(effectiveInterval.effectiveFrom);
-      const to = effectiveInterval.effectiveTo === undefined ? undefined : toEpochMillis(effectiveInterval.effectiveTo);
-      const next = nextApplicabilityBoundary === undefined ? undefined : toEpochMillis(nextApplicabilityBoundary);
-      return toEpochMillis(observedAt) <= evaluated &&
-        from <= evaluated &&
-        (to === undefined || evaluated < to) &&
-        (next === undefined || evaluated < next)
-        ? undefined
-        : 'Current evidence must be observed by and applicable at the requested instant';
-    }),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ allowedChannels: channels, requestedChannel }) =>
+    channels.includes(requestedChannel) ? undefined : 'Current application must allow the requested channel',
+  ),
+  Schema.makeFilter(({ effectiveAt, effectiveInterval, nextApplicabilityBoundary, observedAt }) => {
+    const evaluated = toEpochMillis(effectiveAt);
+    const from = toEpochMillis(effectiveInterval.effectiveFrom);
+    const to = effectiveInterval.effectiveTo === undefined ? undefined : toEpochMillis(effectiveInterval.effectiveTo);
+    const next = nextApplicabilityBoundary === undefined ? undefined : toEpochMillis(nextApplicabilityBoundary);
+    return toEpochMillis(observedAt) <= evaluated &&
+      from <= evaluated &&
+      (to === undefined || evaluated < to) &&
+      (next === undefined || evaluated < next)
+      ? undefined
+      : 'Current evidence must be observed by and applicable at the requested instant';
+  }),
+);
 
 export const CurrentStorefrontApplicationNotFoundSchema = Schema.Struct({
   ...requestIdentity,
   outcome: Schema.Literal('NOT_FOUND'),
   reason: boundedText,
-}).annotate(strict);
+});
 
 export const CurrentStorefrontApplicationNotCurrentSchema = Schema.Struct({
   ...requestIdentity,
@@ -112,7 +107,7 @@ export const CurrentStorefrontApplicationNotCurrentSchema = Schema.Struct({
   outcome: Schema.Literal('NOT_CURRENT'),
   ownerRevision: boundedText,
   reason: boundedText,
-}).annotate(strict);
+});
 
 export const CurrentStorefrontApplicationChannelNotAllowedSchema = Schema.Struct({
   ...requestIdentity,
@@ -120,26 +115,24 @@ export const CurrentStorefrontApplicationChannelNotAllowedSchema = Schema.Struct
   outcome: Schema.Literal('CHANNEL_NOT_ALLOWED'),
   ownerRevision: boundedText,
   reason: boundedText,
-})
-  .check(
-    Schema.makeFilter(({ allowedChannels: channels, requestedChannel }) =>
-      channels.includes(requestedChannel) ? 'Rejected channel must not be included in allowed channels' : undefined,
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ allowedChannels: channels, requestedChannel }) =>
+    channels.includes(requestedChannel) ? 'Rejected channel must not be included in allowed channels' : undefined,
+  ),
+);
 
 export const CurrentStorefrontApplicationUnavailableSchema = Schema.Struct({
   ...requestIdentity,
   outcome: Schema.Literal('UNAVAILABLE'),
   reason: boundedText,
   retryable: Schema.Boolean,
-}).annotate(strict);
+});
 
 export const CurrentStorefrontApplicationUnverifiableSchema = Schema.Struct({
   ...requestIdentity,
   outcome: Schema.Literal('UNVERIFIABLE'),
   reason: boundedText,
-}).annotate(strict);
+});
 
 export const CurrentStorefrontApplicationStaleSchema = Schema.Struct({
   ...requestIdentity,
@@ -147,7 +140,7 @@ export const CurrentStorefrontApplicationStaleSchema = Schema.Struct({
   outcome: Schema.Literal('STALE'),
   ownerRevision: boundedText,
   reason: boundedText,
-}).annotate(strict);
+});
 
 export const CurrentStorefrontApplicationResponseSchema = Schema.Union([
   CurrentStorefrontApplicationCurrentSchema,

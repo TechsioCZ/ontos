@@ -47,7 +47,7 @@ const fixture = () =>
     write(
       root,
       'package.json',
-      '{"name":"runtime-controls","private":true,"type":"module","devDependencies":{"@effect/tsgo":"0.19.0"}}',
+      '{"name":"runtime-controls","private":true,"type":"module","devDependencies":{"@effect/tsgo":"0.19.0"},"scripts":{"typecheck":"ultramodern-create ultramodern typecheck --build tsconfig.json","performance:readiness":"ultramodern-create ultramodern performance-readiness"}}',
     );
     write(root, tsgoPackage, '{"name":"@effect/tsgo","version":"0.19.0"}');
     write(
@@ -86,21 +86,11 @@ const fixture = () =>
     );
     write(
       root,
-      'scripts/ultramodern-typecheck.mts',
-      "const forwardedArgs = []; const args = ['ultramodern', 'typecheck', ...forwardedArgs]; void args;",
-    );
-    write(
-      root,
       `${vendorRoot}/ultramodern-typecheck.mjs`,
       "resolveEffectTsgoCompiler({ from: pathToFileURL(join(workspaceRoot, 'package.json')) });",
     );
     write(root, tsgoReadme, compilerDocumentation);
     write(root, compilerConfig, yield* stringify({ compilerOptions: { plugins: [{ name: pluginName }] } }));
-    write(
-      root,
-      'scripts/ultramodern-performance-readiness.mts',
-      "const forwardedArgs=[]; const args=['ultramodern', 'performance-readiness', ...forwardedArgs]; void args;",
-    );
     write(
       root,
       `${vendorRoot}/ultramodern-performance-readiness.mjs`,
@@ -307,20 +297,12 @@ it.live(
 );
 
 it.live(
-  'shared framework runner retains compiler/readiness evidence without accepting unused neighbors',
-  Effect.fn(function* mergedScenario1() {
+  'direct framework commands retain compiler and readiness evidence only while invoked',
+  Effect.fn(function* directFrameworkCommands() {
     const root = yield* fixture();
-    const runnerFile = 'scripts/shared/ultramodern-command.mts';
+    const packageFile = 'package.json';
+    const original = readFileSync(path.join(root, packageFile), 'utf-8');
     try {
-      const runner = readFileSync(new URL('../shared/ultramodern-command.mts', import.meta.url), 'utf-8');
-      write(root, runnerFile, runner);
-      for (const command of ['typecheck', 'performance-readiness']) {
-        write(
-          root,
-          `scripts/ultramodern-${command}.mts`,
-          readFileSync(new URL(`../ultramodern-${command}.mts`, import.meta.url), 'utf-8'),
-        );
-      }
       const modeled = yield* facts(root);
       for (const target of [tsgoName, pluginName, readinessConfig, `${readinessConfig}#default`]) {
         expect(
@@ -328,28 +310,52 @@ it.live(
           target,
         ).toBeTruthy();
       }
+      write(root, packageFile, original.replace('ultramodern-create ultramodern typecheck', 'unrelated typecheck'));
+      const disconnectedTypecheck = yield* facts(root);
+      expect(disconnectedTypecheck.some((fact) => fact.target === tsgoName)).toBe(false);
       write(
         root,
-        runnerFile,
-        runner.replace('ChildProcess.make(launch.executable, launch.args,', 'ChildProcess.make("unrelated", [],'),
+        packageFile,
+        original.replace('ultramodern-create ultramodern performance-readiness', 'unrelated performance-readiness'),
       );
-      const disconnected = yield* facts(root);
-      expect(!disconnected.some((fact) => fact.target === tsgoName)).toBeTruthy();
-      expect(!disconnected.some((fact) => fact.target === readinessConfig)).toBeTruthy();
-      write(root, runnerFile, runner);
+      const disconnectedReadiness = yield* facts(root);
+      expect(disconnectedReadiness.some((fact) => fact.target === readinessConfig)).toBe(false);
       write(
         root,
-        'scripts/ultramodern-typecheck.mts',
-        "import { runUltramodernScript } from './shared/unrelated.mts'; runUltramodernScript({ command: 'typecheck' });",
+        packageFile,
+        original
+          .replace('ultramodern-create ultramodern typecheck', 'unrelated typecheck')
+          .replace(
+            '"ultramodern-create ultramodern performance-readiness"',
+            '"echo ultramodern-create ultramodern performance-readiness"',
+          )
+          .replace('"scripts":{', '"description":"ultramodern-create ultramodern typecheck","scripts":{'),
       );
-      write(
-        root,
-        'scripts/ultramodern-performance-readiness.mts',
-        "import { runUltramodernScript } from './shared/ultramodern-command.mts'; runUltramodernScript({ command: 'unrelated' });",
-      );
-      const neighbors = yield* facts(root);
-      expect(!neighbors.some((fact) => fact.target === tsgoName)).toBeTruthy();
-      expect(!neighbors.some((fact) => fact.target === readinessConfig)).toBeTruthy();
+      const describedOnly = yield* facts(root);
+      expect(describedOnly.some((fact) => fact.target === tsgoName)).toBe(false);
+      expect(describedOnly.some((fact) => fact.target === readinessConfig)).toBe(false);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  }),
+);
+
+it.live(
+  'Codesmith route refresh models its spawned script only when the invocation is live',
+  Effect.fn(function* routeRefreshScenario() {
+    const root = yield* fixture();
+    const scaffoldFile = 'scripts/scaffolding/cli.mts';
+    const target = 'scripts/generate-tanstack-routes.mts';
+    const invocation = [
+      "const script = path.join(workspaceRoot, 'scripts', 'generate-tanstack-routes.mts');",
+      "ChildProcess.make(process.execPath, [script, '--app', appId], {});",
+    ].join('\n');
+    try {
+      write(root, scaffoldFile, invocation);
+      write(root, target, 'export const routeRefresh = true;');
+      expect((yield* facts(root)).some((fact) => fact.kind === 'file' && fact.target === target)).toBe(true);
+      write(root, scaffoldFile, invocation.replace('ChildProcess.make(', 'unrelated('));
+      expect((yield* facts(root)).some((fact) => fact.kind === 'file' && fact.target === target)).toBe(false);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

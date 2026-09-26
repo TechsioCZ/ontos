@@ -119,7 +119,7 @@ const parseSpiceDbConfigWith = Effect.fn('Config.parseSpiceDbConfigWith')(functi
             configFailureWithCause('SPICEDB_INSECURE must be explicitly true or false', error),
           ),
         ),
-      preSharedKey: Config.redacted('SPICEDB_PRESHARED_KEY')
+      preSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY')
         .pipe(Config.map((value) => Redacted.make(Redacted.value(value).trim())))
         .parse(provider)
         .pipe(Effect.mapError((error) => configFailureWithCause('SPICEDB_PRESHARED_KEY is required', error))),

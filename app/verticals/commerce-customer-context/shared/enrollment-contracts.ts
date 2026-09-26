@@ -133,7 +133,7 @@ export const CommercePortalAccountSubjectSchema = Schema.Struct({
   authenticationNamespaceId: EnrollmentAuthenticationNamespaceIdSchema,
   providerSubjectId: EnrollmentProviderSubjectIdSchema,
   subjectType: Schema.Literal('user'),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CommercePortalAccountSubject = typeof CommercePortalAccountSubjectSchema.Type;
 
 export const EnrollmentAttemptIntentSchema = Schema.Struct({
@@ -143,13 +143,13 @@ export const EnrollmentAttemptIntentSchema = Schema.Struct({
   journey: EnrollmentJourneySchema,
   targetLegalEntityId: Schema.optionalKey(EnrollmentLegalEntityIdSchema),
   targetResourceId: Schema.optionalKey(EnrollmentResourceIdSchema),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 const EnrollmentAttemptLeaseSchema = Schema.Struct({
   leaseExpiresAt: EnrollmentTimestampSchema,
   leaseToken: EnrollmentLeaseTokenSchema,
   workerId: EnrollmentKeySchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 /** The canonical JSON form a persistence adapter builds before it decodes a snapshot. */
 export type EncodedEnrollmentAttemptLease = typeof EnrollmentAttemptLeaseSchema.Encoded;
 
@@ -173,7 +173,7 @@ export const EnrollmentAttemptSnapshotSchema = Schema.Struct({
   tenantId: EnrollmentTenantIdSchema,
   terminatedAt: Schema.optionalKey(EnrollmentTimestampSchema),
   updatedAt: EnrollmentTimestampSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type EnrollmentAttemptSnapshot = typeof EnrollmentAttemptSnapshotSchema.Type;
 
 export const EnrollmentOwnerOperationSnapshotSchema = Schema.Struct({
@@ -198,7 +198,7 @@ export const EnrollmentOwnerOperationSnapshotSchema = Schema.Struct({
   tenantId: EnrollmentTenantIdSchema,
   transitionKey: EnrollmentTransitionKeySchema,
   updatedAt: EnrollmentTimestampSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type EnrollmentOwnerOperationSnapshot = typeof EnrollmentOwnerOperationSnapshotSchema.Type;
 
 export const StartEnrollmentAttemptInputSchema = Schema.Struct({
@@ -206,7 +206,7 @@ export const StartEnrollmentAttemptInputSchema = Schema.Struct({
   actorPrincipalId: EnrollmentPrincipalIdSchema,
   tenantId: EnrollmentTenantIdSchema,
   ...EnrollmentAttemptIntentSchema.fields,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type StartEnrollmentAttemptInput = typeof StartEnrollmentAttemptInputSchema.Type;
 
 export const ClaimEnrollmentTransitionInputSchema = Schema.Struct({
@@ -226,7 +226,7 @@ export const ClaimEnrollmentTransitionInputSchema = Schema.Struct({
   tenantId: EnrollmentTenantIdSchema,
   transitionKey: EnrollmentTransitionKeySchema,
   workerId: EnrollmentKeySchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type ClaimEnrollmentTransitionInput = typeof ClaimEnrollmentTransitionInputSchema.Type;
 
 export const RecordEnrollmentOutcomeInputSchema = Schema.Struct({
@@ -248,7 +248,7 @@ export const RecordEnrollmentOutcomeInputSchema = Schema.Struct({
   tenantId: EnrollmentTenantIdSchema,
   transitionKey: EnrollmentTransitionKeySchema,
   workerId: EnrollmentKeySchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type RecordEnrollmentOutcomeInput = typeof RecordEnrollmentOutcomeInputSchema.Type;
 
 /**
@@ -275,7 +275,7 @@ export const ReconcileEnrollmentOutcomeInputSchema = Schema.Struct({
   status: EnrollmentFinalOwnerOutcomeSchema,
   tenantId: EnrollmentTenantIdSchema,
   transitionKey: EnrollmentTransitionKeySchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type ReconcileEnrollmentOutcomeInput = typeof ReconcileEnrollmentOutcomeInputSchema.Type;
 
 /** Untrusted recovery request.  Final outcome metadata is supplied by the injected owner authority. */
@@ -286,7 +286,7 @@ export const ReconcileEnrollmentRequestSchema = Schema.Struct({
   portalEnrollmentAttemptId: EnrollmentAttemptIdSchema,
   tenantId: EnrollmentTenantIdSchema,
   transitionKey: EnrollmentTransitionKeySchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type ReconcileEnrollmentRequest = typeof ReconcileEnrollmentRequestSchema.Type;
 
 /** Verified owner resolution.  The reconciliation reference is emitted by the owner lookup. */
@@ -303,7 +303,7 @@ export const ReconcileEnrollmentResolutionSchema = Schema.Struct({
   resultDigest: Schema.optionalKey(EnrollmentDigestSchema),
   resultReference: Schema.optionalKey(EnrollmentResourceIdSchema),
   status: EnrollmentFinalOwnerOutcomeSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type ReconcileEnrollmentResolution = typeof ReconcileEnrollmentResolutionSchema.Type;
 
 export const TerminateEnrollmentAttemptInputSchema = Schema.Struct({
@@ -313,13 +313,13 @@ export const TerminateEnrollmentAttemptInputSchema = Schema.Struct({
   portalEnrollmentAttemptId: EnrollmentAttemptIdSchema,
   reason: EnrollmentBoundedTextSchema,
   tenantId: EnrollmentTenantIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type TerminateEnrollmentAttemptInput = typeof TerminateEnrollmentAttemptInputSchema.Type;
 
 export const ReadEnrollmentAttemptInputSchema = Schema.Struct({
   portalEnrollmentAttemptId: EnrollmentAttemptIdSchema,
   tenantId: EnrollmentTenantIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type ReadEnrollmentAttemptInput = typeof ReadEnrollmentAttemptInputSchema.Type;
 
 export const ReadEnrollmentOwnerOperationInputSchema = Schema.Struct({
@@ -327,14 +327,14 @@ export const ReadEnrollmentOwnerOperationInputSchema = Schema.Struct({
   portalEnrollmentAttemptId: EnrollmentAttemptIdSchema,
   tenantId: EnrollmentTenantIdSchema,
   transitionKey: EnrollmentTransitionKeySchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type ReadEnrollmentOwnerOperationInput = typeof ReadEnrollmentOwnerOperationInputSchema.Type;
 
 export const VerifyEnrollmentProofInputSchema = Schema.Struct({
   portalEnrollmentAttemptId: EnrollmentAttemptIdSchema,
   tenantId: EnrollmentTenantIdSchema,
   ...CommercePortalAccountSubjectSchema.fields,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export const EnrollmentProofSchema = Schema.Struct({
   enrollmentAttemptId: EnrollmentAttemptIdSchema,
@@ -342,7 +342,7 @@ export const EnrollmentProofSchema = Schema.Struct({
   observedAt: Schema.DateTimeUtc,
   policyVersion: EnrollmentKeySchema,
   revision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export const isEnrollmentAttemptTerminal = (state: EnrollmentAttemptState): boolean =>
   state === 'COMPLETE' || state === 'TERMINATED';

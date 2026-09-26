@@ -9,6 +9,7 @@ import {
   HttpServerRequest,
   HttpServerResponse,
 } from 'effect/unstable/http';
+import { NetAddress } from 'effect/unstable/net';
 
 import {
   OperationPrincipalVerificationErrorSchema,
@@ -104,7 +105,7 @@ it.live(
       );
       yield* server.serve(application);
       const address = yield* Match.value(server.address).pipe(
-        Match.tag('TcpAddress', (tcpAddress) => Effect.succeed(tcpAddress)),
+        Match.when(NetAddress.isInetAddress, (inetAddress) => Effect.succeed(inetAddress)),
         Match.orElse(() => Effect.die('HTTP authentication fixture did not bind to TCP')),
       );
       const client = yield* HttpClient.HttpClient;

@@ -23,17 +23,15 @@ export const OutboxPayloadSchema = Schema.Struct({
     principalId: PrincipalIdSchema,
     tenantId: TenantIdSchema,
     transitionRef: ActionInvocationIdSchema,
-  })
-    .check(
-      Schema.makeFilter(
-        (data) =>
-          data.previousStatus !== 'revoked' &&
-          data.previousStatus !== data.newStatus &&
-          (data.previousStatus !== 'pending' || data.newStatus === 'revoked'),
-      ),
-    )
-    .annotate({ parseOptions: { onExcessProperty: 'error' } }),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+  }).check(
+    Schema.makeFilter(
+      (data) =>
+        data.previousStatus !== 'revoked' &&
+        data.previousStatus !== data.newStatus &&
+        (data.previousStatus !== 'pending' || data.newStatus === 'revoked'),
+    ),
+  ),
+});
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
 export const outboxTopic = 'core.identity.principal-binding-status-changed.v1' as const;

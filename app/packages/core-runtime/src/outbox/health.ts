@@ -2,6 +2,7 @@ import { NodeHttpServer } from '@effect/platform-node';
 import { Clock, Effect, Match, Option, Ref } from 'effect';
 import type { Scope } from 'effect';
 import { HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { NetAddress } from 'effect/unstable/net';
 import type { ServeError } from 'effect/unstable/http/HttpServerError';
 
 interface HealthState {
@@ -90,10 +91,10 @@ export const serveOutboxWorkerHealth: (
     yield* server.serve(healthApplication);
 
     const address = yield* Match.value(server.address).pipe(
-      Match.tag('TcpAddress', (tcpAddress) => Effect.succeed(tcpAddress)),
+      Match.when(NetAddress.isInetAddress, (inetAddress) => Effect.succeed(inetAddress)),
       Match.orElse(() => Effect.die('Outbox health server did not bind to TCP')),
     );
     yield* Effect.addFinalizer(() => health.shuttingDown);
-    return { hostname: address.hostname, port: address.port };
+    return { hostname: NetAddress.formatIp(address.address), port: address.port };
   },
 );

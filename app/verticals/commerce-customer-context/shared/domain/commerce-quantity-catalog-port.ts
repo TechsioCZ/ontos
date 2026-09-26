@@ -41,13 +41,13 @@ export const CommerceQuantityCatalogLineRequestSchema = Schema.Struct({
   lineId: stableReference,
   requestedQuantity: ExactPositiveCommerceQuantitySchema,
   selection: CatalogSelectionSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CommerceQuantityCatalogLineRequest = typeof CommerceQuantityCatalogLineRequestSchema.Type;
 
 export const CurrentCommerceQuantityCatalogLineSchema = Schema.Struct({
   lineId: stableReference,
   selection: CurrentCommerceQuantityCatalogSelectionSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CurrentCommerceQuantityCatalogLine = typeof CurrentCommerceQuantityCatalogLineSchema.Type;
 
 export const CommerceQuantityCatalogUnavailableSchema = Schema.TaggedStruct('CommerceQuantityCatalogUnavailable', {

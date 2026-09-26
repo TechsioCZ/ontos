@@ -1,3 +1,4 @@
+import { PgTypes } from '@effect/sql-pg';
 import type { SQL } from 'drizzle-orm';
 import { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { PgDialect } from 'drizzle-orm/pg-core';
@@ -73,7 +74,7 @@ it.effect('injects verified scope values and parameterizes every caller-supplied
     expect(query.sql).toBe(
       'select * from "commerce_customer_context"."save_profile"($1::uuid, $2::uuid, $3::text, $4::jsonb)',
     );
-    expect(query.params).toEqual([tenantId, legalEntityId, payload, { source: 'test' }]);
+    expect(query.params).toEqual([tenantId, legalEntityId, payload, PgTypes.jsonb({ source: 'test' })]);
     expect(query.sql).not.toContain(payload);
   }),
 );

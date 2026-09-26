@@ -89,7 +89,7 @@ export const CommerceEnrollmentOwnerTransitionSchema = Schema.Struct({
   requestDigest: EnrollmentDigestSchema,
   tenantId: EnrollmentTenantIdSchema,
   transitionKey: EnrollmentTransitionKeySchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CommerceEnrollmentOwnerTransition = typeof CommerceEnrollmentOwnerTransitionSchema.Type;
 
 /**
@@ -125,7 +125,7 @@ type MutableRecordEnrollmentOutcomeInput = {
 export const CommerceEnrollmentOwnerEffectOutcomeSchema = Schema.Union([
   Schema.Struct({ status: Schema.Literal('SUCCEEDED'), ...ownerEffectOutcomeFields }),
   Schema.Struct({ status: Schema.Literal('FAILED'), ...ownerEffectOutcomeFields }),
-]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+]);
 export type CommerceEnrollmentOwnerEffectOutcome = typeof CommerceEnrollmentOwnerEffectOutcomeSchema.Type;
 
 export interface CommerceEnrollmentOwnerReconciliationInput extends CommerceEnrollmentOwnerTransition {
@@ -305,7 +305,7 @@ const sameOperationIdentity = (
 const decodeDriverInput = (
   input: CommerceEnrollmentOwnerTransition,
 ): Effect.Effect<CommerceEnrollmentOwnerTransition, CommerceEnrollmentAttemptError> =>
-  Schema.decodeEffect(CommerceEnrollmentOwnerTransitionSchema)(input).pipe(
+  Schema.decodeEffect(CommerceEnrollmentOwnerTransitionSchema, { onExcessProperty: 'error' })(input).pipe(
     Effect.mapError((cause) => invalid('The owner transition identity is invalid', cause)),
   );
 
@@ -313,7 +313,7 @@ const decodeOwnerOutcome = (
   input: CommerceEnrollmentOwnerTransition,
   outcome: CommerceEnrollmentOwnerEffectOutcome,
 ): Effect.Effect<CommerceEnrollmentOwnerEffectOutcome, CommerceEnrollmentAttemptError> =>
-  Schema.decodeEffect(CommerceEnrollmentOwnerEffectOutcomeSchema)(outcome).pipe(
+  Schema.decodeEffect(CommerceEnrollmentOwnerEffectOutcomeSchema, { onExcessProperty: 'error' })(outcome).pipe(
     Effect.mapError((cause) => indeterminate(input, 'The owner returned an invalid final outcome', cause)),
   );
 
@@ -331,7 +331,7 @@ const decodeResolution = (
   input: CommerceEnrollmentOwnerTransition,
   resolution: ReconcileEnrollmentResolution,
 ): Effect.Effect<ReconcileEnrollmentResolution, CommerceEnrollmentAttemptError> =>
-  Schema.decodeEffect(ReconcileEnrollmentResolutionSchema)(resolution).pipe(
+  Schema.decodeEffect(ReconcileEnrollmentResolutionSchema, { onExcessProperty: 'error' })(resolution).pipe(
     Effect.mapError((cause) => indeterminate(input, 'The owner returned an invalid reconciliation result', cause)),
     Effect.filterOrFail(
       (decoded) =>
@@ -404,7 +404,7 @@ const toRecordInput = (
   if (outcome.resultReference !== undefined) {
     candidate.resultReference = outcome.resultReference;
   }
-  return Schema.decodeUnknownEffect(RecordEnrollmentOutcomeInputSchema)(candidate).pipe(
+  return Schema.decodeUnknownEffect(RecordEnrollmentOutcomeInputSchema, { onExcessProperty: 'error' })(candidate).pipe(
     Effect.mapError((cause) => indeterminate(input, 'The owner outcome could not be recorded safely', cause)),
   );
 };

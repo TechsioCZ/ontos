@@ -25,6 +25,7 @@ import { session as staffSession, user as staffUser } from '../../../../apps/she
 import { makeAuthenticationService } from '../../../../apps/shell-super-app/api/auth/service.ts';
 import type { AuthenticationService } from '../../../../apps/shell-super-app/api/auth/service.ts';
 import { makePrincipalResolverDouble } from '../../../../apps/shell-super-app/tests/support/identity-service-doubles.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
  * Two realms, two audiences, no shared admission. Both realms are the production Better Auth
@@ -38,8 +39,8 @@ const PORTAL_ORIGIN = 'http://localhost:3020';
 const PORTAL_SECRET = 'x'.repeat(64);
 const PASSWORD = 'P'.repeat(24);
 
-const providerDatabaseUrl = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 const portalConfiguration = Effect.gen(function* portalConfiguration() {
@@ -104,7 +105,7 @@ const makePortalSession = Effect.fnUntraced(function* makePortalSession(
   runtime: Effect.Success<typeof portalRuntime>,
 ): Effect.fn.Return<PortalSession, unknown, Scope.Scope> {
   const configuration = yield* portalConfiguration;
-  const database = yield* makeCommercePortalAuthDatabase(configuration);
+  const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
   const email = `cross-realm-customer-${randomUUID()}@example.test`;
   const auth = yield* makeCommercePortalAuth({
     configuration,
@@ -190,7 +191,7 @@ const makeStaffSession = Effect.fnUntraced(function* makeStaffSession(
 
 const shellAuthentication = Effect.fnUntraced(function* shellAuthentication() {
   const configuration = yield* loadAuthConfig();
-  const database = yield* makeAuthDatabase(configuration);
+  const database = yield* acquireOutlivingCleanup(makeAuthDatabase(configuration));
   const authentication = yield* makeAuthenticationService({ allowFixtureSignUp: true }).pipe(
     Effect.provideService(AuthConfig, configuration),
     Effect.provideService(AuthDatabase, database),

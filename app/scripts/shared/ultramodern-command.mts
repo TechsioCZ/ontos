@@ -1,4 +1,4 @@
-import { Config, Console, Effect, Exit, Option, Path, Stdio } from 'effect';
+import { Config, Effect, Option, Path, Stdio } from 'effect';
 import type { PlatformError } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
@@ -19,11 +19,11 @@ export const resolveUltramodernInvocation = <E,>(options: CommandOptions<E>) =>
     const moduleDirectory = yield* path
       .fromFileUrl(new URL('.', options.moduleUrl))
       .pipe(Effect.mapError(() => options.failure(options.directoryFailure)));
-    const workspaceRoot = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(
+    const workspaceRoot = yield* Config.String('ULTRAMODERN_WORKSPACE_ROOT').pipe(
       Config.withDefault(path.resolve(moduleDirectory, '..')),
       Effect.mapError(() => options.failure('ULTRAMODERN_WORKSPACE_ROOT is invalid')),
     );
-    const createBin = yield* Config.string('ULTRAMODERN_CREATE_BIN').pipe(
+    const createBin = yield* Config.String('ULTRAMODERN_CREATE_BIN').pipe(
       Config.option,
       Effect.map(Option.filter((value) => value.length > 0)),
       Effect.mapError(() => options.failure('ULTRAMODERN_CREATE_BIN is invalid')),
@@ -68,14 +68,3 @@ export const launchUltramodern = <E,>(invocation: Effect.Success<ReturnType<type
     const processSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     return Number(yield* processSpawner.exitCode(invocation.command).pipe(Effect.mapError(invocation.launchFailure)));
   });
-
-export const runUltramodernScript = <E extends { readonly reason: string }>(options: CommandOptions<E>) =>
-  resolveUltramodernInvocation(options).pipe(
-    Effect.flatMap(launchUltramodern),
-    Effect.tapError(({ reason }) => Console.error(reason)),
-  );
-
-export const ultramodernExitCode = Exit.match<number, unknown, number, number>({
-  onFailure: () => 1,
-  onSuccess: (status) => status,
-});

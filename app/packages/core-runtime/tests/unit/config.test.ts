@@ -1,7 +1,6 @@
 import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { acquirePoolResource } from '../../src/db/client.ts';
 import {
   ROOT_ENV_PATH,
   loadDatabaseConfig,
@@ -102,22 +101,5 @@ it.effect('requires distinct administrative and least-privilege runtime identiti
     expect(Predicate.isTagged(identical, 'DatabaseConfigError')).toBe(true);
     expect(Predicate.isTagged(queryParameterCollision, 'DatabaseConfigError')).toBe(true);
     expect(Predicate.isTagged(superuserCompatible, 'DatabaseConfigError')).toBe(true);
-  }),
-);
-
-it.effect('finalizes the pool resource when its Effect scope closes', () =>
-  Effect.gen(function* migratedTest() {
-    let finalized = false;
-
-    yield* Effect.scoped(
-      acquirePoolResource(() => ({
-        end: () => {
-          finalized = true;
-          return Promise.resolve();
-        },
-      })),
-    );
-
-    expect(finalized).toBe(true);
   }),
 );

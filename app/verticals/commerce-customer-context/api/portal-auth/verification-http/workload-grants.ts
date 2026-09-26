@@ -16,12 +16,12 @@ const CommercePortalAuthVerificationWorkloadGrantSchema = Schema.Struct({
   tenantId: TenantIdSchema,
   workloadAuthenticationNamespaceId: AuthenticationNamespaceIdSchema,
   workloadPrincipalId: PrincipalIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export const CommercePortalAuthVerificationWorkloadGrantsSchema = Schema.Struct({
   grants: Schema.Array(CommercePortalAuthVerificationWorkloadGrantSchema),
   providerEndpointAudience: boundedReference,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export type CommercePortalAuthVerificationWorkloadGrant = typeof CommercePortalAuthVerificationWorkloadGrantSchema.Type;
 export type CommercePortalAuthVerificationWorkloadGrants =

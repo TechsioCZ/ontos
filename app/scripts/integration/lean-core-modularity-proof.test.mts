@@ -5,7 +5,6 @@ import { eq, inArray } from 'drizzle-orm';
 import { Context, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { decodeJwt } from 'jose';
-import { Pool } from 'pg';
 
 import { makeActionRepository } from '../../packages/core-runtime/src/actions/repository.ts';
 import { ActionRuntime, makeActionRuntime } from '../../packages/core-runtime/src/actions/runtime.ts';
@@ -38,7 +37,7 @@ import {
   makeOperationalScopeResolver,
 } from '../../packages/core-runtime/src/operations/context.ts';
 import { openActionRuntimeOptions } from '../../packages/core-runtime/tests/support/action-runtime-options.ts';
-import { makeTestDatabaseFromPool } from '../../packages/core-runtime/tests/support/database.ts';
+import { makeTestDatabaseFromClient, makeTestPgClient } from '../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import {
   ContextAccess,
@@ -213,11 +212,8 @@ it.live(
   'proves the default Shell runtime starts and serves staff authentication without Commerce',
   Effect.fnUntraced(function* leanCoreModularityProof() {
     const configuration = yield* loadAuthConfig();
-    const corePool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: configuration.connectionString })),
-      (pool) => Effect.promise(() => pool.end()),
-    );
-    const coreDatabase = yield* makeTestDatabaseFromPool(corePool, coreRelations);
+    const coreClient = yield* makeTestPgClient(configuration.connectionString);
+    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const authPersistence = yield* makeAuthDatabase(configuration);
     const authDatabase = authPersistence.executor;
     const resolver = makePrincipalResolver(
@@ -332,7 +328,7 @@ it.live(
     const shellApi = yield* Effect.tryPromise(() => import('../../apps/shell-super-app/api/index.ts'));
     const handler = yield* Effect.acquireRelease(
       Effect.sync(() => shellApi.default.createHandler()),
-      (createdHandler) => Effect.tryPromise(() => createdHandler.dispose()),
+      (createdHandler) => Effect.tryPromise(() => createdHandler.dispose()).pipe(Effect.orDie),
     );
 
     const signInResponse = yield* Effect.tryPromise(() =>

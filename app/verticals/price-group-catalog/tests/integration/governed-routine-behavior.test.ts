@@ -5,8 +5,8 @@ import { Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { PriceGroupDefinitionRevision } from '../../shared/domain/price-group.ts';
 import { RetirePriceGroupPayloadSchema } from '../../shared/actions/retire-price-group.ts';
@@ -77,9 +77,9 @@ interface RoutineRow extends Record<string, unknown> {
 it.live('executes the tenant-only Price Group lifecycle through the six governed routines', () =>
   Effect.scoped(
     Effect.gen(function* governedRoutineBehavior() {
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, priceGroupCatalogRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, priceGroupCatalogRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, priceGroupCatalogRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, priceGroupCatalogRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>

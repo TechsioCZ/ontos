@@ -471,7 +471,8 @@ describe('Commerce Quantity resolution', () => {
 
   it('rejects caller-authored monetary quantity and unsupported selector fields at schema boundaries', () => {
     expect(() =>
-      Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({
+      // The governed read runtime decodes read input closed (core-runtime `reads/runtime.ts`).
+      Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema, { onExcessProperty: 'error' })({
         ...request,
         lines: [{ ...request.lines[0], monetaryAmount: '100.00' }],
       }),

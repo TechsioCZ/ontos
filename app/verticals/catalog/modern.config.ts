@@ -11,11 +11,11 @@ import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
-import { Config, Option, Result, Schema } from 'effect';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import {
   createCloudflareWorkerSecurity,
+  createModernBuildContext,
   createWorkerSsrPlugins,
   createZephyrRspackPlugin,
   resolveCloudflareExternal,
@@ -23,33 +23,36 @@ import {
 
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
+const appId = 'catalog';
+const cloudflareWorkerName = 'app-catalog';
+const {
+  assetPrefix,
+  buildCacheDirectory,
+  buildOutputRoot,
+  buildTarget,
+  buildTempDirectory,
+  cloudflareDeployEnabled,
+  envValue,
+  moduleFederationDevServerOrigin,
+  port,
+  siteUrl,
+} = createModernBuildContext({
+  appId,
+  cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_CATALOG',
+  cloudflareWorkerName,
+  defaultPort: 4105,
+  getBuildConfigEnvironment,
+  portEnvironmentVariable: 'VERTICAL_CATALOG_PORT',
+});
+// The dev server serves federated assets to every local app origin, so the
+// allowed origin is negotiated per request instead of pinned to one header.
+const moduleFederationDevServerAllowedOrigins = [
+  ...new Set([moduleFederationDevServerOrigin, `http://localhost:${port}`]),
+];
+
 const resolveDevelopmentModuleContractPath = () =>
   fileURLToPath(new URL('.dev-public/.well-known/ontos-module-manifest.json', import.meta.url));
 
-const nonEmptyBuildStringSchema = Schema.Trim.pipe(Schema.check(Schema.isMinLength(1)));
-const getOptionalBuildConfig = (name: string): string | undefined => {
-  const decoded = Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(nonEmptyBuildStringSchema))(
-    getBuildConfigEnvironment(name),
-  );
-  return Result.isSuccess(decoded) ? Option.getOrUndefined(decoded.success) : undefined;
-};
-const envValue = getOptionalBuildConfig;
-const getBuildBoolean = (name: string): boolean =>
-  Option.getOrElse(
-    Result.getOrThrow(
-      Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Config.Boolean))(getBuildConfigEnvironment(name)),
-    ),
-    () => false,
-  );
-const cloudflareDeployMode = Result.getOrThrow(
-  Schema.decodeUnknownResult(Schema.OptionFromUndefinedOr(Schema.Literals(['cloudflare', 'node'])))(
-    getBuildConfigEnvironment('MODERNJS_DEPLOY'),
-  ),
-);
-const cloudflareDeployEnabled = Option.contains(cloudflareDeployMode, 'cloudflare');
-const resolvePostgresProtocolCommonJsEntry = () =>
-  fileURLToPath(new URL('../pg-protocol/dist/index.js', import.meta.resolve('pg/package.json')));
-const resolvePostgresPoolCommonJsEntry = () => createRequire(import.meta.resolve('pg/package.json')).resolve('pg-pool');
 const resolveEffectApiSourceDirectory = () => fileURLToPath(new URL('api/', import.meta.url));
 /* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
 const cloudflareRuntimeExternal = (
@@ -63,70 +66,8 @@ const cloudflareRuntimeExternal = (
 const zephyrRspackPlugin = (): CliPlugin<AppTools> =>
   createZephyrRspackPlugin({
     configure: () => withBuildConfigEnvironment('ZE_FAIL_BUILD', 'true', withZephyrRspack()),
-    readToken: () => getOptionalBuildConfig('ZE_CI_TOKEN'),
+    readToken: () => envValue('ZE_CI_TOKEN'),
   });
-
-const appId = 'catalog';
-const cloudflareWorkerName = 'app-catalog';
-const port = Option.getOrElse(
-  Result.getOrThrow(
-    Schema.decodeUnknownResult(
-      Schema.OptionFromUndefinedOr(
-        Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isBetween({ maximum: 65_535, minimum: 1 }))),
-      ),
-    )(getBuildConfigEnvironment('VERTICAL_CATALOG_PORT')),
-  ),
-  () => 4105,
-);
-const configuredSiteUrl = envValue('MODERN_PUBLIC_SITE_URL');
-const configuredCloudflareUrl = envValue('ULTRAMODERN_PUBLIC_URL_CATALOG');
-const configuredUltramodernAssetPrefix = envValue('ULTRAMODERN_ASSET_PREFIX');
-const configuredModernAssetPrefix = envValue('MODERN_ASSET_PREFIX');
-const moduleFederationDevServerOrigin = envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020';
-// The dev server serves federated assets to every local app origin, so the
-// allowed origin is negotiated per request instead of pinned to one header.
-const moduleFederationDevServerAllowedOrigins = [
-  ...new Set([moduleFederationDevServerOrigin, `http://localhost:${port}`]),
-];
-const cloudflareWorkersDevSubdomain = envValue('ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN');
-const inferredCloudflareUrl =
-  cloudflareDeployEnabled && cloudflareWorkersDevSubdomain !== undefined
-    ? `https://${cloudflareWorkerName}.${cloudflareWorkersDevSubdomain}.workers.dev`
-    : undefined;
-// Site origin (SEO: canonical/hreflang URLs) prefers the site-wide public URL;
-// the per-app deployment URL only fills in when no site origin is configured.
-const siteUrl = configuredSiteUrl ?? configuredCloudflareUrl ?? inferredCloudflareUrl ?? `http://localhost:${port}`;
-const remoteAssetOrigin =
-  configuredCloudflareUrl ?? inferredCloudflareUrl ?? (cloudflareDeployEnabled ? '' : `http://localhost:${port}`);
-// When deploying to Cloudflare without a configured public URL, publish an
-// 'auto' publicPath so the remote resolves its chunks from the origin its
-// remoteEntry.js was loaded from (the vertical's Worker), not the host shell's
-// origin — otherwise cross-origin chunk loading 404s and MF reports an empty
-// moduleId. A configured/inferred URL still wins as an absolute prefix.
-const defaultRemoteAssetPrefix = remoteAssetOrigin.length > 0 ? `${remoteAssetOrigin.replace(/\/+$/u, '')}/` : 'auto';
-const defaultAssetPrefix = defaultRemoteAssetPrefix;
-// Asset loading is intentionally independent from the canonical site URL.
-// Module Federation remotes must publish an absolute publicPath so browsers
-// load remoteEntry.js and exposed chunks from the remote origin, not the host.
-const assetPrefix = configuredModernAssetPrefix ?? configuredUltramodernAssetPrefix ?? defaultAssetPrefix;
-const buildTarget = cloudflareDeployEnabled ? 'cloudflare' : 'web';
-const buildOutputRoot = cloudflareDeployEnabled ? 'dist-cloudflare' : 'dist';
-// SAFETY: the framework requires these deterministic cache paths to include the app and target names.
-// oxlint-disable-next-line github/js-class-name
-const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
-const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildTarget}`;
-
-if (
-  cloudflareDeployEnabled &&
-  getBuildBoolean('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') &&
-  configuredCloudflareUrl === undefined &&
-  configuredSiteUrl === undefined &&
-  inferredCloudflareUrl === undefined
-) {
-  throw new Error(
-    `Cloudflare deploy for ${appId} needs ULTRAMODERN_PUBLIC_URL_CATALOG, MODERN_PUBLIC_SITE_URL, or ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN.`,
-  );
-}
 
 const whenEnabled = <Configuration>(enabled: boolean, configuration: Configuration) =>
   enabled ? configuration : undefined;
@@ -257,7 +198,7 @@ export default defineConfig(
           '@modern-js/plugin-i18n/runtime': '@modern-js/plugin-i18n/runtime/no-react-i18next',
         },
         globalVars: {
-          ULTRAMODERN_SHELL_ORIGIN: envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020',
+          ULTRAMODERN_SHELL_ORIGIN: moduleFederationDevServerOrigin,
           ULTRAMODERN_SITE_URL: siteUrl,
         },
         mainEntryName: 'index',
@@ -275,13 +216,6 @@ export default defineConfig(
           if (!cloudflareDeployEnabled) {
             return;
           }
-          const configuredAliases = config.resolve.alias;
-          config.resolve.alias =
-            configuredAliases === false || configuredAliases === undefined ? {} : configuredAliases;
-          Object.assign(config.resolve.alias, {
-            'pg-pool$': resolvePostgresPoolCommonJsEntry(),
-            'pg-protocol$': resolvePostgresProtocolCommonJsEntry(),
-          });
           const configuredExternals = config.externals;
           config.externals = [cloudflareRuntimeExternal];
           if (configuredExternals !== undefined) {

@@ -14,7 +14,6 @@ import { MarketRefSchema } from './resources/market.ts';
 import { MarketDefinitionRevisionRefSchema } from './resources/market-definition-revision.ts';
 import { StorefrontAssociationRefSchema } from './resources/storefront-association.ts';
 
-const strict = { parseOptions: { onExcessProperty: 'error' as const } };
 const checkedUuid = Schema.String.check(Schema.isUUID());
 const MarketIdSchema = checkedUuid.pipe(Schema.brand('CommerceMarketId'), Schema.decodeTo(checkedUuid));
 const StorefrontAssociationIdSchema = checkedUuid.pipe(
@@ -51,7 +50,7 @@ export const CreateMarketPayloadSchema = Schema.Struct({
   reason,
   sellingLegalEntityRef: SellingLegalEntityRefSchema,
   supportedLocales,
-}).annotate(strict);
+});
 export type CreateMarketPayload = typeof CreateMarketPayloadSchema.Type;
 
 export const CreateMarketResultSchema = Schema.Struct({
@@ -59,15 +58,13 @@ export const CreateMarketResultSchema = Schema.Struct({
   definitionRevisionRef: MarketDefinitionRevisionRefSchema,
   marketRef: MarketRefSchema,
   revision: Schema.Literal(1),
-})
-  .check(
-    Schema.makeFilter(({ definitionRevisionRef, marketRef }) =>
-      definitionRevisionRef.tenantId === marketRef.tenantId
-        ? undefined
-        : 'Market and definition revision must belong to the same Tenant',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ definitionRevisionRef, marketRef }) =>
+    definitionRevisionRef.tenantId === marketRef.tenantId
+      ? undefined
+      : 'Market and definition revision must belong to the same Tenant',
+  ),
+);
 
 export const ReviseMarketDefinitionPayloadSchema = Schema.Struct({
   channels,
@@ -79,13 +76,11 @@ export const ReviseMarketDefinitionPayloadSchema = Schema.Struct({
   purpose: boundedText,
   reason,
   supportedLocales,
-})
-  .check(
-    Schema.makeFilter(({ expectedCurrentDefinitionRevisionRef, marketRef }) =>
-      expectedCurrentDefinitionRevisionRef.tenantId === marketRef.tenantId ? undefined : expectedRevisionTenantMismatch,
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ expectedCurrentDefinitionRevisionRef, marketRef }) =>
+    expectedCurrentDefinitionRevisionRef.tenantId === marketRef.tenantId ? undefined : expectedRevisionTenantMismatch,
+  ),
+);
 export type ReviseMarketDefinitionPayload = typeof ReviseMarketDefinitionPayloadSchema.Type;
 
 export const ReviseMarketDefinitionResultSchema = Schema.Struct({
@@ -93,16 +88,14 @@ export const ReviseMarketDefinitionResultSchema = Schema.Struct({
   marketRef: MarketRefSchema,
   previousDefinitionRevisionRef: MarketDefinitionRevisionRefSchema,
   revision: positiveRevision,
-})
-  .check(
-    Schema.makeFilter(({ definitionRevisionRef, marketRef, previousDefinitionRevisionRef }) =>
-      definitionRevisionRef.tenantId === marketRef.tenantId &&
-      previousDefinitionRevisionRef.tenantId === marketRef.tenantId
-        ? undefined
-        : 'Market and definition revisions must belong to the same Tenant',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ definitionRevisionRef, marketRef, previousDefinitionRevisionRef }) =>
+    definitionRevisionRef.tenantId === marketRef.tenantId &&
+    previousDefinitionRevisionRef.tenantId === marketRef.tenantId
+      ? undefined
+      : 'Market and definition revisions must belong to the same Tenant',
+  ),
+);
 
 const lifecyclePayloadFields = {
   effectiveAt: Schema.DateTimeUtcFromString,
@@ -112,29 +105,23 @@ const lifecyclePayloadFields = {
   reason,
 };
 
-export const ActivateMarketPayloadSchema = Schema.Struct(lifecyclePayloadFields)
-  .check(
-    Schema.makeFilter(({ expectedCurrentDefinitionRevisionRef, marketRef }) =>
-      expectedCurrentDefinitionRevisionRef.tenantId === marketRef.tenantId ? undefined : expectedRevisionTenantMismatch,
-    ),
-  )
-  .annotate(strict);
+export const ActivateMarketPayloadSchema = Schema.Struct(lifecyclePayloadFields).check(
+  Schema.makeFilter(({ expectedCurrentDefinitionRevisionRef, marketRef }) =>
+    expectedCurrentDefinitionRevisionRef.tenantId === marketRef.tenantId ? undefined : expectedRevisionTenantMismatch,
+  ),
+);
 export type ActivateMarketPayload = typeof ActivateMarketPayloadSchema.Type;
-export const SuspendMarketPayloadSchema = Schema.Struct(lifecyclePayloadFields)
-  .check(
-    Schema.makeFilter(({ expectedCurrentDefinitionRevisionRef, marketRef }) =>
-      expectedCurrentDefinitionRevisionRef.tenantId === marketRef.tenantId ? undefined : expectedRevisionTenantMismatch,
-    ),
-  )
-  .annotate(strict);
+export const SuspendMarketPayloadSchema = Schema.Struct(lifecyclePayloadFields).check(
+  Schema.makeFilter(({ expectedCurrentDefinitionRevisionRef, marketRef }) =>
+    expectedCurrentDefinitionRevisionRef.tenantId === marketRef.tenantId ? undefined : expectedRevisionTenantMismatch,
+  ),
+);
 export type SuspendMarketPayload = typeof SuspendMarketPayloadSchema.Type;
-export const RetireMarketPayloadSchema = Schema.Struct(lifecyclePayloadFields)
-  .check(
-    Schema.makeFilter(({ expectedCurrentDefinitionRevisionRef, marketRef }) =>
-      expectedCurrentDefinitionRevisionRef.tenantId === marketRef.tenantId ? undefined : expectedRevisionTenantMismatch,
-    ),
-  )
-  .annotate(strict);
+export const RetireMarketPayloadSchema = Schema.Struct(lifecyclePayloadFields).check(
+  Schema.makeFilter(({ expectedCurrentDefinitionRevisionRef, marketRef }) =>
+    expectedCurrentDefinitionRevisionRef.tenantId === marketRef.tenantId ? undefined : expectedRevisionTenantMismatch,
+  ),
+);
 export type RetireMarketPayload = typeof RetireMarketPayloadSchema.Type;
 
 export const MarketLifecycleResultSchema = Schema.Struct({
@@ -143,15 +130,13 @@ export const MarketLifecycleResultSchema = Schema.Struct({
   lifecycle: MarketLifecycleSchema,
   marketRef: MarketRefSchema,
   revision: positiveRevision,
-})
-  .check(
-    Schema.makeFilter(({ definitionRevisionRef, marketRef }) =>
-      definitionRevisionRef.tenantId === marketRef.tenantId
-        ? undefined
-        : 'Market and definition revision must belong to the same Tenant',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ definitionRevisionRef, marketRef }) =>
+    definitionRevisionRef.tenantId === marketRef.tenantId
+      ? undefined
+      : 'Market and definition revision must belong to the same Tenant',
+  ),
+);
 
 export const AssociateStorefrontPayloadSchema = Schema.Struct({
   associationId: StorefrontAssociationIdSchema,
@@ -163,17 +148,15 @@ export const AssociateStorefrontPayloadSchema = Schema.Struct({
   reason,
   sellingLegalEntityRef: SellingLegalEntityRefSchema,
   storefrontRef: StorefrontRefSchema,
-})
-  .check(
-    Schema.makeFilter(({ expectedMarketDefinitionRevisionRef, marketRef, sellingLegalEntityRef, storefrontRef }) =>
-      marketRef.tenantId === sellingLegalEntityRef.tenantId &&
-      marketRef.tenantId === storefrontRef.tenantId &&
-      marketRef.tenantId === expectedMarketDefinitionRevisionRef.tenantId
-        ? undefined
-        : 'Market revision, Market, seller, and Storefront must belong to the same Tenant',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ expectedMarketDefinitionRevisionRef, marketRef, sellingLegalEntityRef, storefrontRef }) =>
+    marketRef.tenantId === sellingLegalEntityRef.tenantId &&
+    marketRef.tenantId === storefrontRef.tenantId &&
+    marketRef.tenantId === expectedMarketDefinitionRevisionRef.tenantId
+      ? undefined
+      : 'Market revision, Market, seller, and Storefront must belong to the same Tenant',
+  ),
+);
 export type AssociateStorefrontPayload = typeof AssociateStorefrontPayloadSchema.Type;
 
 export const ReviseStorefrontAssociationPayloadSchema = Schema.Struct({
@@ -185,15 +168,13 @@ export const ReviseStorefrontAssociationPayloadSchema = Schema.Struct({
   provenance: AssociationProvenanceSchema,
   reason,
   storefrontRef: StorefrontRefSchema,
-})
-  .check(
-    Schema.makeFilter(({ associationRef, marketRef, storefrontRef }) =>
-      associationRef.tenantId === marketRef.tenantId && marketRef.tenantId === storefrontRef.tenantId
-        ? undefined
-        : 'Association, Market, and Storefront must belong to the same Tenant',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ associationRef, marketRef, storefrontRef }) =>
+    associationRef.tenantId === marketRef.tenantId && marketRef.tenantId === storefrontRef.tenantId
+      ? undefined
+      : 'Association, Market, and Storefront must belong to the same Tenant',
+  ),
+);
 export type ReviseStorefrontAssociationPayload = typeof ReviseStorefrontAssociationPayloadSchema.Type;
 
 export const RemoveStorefrontAssociationPayloadSchema = Schema.Struct({
@@ -203,15 +184,13 @@ export const RemoveStorefrontAssociationPayloadSchema = Schema.Struct({
   marketRef: MarketRefSchema,
   reason,
   storefrontRef: StorefrontRefSchema,
-})
-  .check(
-    Schema.makeFilter(({ associationRef, marketRef, storefrontRef }) =>
-      associationRef.tenantId === marketRef.tenantId && marketRef.tenantId === storefrontRef.tenantId
-        ? undefined
-        : 'Association, Market, and Storefront must belong to the same Tenant',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ associationRef, marketRef, storefrontRef }) =>
+    associationRef.tenantId === marketRef.tenantId && marketRef.tenantId === storefrontRef.tenantId
+      ? undefined
+      : 'Association, Market, and Storefront must belong to the same Tenant',
+  ),
+);
 export type RemoveStorefrontAssociationPayload = typeof RemoveStorefrontAssociationPayloadSchema.Type;
 
 export const StorefrontAssociationResultSchema = Schema.Struct({
@@ -219,15 +198,13 @@ export const StorefrontAssociationResultSchema = Schema.Struct({
   changed: Schema.Boolean,
   marketRef: MarketRefSchema,
   revision: positiveRevision,
-})
-  .check(
-    Schema.makeFilter(({ associationRef, marketRef }) =>
-      associationRef.tenantId === marketRef.tenantId
-        ? undefined
-        : 'Association and Market must belong to the same Tenant',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ associationRef, marketRef }) =>
+    associationRef.tenantId === marketRef.tenantId
+      ? undefined
+      : 'Association and Market must belong to the same Tenant',
+  ),
+);
 
 export class MarketCommandRejected extends Schema.TaggedError<MarketCommandRejected>()('MarketCommandRejected', {
   code: Schema.Literals([

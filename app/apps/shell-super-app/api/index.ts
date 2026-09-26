@@ -34,7 +34,7 @@ import {
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
 import type { GatewayContextProblem } from '@app/shared-contracts';
-import { assembleEffectBffRuntime } from '@app/shared-contracts/server/effect-bff-runtime';
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Cookies, HttpApiBuilder, HttpEffect, HttpServerResponse, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import {

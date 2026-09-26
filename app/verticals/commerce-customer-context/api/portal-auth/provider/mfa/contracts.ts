@@ -59,15 +59,15 @@ export const CommercePortalAuthMfaEnableBodySchema = Schema.Struct({
   issuer: Schema.optionalKey(Schema.String),
   method: Schema.optionalKey(MethodSchema),
   password: PasswordSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export const CommercePortalAuthMfaDisableBodySchema = Schema.Struct({
   password: PasswordSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export const CommercePortalAuthMfaPasswordBodySchema = Schema.Struct({
   password: PasswordSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 type CommercePortalAuthMfaEnableBody = typeof CommercePortalAuthMfaEnableBodySchema.Type;
 type CommercePortalAuthMfaDisableBody = typeof CommercePortalAuthMfaDisableBodySchema.Type;

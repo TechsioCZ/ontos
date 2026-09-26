@@ -7,7 +7,7 @@ import type { Auth } from 'better-auth';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
 import { Config, Context, DateTime, Effect, Layer, Option, Redacted, Result, Schema } from 'effect';
-import type { Scope } from 'effect';
+import type { SchemaAST, Scope } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { OTPOptions } from 'better-auth/plugins/two-factor';
@@ -62,6 +62,7 @@ import { COMMERCE_PORTAL_AUTH_POLICY, parseCommercePortalAuthConfig } from '../.
 import type { CommercePortalAuthConfigValue } from '../../api/portal-auth/provider/config.ts';
 import { CommercePortalAuthMfaApi } from '../../shared/portal-auth/mfa-api.ts';
 import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 const ORIGIN = 'https://commerce.example.test';
 const BASE_PATH = '/api/portal-auth';
@@ -97,7 +98,7 @@ const EnableResponseSchema = Schema.Struct({
   backupCodes: Schema.Array(Schema.String),
   method: Schema.Literal('totp'),
   totpURI: Schema.String,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 const makeFixture = () => {
   const database = {
     account: [],
@@ -211,9 +212,13 @@ const request = <AuthValue extends Pick<Auth, 'handler'>>(
     ),
   );
 
-const responseBody = <SchemaValue extends Schema.Constraint>(response: Response, schema: SchemaValue) =>
+const responseBody = <SchemaValue extends Schema.Constraint>(
+  response: Response,
+  schema: SchemaValue,
+  options?: SchemaAST.ParseOptions,
+) =>
   Effect.promise(() => response.clone().json()).pipe(
-    Effect.flatMap((body) => Schema.decodeUnknownEffect(schema)(body)),
+    Effect.flatMap((body) => Schema.decodeUnknownEffect(schema, options)(body)),
   );
 
 const browserHeadersFrom = (response: Response): Headers => {
@@ -241,7 +246,7 @@ it.effect('registers the real Better Auth MFA HTTP routes and returns only TOTP 
       browserHeadersFrom(signUp).get('cookie') ?? undefined,
     );
     expect(enable.status).toBe(200);
-    const setup = yield* responseBody(enable, EnableResponseSchema);
+    const setup = yield* responseBody(enable, EnableResponseSchema, { onExcessProperty: 'error' });
     expect(setup.backupCodes.length).toBeGreaterThan(0);
     expect(setup.totpURI.startsWith('otpauth://totp/')).toBe(true);
   }),
@@ -800,8 +805,8 @@ it.effect('bounds MFA routes on the owner budget and keeps every refusal problem
  * rotation a completed step-up performs preserves `created_at` on purpose — that is what carries
  * the absolute session lifetime — so the row's age can never stand in for "recently authenticated".
  */
-const PORTAL_AUTH_DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const PORTAL_AUTH_DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 const FRESHNESS_COOKIE_NAME = `__Secure-${COMMERCE_PORTAL_AUTH_POLICY.cookie.namePrefix}.session_token`;
 const FRESHNESS_STALE_AGE_MILLIS = (COMMERCE_PORTAL_AUTH_POLICY.session.freshAgeSeconds + 600) * 1000;
@@ -823,7 +828,7 @@ const makeFreshnessFixture = Effect.fn('CommercePortalAuthMfaFreshnessIntegratio
       COMMERCE_PORTAL_AUTH_SECRET: SECRET,
       COMMERCE_PORTAL_AUTH_URL: ORIGIN,
     });
-    const database = yield* makeCommercePortalAuthDatabase(configuration);
+    const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
     const providerSubjectId = `mfa-freshness-${randomUUID()}`;
     const now = yield* DateTime.nowAsDate;
     const staleAt = new Date(now.getTime() - FRESHNESS_STALE_AGE_MILLIS);
@@ -1020,7 +1025,7 @@ it.effect('proves the Commerce realm stages a TOTP factor at /enable and activat
     );
     expect(enabled.status).toBe(200);
 
-    const setup = yield* responseBody(enabled, EnableResponseSchema);
+    const setup = yield* responseBody(enabled, EnableResponseSchema, { onExcessProperty: 'error' });
     expect(setup.totpURI.startsWith('otpauth://totp/')).toBe(true);
 
     // Better Auth 1.7.2, dist/plugins/two-factor/index.mjs:138-149 — the `twoFactorEnabled` update

@@ -81,6 +81,7 @@ import {
   readCounterpartyInvitationRow,
 } from '../support/counterparty-invitation-acceptance.ts';
 import type { CounterpartyInvitationRealm } from '../support/counterparty-invitation-acceptance.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
  * The Counterparty invitation enrollment journey, end to end on the deployed composition.
@@ -113,8 +114,8 @@ const CLAIM_INVITATION_ACTION_KEY = 'commerce.customer-context.claim-counterpart
 const BINDING_RESERVED_OUTCOME_CODE = 'principal_binding_reserved';
 const BINDING_ACTIVATED_OUTCOME_CODE = 'principal_binding_activated';
 
-const providerDatabaseUrl = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 /** Resend is answered locally: creation now awaits delivery, so the transport must accept. */
@@ -221,14 +222,18 @@ const deployedRuntime = (gateway: AcceptanceGatewayIssuer) =>
 /** The provider account directory, read directly so a created row cannot hide behind the port. */
 const portalAccountsFor = Effect.fnUntraced(function* portalAccountsFor(email: string) {
   const databaseUrl = yield* providerDatabaseUrl;
-  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  const database = yield* acquireOutlivingCleanup(
+    makeCommercePortalAuthDatabase({ connectionString: databaseUrl }),
+  ).pipe(Effect.orDie);
   return yield* database.executor.select({ id: user.id }).from(user).where(eq(user.email, email)).pipe(Effect.orDie);
 });
 
 /** Removes the provider account a start really created, so the directory is left as it was found. */
 const removePortalAccountsOnClose = Effect.fnUntraced(function* removePortalAccountsOnClose(email: string) {
   const databaseUrl = yield* providerDatabaseUrl;
-  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  const database = yield* acquireOutlivingCleanup(
+    makeCommercePortalAuthDatabase({ connectionString: databaseUrl }),
+  ).pipe(Effect.orDie);
   yield* Effect.addFinalizer(() =>
     database.executor
       .transaction((transaction) =>
@@ -256,7 +261,7 @@ interface SignedInPortalAccount {
  */
 const signInPortalAccount = Effect.fnUntraced(function* signInPortalAccount(email: string) {
   const configuration = yield* portalAuthConfiguration();
-  const database = yield* makeCommercePortalAuthDatabase(configuration).pipe(Effect.orDie);
+  const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration)).pipe(Effect.orDie);
   const verificationTokens: string[] = [];
   const auth = yield* makeCommercePortalAuth({
     configuration,

@@ -3,10 +3,10 @@ import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type {
   MarketRetirementImpactAssessment,
   ReservedMarketRetirementImpactAssessment,
@@ -23,7 +23,7 @@ const duplicateMarketId = 'e3461000-0000-4000-8000-000000000002';
 const associationId = 'e3462000-0000-4000-8000-000000000001';
 const overlappingAssociationId = 'e3462000-0000-4000-8000-000000000002';
 
-type MarketCatalogTestDatabase = TestDatabaseFromPool<typeof commerceMarketCatalogRelations>;
+type MarketCatalogTestDatabase = TestDatabaseFromClient<typeof commerceMarketCatalogRelations>;
 type MarketCatalogTransaction = Parameters<Parameters<MarketCatalogTestDatabase['transaction']>[0]>[0];
 
 const OutcomeRowSchema = Schema.Struct({ payload: Schema.Record(Schema.String, Schema.Unknown) });
@@ -116,9 +116,9 @@ const storefrontRef = { appId: 'czech-storefront', tenantId };
 it.live('enforces CAS, idempotency, temporal associations, terminal retirement, and immutable history', () =>
   Effect.scoped(
     Effect.gen(function* marketAdministrationAcceptance() {
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceMarketCatalogRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceMarketCatalogRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceMarketCatalogRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceMarketCatalogRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>
@@ -480,8 +480,8 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
 it.live('exposes only the six governed mutations and three governed reads over forced Tenant RLS', () =>
   Effect.scoped(
     Effect.gen(function* marketSecurityCatalog() {
-      const { admin: adminPool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceMarketCatalogRelations);
+      const { admin: adminClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceMarketCatalogRelations);
       const [catalog] = yield* admin.execute<{
         readonly executable_routines: number;
         readonly forced_tables: number;

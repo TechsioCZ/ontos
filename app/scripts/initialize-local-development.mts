@@ -205,7 +205,7 @@ const TrimmedNonEmptyString = Schema.Trim.check(Schema.isNonEmpty());
 
 const localDevelopmentConfigSource = Config.all({
   authBaseUrl: Config.schema(TrimmedNonEmptyString, 'BETTER_AUTH_URL'),
-  authSecret: Config.redacted('BETTER_AUTH_SECRET'),
+  authSecret: Config.Redacted('BETTER_AUTH_SECRET'),
   databaseAdminUrl: Config.schema(TrimmedNonEmptyString, 'DATABASE_ADMIN_URL'),
   databaseUrl: Config.schema(TrimmedNonEmptyString, 'DATABASE_URL'),
   deploymentEnvironment: Config.schema(Schema.Trim, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
@@ -213,7 +213,7 @@ const localDevelopmentConfigSource = Config.all({
   ),
   spiceDbEndpoint: Config.schema(TrimmedNonEmptyString, 'SPICEDB_ENDPOINT'),
   spiceDbInsecure: Config.schema(Schema.Trim, 'SPICEDB_INSECURE'),
-  spiceDbPreSharedKey: Config.redacted('SPICEDB_PRESHARED_KEY'),
+  spiceDbPreSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY'),
 });
 
 const environmentProvider = (environment: LocalDevelopmentEnvironment) => ConfigProvider.fromUnknown(environment);
@@ -329,9 +329,7 @@ export const deriveActivatedModuleIds = (
     const topologySource = yield* fileSystem
       .readFileString(pathService.join(workspaceRoot, 'topology/reference-topology.json'))
       .pipe(Effect.mapError(() => failure('local_contract_invalid', 'The authoritative topology could not be read')));
-    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema), {
-      onExcessProperty: 'preserve',
-    })(topologySource).pipe(
+    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema))(topologySource).pipe(
       Effect.mapError(() => failure('local_contract_invalid', 'The authoritative topology is invalid')),
     );
     if (topology.verticals.length === 0) {

@@ -54,7 +54,7 @@ export const CommerceEnrollmentProviderOwnerReconciliationObservationSchema = Sc
     outcome: Schema.Literal('FOUND'),
     providerSubjectId: EnrollmentProviderSubjectIdSchema,
   }),
-]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+]);
 export type CommerceEnrollmentProviderOwnerReconciliationObservation =
   typeof CommerceEnrollmentProviderOwnerReconciliationObservationSchema.Type;
 
@@ -146,7 +146,7 @@ const validateAccountInput = (
   CommercePortalAccountCreateInputBoundary,
   InstanceType<typeof CommerceEnrollmentOwnerEffectRejected>
 > =>
-  Schema.decodeEffect(CommercePortalAccountCreateInputSchema)(input).pipe(
+  Schema.decodeEffect(CommercePortalAccountCreateInputSchema, { onExcessProperty: 'error' })(input).pipe(
     Effect.mapError((cause) =>
       rejected('provider_account_invalid_request', 'The owner account request is invalid', cause),
     ),
@@ -265,6 +265,7 @@ export const commerceEnrollmentPortalAuthOwnerReconciliationForLookup = (
     const observation = yield* reconcileAccount(input);
     const decodedObservation = yield* Schema.decodeEffect(
       CommerceEnrollmentProviderOwnerReconciliationObservationSchema,
+      { onExcessProperty: 'error' },
     )(observation).pipe(
       Effect.mapError((cause) =>
         indeterminate(

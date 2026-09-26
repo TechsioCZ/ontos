@@ -51,7 +51,7 @@ export const CustomerCommercePolicyTrustedActionContextSchema = Schema.Struct({
   actorPrincipalId: CustomerCommercePolicyActorPrincipalIdSchema,
   sellingLegalEntityId: CustomerCommercePolicySellingLegalEntityIdSchema,
   tenantId: CustomerCommercePolicyTenantIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CustomerCommercePolicyTrustedActionContext = typeof CustomerCommercePolicyTrustedActionContextSchema.Type;
 
 const trustedCommandFields = {
@@ -140,7 +140,7 @@ const makeAdministrationPayloadSchema = <Revision extends Schema.Top>(revision: 
       replacedRevisionId: CustomerCommercePolicyRevisionIdSchema,
       replacement: revision,
     }),
-  ]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+  ]);
 
 const makeAdministrationCommandSchema = <Revision extends Schema.Top>(revision: Revision) =>
   Schema.Union([
@@ -171,7 +171,7 @@ const makeAdministrationCommandSchema = <Revision extends Schema.Top>(revision: 
       replacedRevisionId: CustomerCommercePolicyRevisionIdSchema,
       replacement: revision,
     }),
-  ]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+  ]);
 
 export const MarketBootstrapPolicyAdministrationPayloadSchema = makeAdministrationPayloadSchema(
   MarketBootstrapPolicyRevisionPayloadSchema,
@@ -847,13 +847,13 @@ const makeCurrentPolicyCandidateSchema = <Scope extends Schema.Top, Value extend
     policyRevisionId: CustomerCommercePolicyRevisionIdSchema,
     scope,
     value,
-  }).annotate({ parseOptions: { onExcessProperty: 'error' } });
+  });
 
 const makeCurrentCandidateSetSchema = <Candidate extends Schema.Top>(candidate: Candidate) =>
   Schema.Struct({
     candidates: Schema.Array(candidate),
     completeness: Schema.toEncoded(OwnerVerifiableSetCompletenessEvidenceSchema),
-  }).annotate({ parseOptions: { onExcessProperty: 'error' } });
+  });
 
 export const CurrentPurchaseCurrencyPolicyCandidateSchema = makeCurrentPolicyCandidateSchema({
   scope: OrdinaryCustomerCommercePolicyScopeSchema,
@@ -889,14 +889,14 @@ export const MarketBootstrapPolicyBatchCurrentRequestSchema = Schema.Struct({
       new Set(ids).size === ids.length ? undefined : 'Eligible Selling Legal Entity IDs must be unique',
     ),
   ),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type MarketBootstrapPolicyBatchCurrentRequest = typeof MarketBootstrapPolicyBatchCurrentRequestSchema.Type;
 
 const MarketBootstrapDefaultTupleSchema = Schema.Struct({
   channelId: CustomerCommercePolicyChannelIdSchema,
   commerceMarketId: CustomerCommercePolicyCommerceMarketIdSchema,
   sellingLegalEntityId: CustomerCommercePolicySellingLegalEntityIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 const MarketBootstrapPolicyBatchCandidateSchema = Schema.Struct({
   defaultTuple: MarketBootstrapDefaultTupleSchema,
@@ -942,7 +942,7 @@ export const MarketBootstrapPolicyBatchCurrentResponseSchema = Schema.Struct({
         : 'Bootstrap response may contain only one partition per Selling Legal Entity',
     ),
   ),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type MarketBootstrapPolicyBatchCurrentResponse = typeof MarketBootstrapPolicyBatchCurrentResponseSchema.Type;
 
 export const MarketBootstrapPolicyBatchCurrentExchangeSchema = Schema.Struct({
@@ -1082,7 +1082,7 @@ export const CommerceQuantityAssignmentPayloadSchema = Schema.Union([
     idempotencyKey: CustomerCommercePolicyIdempotencyKeySchema,
     reason: boundedReason,
   }),
-]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+]);
 export type CommerceQuantityAssignmentPayload = typeof CommerceQuantityAssignmentPayloadSchema.Type;
 
 const CommerceQuantityAssignmentCommandSchema = Schema.Union([
@@ -1099,7 +1099,7 @@ const CommerceQuantityAssignmentCommandSchema = Schema.Union([
     idempotencyKey: CustomerCommercePolicyIdempotencyKeySchema,
     reason: boundedReason,
   }),
-]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+]);
 
 export const toTrustedCommerceQuantityAssignmentCommand = (
   payload: CommerceQuantityAssignmentPayload,
@@ -1121,7 +1121,9 @@ export const toTrustedCommerceQuantityAssignmentCommand = (
     Match.tag('UNASSIGN', () => base),
     Match.exhaustive,
   );
-  return Result.getOrThrow(Schema.decodeUnknownResult(CommerceQuantityAssignmentCommandSchema)(command));
+  return Result.getOrThrow(
+    Schema.decodeUnknownResult(CommerceQuantityAssignmentCommandSchema, { onExcessProperty: 'error' })(command),
+  );
 };
 
 interface CommerceQuantityRuleUnassignment {
@@ -1426,13 +1428,13 @@ export const CurrentCommerceQuantityAssignmentSchema = Schema.Struct({
   profile: CommerceQuantityAssignmentProfileSchema,
   ruleRevisionRef: CommerceQuantityRuleRefSchema,
   sellingLegalEntityId: CustomerCommercePolicySellingLegalEntityIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CurrentCommerceQuantityAssignment = typeof CurrentCommerceQuantityAssignmentSchema.Type;
 
 const CurrentCommerceQuantityAssignmentSetSchema = Schema.Struct({
   assignments: Schema.Array(CurrentCommerceQuantityAssignmentSchema),
   completeness: Schema.toEncoded(OwnerVerifiableSetCompletenessEvidenceSchema),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CurrentCommerceQuantityAssignmentSet = typeof CurrentCommerceQuantityAssignmentSetSchema.Type;
 
 export const currentCommerceQuantityAssignmentSet = (
@@ -1464,7 +1466,7 @@ export const currentCommerceQuantityAssignmentSet = (
 export const CurrentCommerceQuantityPolicySetSchema = Schema.Struct({
   assignmentSet: CurrentCommerceQuantityAssignmentSetSchema,
   ruleSet: CurrentCommerceQuantityRuleSetSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CurrentCommerceQuantityPolicySet = typeof CurrentCommerceQuantityPolicySetSchema.Type;
 
 export const currentCommerceQuantityPolicySet = (

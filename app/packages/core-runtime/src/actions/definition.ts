@@ -685,7 +685,7 @@ export const decodeActionPayload = <PayloadSchema extends Schema.ConstraintDecod
     );
   }
 
-  return Schema.decodeUnknownEffect(schema)(payload).pipe(
+  return Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })(payload).pipe(
     Effect.mapError((cause) =>
       preserveFailureCause(
         new ActionPayloadValidationError({

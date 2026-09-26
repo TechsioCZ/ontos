@@ -220,24 +220,6 @@ const fixture = () =>
       'verticals/remote/module-federation.config.ts',
       "export default {remotes: {childRemote:'child@https://example.test/remote.js'}};",
     );
-    write(root, 'src/validated.ts', 'export const unusedValidatedExport = 1;');
-    write(
-      root,
-      'scripts/validate-ultramodern-workspace.mts',
-      [
-        "const requiredPaths = ['src/validated.ts']; for (const file of requiredPaths) console.log(file);",
-        "const workspaceValidationContractDefinition = {topology: {compactConfig: {apps: [{path:'verticals/remote'}]}}};",
-        'for (const expectedApp of workspaceValidationContractDefinition.topology.compactConfig.apps) {',
-        'const appPath = expectedApp.path;',
-        `const buildModuleSource = readText(\`\${appPath}/shared/ultramodern-build.ts\`);`,
-        "console.log(buildModuleSource.includes('export const declaredBuildIdentity')); }",
-      ].join('\n'),
-    );
-    write(
-      root,
-      'verticals/remote/shared/ultramodern-build.ts',
-      'export const declaredBuildIdentity = 1; export const unusedBuildNeighbor = 2;',
-    );
     write(root, 'tools/oxlint/effect-native/report.mts', "runOxlint(join(pluginDirectory, 'report.config.ts'), []);");
     write(
       root,
@@ -309,11 +291,6 @@ it.live(
     expect(!findings('files').some((finding) => finding.startsWith('src/worker.mts#'))).toBe(true);
     expect(!findings('files').some((finding) => finding.startsWith('src/public.ts#'))).toBe(true);
     expect(findings('exports').includes('src/helper.ts#unusedNeighbor')).toBe(true);
-    expect(findings('exports').includes('src/validated.ts#unusedValidatedExport')).toBe(true);
-    expect(!findings('exports').includes('verticals/remote/shared/ultramodern-build.ts#declaredBuildIdentity')).toBe(
-      true,
-    );
-    expect(findings('exports').includes('verticals/remote/shared/ultramodern-build.ts#unusedBuildNeighbor')).toBe(true);
     expect(!findings('exports').includes('verticals/remote/src/api/action-gateway.ts#ACTION_GATEWAY_AUDIENCE')).toBe(
       true,
     );
@@ -333,7 +310,6 @@ it.live(
     expect(findings('exports')).toContain('verticals/remote/shared/apis/remote-status.ts#unusedModuleApiNeighbor');
     expect(!findings('exports').includes('tools/oxlint/effect-native/report.config.ts#default')).toBe(true);
     expect(findings('exports').includes('tools/oxlint/effect-native/report.config.ts#unusedConfigNeighbor')).toBe(true);
-    expect(!findings('files').some((finding) => finding.startsWith('src/validated.ts#'))).toBe(true);
     expect(findings('exports').includes('src/schema.ts#unregisteredHelper')).toBe(true);
     expect(!findings('exports').includes('src/schema.ts#registeredSchema')).toBe(true);
     expect(!findings('exports').includes('src/public.ts#externallyConsumed')).toBe(true);

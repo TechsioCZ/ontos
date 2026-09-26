@@ -154,7 +154,8 @@ const commercePortalAuthRecoveryGroupDefinition = HttpApiGroup.make('portalAuthR
   .add(
     HttpApiEndpoint.get('verifyEmail', '/api/portal-auth/verify-email', {
       error: verificationRouteProblems,
-      query: Schema.Struct({ token: recoveryToken }),
+      // Better Auth issues the verification link with its own `callbackURL` query key.
+      query: Schema.Struct({ callbackURL: Schema.optionalKey(callbackURL), token: recoveryToken }),
       success: Schema.Union([
         CommercePortalAuthEmailVerificationCompletedResultSchema,
         CommercePortalAuthRecoveryReconciliationRequiredResultSchema,
@@ -171,6 +172,7 @@ export type CommercePortalAuthRecoveryGroupContract = HttpApiGroup.HttpApiGroup<
 const CommercePortalAuthRecoveryGroup: CommercePortalAuthRecoveryGroupContract =
   commercePortalAuthRecoveryGroupDefinition;
 
-export const CommercePortalAuthRecoveryApi = HttpApi.make('CommercePortalAuthRecoveryApi').add(
-  CommercePortalAuthRecoveryGroup,
-);
+/** Request bodies and queries are decoded closed: an undeclared field is a rejected request. */
+export const CommercePortalAuthRecoveryApi = HttpApi.make('CommercePortalAuthRecoveryApi')
+  .add(CommercePortalAuthRecoveryGroup)
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });

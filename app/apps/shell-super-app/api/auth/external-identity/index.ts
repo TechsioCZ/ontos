@@ -326,7 +326,7 @@ const requiredHeader = (
 const BindingSubjectLookupInputSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 type BindingSubjectReadServices = Readonly<{
   readonly lookup: (input: {
@@ -1124,10 +1124,8 @@ const externalIdentityStandaloneApiGroupLive = HttpApiBuilder.group(
   buildExternalIdentityHandlers,
 );
 
-/** Shell-owned group layer. Direct declaration with the handler chain inlined, per the
- * runtime topology gate (`declaresLayerValue`/`groupCallbackRegistersHandler` in
- * `scripts/ultramodern-api-boundary-rules.mts`): the group callback must be an inline arrow
- * whose body contains `handlers.handle(`, not a reference to a named callback. */
+/** Shell-owned group layer with a concrete handler chain proven by the native
+ * strict Effect API boundary analyzer. */
 export const externalIdentityGroupLive = HttpApiBuilder.group(ShellAuthenticationApi, 'externalIdentity', (handlers) =>
   handlers
     .handle('reservePrincipalBinding', reservePrincipalBindingHandler)

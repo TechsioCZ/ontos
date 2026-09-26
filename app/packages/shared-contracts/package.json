@@ -15,19 +15,19 @@
     "./server/external-identity-client": "./src/external-identity-client.ts"
   },
   "scripts": {
-    "test:types": "node ../../scripts/ultramodern-typecheck.mts --project tests/tsconfig.json && node ../../scripts/ultramodern-typecheck.mts --project tests/client-runtime-types.tsconfig.json",
+    "test:types": "ultramodern-create ultramodern typecheck --project tests/tsconfig.json && ultramodern-create ultramodern typecheck --project tests/client-runtime-types.tsconfig.json",
     "test:unit": "rstest --project unit && pnpm test:types",
-    "typecheck": "node ../../scripts/ultramodern-typecheck.mts --project tsconfig.json"
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
-    "@effect/opentelemetry": "4.0.0-rc.112",
-    "effect": "4.0.0-rc.112",
+    "@effect/opentelemetry": "4.0.0-rc.117",
+    "effect": "4.0.0-rc.117",
     "@app/core-runtime": "workspace:*",
-    "@modern-js/bff-effect": "npm:@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.12"
+    "@modern-js/bff-effect": "catalog:ultramodern"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",
-    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "@rstest/core": "0.11.12"
   }
 }

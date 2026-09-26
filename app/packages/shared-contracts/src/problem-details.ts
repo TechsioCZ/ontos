@@ -50,9 +50,6 @@ const isConcreteExtensionValue = (ast: SchemaAST.AST): boolean => {
   if (SchemaAST.isNumber(ast)) {
     return hasJsonSafeNumberCheck(ast.checks);
   }
-  if (SchemaAST.isEnum(ast)) {
-    return ast.enums.every(([, value]) => Predicate.isString(value) || Number.isFinite(value));
-  }
   return true;
 };
 

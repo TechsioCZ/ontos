@@ -12,7 +12,7 @@ export class KeySet extends Context.Tag('KeySet')<KeySet, unknown>() {}
 export const KeySetLive = Layer.effect(
   KeySet,
   Effect.gen(function* buildKeySet() {
-    const raw = yield* Config.string('AUTH_JWKS');
+    const raw = yield* Config.String('AUTH_JWKS');
     return createLocalJWKSet(JSON.parse(raw) as never);
   }),
 );

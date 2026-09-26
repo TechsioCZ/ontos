@@ -52,7 +52,7 @@ export const CommercePortalAccountCreateInputSchema = Schema.Struct({
   ownerInvocationId,
   password,
   tenantId,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CommercePortalAccountCreateInput = typeof CommercePortalAccountCreateInputSchema.Type;
 export type CommercePortalAccountCreateInputBoundary = Schema.Codec.Encoded<
   typeof CommercePortalAccountCreateInputSchema
@@ -378,7 +378,9 @@ export const makeCommercePortalAuthAccountCreationService = Effect.fn('CommerceP
     const createAccount = Effect.fn('CommercePortalAuthAccountCreation.create')(function* create(
       input: CommercePortalAccountCreateInputBoundary,
     ): Effect.fn.Return<CommercePortalAccountCreateResult, CommercePortalAuthAccountCreationFailure> {
-      const request = yield* Schema.decodeEffect(CommercePortalAccountCreateInputSchema)(input).pipe(
+      const request = yield* Schema.decodeEffect(CommercePortalAccountCreateInputSchema, { onExcessProperty: 'error' })(
+        input,
+      ).pipe(
         Effect.mapError((cause) =>
           withCause(
             new CommercePortalAuthAccountCreationInvalidRequest({

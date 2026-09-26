@@ -1004,8 +1004,8 @@ export const runQualityAudit = Effect.fn('qualityAudit.runQualityAudit')(functio
 const cli = Command.make(
   'quality-audit',
   {
-    output: Flag.string('output').pipe(Flag.withDefault('.codex/reports/quality-audit')),
-    tool: Flag.choice('tool', ['all', 'knip', 'jscpd', 'fallow']).pipe(Flag.withDefault('all')),
+    output: Flag.String('output').pipe(Flag.withDefault('.codex/reports/quality-audit')),
+    tool: Flag.Literals('tool', ['all', 'knip', 'jscpd', 'fallow']).pipe(Flag.withDefault('all')),
   },
   ({ output, tool }) =>
     Effect.gen(function* qualityAuditCommand() {

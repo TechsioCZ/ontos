@@ -907,7 +907,9 @@ const readRuntimeFromDependencies = <
     >;
     readonly transport: unknown;
   }) {
-    const decodedInput = yield* Schema.decodeUnknownEffect(input.registration.descriptor.inputSchema)(input.input).pipe(
+    const decodedInput = yield* Schema.decodeUnknownEffect(input.registration.descriptor.inputSchema, {
+      onExcessProperty: 'error',
+    })(input.input).pipe(
       Effect.mapError((parseIssue) =>
         preserveFailureCause(
           new ReadInputValidationError({
@@ -1195,9 +1197,9 @@ const readRuntimeFromDependencies = <
             ),
           );
           stage('handler_executed');
-          const result = yield* Schema.decodeUnknownEffect(Schema.toType(input.registration.descriptor.resultSchema))(
-            handlerResult.result,
-          ).pipe(
+          const result = yield* Schema.decodeUnknownEffect(Schema.toType(input.registration.descriptor.resultSchema), {
+            onExcessProperty: 'error',
+          })(handlerResult.result).pipe(
             Effect.mapError((parseIssue) =>
               preserveFailureCause(
                 new ReadResultValidationError({

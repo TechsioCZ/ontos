@@ -188,9 +188,9 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
       function* requestPasswordResetEffect(
         input: CommercePortalAuthPasswordResetRequestBoundary,
       ): Effect.fn.Return<CommercePortalAuthRecoveryStarted, CommercePortalAuthRecoveryFailure> {
-        const request = yield* Schema.decodeEffect(CommercePortalAuthPasswordResetRequestSchema)(input).pipe(
-          Effect.mapError(invalidRequest),
-        );
+        const request = yield* Schema.decodeEffect(CommercePortalAuthPasswordResetRequestSchema, {
+          onExcessProperty: 'error',
+        })(input).pipe(Effect.mapError(invalidRequest));
         // The provider sends mail and registers a token; both rows are strict so neither can happen
         // behind an audit trail with no row for it. No subject: the answer must not enumerate.
         yield* recordIntent({
@@ -228,9 +228,9 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
       CommercePortalAuthRecoveryCompleted | CommercePortalAuthRecoveryReconciliationRequired,
       CommercePortalAuthRecoveryFailure
     > {
-      const request = yield* Schema.decodeEffect(CommercePortalAuthPasswordResetSchema)(input).pipe(
-        Effect.mapError(invalidRequest),
-      );
+      const request = yield* Schema.decodeEffect(CommercePortalAuthPasswordResetSchema, { onExcessProperty: 'error' })(
+        input,
+      ).pipe(Effect.mapError(invalidRequest));
       // Reconciliation runs before any token is spent: a conflict is terminal, and the provider's
       // reset must never run once the ledger and the account's current state disagree.
       const conflict = yield* reconciliation.detect({
@@ -359,9 +359,9 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
       function* requestEmailVerificationEffect(
         input: CommercePortalAuthEmailVerificationRequestBoundary,
       ): Effect.fn.Return<CommercePortalAuthEmailVerificationStarted, CommercePortalAuthRecoveryFailure> {
-        const request = yield* Schema.decodeEffect(CommercePortalAuthEmailVerificationRequestSchema)(input).pipe(
-          Effect.mapError(invalidRequest),
-        );
+        const request = yield* Schema.decodeEffect(CommercePortalAuthEmailVerificationRequestSchema, {
+          onExcessProperty: 'error',
+        })(input).pipe(Effect.mapError(invalidRequest));
         const reserved = yield* store.reserveEmailVerificationSubject({
           email: normalizeCommercePortalAuthEmail(request.email),
           providerSubjectId: request.providerSubjectId,
@@ -424,9 +424,9 @@ export const makeCommercePortalAuthRecoveryService = Effect.fn('CommercePortalAu
       CommercePortalAuthEmailVerificationCompleted | CommercePortalAuthRecoveryReconciliationRequired,
       CommercePortalAuthRecoveryFailure
     > {
-      const request = yield* Schema.decodeEffect(CommercePortalAuthEmailVerificationTokenSchema)(input).pipe(
-        Effect.mapError(invalidRequest),
-      );
+      const request = yield* Schema.decodeEffect(CommercePortalAuthEmailVerificationTokenSchema, {
+        onExcessProperty: 'error',
+      })(input).pipe(Effect.mapError(invalidRequest));
       // Reconciliation runs before the ledger token is consumed: a conflict is terminal, and access
       // must never be restored once the ledger and the account's current state disagree.
       const conflict = yield* reconciliation.detect({

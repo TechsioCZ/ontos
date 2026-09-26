@@ -36,8 +36,8 @@ import {
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { makeInMemoryTenantBindingIsolationOwner } from '../support/tenant-binding-isolation-fixture.ts';
 import type {
@@ -152,9 +152,9 @@ const makeOwnerAuthentication = (
 // canonical recheck and durable-state assertions below.
 it.live('revokes only T1 through the governed Core action and keeps T2 admitted on the same session', () =>
   Effect.gen(function* tenantBindingIsolation() {
-    const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-    const admin = yield* makeTestDatabaseFromPool(adminPool, coreRelations);
-    const database = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
+    const { admin: adminClient, runtime } = yield* testDatabaseClients;
+    const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+    const database = yield* makeTestDatabaseFromClient(runtime, coreRelations);
     const fixtureId = randomUUID();
     const tenantOneId = randomUUID();
     const tenantTwoId = randomUUID();

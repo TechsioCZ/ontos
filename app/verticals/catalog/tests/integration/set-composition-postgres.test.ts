@@ -5,8 +5,8 @@ import { expect, it } from 'effect-rstest';
 import { randomUUID } from 'node:crypto';
 
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { SetCompositionRevisionSchema } from '../../shared/domain/set-composition.ts';
 import { ProductConfigurationSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
@@ -109,9 +109,9 @@ const revisionFor = (
 it.live('publishes only a proven flat fixed Set with one shelf and two brackets', () =>
   Effect.scoped(
     Effect.gen(function* setCompositionPostgres() {
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, catalogRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, catalogRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, catalogRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, catalogRelations);
       const withTenant = <Value, Failure>(
         scopedTenantId: string,
         operation: (transaction: CatalogTransaction) => Effect.Effect<Value, Failure>,

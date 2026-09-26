@@ -21,8 +21,8 @@ class LocalValidationError extends Schema.TaggedError<LocalValidationError>()('L
 const cli = Command.make(
   'check-local',
   {
-    dryRun: Flag.boolean('dry-run').pipe(Flag.withDefault(false)),
-    scope: Flag.choice('scope', ['full', 'lint-rules', 'quality', 'scripts', 'unit']).pipe(Flag.withDefault('full')),
+    dryRun: Flag.Boolean('dry-run').pipe(Flag.withDefault(false)),
+    scope: Flag.Literals('scope', ['full', 'lint-rules', 'quality', 'scripts', 'unit']).pipe(Flag.withDefault('full')),
   },
   ({ dryRun, scope }) =>
     Effect.gen(function* checkLocalCommand() {

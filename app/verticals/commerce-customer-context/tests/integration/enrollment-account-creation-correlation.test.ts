@@ -53,6 +53,7 @@ import {
   readEnrollmentAcceptanceOperations,
   startEnrollmentAcceptanceAttempt,
 } from '../support/enrollment-acceptance-fixture.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 /**
  * Better Auth can commit the account row and still lose its answer — a timed-out call, an unusable
@@ -68,8 +69,8 @@ import {
 const ORIGIN = 'https://portal.example.test';
 const SECRET = 'c'.repeat(64);
 const PASSWORD = 'C'.repeat(24);
-const DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)('60000000-0000-4000-8000-0000000000c1');
@@ -98,7 +99,7 @@ const makeCorrelationFixture = Effect.fn('CommerceEnrollmentAccountCorrelation.m
     COMMERCE_PORTAL_AUTH_SECRET: SECRET,
     COMMERCE_PORTAL_AUTH_URL: ORIGIN,
   });
-  const database = yield* makeCommercePortalAuthDatabase(configuration);
+  const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
   const auth = yield* makeCommercePortalAuth({
     configuration,
     databaseAdapter: database.adapter,
@@ -287,7 +288,7 @@ it.live('reports unavailable when the first send fails, then converges and reiss
         COMMERCE_PORTAL_AUTH_SECRET: SECRET,
         COMMERCE_PORTAL_AUTH_URL: ORIGIN,
       });
-      const database = yield* makeCommercePortalAuthDatabase(configuration);
+      const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
       let sendCount = 0;
       const deliveredTokens: string[] = [];
       const auth = yield* makeCommercePortalAuth({

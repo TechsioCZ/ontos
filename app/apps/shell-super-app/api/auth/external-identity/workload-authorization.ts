@@ -95,7 +95,7 @@ const configurationDecodeError = (error: Schema.SchemaError): ExternalIdentityWo
 const decodeHttpConfiguration = (
   configuration: ExternalIdentityHttpConfiguration,
 ): Effect.Effect<ExternalIdentityHttpConfiguration, ExternalIdentityWorkloadUnavailableError> =>
-  Schema.decodeEffect(ExternalIdentityHttpConfigurationSchema)(configuration).pipe(
+  Schema.decodeEffect(ExternalIdentityHttpConfigurationSchema, { onExcessProperty: 'error' })(configuration).pipe(
     Effect.mapError(configurationDecodeError),
   );
 

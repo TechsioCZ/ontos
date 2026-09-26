@@ -5,10 +5,10 @@ import { Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { CurrentMarketCatalogRequestSchema } from '../../shared/apis/current-market-catalog.ts';
@@ -20,7 +20,7 @@ const principalId = 'e3470000-0000-4000-8000-000000000004';
 const marketId = 'e3471000-0000-4000-8000-000000000001';
 const associationId = 'e3472000-0000-4000-8000-000000000001';
 
-type MarketCatalogTestDatabase = TestDatabaseFromPool<typeof coreRelations>;
+type MarketCatalogTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
 type MarketCatalogTransaction = Parameters<Parameters<MarketCatalogTestDatabase['transaction']>[0]>[0];
 
 const OutcomeRowSchema = Schema.Struct({ payload: Schema.Record(Schema.String, Schema.Unknown) });
@@ -88,9 +88,9 @@ const currentAt = (database: MarketCatalogTestDatabase, at: string) =>
 it.live('reads scheduled Current state and immutable retained history through runtime PostgreSQL RLS', () =>
   Effect.scoped(
     Effect.gen(function* ownerReadAcceptance() {
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, coreRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>

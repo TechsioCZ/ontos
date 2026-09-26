@@ -33,14 +33,14 @@ const tsconfigFile = 'tsconfig.json';
 const packageJson = Schema.decodeUnknownSync(Schema.fromJsonString(PackageJsonSchema))(
   readFileSync(path.join(workspaceRoot, packageJsonFile), 'utf-8'),
 );
-const typecheckWrapper = path.join(workspaceRoot, 'scripts/ultramodern-typecheck.mts');
+const typecheckExecutable = path.join(workspaceRoot, 'node_modules/.bin/ultramodern-create');
 const executablePath = path.join(workspaceRoot, 'node_modules/.bin');
 
 const runTypecheck = (fixture: string, commandArguments: readonly string[]) =>
   Effect.gen(function* runTypecheckEffect() {
-    const inheritedPath = yield* Config.string('PATH').pipe(Config.withDefault(''));
+    const inheritedPath = yield* Config.String('PATH').pipe(Config.withDefault(''));
     return yield* collectToolingProcess(
-      ChildProcess.make(process.execPath, [typecheckWrapper, ...commandArguments], {
+      ChildProcess.make(typecheckExecutable, ['ultramodern', 'typecheck', ...commandArguments], {
         cwd: fixture,
         env: {
           PATH: `${executablePath}${path.delimiter}${inheritedPath}`,
@@ -71,7 +71,7 @@ it.live(
       ),
     );
     const scriptPlan = Schema.decodeUnknownSync(WorkspaceScriptPlanSchema)(generator.createWorkspaceRootScriptPlan([]));
-    expect(scriptPlan.typecheck).toBe('node ./scripts/ultramodern-typecheck.mts --build tsconfig.json');
+    expect(scriptPlan.typecheck).toBe('ultramodern-create ultramodern typecheck --build tsconfig.json');
   }),
 );
 
@@ -142,7 +142,7 @@ it.live(
     );
     const sourceFile = path.join(fixture, 'referenced/index.ts');
     writeFileSync(sourceFile, 'export const referenceGateFixture: number = 1;\n');
-    const args = packageJson.scripts.typecheck.split(' ').slice(2);
+    const args = packageJson.scripts.typecheck.split(' ').slice(3);
     const initial = yield* runTypecheck(fixture, args);
     expect(initial.status, initial.stdout + initial.stderr).toBe(0);
     expect(

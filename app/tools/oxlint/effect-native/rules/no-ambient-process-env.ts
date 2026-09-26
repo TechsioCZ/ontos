@@ -210,7 +210,7 @@ export const rule = defineRule({
     },
     messages: {
       ambientEnvRead:
-        'Audit A3: `{{expression}}` reads the ambient environment, so the requirement never appears in the Layer graph and the value is neither typed nor redactable. Declare it once as `Config.string`/`Config.integer`/`Config.redacted` (or `Config.schema` over the application configuration Schema), consume it with `yield* AppConfig`, and provide the values from the single root `ConfigProvider` composed at startup; tests use `ConfigProvider.fromMap`.',
+        'Audit A3: `{{expression}}` reads the ambient environment, so the requirement never appears in the Layer graph and the value is neither typed nor redactable. Declare it once as `Config.String`/`Config.Int`/`Config.Redacted` (or `Config.schema` over the application configuration Schema), consume it with `yield* AppConfig`, and provide the values from the single root `ConfigProvider` composed at startup; tests use `ConfigProvider.fromMap`.',
       ambientEnvMutation:
         'Audit A3/B2: `{{expression}}` mutates the ambient environment, so this code configures itself through a process-global side effect that leaks across tests and cannot be typed or redacted. Provide the values through a map-backed `ConfigProvider` test Layer (`Layer.setConfigProvider(ConfigProvider.fromMap(new Map([...])))`) instead of writing to or deleting from `process.env`.',
     },

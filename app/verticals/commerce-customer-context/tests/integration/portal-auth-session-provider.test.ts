@@ -37,6 +37,7 @@ import {
 import { makeCommercePortalAuthSessionStore } from '../../src/portal-auth/persistence/portal-auth-session-store.ts';
 import { CommercePortalAuthSessionApi } from '../../shared/portal-auth/session-api.ts';
 import { CommercePortalAuthAudit, unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
+import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
 
 const ORIGIN = 'http://localhost:3020';
 const requestContext = Context.makeUnsafe<unknown>(new Map());
@@ -44,8 +45,8 @@ const PASSWORD = 'P'.repeat(24);
 const SECRET = 's'.repeat(64);
 const LOCK_WAIT_DEADLINE_MILLIS = 3000;
 const LOCK_WAIT_POLL_MILLIS = 20;
-const DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 const ProviderDateSchema = Schema.Union([Schema.Date, Schema.String, Schema.Finite]);
@@ -345,7 +346,7 @@ const makeProviderFixture = Effect.fn('CommercePortalAuthProviderIntegration.mak
     COMMERCE_PORTAL_AUTH_SECRET: SECRET,
     COMMERCE_PORTAL_AUTH_URL: ORIGIN,
   });
-  const database = yield* makeCommercePortalAuthDatabase(configuration);
+  const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
   const verificationTokens: string[] = [];
   const auth = yield* makeCommercePortalAuth({
     configuration,
