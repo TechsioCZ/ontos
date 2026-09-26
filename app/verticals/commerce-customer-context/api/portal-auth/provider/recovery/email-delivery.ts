@@ -17,7 +17,7 @@ const verificationEmailDataSchema = Schema.Struct({
   email: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(3), Schema.isMaxLength(320)),
   providerSubjectId: CommercePortalAuthProviderSubjectIdSchema,
   token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 const unavailable = (operation: string, cause: unknown): CommercePortalAuthRecoveryUnavailable =>
   withCause(

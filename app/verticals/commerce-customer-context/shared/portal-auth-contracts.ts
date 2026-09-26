@@ -32,7 +32,7 @@ export const ExternalUserSubjectSchema = Schema.Struct({
   authenticationNamespaceId: Schema.Literal(COMMERCE_AUTHENTICATION_NAMESPACE_ID),
   providerSubjectId: ProviderSubjectIdSchema,
   subjectType: Schema.Literal('user'),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type ExternalUserSubject = typeof ExternalUserSubjectSchema.Type;
 /** Private service-to-service proof input; never included in a gateway assertion. */
 export const VerifyExternalAuthenticationRequestSchema = Schema.Struct({
@@ -41,7 +41,7 @@ export const VerifyExternalAuthenticationRequestSchema = Schema.Struct({
   nonce: uuid,
   sessionRef: CommerceSessionReferenceSchema,
   tenantId: TenantIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export const VerifyExternalAuthenticationResultSchema = Schema.Union([
   Schema.Struct({
     ...VerifyExternalAuthenticationRequestSchema.fields,
@@ -62,6 +62,6 @@ export const VerifyExternalAuthenticationResultSchema = Schema.Union([
   }),
   Schema.Struct({ nonce: uuid, observedAt: Schema.DateTimeUtc, outcome: Schema.Literal('REJECTED') }),
   Schema.Struct({ nonce: uuid, observedAt: Schema.DateTimeUtc, outcome: Schema.Literal('UNAVAILABLE') }),
-]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+]);
 export type VerifyExternalAuthenticationRequest = typeof VerifyExternalAuthenticationRequestSchema.Type;
 export type VerifyExternalAuthenticationResult = typeof VerifyExternalAuthenticationResultSchema.Type;

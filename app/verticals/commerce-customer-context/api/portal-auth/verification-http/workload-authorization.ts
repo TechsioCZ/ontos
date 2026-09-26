@@ -57,7 +57,9 @@ const gatewayAssertionRejected = () => Effect.fail(rejected('The workload gatewa
 const gatewayVerificationUnavailable = () => Effect.fail(unavailable('Workload gateway verification is unavailable'));
 
 const decodeGrantConfiguration = (configuration: CommercePortalAuthVerificationWorkloadGrants) =>
-  Schema.decodeEffect(CommercePortalAuthVerificationWorkloadGrantsSchema)(configuration).pipe(
+  Schema.decodeEffect(CommercePortalAuthVerificationWorkloadGrantsSchema, { onExcessProperty: 'error' })(
+    configuration,
+  ).pipe(
     Effect.filterOrFail(
       ({ grants }) =>
         grants.every(

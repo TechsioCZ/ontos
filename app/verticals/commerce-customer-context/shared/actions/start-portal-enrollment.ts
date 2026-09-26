@@ -8,4 +8,4 @@ export type StartPortalEnrollmentPayload = typeof StartPortalEnrollmentPayloadSc
 export const StartPortalEnrollmentResultSchema = Schema.Struct({
   attempt: EnrollmentAttemptSnapshotSchema,
   outcome: Schema.Literals(['CREATED', 'EXISTING']),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});

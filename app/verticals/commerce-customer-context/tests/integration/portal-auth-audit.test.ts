@@ -19,6 +19,7 @@ import {
 import type { CommercePortalAuthAuditRecorder } from '../../src/portal-auth/audit/audit.ts';
 import type { CommercePortalAuthAuditEvent } from '../../src/portal-auth/audit/audit-contracts.ts';
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
+import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 const ORIGIN = 'https://portal.example.test';
 const SECRET = 's'.repeat(64);
@@ -57,7 +58,7 @@ const makeFixture = Effect.fn('CommercePortalAuthAuditIntegration.makeFixture')(
     COMMERCE_PORTAL_AUTH_SECRET: SECRET,
     COMMERCE_PORTAL_AUTH_URL: ORIGIN,
   });
-  const database = yield* makeCommercePortalAuthDatabase(configuration);
+  const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
   const now = yield* DateTime.nowAsDate;
   const fixture: AuditFixture = {
     database,
@@ -200,7 +201,7 @@ const makeSessionAuditFixture = Effect.fn('CommercePortalAuthAuditIntegration.ma
       COMMERCE_PORTAL_AUTH_SECRET: SECRET,
       COMMERCE_PORTAL_AUTH_URL: ORIGIN,
     });
-    const database = yield* makeCommercePortalAuthDatabase(configuration);
+    const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
     const providerSubjectId = `audit-revoke-${randomUUID()}`;
     const sessionId = `${providerSubjectId}-session`;
     const now = yield* DateTime.nowAsDate;

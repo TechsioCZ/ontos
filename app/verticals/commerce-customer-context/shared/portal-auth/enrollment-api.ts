@@ -124,7 +124,7 @@ const claimInvitationErrors = [
 const CommercePortalAuthEnrollmentStartedResultSchema = Schema.Struct({
   attempt: CommercePortalAuthEnrollmentAttemptProjectionSchema,
   outcome: Schema.Literals(['CREATED', 'EXISTING']),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /**
  * Paths are declared internal; the BFF runtime republishes them under the MicroVertical prefix, so

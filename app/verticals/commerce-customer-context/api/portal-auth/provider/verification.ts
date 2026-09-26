@@ -147,7 +147,9 @@ export const makeCommercePortalAuthVerificationService = Effect.fn('CommercePort
     const verifyExternalAuthentication = Effect.fn('CommercePortalAuthVerification.verify')(function* verify(
       input: CommercePortalAuthVerificationInput,
     ): Effect.fn.Return<VerifyExternalAuthenticationResult, CommercePortalAuthVerificationFailure> {
-      const request = yield* Schema.decodeEffect(VerifyExternalAuthenticationRequestSchema)(input).pipe(
+      const request = yield* Schema.decodeEffect(VerifyExternalAuthenticationRequestSchema, {
+        onExcessProperty: 'error',
+      })(input).pipe(
         Effect.mapError((cause) =>
           Object.defineProperty(
             new CommercePortalAuthVerificationInvalidRequest({

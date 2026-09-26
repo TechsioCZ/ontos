@@ -70,8 +70,6 @@ const enrollmentExistingAccountFields = {
   sellingLegalEntityId: EnrollmentLegalEntityIdSchema,
 } as const;
 
-const rejectExcessProperties = { parseOptions: { onExcessProperty: 'error' } } as const;
-
 /**
  * The start payload is a discriminated union rather than one struct with an optional invitation,
  * because the two are not independent: a Counterparty invitation enrollment is meaningless without
@@ -80,23 +78,29 @@ const rejectExcessProperties = { parseOptions: { onExcessProperty: 'error' } } a
  * governed Action runs, before an Attempt is persisted and before any provider mutation.
  */
 export const CommercePortalAuthEnrollmentStartInputSchema = Schema.Union([
-  Schema.Struct({ ...enrollmentAccountCreationFields, journey: Schema.Literal('RETAIL_SELF_ENROLLMENT') }).annotate(
-    rejectExcessProperties,
-  ),
+  Schema.Struct({
+    ...enrollmentAccountCreationFields,
+    invitationId: Schema.optionalKey(Schema.Never),
+    journey: Schema.Literal('RETAIL_SELF_ENROLLMENT'),
+  }),
   Schema.Struct({
     ...enrollmentAccountCreationFields,
     invitationId: EnrollmentInvitationIdSchema,
     journey: Schema.Literal('COUNTERPARTY_INVITATION'),
-  }).annotate(rejectExcessProperties),
+  }),
   // Existing-account enrollment continues an already-authenticated subject into a second Tenant,
   // and it enters that Tenant as the journey its own definition composes. Naming an invitation here
   // would ask for a Counterparty claim no owner effect can perform, so the Attempt would journal an
   // ownership proof and then halt forever: the combination is refused at decode, as Retail's is. It
   // also carries no `password` or `displayName`: ownership is proven by the portal session, not by
   // a credential the provider never sees.
-  Schema.Struct({ ...enrollmentExistingAccountFields, journey: Schema.Literal('EXISTING_ACCOUNT') }).annotate(
-    rejectExcessProperties,
-  ),
+  Schema.Struct({
+    ...enrollmentExistingAccountFields,
+    displayName: Schema.optionalKey(Schema.Never),
+    invitationId: Schema.optionalKey(Schema.Never),
+    journey: Schema.Literal('EXISTING_ACCOUNT'),
+    password: Schema.optionalKey(Schema.Never),
+  }),
 ]);
 export type CommercePortalAuthEnrollmentStartInput = typeof CommercePortalAuthEnrollmentStartInputSchema.Type;
 
@@ -113,7 +117,7 @@ export const CommercePortalAuthEnrollmentClaimInvitationInputSchema = Schema.Str
   invitationSecret: Schema.Redacted(
     Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(16), Schema.isMaxLength(200)),
   ),
-}).annotate(rejectExcessProperties);
+});
 /** The invitation this start request names, or `undefined` for a journey that carries none. */
 export const commercePortalAuthEnrollmentInvitationId = (
   input: CommercePortalAuthEnrollmentStartInput,
@@ -133,7 +137,7 @@ export const CommercePortalAuthEnrollmentAttemptProjectionSchema = Schema.Struct
   revision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   state: EnrollmentAttemptStateSchema,
   targetLegalEntityId: Schema.optionalKey(EnrollmentLegalEntityIdSchema),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CommercePortalAuthEnrollmentAttemptProjection =
   typeof CommercePortalAuthEnrollmentAttemptProjectionSchema.Type;
 

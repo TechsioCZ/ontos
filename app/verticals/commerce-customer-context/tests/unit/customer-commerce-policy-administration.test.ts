@@ -166,6 +166,9 @@ const assignmentPayload = (
     expectedGeneration,
   });
 
+// The governed read runtime decodes every read result closed (core-runtime `reads/runtime.ts`).
+const closedReadResult = { onExcessProperty: 'error' } as const;
+
 describe('Customer Commerce Policy administration', () => {
   it('requires exactly one seller-qualified bootstrap partition for every requested eligible seller', () => {
     const secondSellerId = '99999999-9999-4999-8999-999999999999';
@@ -248,8 +251,9 @@ describe('Customer Commerce Policy administration', () => {
   });
 
   it('keeps caller payloads free of trusted identity and time', () => {
+    // Decoded exactly as the governed Action runtime decodes every Action payload: closed.
     expect(() =>
-      Schema.decodeUnknownSync(PurchaseCurrencyPolicyAdministrationPayloadSchema)({
+      Schema.decodeUnknownSync(PurchaseCurrencyPolicyAdministrationPayloadSchema, { onExcessProperty: 'error' })({
         _tag: 'CREATE_REVISION',
         expectedGeneration: 0,
         observedAt,
@@ -730,7 +734,10 @@ describe('Customer Commerce Policy administration', () => {
       'tenantId',
     ] as const) {
       expect(() =>
-        Schema.decodeUnknownSync(CurrentPurchaseCurrencyPolicyCandidateSchema)({
+        Schema.decodeUnknownSync(
+          CurrentPurchaseCurrencyPolicyCandidateSchema,
+          closedReadResult,
+        )({
           ...currencyCandidate,
           [leakedField]: 'must-not-leak',
         }),
@@ -753,7 +760,10 @@ describe('Customer Commerce Policy administration', () => {
       },
     });
     expect(() =>
-      Schema.decodeUnknownSync(CurrentPaymentTermPolicyCandidateSchema)({
+      Schema.decodeUnknownSync(
+        CurrentPaymentTermPolicyCandidateSchema,
+        closedReadResult,
+      )({
         ...paymentTermCandidate,
         idempotencyKey: 'must-not-leak',
       }),
@@ -791,7 +801,10 @@ describe('Customer Commerce Policy administration', () => {
       'sellingLegalEntityId',
     ]);
     expect(() =>
-      Schema.decodeUnknownSync(CurrentCommerceQuantityRuleCandidateSchema)({
+      Schema.decodeUnknownSync(
+        CurrentCommerceQuantityRuleCandidateSchema,
+        closedReadResult,
+      )({
         ...ruleCandidate,
         reason: 'must not leak',
       }),
@@ -805,7 +818,10 @@ describe('Customer Commerce Policy administration', () => {
       'recordedAt',
     ] as const) {
       expect(() =>
-        Schema.decodeUnknownSync(CurrentCommerceQuantityAssignmentSchema)({
+        Schema.decodeUnknownSync(
+          CurrentCommerceQuantityAssignmentSchema,
+          closedReadResult,
+        )({
           ...assignment,
           [leakedField]: 'must-not-leak',
         }),

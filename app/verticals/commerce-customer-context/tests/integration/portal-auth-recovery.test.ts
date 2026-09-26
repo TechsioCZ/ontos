@@ -62,6 +62,7 @@ import {
   COMMERCE_PORTAL_AUTH_PUBLIC_BASE_PATH,
 } from '../../shared/deployment-paths.ts';
 import { unauditedCommercePortalAuthRecorder } from '../../src/portal-auth/audit/audit.ts';
+import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 const ORIGIN = 'https://portal.example.test';
 const EMAIL = 'recovery-integration@example.test';
@@ -166,7 +167,7 @@ const makeRecoveryFixture = Effect.fn('CommercePortalAuthRecoveryIntegration.mak
     COMMERCE_PORTAL_AUTH_SECRET: SECRET,
     COMMERCE_PORTAL_AUTH_URL: ORIGIN,
   });
-  const database = yield* makeCommercePortalAuthDatabase(configuration);
+  const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
   const store = yield* makeCommercePortalAuthRecoveryStore(database.executor).pipe(
     Effect.provideService(Crypto.Crypto, recoveryCrypto),
   );

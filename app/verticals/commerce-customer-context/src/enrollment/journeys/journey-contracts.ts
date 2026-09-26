@@ -20,7 +20,7 @@ const JourneyTransitionSpecSchema = Schema.Struct({
   required: Schema.Boolean,
   /** Stable transition identity inside the owner module, e.g. `provider.account.create`. */
   transitionKey: Schema.toEncoded(EnrollmentTransitionKeySchema),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type JourneyTransitionSpec = typeof JourneyTransitionSpecSchema.Type;
 
 const transitionIdentity = (ownerModuleKey: string, transitionKey: string): string =>
@@ -46,25 +46,23 @@ export const JourneyDefinitionSchema = Schema.Struct({
   kind: EnrollmentJourneySchema,
   optionalTransitions: Schema.Array(JourneyTransitionSpecSchema),
   requiredTransitions: Schema.Array(JourneyTransitionSpecSchema),
-})
-  .check(
-    Schema.makeFilter(({ optionalTransitions, requiredTransitions }: JourneyDeclaration): string | undefined => {
-      if (
-        requiredTransitions.some((transition) => !transition.required) ||
-        optionalTransitions.some((transition) => transition.required)
-      ) {
-        return 'A journey transition must be declared required exactly when it sits in requiredTransitions';
-      }
-      if (requiredTransitions.length === 0) {
-        return 'A journey must declare at least one required owner transition';
-      }
-      const identities = [...requiredTransitions, ...optionalTransitions].map(journeyTransitionIdentity);
-      return new Set(identities).size === identities.length
-        ? undefined
-        : 'A journey must declare every owner transition key at most once';
-    }),
-  )
-  .annotate({ parseOptions: { onExcessProperty: 'error' } });
+}).check(
+  Schema.makeFilter(({ optionalTransitions, requiredTransitions }: JourneyDeclaration): string | undefined => {
+    if (
+      requiredTransitions.some((transition) => !transition.required) ||
+      optionalTransitions.some((transition) => transition.required)
+    ) {
+      return 'A journey transition must be declared required exactly when it sits in requiredTransitions';
+    }
+    if (requiredTransitions.length === 0) {
+      return 'A journey must declare at least one required owner transition';
+    }
+    const identities = [...requiredTransitions, ...optionalTransitions].map(journeyTransitionIdentity);
+    return new Set(identities).size === identities.length
+      ? undefined
+      : 'A journey must declare every owner transition key at most once';
+  }),
+);
 export type JourneyDefinition = typeof JourneyDefinitionSchema.Type;
 
 /** The declared transition, or `undefined` when the journey does not own that exact pair. */

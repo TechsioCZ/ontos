@@ -1,11 +1,10 @@
 import { loadDatabaseConnectionPair, scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
 import { eq, sql } from 'drizzle-orm';
 import { Context, Effect, Schema } from 'effect';
-import { Pool } from 'pg';
 
-import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
-import { layerTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { layerTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { acquireFixturePgClient } from './fixture-pg-client.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
 import {
   commerceCustomerContextRelations,
@@ -36,7 +35,7 @@ import type { CommerceEnrollmentOwnerAttemptStore } from '../../src/enrollment/o
  */
 
 /** The Drizzle/Effect executor the fixture drives both the runtime and the admin role through. */
-type EnrollmentAcceptanceDatabase = TestDatabaseFromPool<typeof commerceCustomerContextRelations>;
+type EnrollmentAcceptanceDatabase = TestDatabaseFromClient<typeof commerceCustomerContextRelations>;
 
 class AcceptanceDatabase extends Context.Service<AcceptanceDatabase, EnrollmentAcceptanceDatabase>()(
   '@app/commerce-customer-context/tests/support/AcceptanceDatabase',
@@ -124,22 +123,18 @@ const acceptanceWorkerRun =
         ),
       );
 
-/** Acquires the admin and runtime pools and builds the production owner store on the runtime role. */
+/** Acquires the admin and runtime clients and builds the production owner store on the runtime role. */
 export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeEnrollmentAcceptanceFixture(
   scope: CommerceEnrollmentOwnerScope,
 ) {
   const connections = yield* loadDatabaseConnectionPair();
-  const adminPool = yield* acquirePoolResource(
-    () => new Pool({ connectionString: connections.admin.connectionString }),
-  );
-  const runtimePool = yield* acquirePoolResource(
-    () => new Pool({ connectionString: connections.runtime.connectionString, max: 4 }),
-  );
+  const adminClient = yield* acquireFixturePgClient(connections.admin.connectionString);
+  const runtimeClient = yield* acquireFixturePgClient(connections.runtime.connectionString, 4);
   const admin = yield* AcceptanceDatabase.pipe(
-    Effect.provide(layerTestDatabaseFromPool(AcceptanceDatabase, adminPool, commerceCustomerContextRelations)),
+    Effect.provide(layerTestDatabaseFromClient(AcceptanceDatabase, adminClient, commerceCustomerContextRelations)),
   );
   const runtime = yield* AcceptanceDatabase.pipe(
-    Effect.provide(layerTestDatabaseFromPool(AcceptanceDatabase, runtimePool, commerceCustomerContextRelations)),
+    Effect.provide(layerTestDatabaseFromClient(AcceptanceDatabase, runtimeClient, commerceCustomerContextRelations)),
   );
   const cleanup = () =>
     admin

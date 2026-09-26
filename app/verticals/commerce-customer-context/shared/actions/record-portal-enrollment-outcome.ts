@@ -13,11 +13,11 @@ export const RecordPortalEnrollmentOutcomePayloadSchema = Schema.Struct({
   ownerModuleKey: ReconcileEnrollmentRequestSchema.fields.ownerModuleKey,
   portalEnrollmentAttemptId: ReconcileEnrollmentRequestSchema.fields.portalEnrollmentAttemptId,
   transitionKey: ReconcileEnrollmentRequestSchema.fields.transitionKey,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type RecordPortalEnrollmentOutcomePayload = typeof RecordPortalEnrollmentOutcomePayloadSchema.Type;
 
 export const RecordPortalEnrollmentOutcomeResultSchema = Schema.Struct({
   attempt: EnrollmentAttemptSnapshotSchema,
   operation: EnrollmentOwnerOperationSnapshotSchema,
   outcome: Schema.Literal('RECORDED'),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});

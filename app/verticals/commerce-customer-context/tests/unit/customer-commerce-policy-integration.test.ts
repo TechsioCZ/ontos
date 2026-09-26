@@ -1,7 +1,7 @@
 import type { ContextAccessService, OperationalScope, ScopedRoutineDefinition } from '@app/core-runtime';
 import { getVerticalRuntimeEntrypoints, toContextPermissionAccessKey } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Predicate, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
@@ -538,6 +538,13 @@ const quantityAssignmentPayload = Schema.decodeUnknownSync(CommerceQuantityAssig
   expectedGeneration: 0,
 });
 
+// The governed read runtime decodes every read result closed against its type side
+// (core-runtime `reads/runtime.ts`), so a projection carrying private fields is refused there.
+const isClosedReadResult =
+  <S extends Schema.Constraint>(schema: S) =>
+  <Value>(value: Value): boolean =>
+    Result.isSuccess(Schema.decodeUnknownResult(Schema.toType(schema), { onExcessProperty: 'error' })(value));
+
 describe('Customer Commerce Policy integration', () => {
   it.effect('persists a changed mutation once, replays idempotently, and maps stale generation', () => {
     const { calls, invoker } = statefulInvoker();
@@ -629,19 +636,19 @@ describe('Customer Commerce Policy integration', () => {
       }
 
       expect(
-        Schema.is(PurchaseCurrencyPolicyCurrentResponseSchema)({
+        isClosedReadResult(PurchaseCurrencyPolicyCurrentResponseSchema)({
           ...currency,
           candidates: [{ ...currency.candidates[0], lifecycle: 'ACTIVE' }],
         }),
       ).toBe(false);
       expect(
-        Schema.is(PaymentTermPolicyCurrentResponseSchema)({
+        isClosedReadResult(PaymentTermPolicyCurrentResponseSchema)({
           ...paymentTerm,
           candidates: [{ ...paymentTerm.candidates[0], reason: 'private' }],
         }),
       ).toBe(false);
       expect(
-        Schema.is(CommerceQuantityPolicyCurrentResponseSchema)({
+        isClosedReadResult(CommerceQuantityPolicyCurrentResponseSchema)({
           ...quantity,
           assignmentSet: {
             ...quantity.assignmentSet,

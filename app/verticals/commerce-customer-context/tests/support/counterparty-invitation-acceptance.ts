@@ -3,14 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { v1 } from '@authzed/authzed-node';
 import { sql } from 'drizzle-orm';
 import { Context, Effect, Layer, Schema } from 'effect';
-import { Pool } from 'pg';
 
 import { scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
 
 import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
-import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
-import { layerTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { layerTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { acquireFixturePgClient } from './fixture-pg-client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
   ContextAccess,
@@ -322,12 +321,12 @@ interface ExpiryRow extends Record<string, unknown> {
 }
 
 type OwnerTransaction = Parameters<
-  Parameters<TestDatabaseFromPool<typeof commerceCustomerContextRelations>['transaction']>[0]
+  Parameters<TestDatabaseFromClient<typeof commerceCustomerContextRelations>['transaction']>[0]
 >[0];
 
 class InvitationOwnerDatabase extends Context.Service<
   InvitationOwnerDatabase,
-  TestDatabaseFromPool<typeof commerceCustomerContextRelations>
+  TestDatabaseFromClient<typeof commerceCustomerContextRelations>
 >()('@app/commerce-customer-context/tests/support/InvitationOwnerDatabase') {}
 
 /**
@@ -339,11 +338,9 @@ const counterpartyAccessOwnerRun = Effect.fnUntraced(function* counterpartyAcces
   realm: CounterpartyInvitationRealm,
 ) {
   const connections = yield* loadDatabaseConnectionPair();
-  const pool = yield* acquirePoolResource(
-    () => new Pool({ connectionString: connections.runtime.connectionString, max: 2 }),
-  );
+  const client = yield* acquireFixturePgClient(connections.runtime.connectionString, 2);
   const database = yield* InvitationOwnerDatabase.pipe(
-    Effect.provide(layerTestDatabaseFromPool(InvitationOwnerDatabase, pool, commerceCustomerContextRelations)),
+    Effect.provide(layerTestDatabaseFromClient(InvitationOwnerDatabase, client, commerceCustomerContextRelations)),
   );
   const scope = { legalEntityId: realm.legalEntityId, tenantId: realm.tenantId };
   const installScope = (transaction: OwnerTransaction) =>

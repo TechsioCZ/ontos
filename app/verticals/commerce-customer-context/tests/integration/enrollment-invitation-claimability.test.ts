@@ -52,6 +52,7 @@ import {
   readCounterpartyInvitationRow,
 } from '../support/counterparty-invitation-acceptance.ts';
 import type { CounterpartyInvitationRealm } from '../support/counterparty-invitation-acceptance.ts';
+import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 /**
  * The claimability gate a COUNTERPARTY_INVITATION start must clear before it spends any budget or
@@ -172,13 +173,17 @@ const deployedRuntime = (gateway: AcceptanceGatewayIssuer) =>
 
 const portalAccountsFor = Effect.fnUntraced(function* portalAccountsFor(email: string) {
   const databaseUrl = yield* providerDatabaseUrl;
-  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  const database = yield* acquireOutlivingCleanup(
+    makeCommercePortalAuthDatabase({ connectionString: databaseUrl }),
+  ).pipe(Effect.orDie);
   return yield* database.executor.select({ id: user.id }).from(user).where(eq(user.email, email)).pipe(Effect.orDie);
 });
 
 const removePortalAccountsOnClose = Effect.fnUntraced(function* removePortalAccountsOnClose(email: string) {
   const databaseUrl = yield* providerDatabaseUrl;
-  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  const database = yield* acquireOutlivingCleanup(
+    makeCommercePortalAuthDatabase({ connectionString: databaseUrl }),
+  ).pipe(Effect.orDie);
   yield* Effect.addFinalizer(() =>
     database.executor
       .transaction((transaction) =>

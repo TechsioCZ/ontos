@@ -3,12 +3,13 @@ import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
+import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 const tenantId = 'd3300000-0000-4000-8000-000000000001';
 const otherTenantId = 'd3300000-0000-4000-8000-000000000002';
@@ -90,7 +91,7 @@ interface RevisionIdentity extends Record<string, unknown> {
   readonly revisionId: string;
 }
 
-type CommerceCustomerContextTestDatabase = TestDatabaseFromPool<typeof commerceCustomerContextRelations>;
+type CommerceCustomerContextTestDatabase = TestDatabaseFromClient<typeof commerceCustomerContextRelations>;
 
 const one = <Row>(rows: readonly Row[]): Row => {
   const [row] = rows;
@@ -264,9 +265,9 @@ type AssignmentPayload = ReturnType<typeof assignmentPayload>;
 it.live('enforces immutable temporal policy history, typed scopes, assignment integrity, and CAS persistence', () =>
   Effect.scoped(
     Effect.gen(function* postgresPolicyAcceptance() {
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* acquireOutlivingCleanup(testDatabaseClients);
+      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>

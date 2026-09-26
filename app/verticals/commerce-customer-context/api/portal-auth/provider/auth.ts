@@ -152,7 +152,7 @@ const CommercePortalAuthAccountCreationCorrelationSchema = Schema.Struct({
   ownerInvocationId: correlationUuid.pipe(Schema.brand('ActionInvocationId')),
   portalEnrollmentAttemptId: correlationUuid.pipe(Schema.brand('EnrollmentAttemptId')),
   tenantId: correlationUuid.pipe(Schema.brand('TenantId')),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 const databaseFailure = (cause: unknown): APIError =>
   Object.defineProperty(
@@ -281,7 +281,9 @@ const accountCreationCorrelationOf = (
   if (Object.values(candidate).every((value) => value === null)) {
     return Effect.succeedNone;
   }
-  return Schema.decodeUnknownEffect(CommercePortalAuthAccountCreationCorrelationSchema)(candidate).pipe(
+  return Schema.decodeUnknownEffect(CommercePortalAuthAccountCreationCorrelationSchema, { onExcessProperty: 'error' })(
+    candidate,
+  ).pipe(
     Effect.mapBoth({
       onFailure: (cause) =>
         Object.defineProperty(

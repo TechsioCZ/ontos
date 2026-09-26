@@ -26,23 +26,21 @@ export const MarketBootstrapResolutionRequestSchema = Schema.Struct({
   sellingLegalEntityRestriction: marketRequestFields.sellingLegalEntityRestriction,
   storefrontRef: marketRequestFields.storefrontRef,
   subject: marketRequestFields.subject,
-})
-  .check(
-    Schema.makeFilter(({ explicitSelection, sellingLegalEntityRestriction, storefrontRef }) => {
-      if (
-        explicitSelection !== undefined &&
-        (explicitSelection.marketRef.tenantId !== storefrontRef.tenantId ||
-          explicitSelection.sellingLegalEntityRef.tenantId !== storefrontRef.tenantId)
-      ) {
-        return 'Explicit Market selection and Storefront must belong to the same Tenant';
-      }
-      return sellingLegalEntityRestriction === undefined ||
-        sellingLegalEntityRestriction.tenantId === storefrontRef.tenantId
-        ? undefined
-        : 'Seller restriction and Storefront must belong to the same Tenant';
-    }),
-  )
-  .annotate({ parseOptions: { onExcessProperty: 'error' } });
+}).check(
+  Schema.makeFilter(({ explicitSelection, sellingLegalEntityRestriction, storefrontRef }) => {
+    if (
+      explicitSelection !== undefined &&
+      (explicitSelection.marketRef.tenantId !== storefrontRef.tenantId ||
+        explicitSelection.sellingLegalEntityRef.tenantId !== storefrontRef.tenantId)
+    ) {
+      return 'Explicit Market selection and Storefront must belong to the same Tenant';
+    }
+    return sellingLegalEntityRestriction === undefined ||
+      sellingLegalEntityRestriction.tenantId === storefrontRef.tenantId
+      ? undefined
+      : 'Seller restriction and Storefront must belong to the same Tenant';
+  }),
+);
 export type MarketBootstrapResolutionRequest = typeof MarketBootstrapResolutionRequestSchema.Type;
 
 const BootstrapPolicyStatusSchema = Schema.Literals([
@@ -60,14 +58,14 @@ const BootstrapPolicyPartitionEvidenceSchema = Schema.Struct({
   completeness: Schema.toEncoded(OwnerVerifiableSetCompletenessEvidenceSchema),
   policyRevisionIds: Schema.Array(CustomerCommercePolicyRevisionIdSchema),
   sellingLegalEntityId: CustomerCommercePolicySellingLegalEntityIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 const MarketBootstrapPolicyResolutionEvidenceSchema = Schema.Struct({
   evaluatedAt: Schema.DateTimeUtcFromString,
   partitions: Schema.Array(BootstrapPolicyPartitionEvidenceSchema),
   selectedPolicyRevisionId: Schema.optionalKey(CustomerCommercePolicyRevisionIdSchema),
   status: BootstrapPolicyStatusSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type MarketBootstrapPolicyResolutionEvidence = typeof MarketBootstrapPolicyResolutionEvidenceSchema.Type;
 
 export const MarketBootstrapResolutionOutcomeSchema = Schema.Struct({
@@ -76,7 +74,7 @@ export const MarketBootstrapResolutionOutcomeSchema = Schema.Struct({
   marketResolution: ResolveCommerceMarketResponseSchema,
   nextApplicabilityBoundary: Schema.optionalKey(Schema.DateTimeUtcFromString),
   policyEvidence: MarketBootstrapPolicyResolutionEvidenceSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 type MarketBootstrapResolutionOutcome = typeof MarketBootstrapResolutionOutcomeSchema.Type;
 
 type CompleteEligibleResponse = Extract<EligibleMarketTuplesResponse, { readonly outcome: 'ELIGIBLE_MARKET_TUPLES' }>;

@@ -400,9 +400,9 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
 ) {
   yield* noStoreHeaders;
   yield* requireTrustedOrigin(request.headers, () => commercePortalAuthEnrollmentUntrustedOriginProblem);
-  const input = yield* Schema.decodeEffect(CommercePortalAuthEnrollmentClaimInvitationInputSchema)(payload).pipe(
-    Effect.mapError(commercePortalAuthEnrollmentInvalidProblem),
-  );
+  const input = yield* Schema.decodeEffect(CommercePortalAuthEnrollmentClaimInvitationInputSchema, {
+    onExcessProperty: 'error',
+  })(payload).pipe(Effect.mapError(commercePortalAuthEnrollmentInvalidProblem));
   // Ahead of every durable phase on purpose: the claim Action requires this key, and discovering it
   // missing after the secret was redeemed would journal a request defect as a refused invitation.
   const claimIdempotencyKey = yield* requiredIdempotencyKey(idempotencyKey);

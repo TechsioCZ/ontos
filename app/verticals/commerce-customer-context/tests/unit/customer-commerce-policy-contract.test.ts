@@ -226,7 +226,9 @@ describe('Customer Commerce Policy field catalog', () => {
     };
     expect(Schema.is(MarketBootstrapPolicyRevisionSchema)(storefrontScoped)).toBe(true);
     expect(() =>
-      Schema.decodeUnknownSync(MarketBootstrapPolicyRevisionSchema)({
+      // The Market bootstrap value enters only through the administer Action payload, which the
+      // platform Action boundary (`decodeActionPayload`) decodes closed.
+      Schema.decodeUnknownSync(MarketBootstrapPolicyRevisionSchema, { onExcessProperty: 'error' })({
         ...storefrontScoped,
         value: { ...storefrontScoped.value, defaultStorefrontId: 'storefront-1' },
       }),

@@ -135,6 +135,7 @@ import {
   makeCounterpartyInvitationRealm,
 } from '../support/counterparty-invitation-acceptance.ts';
 import { makeCapturingCounterpartyInvitationProofDelivery } from '../support/counterparty-invitation-proof-capture.ts';
+import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 /**
  * The enrollment start path through the deployed composition, on real PostgreSQL.
@@ -205,7 +206,9 @@ const configuredRuntime = Effect.acquireRelease(
 /** Removes the provider account a start really created, so the directory is left as it was found. */
 const removePortalAccountsOnClose = Effect.fnUntraced(function* removePortalAccountsOnClose(email: string) {
   const databaseUrl = yield* providerDatabaseUrl;
-  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  const database = yield* acquireOutlivingCleanup(
+    makeCommercePortalAuthDatabase({ connectionString: databaseUrl }),
+  ).pipe(Effect.orDie);
   yield* Effect.addFinalizer(() =>
     database.executor
       .transaction((transaction) =>
@@ -221,7 +224,9 @@ const removePortalAccountsOnClose = Effect.fnUntraced(function* removePortalAcco
 /** The provider account directory, read directly so a created row cannot hide behind the port. */
 const portalAccountsFor = Effect.fnUntraced(function* portalAccountsFor(email: string) {
   const databaseUrl = yield* providerDatabaseUrl;
-  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  const database = yield* acquireOutlivingCleanup(
+    makeCommercePortalAuthDatabase({ connectionString: databaseUrl }),
+  ).pipe(Effect.orDie);
   return yield* database.executor.select({ id: user.id }).from(user).where(eq(user.email, email)).pipe(Effect.orDie);
 });
 
@@ -1027,7 +1032,7 @@ const makeSignedInPortalAccount = Effect.fnUntraced(function* makeSignedInPortal
     COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS: ORIGIN,
     COMMERCE_PORTAL_AUTH_URL: ORIGIN,
   });
-  const database = yield* makeCommercePortalAuthDatabase(configuration).pipe(Effect.orDie);
+  const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration)).pipe(Effect.orDie);
   const verificationTokens: string[] = [];
   // The realm this fixture signs up through is configured exactly as the mounted one; only the
   // transactional email transport is replaced, so the verification token is observable here.
@@ -1344,7 +1349,9 @@ it.live(
  */
 const enrollmentStartBudgetKeys = Effect.fnUntraced(function* enrollmentStartBudgetKeys(email: string) {
   const databaseUrl = yield* providerDatabaseUrl;
-  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  const database = yield* acquireOutlivingCleanup(
+    makeCommercePortalAuthDatabase({ connectionString: databaseUrl }),
+  ).pipe(Effect.orDie);
   const scope = createHmac('sha256', SECRET).update(email).digest('base64url');
   const budgetKeys = like(rateLimit.key, `%|/enrollment/start|${scope}`);
   yield* Effect.addFinalizer(() => database.executor.delete(rateLimit).where(budgetKeys).pipe(Effect.orDie));
@@ -1577,7 +1584,9 @@ const enrollmentExistingAccountBudgetKeys = Effect.fnUntraced(function* enrollme
   sessionProviderSubjectId: string,
 ) {
   const databaseUrl = yield* providerDatabaseUrl;
-  const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+  const database = yield* acquireOutlivingCleanup(
+    makeCommercePortalAuthDatabase({ connectionString: databaseUrl }),
+  ).pipe(Effect.orDie);
   const principalScope = createHmac('sha256', SECRET).update(principalId).digest('base64url');
   const subjectScope = createHmac('sha256', SECRET).update(sessionProviderSubjectId).digest('base64url');
   const key = eq(rateLimit.key, `${principalScope}|/enrollment/start|existing-account|${subjectScope}`);
@@ -2712,7 +2721,9 @@ it.live(
           async () => await auth.api.verifyEmail({ headers, query: { token }, returnHeaders: true }),
         );
         const databaseUrl = yield* providerDatabaseUrl;
-        const database = yield* makeCommercePortalAuthDatabase({ connectionString: databaseUrl }).pipe(Effect.orDie);
+        const database = yield* acquireOutlivingCleanup(
+          makeCommercePortalAuthDatabase({ connectionString: databaseUrl }),
+        ).pipe(Effect.orDie);
         const [verified] = yield* database.executor
           .select({ emailVerified: user.emailVerified })
           .from(user)
