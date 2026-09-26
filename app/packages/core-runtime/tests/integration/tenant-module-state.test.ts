@@ -36,7 +36,8 @@ import { OperationAuthenticationRequired, OperationContextUnavailable } from '..
 import { makeModuleContractFixture } from '../../src/testing/module-contract.ts';
 import { testOperationalScopeResolver as baseTestOperationalScopeResolver } from '../fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../support/action-runtime-options.ts';
-import { makeFaultInjectableCoreDatabase, TestQueryHook } from '../support/database-faults.ts';
+import { makeCoreDatabase } from '../../src/db/client.ts';
+import { injectStatementFaults } from '../support/database-faults.ts';
 import { makeInstalledCatalogFixture as catalogFrom } from '../support/installed-catalog.ts';
 
 const tenantOne = '70000000-0000-4000-8000-000000000001';
@@ -113,7 +114,7 @@ const withDatabase = <Value, Error>(
   Effect.scoped(
     Effect.gen(function* tenantModuleStateDatabaseScope() {
       const configuration = yield* loadDatabaseConfig();
-      const database = yield* makeFaultInjectableCoreDatabase(configuration);
+      const database = yield* makeCoreDatabase(configuration);
       return yield* operation(database).pipe(
         Effect.provideService(InstalledModuleCatalogService, {
           load: Effect.succeed(installedCatalog),
@@ -512,7 +513,7 @@ const withTenantStateWriteFailure = (database: DatabaseService): DatabaseService
   const transaction: DatabaseService['executor']['transaction'] = (operation) =>
     database.executor.transaction((currentTransaction) =>
       operation(currentTransaction).pipe(
-        Effect.provideService(TestQueryHook, (statement) =>
+        injectStatementFaults((statement) =>
           statement.startsWith('insert into "core"."tenant_module_states"')
             ? Effect.fail(
                 new SqlError({

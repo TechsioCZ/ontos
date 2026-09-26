@@ -30,8 +30,8 @@ const UtcTimestampStringSchema = Schema.String.check(
   }),
 ).pipe(
   Schema.decode({
-    decode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
-    encode: SchemaGetter.dateTimeUtcFromInput<string>().map(DateTime.formatIso),
+    decode: SchemaGetter.dateTimeUtcFromInput<string>().pipe(SchemaGetter.map(DateTime.formatIso)),
+    encode: SchemaGetter.dateTimeUtcFromInput<string>().pipe(SchemaGetter.map(DateTime.formatIso)),
   }),
 );
 

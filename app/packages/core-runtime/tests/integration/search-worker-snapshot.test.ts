@@ -1,9 +1,8 @@
 import { NodeServices } from '@effect/platform-node';
 import { eq, sql } from 'drizzle-orm';
-import { Cause, Crypto, Deferred, Effect, Fiber, Option } from 'effect';
+import type { PgClient } from '@effect/sql-pg';
+import { Crypto, Deferred, Effect, Fiber, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
-import type { PoolClient } from 'pg';
-import { Pool } from 'pg';
 
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import { coreRelations, domainEvents } from '../../src/db/schema.ts';
@@ -17,7 +16,7 @@ import {
   makeCoreSearchWorkerSnapshot,
   makePostgresCoreSearchSnapshotBackend,
 } from '../../src/search/worker-snapshot.ts';
-import { makeTestDatabaseFromPool } from '../support/database.ts';
+import { makeTestDatabaseFromClient, makeTestPgClient, makeTestPgSession } from '../support/database.ts';
 
 const readLegalEntitySettings = (executor: CoreSearchSnapshotReadExecutor, eventId: string) =>
   executor
@@ -46,30 +45,16 @@ const readSnapshotPosition = (source: CoreSearchWorkerSnapshotService, context: 
     }),
   );
 
-const beginTransaction = (client: PoolClient) =>
-  Effect.tryPromise({
-    catch: (cause) => new Cause.UnknownError(cause),
-
-    try: () => client.query('begin'),
-  });
-
-const commitTransaction = (client: PoolClient) =>
-  Effect.tryPromise({
-    catch: (cause) => new Cause.UnknownError(cause),
-
-    try: () => client.query('commit'),
-  });
-
-const insertPendingEvent = (client: PoolClient, pendingEventId: string, tenantId: string, pendingSubjectId: string) =>
-  Effect.tryPromise({
-    catch: (cause) => new Cause.UnknownError(cause),
-
-    try: () =>
-      client.query(
-        `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3)`,
-        [pendingEventId, tenantId, pendingSubjectId],
-      ),
-  });
+const insertPendingEvent = (
+  client: PgClient.PgClient,
+  pendingEventId: string,
+  tenantId: string,
+  pendingSubjectId: string,
+) =>
+  client.unsafe(
+    `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3)`,
+    [pendingEventId, tenantId, pendingSubjectId],
+  );
 
 const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
   const crypto = yield* Crypto.Crypto;
@@ -78,93 +63,42 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     [crypto.randomUUIDv4, crypto.randomUUIDv4, crypto.randomUUIDv4],
     { concurrency: 'unbounded' },
   );
-  const admin = new Pool({
-    connectionString: connections.admin.connectionString,
-  });
+  const admin = yield* makeTestPgClient(connections.admin.connectionString);
   const applicationName = `core-search-snapshot-${tenantId}`;
-  const runtimePool = new Pool({
-    application_name: applicationName,
-    connectionString: connections.runtime.connectionString,
-  });
+  const runtime = yield* makeTestPgClient(connections.runtime.connectionString, { applicationName });
   const source = makeCoreSearchWorkerSnapshot(
     makePostgresCoreSearchSnapshotBackend({
-      executor: yield* makeTestDatabaseFromPool(runtimePool, coreRelations),
+      executor: yield* makeTestDatabaseFromClient(runtime, coreRelations),
     }),
   );
   const insertEvent = (id: string) =>
     Effect.gen(function* insertDomainEvent() {
       const subjectId = yield* crypto.randomUUIDv4;
-      const result = yield* Effect.tryPromise({
-        catch: (cause) => new Cause.UnknownError(cause),
-
-        try: () =>
-          admin.query<{ tenant_sequence_no: string }>(
-            `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3) returning tenant_sequence_no::text`,
-            [id, tenantId, subjectId],
-          ),
-      });
-      const row = Option.getOrThrow(Option.fromNullishOr(result.rows[0]));
+      const rows = yield* admin.unsafe<{ tenant_sequence_no: string }>(
+        `insert into core.domain_events (domain_event_id, tenant_id, producer_module_key, event_type, subject_module_key, subject_resource_type, subject_resource_id) values ($1, $2, 'party.registry', 'party.registry.party-updated.v1', 'party.registry', 'party.registry.party', $3) returning tenant_sequence_no::text`,
+        [id, tenantId, subjectId],
+      );
+      const row = Option.getOrThrow(Option.fromNullishOr(rows[0]));
       expect(row).toBeDefined();
       return row.tenant_sequence_no;
     });
   const cleanup = Effect.gen(function* cleanupWorkerSnapshot() {
-    yield* Effect.tryPromise({
-      catch: (cause) => new Cause.UnknownError(cause),
-
-      try: () => admin.query('delete from core.search_projection_generations where tenant_id = $1', [tenantId]),
-    });
-    yield* Effect.tryPromise({
-      catch: (cause) => new Cause.UnknownError(cause),
-
-      try: () => admin.query('delete from core.domain_events where tenant_id = $1', [tenantId]),
-    });
-    yield* Effect.tryPromise({
-      catch: (cause) => new Cause.UnknownError(cause),
-
-      try: () => admin.query('delete from core.legal_entities where tenant_id = $1', [tenantId]),
-    });
-    yield* Effect.tryPromise({
-      catch: (cause) => new Cause.UnknownError(cause),
-
-      try: () => admin.query('delete from core.tenants where tenant_id = $1', [tenantId]),
-    });
-    yield* Effect.all(
-      [
-        Effect.tryPromise({
-          catch: (cause) => new Cause.UnknownError(cause),
-
-          try: () => admin.end(),
-        }),
-        Effect.tryPromise({
-          catch: (cause) => new Cause.UnknownError(cause),
-
-          try: () => runtimePool.end(),
-        }),
-      ],
-      { concurrency: 'unbounded' },
-    );
+    yield* admin.unsafe('delete from core.search_projection_generations where tenant_id = $1', [tenantId]);
+    yield* admin.unsafe('delete from core.domain_events where tenant_id = $1', [tenantId]);
+    yield* admin.unsafe('delete from core.legal_entities where tenant_id = $1', [tenantId]);
+    yield* admin.unsafe('delete from core.tenants where tenant_id = $1', [tenantId]);
   }).pipe(Effect.orDie);
 
   yield* Effect.addFinalizer(() => cleanup);
   const exercise = Effect.gen(function* exerciseWorkerSnapshots() {
-    yield* Effect.tryPromise({
-      catch: (cause) => new Cause.UnknownError(cause),
-
-      try: () =>
-        admin.query(
-          `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Snapshot tenant', 'active', 'en')`,
-          [tenantId, `snapshot-${tenantId}`],
-        ),
-    });
-    yield* Effect.tryPromise({
-      catch: (cause) => new Cause.UnknownError(cause),
-
-      try: () =>
-        admin.query(
-          `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1::uuid, $2, 'Snapshot LE', 'CZ', $1::uuid::text, 'active')`,
-          [legalEntityId, tenantId],
-        ),
-    });
+    yield* admin.unsafe(
+      `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $2, 'Snapshot tenant', 'active', 'en')`,
+      [tenantId, `snapshot-${tenantId}`],
+    );
+    yield* admin.unsafe(
+      `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1::uuid, $2, 'Snapshot LE', 'CZ', $1::uuid::text, 'active')`,
+      [legalEntityId, tenantId],
+    );
     const originalVersion = yield* insertEvent(eventId);
     const [claimId, deliveryId, messageId] = yield* Effect.all(
       [crypto.randomUUIDv4, crypto.randomUUIDv4, crypto.randomUUIDv4],
@@ -239,23 +173,14 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
       (blocked) =>
         blocked
           ? Effect.succeed(true)
-          : Effect.tryPromise({
-              catch: (cause) => new Cause.UnknownError(cause),
-
-              try: () => admin.query('select pg_sleep(0.01)'),
-            }).pipe(
+          : admin.unsafe('select pg_sleep(0.01)').pipe(
               Effect.andThen(
-                Effect.tryPromise({
-                  catch: (cause) => new Cause.UnknownError(cause),
-
-                  try: () =>
-                    admin.query<{ count: number }>(
-                      `select count(*)::int as count from pg_stat_activity where application_name = $1 and wait_event_type = 'Lock'`,
-                      [applicationName],
-                    ),
-                }),
+                admin.unsafe<{ count: number }>(
+                  `select count(*)::int as count from pg_stat_activity where application_name = $1 and wait_event_type = 'Lock'`,
+                  [applicationName],
+                ),
               ),
-              Effect.map((activity) => activity.rows[0]?.count === 1),
+              Effect.map((activity) => activity[0]?.count === 1),
             ),
     );
     expect(waiting, 'second snapshot must wait on first generation before retrying').toBe(true);
@@ -280,13 +205,13 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
       [crypto.randomUUIDv4, crypto.randomUUIDv4, crypto.randomUUIDv4],
       { concurrency: 'unbounded' },
     );
-    const lateCommitSnapshot = (pending: PoolClient) =>
+    const lateCommitSnapshot = (pending: PgClient.PgClient) =>
       Effect.gen(function* lateCommitSnapshotEffect() {
-        yield* beginTransaction(pending);
+        yield* pending.unsafe('begin');
         yield* insertPendingEvent(pending, pendingEventId, tenantId, pendingSubjectId);
         const higherEvent = yield* insertEvent(higherEventId);
         const beforeLateCommit = yield* readSnapshotPosition(source, context);
-        yield* commitTransaction(pending);
+        yield* pending.unsafe('commit');
         const afterLateCommit = yield* readSnapshotPosition(source, context);
         expect(beforeLateCommit).toEqual({
           eventWatermark: higherEvent,
@@ -297,19 +222,10 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
           generation: '7',
         });
       });
-    yield* Effect.acquireUseRelease(
-      Effect.tryPromise({
-        catch: (cause) => new Cause.UnknownError(cause),
-
-        try: () => admin.connect(),
-      }),
-      lateCommitSnapshot,
-      (pending) =>
-        Effect.tryPromise({
-          catch: (cause) => new Cause.UnknownError(cause),
-
-          try: () => pending.query('rollback'),
-        }).pipe(Effect.orDie, Effect.ensuring(Effect.sync(() => pending.release()))),
+    yield* Effect.scoped(
+      Effect.acquireUseRelease(makeTestPgSession(connections.admin.connectionString), lateCommitSnapshot, (pending) =>
+        pending.unsafe('rollback').pipe(Effect.orDie),
+      ),
     );
   });
   yield* exercise;
