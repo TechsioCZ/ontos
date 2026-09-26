@@ -482,7 +482,7 @@ controlled values. Individual allowed values never create a Cartesian product of
 A single-Variant Product may have no axes.
 
 **Controlled Attribute Value** — Stable Catalog-owned value in a governed vocabulary for an
-Attribute Definition. Rename preserves identity only for unchanged meaning. Retirement prevents
+Attribute Definition. Rename preserves identity only when meaning is unchanged. Retirement prevents
 new assignment while retaining existing references and their explanation; it is not automatically
 Product retirement. Reactivation preserves the same identity. Color and Size are specialized values.
 
@@ -502,8 +502,7 @@ requires scoped evidence; a numeric Size label is not a measured value with an i
 **Product Category** — Stable Catalog classification Resource with `0..1` direct parent; multiple
 roots are allowed. Rename preserves identity only for unchanged classification meaning. Hierarchy
 is acyclic. No shared primary/main Product Category exists in the Current model. Category is not
-Product Type, identity, Set marker, packaging marker or selling policy.
-Absence of a type does not permit arbitrary undeclared structured attributes.
+Product Type, navigation, publication, Assortment or Permission.
 
 **Direct Category Assignment** — Explicit Product-to-Product Category relation. A Product has
 `0..N` such assignments; removing one preserves independent others. A Variant uses the classification
@@ -959,7 +958,7 @@ expanded by imported Price rows or inferred FX.
 
 **Quantity Tier** — Pricing-owned threshold rule belonging to exactly one Price identity. The highest
 reached inclusive positive Quantity threshold supplies one resulting non-negative pre-Tax Unit Price
-for the whole relevant aggregated Quantity. A Tier never participates in choosing a different Price,
+for the whole relevant aggregated Quantity. A Tier never participatesates in choosing a different Price,
 and purpose-specific Tier aggregation never changes the underlying Pricing Line identities.
 
 **Pricing-owned Discount** — Pricing-owned pre-Tax reduction fact with distinct family, audience,
