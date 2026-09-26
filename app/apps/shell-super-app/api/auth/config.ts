@@ -57,9 +57,9 @@ const PostgreSqlUrlSchema = Schema.URLFromString.check(
 
 const authConfigSource = Config.all({
   baseUrl: Config.schema(HttpUrlSchema, 'BETTER_AUTH_URL'),
-  databaseUrl: Config.redacted('DATABASE_URL'),
-  nodeEnvironment: Config.string('NODE_ENV').pipe(Config.withDefault('')),
-  secret: Config.redacted('BETTER_AUTH_SECRET'),
+  databaseUrl: Config.Redacted('DATABASE_URL'),
+  nodeEnvironment: Config.String('NODE_ENV').pipe(Config.withDefault('')),
+  secret: Config.Redacted('BETTER_AUTH_SECRET'),
   supportUserIds: Config.schema(Schema.Trim, 'BETTER_AUTH_SUPPORT_USER_IDS').pipe(Config.withDefault('')),
   trustedOrigins: Config.schema(Schema.Trim, 'BETTER_AUTH_TRUSTED_ORIGINS').pipe(Config.withDefault('')),
 });

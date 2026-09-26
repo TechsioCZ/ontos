@@ -26,8 +26,8 @@ it.effect('explicit environment overrides file values and absent keys fall back 
     ).pipe(
       Effect.flatMap((provider) =>
         Config.all({
-          secret: Config.string('SECRET'),
-          url: Config.string('URL'),
+          secret: Config.String('SECRET'),
+          url: Config.String('URL'),
         }).parse(provider),
       ),
     );
@@ -42,7 +42,7 @@ const read = (
   } = {},
 ) =>
   loadConfigurationProvider(options, () => 'unreadable').pipe(
-    Effect.flatMap((provider) => Config.string('ONTOS_PROVIDER_TEST').parse(provider)),
+    Effect.flatMap((provider) => Config.String('ONTOS_PROVIDER_TEST').parse(provider)),
   );
 
 it.effect('an explicit empty environment does not fall through to process values', () =>

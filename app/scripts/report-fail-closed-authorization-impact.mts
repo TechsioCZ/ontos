@@ -216,7 +216,7 @@ const writeAuthorizationImpactReport = Effect.fn('writeAuthorizationImpactReport
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const configuredRoot = yield* Config.option(Config.string('ULTRAMODERN_WORKSPACE_ROOT'));
+  const configuredRoot = yield* Config.option(Config.String('ULTRAMODERN_WORKSPACE_ROOT'));
   const root = Option.getOrElse(configuredRoot, () => path.resolve(import.meta.dirname, '..'));
   const input = Option.getOrElse(inputPath, () => path.join(root, '.codex/reports/authorization/would-deny.json'));
   const output = path.join(root, '.codex/reports/authorization/fail-closed-impact.json');
@@ -252,7 +252,7 @@ const writeAuthorizationImpactReport = Effect.fn('writeAuthorizationImpactReport
 
 const command = Command.make(
   'report-fail-closed-authorization-impact',
-  { input: Argument.file('input').pipe(Argument.optional) },
+  { input: Argument.File('input').pipe(Argument.optional) },
   ({ input }) => writeAuthorizationImpactReport(input),
 );
 

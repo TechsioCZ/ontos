@@ -100,7 +100,7 @@
     "@typescript/native": "npm:typescript@7.0.2",
     "cross-env": "10.1.0",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
-    "effect-rstest": "0.1.4",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "@types/pg": "8.20.0",
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",

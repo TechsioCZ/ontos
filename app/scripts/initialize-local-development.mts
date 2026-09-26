@@ -205,7 +205,7 @@ const TrimmedNonEmptyString = Schema.Trim.check(Schema.isNonEmpty());
 
 const localDevelopmentConfigSource = Config.all({
   authBaseUrl: Config.schema(TrimmedNonEmptyString, 'BETTER_AUTH_URL'),
-  authSecret: Config.redacted('BETTER_AUTH_SECRET'),
+  authSecret: Config.Redacted('BETTER_AUTH_SECRET'),
   databaseAdminUrl: Config.schema(TrimmedNonEmptyString, 'DATABASE_ADMIN_URL'),
   databaseUrl: Config.schema(TrimmedNonEmptyString, 'DATABASE_URL'),
   deploymentEnvironment: Config.schema(Schema.Trim, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
@@ -213,7 +213,7 @@ const localDevelopmentConfigSource = Config.all({
   ),
   spiceDbEndpoint: Config.schema(TrimmedNonEmptyString, 'SPICEDB_ENDPOINT'),
   spiceDbInsecure: Config.schema(Schema.Trim, 'SPICEDB_INSECURE'),
-  spiceDbPreSharedKey: Config.redacted('SPICEDB_PRESHARED_KEY'),
+  spiceDbPreSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY'),
 });
 
 const environmentProvider = (environment: LocalDevelopmentEnvironment) => ConfigProvider.fromUnknown(environment);

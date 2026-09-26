@@ -46,8 +46,8 @@ const parseBaseUrl = (value: string): Effect.Effect<string, CommerceCoreIdentity
   Effect.map(parseHttpUrl(value, malformedConfiguration), (url) => url.href.replace(/\/+$/u, ''));
 
 const configSource = Config.all({
-  apiKey: Config.redacted(CORE_IDENTITY_API_KEY_KEY),
-  baseUrl: Config.string(CORE_IDENTITY_BASE_URL_KEY),
+  apiKey: Config.Redacted(CORE_IDENTITY_API_KEY_KEY),
+  baseUrl: Config.String(CORE_IDENTITY_BASE_URL_KEY),
 });
 
 const parseFromProvider = Effect.fn('CommerceCoreIdentityClientConfig.parse')(function* parseCoreIdentityConfig(

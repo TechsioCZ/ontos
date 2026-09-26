@@ -44,8 +44,8 @@ const PASSWORD = 'P'.repeat(24);
 const SECRET = 's'.repeat(64);
 const LOCK_WAIT_DEADLINE_MILLIS = 3000;
 const LOCK_WAIT_POLL_MILLIS = 20;
-const DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 const ProviderDateSchema = Schema.Union([Schema.Date, Schema.String, Schema.Finite]);

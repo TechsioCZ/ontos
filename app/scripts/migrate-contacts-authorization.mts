@@ -470,7 +470,7 @@ const migrateContactsAuthorization = (
 
 const command = Command.make(
   'migrate-contacts-authorization',
-  { mode: Argument.choice('mode', ['prepare', 'verify', 'finalize']) },
+  { mode: Argument.Literals('mode', ['prepare', 'verify', 'finalize']) },
   ({ mode }) =>
     Effect.gen(function* migrateContactsAuthorizationCommand() {
       const result = yield* migrateContactsAuthorization(mode).pipe(

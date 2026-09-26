@@ -123,8 +123,8 @@ const readConnectionPair = Effect.fn('CommercePortalAuthDatabaseConfig.readConne
 });
 
 const optionalConnectionKeys = Config.all({
-  admin: Config.option(Config.redacted(COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL)),
-  runtime: Config.option(Config.redacted(COMMERCE_PORTAL_AUTH_DATABASE_URL)),
+  admin: Config.option(Config.Redacted(COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL)),
+  runtime: Config.option(Config.Redacted(COMMERCE_PORTAL_AUTH_DATABASE_URL)),
 });
 
 const parseOptionalWith = Effect.fn('CommercePortalAuthDatabaseConfig.parseOptional')(function* parseOptionalEffect(

@@ -6,8 +6,8 @@
  *     "Configuration currently combines `process.env`, per-module dotenv loading, `trim`, `new URL`,
  *     number/range checks, `JSON.parse`, synchronous Schema decoding, and throws"; scale is
  *     "approximately 80–110 hand-parsed configuration sites depending on how shared helpers are
- *     counted". Every one of those sites re-implements `Config.string` / `Config.integer` /
- *     `Config.url` / `Config.boolean` / `Config.schema` with its own ad hoc error vocabulary.
+ *     counted". Every one of those sites re-implements `Config.String` / `Config.Int` /
+ *     `Config.URL` / `Config.Boolean` / `Config.schema` with its own ad hoc error vocabulary.
  *   - Secondarily **A7** ("shared Schemas for topology/composition documents"): the
  *     `JSON.parse(environment[...])` shape is the environment-side half of that cluster, and
  *     **A8** (generators/scripts), because `scripts/**` reproduces the same parsing by hand.
@@ -66,7 +66,7 @@
  *     never report.
  *   - Presence checks that are not parses: `value === undefined`, `value === null`, `value !== other`
  *     — `undefined`/`null` comparisons carry no vocabulary to move into a `Config`.
- *   - Reads that are only *passed on* (`Config.string`, `ConfigProvider.fromJson`,
+ *   - Reads that are only *passed on* (`Config.String`, `ConfigProvider.fromJson`,
  *     `Schema.decodeUnknown(...)(environment['X'])`, `loadDotenv({ processEnv: bag })`) — decoding
  *     through Effect is the target state, not the defect.
  *   - `allowPaths` (empty by default) for a ratified carve-out, and `ignoreTestFiles` (`false` by
@@ -316,20 +316,20 @@ export const rule = defineRule({
         'Audit A3 (with A7/A8): hand parsing of an environment-derived value — `trim`/`split`/`toLowerCase`, ' +
         "`Number`/`parseInt`/`Boolean`, `JSON.parse`, `new URL`/`new Date`, `=== 'true'` and `.length` checks " +
         'on `process.env`, `import.meta.env`, an injected `environment` record or a `readEnvironment(...)` ' +
-        'helper — re-implements `Config.string`/`integer`/`url`/`boolean`/`schema` with an ad hoc error ' +
+        'helper — re-implements `Config.String`/`integer`/`url`/`boolean`/`schema` with an ad hoc error ' +
         'vocabulary and hides the requirement from the root ConfigProvider. Syntax-only: injected record/reader names are configurable heuristics; bounded local aliases are tracked, not arbitrary cross-module flow.',
       url: 'docs/architecture/EFFECT_V4_ANTIPATTERN_AUDIT.md#a3-replace-ambient-configuration-with-config-configprovider-and-redacted',
     },
     messages: {
       envStringSurgery:
         'Audit A3: `.{{operation}}()` hand parses an environment value, re-implementing a codec that `Config` ' +
-        "already owns. Declare the variable as `Config.string('NAME')` (add `Config.map`/`Schema.Trim` or a " +
+        "already owns. Declare the variable as `Config.String('NAME')` (add `Config.map`/`Schema.Trim` or a " +
         '`Schema.Literal` refinement through `Config.schema` for the shape you need) and read it with ' +
         '`yield* AppConfig`, so the single root `ConfigProvider` fails with a typed `ConfigError` instead of ' +
         'this local string surgery.',
       envCoercion:
         'Audit A3: `{{operation}}(...)` coerces an environment string by hand and may yield `NaN`/`false` ' +
-        "or fails synchronously on malformed input. Declare it as `Config.integer('NAME')` / `Config.number` / `Config.boolean` " +
+        "or fails synchronously on malformed input. Declare it as `Config.Int('NAME')` / `Config.Number` / `Config.Boolean` " +
         '(compose defaults with `Config.withDefault`, ranges with `Config.validate` or a `Schema` refinement ' +
         'through `Config.schema`) and let the root ConfigProvider report a typed `ConfigError`.',
       envJsonParse:
@@ -339,18 +339,18 @@ export const rule = defineRule({
         'failure arrives as a typed `ConfigError`.',
       envStructuredParse:
         'Audit A3: `{{operation}}(...)` parses or validates an environment string by hand, so ' +
-        "malformation is not handled by the declared configuration codec. Use `Config.url('NAME')` (or " +
+        "malformation is not handled by the declared configuration codec. Use `Config.URL('NAME')` (or " +
         "`Config.schema(Schema.DateTimeUtc, 'NAME')` for instants) and keep the validation rules in the " +
         'configuration Schema rather than in a local `try`/`throw`.',
       envLiteralComparison:
         'Audit A3: comparing an environment value against the literal `{{literal}}` hand rolls a closed ' +
-        "configuration vocabulary. Declare it as `Config.boolean('NAME')` for on/off flags or " +
+        "configuration vocabulary. Declare it as `Config.Boolean('NAME')` for on/off flags or " +
         "`Config.schema(Schema.Literals([...]), 'NAME')` for a closed set, so the accepted values live in one " +
         'Schema and an unexpected value fails startup with a typed `ConfigError` instead of falling through ' +
         'this branch.',
       envLengthCheck:
         "Audit A3: a `.length` check on an environment value hand rolls the 'required'/'non-empty' rule that " +
-        "`Config` already enforces. Declare it as `Config.string('NAME')` (with `Config.withDefault` when it is " +
+        "`Config` already enforces. Declare it as `Config.String('NAME')` (with `Config.withDefault` when it is " +
         'optional, `Schema.NonEmptyString`/`Schema.minLength` through `Config.schema` when it has a shape) so ' +
         'the missing-value failure is one typed `ConfigError` rather than a local guard and error literal.',
     },

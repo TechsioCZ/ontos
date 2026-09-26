@@ -5,7 +5,7 @@ import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
-import * as FastCheck from 'fast-check';
+import { Arbitrary } from 'effect/unstable/arbitrary';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makePartyRegistryApiRuntime, partyRegistryFoundationLive } from '../../api/index.ts';
@@ -426,10 +426,10 @@ it.live(
             ? undefined
             : (manualPayload ??
               (yield* Schema.encodeEffect(payloadSchema)(
-                FastCheck.sample(Schema.toArbitrary(payloadSchema)(FastCheck), {
-                  numRuns: 1,
+                (yield* Arbitrary.sampleEffect(Arbitrary.schema(payloadSchema), {
+                  count: 1,
                   seed: index + 1,
-                })[0],
+                }))[0],
               )));
         const request =
           payload === undefined

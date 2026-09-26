@@ -96,9 +96,9 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 const TestSpiceDbConfig = Config.all({
-  endpoint: Config.string('SPICEDB_ENDPOINT').pipe(Config.withDefault('localhost:50051')),
-  insecureLocal: Config.boolean('SPICEDB_INSECURE').pipe(Config.withDefault(true)),
-  preSharedKey: Config.redacted('SPICEDB_PRESHARED_KEY').pipe(
+  endpoint: Config.String('SPICEDB_ENDPOINT').pipe(Config.withDefault('localhost:50051')),
+  insecureLocal: Config.Boolean('SPICEDB_INSECURE').pipe(Config.withDefault(true)),
+  preSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY').pipe(
     Config.withDefault(Redacted.make('ontos-local-development-key')),
   ),
 }).pipe(

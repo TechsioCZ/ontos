@@ -136,7 +136,7 @@
     "@vercel/nft": "0.29.2",
     "cross-env": "10.1.0",
     "effect": "4.0.0-rc.117",
-    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@f29b3f495d45a11037334620bf5f693414fb5578",
+    "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "esbuild": "0.28.1",
     "eslint-plugin-github": "6.1.2",
     "eslint-plugin-perfectionist": "5.10.1",

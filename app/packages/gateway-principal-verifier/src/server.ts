@@ -159,8 +159,8 @@ const decodeLegacyGatewayNamespaceMapping = (
       );
 
 const gatewayVerificationEnvironment = Config.all({
-  ONTOS_GATEWAY_ISSUER: Config.string('ONTOS_GATEWAY_ISSUER'),
-  ONTOS_GATEWAY_PUBLIC_JWKS: Config.string('ONTOS_GATEWAY_PUBLIC_JWKS'),
+  ONTOS_GATEWAY_ISSUER: Config.String('ONTOS_GATEWAY_ISSUER'),
+  ONTOS_GATEWAY_PUBLIC_JWKS: Config.String('ONTOS_GATEWAY_PUBLIC_JWKS'),
 });
 const VERIFY_ASSERTION_TIMEOUT = Duration.seconds(2);
 

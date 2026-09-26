@@ -955,7 +955,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
         : validateAuthorizationPromotionGate(options.authorizationPromotion);
     const pathService = yield* Path.Path;
     const fileSystem = yield* FileSystem.FileSystem;
-    const rootDirectory = options.rootDirectory ?? (yield* Config.string('PWD').pipe(Effect.orElseSucceed(() => '.')));
+    const rootDirectory = options.rootDirectory ?? (yield* Config.String('PWD').pipe(Effect.orElseSucceed(() => '.')));
     const topology = yield* readJson(
       ReferenceTopologySchema,
       pathService.join(rootDirectory, 'topology/reference-topology.json'),
@@ -1095,17 +1095,17 @@ const parseAuthorizationNow = (value: string) =>
 const deploymentImpactCommand = Command.make(
   'plan-deployment-impact',
   {
-    authorizationEnvironment: Flag.choice('authorization-environment', ['development', 'production', 'stage']).pipe(
+    authorizationEnvironment: Flag.Literals('authorization-environment', ['development', 'production', 'stage']).pipe(
       Flag.optional,
     ),
-    authorizationNow: Flag.string('authorization-now').pipe(Flag.optional),
-    baseRevision: Flag.string('base').pipe(Flag.optional),
-    changedPaths: Flag.string('changed-path').pipe(Flag.atLeast(0)),
-    headRevision: Flag.string('head').pipe(Flag.optional),
+    authorizationNow: Flag.String('authorization-now').pipe(Flag.optional),
+    baseRevision: Flag.String('base').pipe(Flag.optional),
+    changedPaths: Flag.String('changed-path').pipe(Flag.atLeast(0)),
+    headRevision: Flag.String('head').pipe(Flag.optional),
   },
   ({ authorizationEnvironment, authorizationNow, baseRevision, changedPaths, headRevision }) =>
     Effect.gen(function* deploymentImpactCommandEffect() {
-      const rootDirectory = yield* Config.string('PWD').pipe(Effect.orElseSucceed(() => '.'));
+      const rootDirectory = yield* Config.String('PWD').pipe(Effect.orElseSucceed(() => '.'));
       const environment = Option.getOrUndefined(authorizationEnvironment);
       let authorizationPromotion: AuthorizationPromotionGateInput | undefined;
       if (environment !== undefined) {
@@ -1126,7 +1126,7 @@ const deploymentImpactCommand = Command.make(
           : yield* planDeploymentImpact({ ...options, authorizationPromotion });
       const planJson = yield* Schema.encodeEffect(PlanJsonSchema)(plan);
       yield* Console.log(planJson);
-      const outputPath = yield* Config.option(Config.string('GITHUB_OUTPUT'));
+      const outputPath = yield* Config.option(Config.String('GITHUB_OUTPUT'));
       if (Option.isSome(outputPath)) {
         yield* writeGitHubOutputs(plan, outputPath.value);
       }

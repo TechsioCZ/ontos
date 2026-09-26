@@ -68,8 +68,8 @@ import {
 const ORIGIN = 'https://portal.example.test';
 const SECRET = 'c'.repeat(64);
 const PASSWORD = 'C'.repeat(24);
-const DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)('60000000-0000-4000-8000-0000000000c1');

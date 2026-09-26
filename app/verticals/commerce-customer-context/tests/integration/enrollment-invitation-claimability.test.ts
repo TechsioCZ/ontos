@@ -72,8 +72,8 @@ const START_ACTION_KEY = 'commerce.customer-context.start-portal-enrollment';
 /** A COUNTERPARTY_INVITATION start also runs the claim-transition Action on the Storefront's behalf. */
 const CLAIM_TRANSITION_ACTION_KEY = 'commerce.customer-context.claim-portal-enrollment-transition';
 
-const providerDatabaseUrl = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 /** Resend is answered locally: creation now awaits delivery, so the transport must accept. */

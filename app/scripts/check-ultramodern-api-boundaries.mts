@@ -103,7 +103,7 @@ const listWorkspaceFiles = (
 const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const workspaceRoot = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(path.resolve()));
+  const workspaceRoot = yield* Config.String('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(path.resolve()));
   const failures: string[] = [];
   const sourceByFile = new Map<string, string>();
 

@@ -1,13 +1,13 @@
 // The A3 target: Config/Config.schema/Redacted decoded through one root ConfigProvider. No throws.
 import { Config, ConfigProvider, Effect, Layer, Redacted, Schema } from 'effect';
 
-const Secret = Config.redacted('BETTER_AUTH_SECRET').pipe(
+const Secret = Config.Redacted('BETTER_AUTH_SECRET').pipe(
   Config.validate({
     message: 'BETTER_AUTH_SECRET must be at least 32 characters',
     validation: (secret) => Redacted.value(secret).length >= 32,
   }),
 );
-const Issuer = Config.string('ONTOS_GATEWAY_ISSUER');
+const Issuer = Config.String('ONTOS_GATEWAY_ISSUER');
 const Jwks = Config.schema(Schema.fromJsonString(Schema.Unknown), 'ONTOS_GATEWAY_PUBLIC_JWKS');
 
 export const AppConfig = Config.all({ issuer: Issuer, jwks: Jwks, secret: Secret });

@@ -150,8 +150,8 @@ import { makeCapturingCounterpartyInvitationProofDelivery } from '../support/cou
 const ORIGIN = 'http://localhost:3020';
 const SECRET = 'd'.repeat(64);
 
-const providerDatabaseUrl = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 /** Resend is answered locally: creation now awaits delivery, so the transport must accept. */

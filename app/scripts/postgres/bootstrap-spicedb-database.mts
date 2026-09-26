@@ -52,7 +52,7 @@ const loadRootConfiguration = (): Effect.Effect<
 
     const provider = ConfigProvider.orElse(ConfigProvider.fromEnv({ preserveEmptyStrings: true }), fileProvider);
     const [adminUrl, spiceDbUrl] = yield* Effect.all(
-      [Config.redacted('DATABASE_ADMIN_URL').parse(provider), Config.redacted('SPICEDB_DATABASE_URL').parse(provider)],
+      [Config.Redacted('DATABASE_ADMIN_URL').parse(provider), Config.Redacted('SPICEDB_DATABASE_URL').parse(provider)],
       { concurrency: 1 },
     ).pipe(
       Effect.mapError((cause) => bootstrapFailure('SpiceDB PostgreSQL bootstrap configuration is invalid', cause)),
