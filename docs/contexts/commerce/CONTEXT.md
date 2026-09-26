@@ -952,9 +952,18 @@ _Avoid_: informational toast as consent, acknowledgement as permission to cancel
 
 **Pricing Currency Support** — One Pricing-owned Tenant-level capability with immutable revisions
 and Effective Periods defining the enabled purchase currencies within the actually supported
-capability, with Launch enabled support exactly `{CZK}`. It is not a per-Cart, subject, Selling Legal
-Entity, Channel, Market or Storefront setting, purchase-currency preference or choice, and is not
-expanded by imported Price rows or inferred FX.
+capability. The Pricing architecture and contracts remain currency-aware, including existing
+EUR-aware supported-currency infrastructure, while Launch enabled support is exactly `{CZK}`.
+It is not a per-Cart, subject, Selling Legal Entity, Channel, Market or Storefront setting,
+purchase-currency preference or choice, and is not expanded by imported Price rows or inferred FX.
+Preserving generalized currency-bearing contracts does not itself activate an additional currency.
+
+**Additional Currency Activation** — Explicit product/release decision that enables one additional
+currency, for example EUR, for authoritative selling after its required native Pricing facts,
+monetary precision/publication behavior and activated downstream consumer path are proven. This is
+distinct from the already-current currency-aware architecture and from FX conversion.
+_Avoid_: treating EUR-aware contracts as production EUR activation; hardcoding current Pricing to CZK
+because Launch enables only CZK; treating native EUR Price as an FX-derived CZK Price.
 
 **Quantity Tier** — Pricing-owned threshold rule belonging to exactly one Price identity. The highest
 reached inclusive positive Quantity threshold supplies one resulting non-negative pre-Tax Unit Price
