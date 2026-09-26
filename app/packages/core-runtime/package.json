@@ -44,15 +44,14 @@
     "@effect/platform-node": "4.0.0-rc.117",
     "@effect/sql-pg": "4.0.0-rc.117",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
-    "effect": "4.0.0-rc.117",
-    "pg": "8.22.0"
+    "effect": "4.0.0-rc.117"
   },
   "devDependencies": {
     "@rstest/core": "0.11.12",
     "@types/node": "^26.4.1",
-    "@types/pg": "8.20.0",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
+    "pg": "8.22.0",
     "yaml": "2.9.1"
   }
 }
