@@ -30,8 +30,10 @@
     "@app/commerce-customer-context": "workspace:*",
     "@app/commerce-market-catalog": "workspace:*",
     "@app/core-runtime": "workspace:*",
+    "@app/inventory": "workspace:*",
     "@app/party-registry": "workspace:*",
     "@app/payment-term-catalog": "workspace:*",
+    "@app/price-group-catalog": "workspace:*",
     "@app/pricing": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
@@ -62,8 +64,7 @@
     "jose": "6.2.5",
     "pg": "8.22.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8",
-    "@app/price-group-catalog": "workspace:*"
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260923.1",
@@ -101,6 +102,7 @@
   "zephyr:dependencies": {
     "partyRegistry": "@app/party-registry@workspace:*",
     "commerceMarketCatalog": "@app/commerce-market-catalog@workspace:*",
-    "catalog": "@app/catalog@workspace:*"
+    "catalog": "@app/catalog@workspace:*",
+    "inventory": "@app/inventory@workspace:*"
   }
 }

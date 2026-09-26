@@ -227,6 +227,11 @@ export default defineConfig(
                 getOptionalBuildConfig('VERTICAL_COMMERCE_MARKET_CATALOG_WORKER_NAME') ?? 'app-commerce-market-catalog',
             },
             {
+              binding: getOptionalBuildConfig('VERTICAL_INVENTORY_WORKER_BINDING') ?? 'VERTICAL_INVENTORY_WORKER',
+              prefix: '/inventory-api',
+              service: getOptionalBuildConfig('VERTICAL_INVENTORY_WORKER_NAME') ?? 'app-inventory',
+            },
+            {
               binding:
                 getOptionalBuildConfig('VERTICAL_PARTY_REGISTRY_WORKER_BINDING') ?? 'VERTICAL_PARTY_REGISTRY_WORKER',
               prefix: '/party-registry-api',

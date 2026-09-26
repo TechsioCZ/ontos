@@ -1130,6 +1130,91 @@ it.effect('governs tenant-only Price Group reads with stable target evidence and
   }),
 );
 
+it.effect('governs one exact Inventory Resource read without deriving authority from selected context', () =>
+  Effect.gen(function* governsInventoryResourceRead() {
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.resource.read');
+    const InventoryResourceIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('InventoryResourceId'));
+    const TenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('InventoryReadTenantId'));
+    const InputSchema = Schema.Struct({
+      resourceId: InventoryResourceIdSchema,
+      tenantId: TenantIdSchema,
+    });
+    let handlerCalls = 0;
+    const read = defineRead(
+      {
+        accessKind: 'detail',
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'read',
+          authorization: { kind: 'context_permission', permission: 'inventory.resource.read' },
+          entrypointKey: 'commerce.inventory.stock-position.read',
+          moduleKey: 'commerce.inventory',
+          role: 'api',
+        }),
+        evidencePolicy: { captureMode: 'metadata_only', policyKey: 'inventory.resource.read.v1' },
+        inputSchema: InputSchema,
+        legalEntityScope: 'optional',
+        owningModuleKey: 'commerce.inventory',
+        permissionTarget: 'business_permission',
+        policies: [],
+        readKey: 'commerce.inventory.stock-position.read',
+        resultSchema: Schema.String,
+        schemaVersion: '1',
+      },
+      ({ resourceId }) => {
+        handlerCalls += 1;
+        return Effect.succeed({ evidence: { resultCount: 1 }, result: resourceId });
+      },
+      () => Effect.succeed(Object.freeze({})),
+      (input) => ({
+        businessPermission: {
+          permission,
+          target: {
+            kind: 'inventory_resource',
+            resource: {
+              moduleId: 'commerce.inventory',
+              resourceId: input.resourceId,
+              resourceType: 'commerce.inventory.stock-position',
+            },
+            tenantId: input.tenantId,
+          },
+        },
+        kind: 'business_permission',
+      }),
+    );
+    const resourceId = '70000000-0000-4000-8000-000000000001';
+    const input = { resourceId, tenantId: scope.tenantId };
+    const run = (harness: Effect.Success<ReturnType<typeof makeHarness>>, nextInput?: typeof input) =>
+      harness.runtime.runRead({
+        input: nextInput ?? input,
+        principal: scope,
+        registration: read,
+        transport: { correlationId: scope.correlationId },
+      });
+
+    const allowed = yield* makeHarness({
+      businessPermissionDecision: 'allowed',
+      contextPermissionDecision: 'allowed',
+    });
+    expect(yield* run(allowed)).toBe(resourceId);
+    const evidenceValues = allowed.evidenceParameterRows()[0] ?? [];
+    expect(evidenceValues).toContain(resourceId);
+    expect(evidenceValues).toContain('commerce.inventory.stock-position');
+
+    const crossTenant = yield* makeHarness({
+      businessPermissionDecision: 'allowed',
+      contextPermissionDecision: 'allowed',
+    });
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(run(crossTenant, { ...input, tenantId: '00000000-0000-4000-8000-000000000099' })),
+        'ReadPermissionUnavailable',
+      ),
+    ).toBe(true);
+    expect(crossTenant.permissionChecks().businessPermissionChecks).toBe(0);
+    expect(handlerCalls).toBe(1);
+  }),
+);
+
 it.effect('persists sanitized permission denial and never invokes the private handler', () =>
   Effect.gen(function* migratedTest11() {
     const legalEntityId = '00000000-0000-4000-8000-000000000004';

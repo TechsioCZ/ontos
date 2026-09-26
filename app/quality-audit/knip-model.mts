@@ -1084,53 +1084,137 @@ const drizzleFactories = (facts: SourceFacts): ReadonlySet<string> => {
   );
 };
 
+const drizzleTableReceiver = (callee: Extract<Node, { type: 'MemberExpression' }>): Node | undefined => {
+  if (propertyName(callee.property) === 'table') {
+    return callee.object;
+  }
+  if (
+    propertyName(callee.property) === 'withRLS' &&
+    callee.object.type === 'MemberExpression' &&
+    propertyName(callee.object.property) === 'table'
+  ) {
+    return callee.object.object;
+  }
+  return undefined;
+};
+
+const importedDrizzleDeclaration = (
+  facts: SourceFacts,
+  localName: string,
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  path: Path.Path,
+): { readonly facts: SourceFacts; readonly node: Node | undefined } | undefined => {
+  const statement = facts.program.body.find(
+    (candidate) =>
+      candidate.type === 'ImportDeclaration' &&
+      candidate.source.value.startsWith('.') &&
+      candidate.specifiers.some(
+        (specifier) => specifier.type === 'ImportSpecifier' && specifier.local.name === localName,
+      ),
+  );
+  if (statement?.type !== 'ImportDeclaration') {
+    return undefined;
+  }
+  const imported = statement.specifiers.find(
+    (specifier) => specifier.type === 'ImportSpecifier' && specifier.local.name === localName,
+  );
+  if (imported?.type !== 'ImportSpecifier') {
+    return undefined;
+  }
+  const targetPath = path.normalize(path.join(path.dirname(facts.file), statement.source.value)).replaceAll('\\', '/');
+  const target = factsByPath.get(targetPath);
+  const importedName = propertyName(imported.imported);
+  return target === undefined || importedName === undefined
+    ? undefined
+    : { facts: target, node: target.variables.get(importedName) };
+};
+
 const isDrizzleDeclaration = (
   node: Node | undefined,
-  variables: ReadonlyMap<string, Node>,
-  factories: ReadonlySet<string>,
+  facts: SourceFacts,
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  path: Path.Path,
   depth = 0,
 ): boolean => {
-  const expression = unwrap(node, variables);
+  const expression = unwrap(node, facts.variables);
   if (expression?.type !== 'CallExpression' || depth > 5) {
     return false;
   }
   if (expression.callee.type === 'Identifier') {
-    return factories.has(expression.callee.name);
+    return drizzleFactories(facts).has(expression.callee.name);
   }
-  if (expression.callee.type === 'MemberExpression' && propertyName(expression.callee.property) === 'table') {
-    return isDrizzleDeclaration(expression.callee.object, variables, factories, depth + 1);
+  if (expression.callee.type !== 'MemberExpression') {
+    return false;
   }
-  return false;
+  const receiver = drizzleTableReceiver(expression.callee);
+  if (receiver === undefined) {
+    return false;
+  }
+  const schema =
+    receiver.type === 'Identifier' && !facts.variables.has(receiver.name)
+      ? receiver
+      : unwrap(receiver, facts.variables);
+  if (schema?.type === 'CallExpression') {
+    return isDrizzleDeclaration(schema, facts, factsByPath, path, depth + 1);
+  }
+  if (schema?.type !== 'Identifier') {
+    return false;
+  }
+  const imported = importedDrizzleDeclaration(facts, schema.name, factsByPath, path);
+  return imported !== undefined && isDrizzleDeclaration(imported.node, imported.facts, factsByPath, path, depth + 1);
 };
 
-const reflectedDrizzleExports = (facts: SourceFacts, workspace: string, configSource: string): KnipModelEvidence[] => {
-  const factories = drizzleFactories(facts);
-  const result: KnipModelEvidence[] = [];
-  for (const node of facts.program.body) {
-    if (node.type !== 'ExportNamedDeclaration' || node.declaration?.type !== 'VariableDeclaration') {
-      continue;
-    }
-    for (const declaration of node.declaration.declarations) {
-      if (
-        declaration.id.type === 'Identifier' &&
-        declaration.init !== null &&
-        isDrizzleDeclaration(declaration.init, facts.variables, factories)
-      ) {
-        result.push(
-          evidenceAt(
-            facts,
-            workspace,
-            'export',
-            `${facts.file}#${declaration.id.name}`,
-            declaration.start,
-            `Drizzle reflective schema consumer configured by ${configSource}`,
-          ),
-        );
-      }
-    }
+const reflectedDrizzleExport = (
+  facts: SourceFacts,
+  node: Node,
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  workspace: string,
+  configSource: string,
+  path: Path.Path,
+): KnipModelEvidence[] => {
+  if (node.type !== 'ExportNamedDeclaration') {
+    return [];
   }
-  return result;
+  const reason = `Drizzle reflective schema consumer configured by ${configSource}`;
+  if (node.declaration?.type === 'VariableDeclaration') {
+    return node.declaration.declarations.flatMap((declaration) =>
+      declaration.id.type === 'Identifier' &&
+      declaration.init !== null &&
+      isDrizzleDeclaration(declaration.init, facts, factsByPath, path)
+        ? [evidenceAt(facts, workspace, 'export', `${facts.file}#${declaration.id.name}`, declaration.start, reason)]
+        : [],
+    );
+  }
+  if (node.source?.type !== 'Literal' || !isString(node.source.value) || !node.source.value.startsWith('.')) {
+    return [];
+  }
+  const targetPath = path.normalize(path.join(path.dirname(facts.file), node.source.value)).replaceAll('\\', '/');
+  const target = factsByPath.get(targetPath);
+  if (target === undefined) {
+    return [];
+  }
+  return node.specifiers.flatMap((specifier) => {
+    const importedName = propertyName(specifier.local);
+    const exportedName = propertyName(specifier.exported);
+    return specifier.type === 'ExportSpecifier' &&
+      node.exportKind !== 'type' &&
+      specifier.exportKind !== 'type' &&
+      importedName !== undefined &&
+      exportedName !== undefined &&
+      isDrizzleDeclaration(target.variables.get(importedName), target, factsByPath, path)
+      ? [evidenceAt(facts, workspace, 'export', `${facts.file}#${exportedName}`, specifier.start, reason)]
+      : [];
+  });
 };
+
+const reflectedDrizzleExports = (
+  facts: SourceFacts,
+  factsByPath: ReadonlyMap<string, SourceFacts>,
+  workspace: string,
+  configSource: string,
+  path: Path.Path,
+): KnipModelEvidence[] =>
+  facts.program.body.flatMap((node) => reflectedDrizzleExport(facts, node, factsByPath, workspace, configSource, path));
 
 const resolver = createRequire(import.meta.url);
 const packageName = (specifier: string): string =>
@@ -1303,6 +1387,7 @@ const drizzleEvidence = (
   factsByPath: ReadonlyMap<string, SourceFacts>,
   prefix: string,
   workspace: string,
+  path: Path.Path,
 ): KnipModelEvidence[] => {
   const evidence: KnipModelEvidence[] = [];
   for (const facts of factsByPath.values()) {
@@ -1312,7 +1397,7 @@ const drizzleEvidence = (
     const schema = staticString(objectValue(exportedObject(facts), 'schema'), facts.variables);
     const target = schema === undefined ? undefined : factsByPath.get(`${prefix}${schema.replace(/^\.\//u, '')}`);
     if (target !== undefined) {
-      evidence.push(...reflectedDrizzleExports(target, workspace, facts.file));
+      evidence.push(...reflectedDrizzleExports(target, factsByPath, workspace, facts.file, path));
     }
   }
   return evidence;
@@ -1495,7 +1580,7 @@ const workspaceModel = Effect.fn('QualityAudit.knipWorkspaceModel')(function* bu
   evidence.push(...catalogAliasEvidence(factsByPath, manifest, prefix, workspace, path));
   evidence.push(...generatedModuleApiEvidence(factsByPath, prefix, workspace));
   evidence.push(...generatedOutboxMessageEvidence(factsByPath, manifest, prefix, workspace));
-  evidence.push(...drizzleEvidence(factsByPath, prefix, workspace));
+  evidence.push(...drizzleEvidence(factsByPath, prefix, workspace, path));
   const aliasFiles = new Set(
     evidence
       .filter((fact) => fact.kind === 'alias')

@@ -24,6 +24,7 @@ const principalId = '30000000-0000-4000-8000-000000000001';
 const pricingCatalogId = '50000000-0000-4000-8000-000000000001';
 const priceGroupId = '60000000-0000-4000-8000-000000000001';
 const otherPriceGroupId = '60000000-0000-4000-8000-000000000002';
+const inventoryResourceId = '70000000-0000-4000-8000-000000000001';
 
 const responseFor = (
   request: v1.CheckBulkPermissionsRequest,
@@ -257,6 +258,58 @@ it.effect('checks exact business permissions and rejects untrusted storefront sc
         key: toBusinessPermissionAccessKey(businessTarget),
       },
     ]);
+    expect(requests).toHaveLength(1);
+  }),
+);
+
+it.effect('checks one exact tenant-qualified Inventory Resource and rejects another owner or identity', () =>
+  Effect.gen(function* checksInventoryResourcePermission() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return responseFor(request, [v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION]);
+        }),
+      ),
+    );
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('inventory.stock.correct');
+    const target = {
+      permission,
+      target: {
+        kind: 'inventory_resource' as const,
+        resource: {
+          moduleId: 'commerce.inventory' as const,
+          resourceId: inventoryResourceId,
+          resourceType: 'commerce.inventory.stock-position',
+        },
+        tenantId,
+      },
+    };
+    const check = requireBusinessPermissions(access);
+    expect(yield* check({ principal: { principalId, tenantId }, targets: [target] })).toEqual([
+      { decision: 'allowed', key: toBusinessPermissionAccessKey(target) },
+    ]);
+    expect(requests[0]?.items[0]?.resource?.objectId).toBe(
+      toBusinessPermissionAccessObjectId(permission, target.target),
+    );
+
+    for (const invalidTarget of [
+      {
+        ...target.target,
+        resource: { ...target.target.resource, resourceType: 'commerce.catalog.stock-position' },
+      },
+      { ...target.target, resource: { ...target.target.resource, resourceId: 'position-by-location' } },
+    ]) {
+      expect(
+        yield* check({ principal: { principalId, tenantId }, targets: [{ permission, target: invalidTarget }] }),
+      ).toEqual([
+        {
+          decision: 'unavailable',
+          key: toBusinessPermissionAccessKey({ permission, target: invalidTarget }),
+        },
+      ]);
+    }
     expect(requests).toHaveLength(1);
   }),
 );

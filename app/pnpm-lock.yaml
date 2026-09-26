@@ -383,6 +383,9 @@ importers:
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
+      '@app/inventory':
+        specifier: workspace:*
+        version: link:../../verticals/inventory
       '@app/party-registry':
         specifier: workspace:*
         version: link:../../verticals/party-registry
@@ -1203,6 +1206,145 @@ importers:
       pg:
         specifier: 8.22.0
         version: 8.22.0
+      tailwindcss:
+        specifier: ^4.3.3
+        version: 4.3.3
+      typescript:
+        specifier: 7.0.2
+        version: 7.0.2
+      wrangler:
+        specifier: 4.137.0
+        version: 4.137.0(@cloudflare/workers-types@5.20260923.1)(@types/node@26.6.2)
+      zephyr-rspack-plugin:
+        specifier: 1.2.4
+        version: 1.2.4(@rspack/core@2.2.7(@swc/helpers@0.5.23))(supports-color@10.2.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.2))(svgo@4.1.0))
+
+  verticals/inventory:
+    dependencies:
+      '@app/catalog':
+        specifier: workspace:*
+        version: link:../catalog
+      '@app/core-runtime':
+        specifier: workspace:*
+        version: link:../../packages/core-runtime
+      '@app/gateway-principal-verifier':
+        specifier: workspace:*
+        version: link:../../packages/gateway-principal-verifier
+      '@app/shared-contracts':
+        specifier: workspace:*
+        version: link:../../packages/shared-contracts
+      '@app/shared-design-tokens':
+        specifier: workspace:*
+        version: link:../../packages/shared-design-tokens
+      '@effect/opentelemetry':
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117(@bleedingdev/effect@4.0.0-rc.117)(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)
+      '@effect/sql-pg':
+        specifier: 4.0.0-rc.117
+        version: 4.0.0-rc.117(@bleedingdev/effect@4.0.0-rc.117)
+      '@modern-js/bff-effect':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.17(@bleedingdev/effect@4.0.0-rc.117)(@bleedingdev/mf-runtime-tools@2.9.1)(@effect/opentelemetry@4.0.0-rc.117(@bleedingdev/effect@4.0.0-rc.117)(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0))(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tsconfig-paths@4.2.0)(zod@4.6.5)'
+      '@modern-js/federation-runtime':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-federation-runtime@3.9.0-ultramodern.17(@bleedingdev/modern-js-runtime@3.9.0-ultramodern.17(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)'
+      '@modern-js/i18n-integration':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-i18n-integration@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(@bleedingdev/modern-js-app-tools@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(@rspack/core@2.2.7(@bleedingdev/mf-runtime-tools@2.9.1)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(core-js@3.50.0)(csso@5.0.5)(lightningcss@1.33.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)(tsconfig-paths@4.2.0)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.2))(svgo@4.1.0))(zod@4.6.5))(@bleedingdev/modern-js-runtime@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(core-js@3.50.0)(i18next@26.4.2(typescript@7.0.2))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
+      '@modern-js/plugin-bff':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-plugin-bff@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(@bleedingdev/modern-js-app-tools@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(@rspack/core@2.2.7(@bleedingdev/mf-runtime-tools@2.9.1)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(core-js@3.50.0)(csso@5.0.5)(lightningcss@1.33.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)(tsconfig-paths@4.2.0)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.2))(svgo@4.1.0))(zod@4.6.5))(@swc/helpers@0.5.23)(@typescript/native-preview@7.0.0-dev.20260707.2)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tsconfig-paths@4.2.0)(zod@4.6.5)'
+      '@modern-js/plugin-bff-extensions':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.17(@bleedingdev/effect@4.0.0-rc.117)(@bleedingdev/mf-runtime-tools@2.9.1)(@effect/opentelemetry@4.0.0-rc.117(@bleedingdev/effect@4.0.0-rc.117)(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0))(@swc/helpers@0.5.23)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(tsconfig-paths@4.2.0)(zod@4.6.5)'
+      '@modern-js/plugin-i18n':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-plugin-i18n@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(@bleedingdev/modern-js-runtime@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(core-js@3.50.0)(i18next@26.4.2(typescript@7.0.2))(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
+      '@modern-js/plugin-tanstack':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-plugin-tanstack@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(@bleedingdev/modern-js-app-tools@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(@rspack/core@2.2.7(@bleedingdev/mf-runtime-tools@2.9.1)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(core-js@3.50.0)(csso@5.0.5)(lightningcss@1.33.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)(tsconfig-paths@4.2.0)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.2))(svgo@4.1.0))(zod@4.6.5))(@bleedingdev/modern-js-runtime@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
+      '@modern-js/runtime':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-runtime@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
+      '@modern-js/runtime-extensions':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-runtime-extensions@3.9.0-ultramodern.17(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
+      '@modern-js/runtime-renderer-extensions':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-runtime-renderer-extensions@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(core-js@3.50.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)'
+      '@module-federation/modern-js-v3':
+        specifier: npm:@bleedingdev/mf-modern-js-v3@2.9.1
+        version: '@bleedingdev/mf-modern-js-v3@2.9.1(@rsbuild/core@2.2.9(core-js@3.50.0))(@rspack/core@2.2.7(@swc/helpers@0.5.23))(react-dom@19.2.8(react@19.2.8))(react-router@7.18.4(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.2))(svgo@4.1.0))'
+      '@module-federation/runtime':
+        specifier: npm:@bleedingdev/mf-runtime@2.9.1
+        version: '@bleedingdev/mf-runtime@2.9.1'
+      '@tanstack/react-router':
+        specifier: 1.170.39
+        version: 1.170.39(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+      drizzle-orm:
+        specifier: 1.0.0-rc.5-ab785fc
+        version: 1.0.0-rc.5-ab785fc(patch_hash=b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe)(@bleedingdev/effect@4.0.0-rc.117)(@cloudflare/workers-types@5.20260923.1)(@effect/sql-pg@4.0.0-rc.117(@bleedingdev/effect@4.0.0-rc.117))(@opentelemetry/api@1.9.1)(@sinclair/typebox@0.34.52)(@types/pg@8.20.0)(bun-types@1.4.0)(pg@8.22.0)(zod@4.6.5)
+      effect:
+        specifier: npm:@bleedingdev/effect@4.0.0-rc.117
+        version: '@bleedingdev/effect@4.0.0-rc.117'
+      i18next:
+        specifier: 26.4.2
+        version: 26.4.2(typescript@7.0.2)
+      pg:
+        specifier: 8.22.0
+        version: 8.22.0
+      react:
+        specifier: 19.2.8
+        version: 19.2.8
+      react-dom:
+        specifier: 19.2.8
+        version: 19.2.8(react@19.2.8)
+    devDependencies:
+      '@effect/tsgo':
+        specifier: 0.41.0
+        version: 0.41.0
+      '@modern-js/app-tools':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-app-tools@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(@rspack/core@2.2.7(@bleedingdev/mf-runtime-tools@2.9.1)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(core-js@3.50.0)(csso@5.0.5)(lightningcss@1.33.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)(tsconfig-paths@4.2.0)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.2))(svgo@4.1.0))(zod@4.6.5)'
+      '@modern-js/app-tools-extensions':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(@rsbuild/core@2.2.9(@bleedingdev/mf-runtime-tools@2.9.1)(core-js@3.50.0))(@rspack/core@2.2.7(@bleedingdev/mf-runtime-tools@2.9.1)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(core-js@3.50.0)(csso@5.0.5)(lightningcss@1.33.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.2))(svgo@4.1.0))(zod@4.6.5)'
+      '@modern-js/plugin-bff-build-extensions':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.17(104cbb349dbccf291a3d2b9c63d12434)'
+      '@modern-js/ultramodern-app-tools':
+        specifier: catalog:ultramodern
+        version: '@bleedingdev/modern-js-ultramodern-app-tools@3.9.0-ultramodern.17(@bleedingdev/mf-runtime-tools@2.9.1)(@rspack/core@2.2.7(@bleedingdev/mf-runtime-tools@2.9.1)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(core-js@3.50.0)(csso@5.0.5)(i18next@26.4.2(typescript@7.0.2))(lightningcss@1.33.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)(tsconfig-paths@4.2.0)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.2))(svgo@4.1.0))(zod@4.6.5)'
+      '@rsbuild/plugin-tailwindcss':
+        specifier: ^2.0.3
+        version: 2.0.3(@rsbuild/core@2.2.9(core-js@3.50.0))(@rspack/core@2.2.7(@swc/helpers@0.5.23))(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.2))(svgo@4.1.0))
+      '@rstest/core':
+        specifier: 0.11.12
+        version: 0.11.12(@bleedingdev/mf-runtime-tools@2.9.1)(core-js@3.50.0)(happy-dom@20.8.3)
+      '@types/node':
+        specifier: ^26.4.1
+        version: 26.6.2
+      '@types/pg':
+        specifier: 8.20.0
+        version: 8.20.0
+      '@types/react':
+        specifier: ^19.2.18
+        version: 19.3.0
+      '@types/react-dom':
+        specifier: ^19.2.7
+        version: 19.3.0(@types/react@19.3.0)
+      '@typescript/native':
+        specifier: npm:typescript@7.0.2
+        version: typescript@7.0.2
+      cross-env:
+        specifier: 10.1.0
+        version: 10.1.0
+      drizzle-kit:
+        specifier: 1.0.0-rc.5-ab785fc
+        version: 1.0.0-rc.5-ab785fc
+      effect-rstest:
+        specifier: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597
+        version: https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597(@bleedingdev/effect@4.0.0-rc.117)(@rstest/core@0.11.12(core-js@3.50.0)(happy-dom@20.8.3))
       tailwindcss:
         specifier: ^4.3.3
         version: 4.3.3

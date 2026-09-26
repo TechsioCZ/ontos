@@ -1,0 +1,4 @@
+ALTER TABLE "inventory"."catalog_to_stock_binding_history" DROP CONSTRAINT "inventory_catalog_to_stock_binding_history_binding_fk";--> statement-breakpoint
+ALTER TABLE "inventory"."catalog_to_stock_binding_history" ADD COLUMN "transition" text NOT NULL;--> statement-breakpoint
+ALTER TABLE "inventory"."catalog_to_stock_binding_history" ADD COLUMN "owner_evidence_ref" text NOT NULL;--> statement-breakpoint
+ALTER TABLE "inventory"."catalog_to_stock_binding_history" ADD CONSTRAINT "inventory_catalog_to_stock_binding_history_transition_ck" CHECK ("transition" in ('CORRECTED', 'ENDED', 'SUPERSEDED') and char_length(btrim("owner_evidence_ref")) between 1 and 300);

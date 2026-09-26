@@ -17,6 +17,7 @@ const EXPECTED_APPLICATION_SCHEMAS = [
   'commerce_market_catalog',
   'contacts',
   'core',
+  'inventory',
   'party',
   'payment_term_catalog',
   'price_group_catalog',
@@ -30,6 +31,7 @@ const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_commerce_market_catalog',
   '__drizzle_migrations_contacts',
   '__drizzle_migrations_core',
+  '__drizzle_migrations_inventory',
   '__drizzle_migrations_party',
   '__drizzle_migrations_payment_term_catalog',
   '__drizzle_migrations_price_group_catalog',
@@ -143,6 +145,7 @@ const ownerVerifierPaths = [
   '../verticals/commerce-customer-context/scripts/verify-db-schema.mts',
   '../verticals/commerce-market-catalog/scripts/verify-db-schema.mts',
   '../verticals/catalog/scripts/verify-db-schema.mts',
+  '../verticals/inventory/scripts/verify-db-schema.mts',
   '../verticals/pricing/scripts/verify-db-schema.mts',
   '../verticals/storefront-registry/scripts/verify-db-schema.mts',
 ] as const;

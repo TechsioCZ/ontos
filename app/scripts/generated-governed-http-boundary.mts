@@ -1243,7 +1243,9 @@ const thinServerImportSpans = (source: string, allowedImports: ReadonlySet<strin
 const thinServerDeclarations = (exportedName: string, domainMapperName: string | undefined): readonly RegExp[] => [
   /const problems\s*=\s*/u,
   new RegExp(`export const ${escapeRegExp(exportedName)}\\s*=\\s*`, 'u'),
-  ...(domainMapperName === undefined ? [] : [new RegExp(`const ${escapeRegExp(domainMapperName)}\\s*=\\s*`, 'u')]),
+  ...(domainMapperName === undefined
+    ? []
+    : [new RegExp(`(?:export\\s+)?const ${escapeRegExp(domainMapperName)}\\s*=\\s*`, 'u')]),
 ];
 
 const removeSourceSpans = (source: string, spans: readonly SourceSpan[]): string =>
@@ -1807,7 +1809,7 @@ export const hasGeneratedActionRegistrationBinding = (
   const actionName = escapeRegExp(`${camel}Action`);
   const direct = new RegExp(`^export const ${actionName} = defineAction\\(`, 'mu');
   const typed = new RegExp(
-    `^export const ${actionName}\\s*:\\s*ActionRegistration<\\s*typeof ${escapeRegExp(type)}PayloadSchema\\s*,\\s*typeof ${escapeRegExp(type)}ResultSchema\\s*,\\s*typeof (?<error>[A-Z][A-Za-z0-9]*ErrorSchema)\\s*,\\s*Readonly<Record<string, never>>\\s*,\\s*['"]${escapeRegExp(moduleId)}['"]\\s*,\\s*(?<services>[A-Z][A-Za-z0-9]*Services)\\s*>\\s*=\\s*defineAction\\(`,
+    `^export const ${actionName}\\s*:\\s*ActionRegistration<\\s*typeof ${escapeRegExp(type)}PayloadSchema\\s*,\\s*typeof ${escapeRegExp(type)}ResultSchema\\s*,\\s*typeof (?<error>[A-Z][A-Za-z0-9]*ErrorSchema)\\s*,\\s*Readonly<Record<string, never>>\\s*,\\s*['"]${escapeRegExp(moduleId)}['"]\\s*,\\s*(?<services>[A-Z][A-Za-z0-9]*Services)(?:\\s*,\\s*(?<requirements>[A-Z][A-Za-z0-9]*))?\\s*>\\s*=\\s*defineAction\\(`,
     'mu',
   );
   const directMatch = direct.exec(source);

@@ -110,6 +110,13 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
   filename: 'remoteEntry.js',
   name: 'shellSuperApp',
   remotes: {
+    inventory: createRemoteManifestUrl({
+      manifestEnv: 'VERTICAL_INVENTORY_MF_MANIFEST',
+      mfName: 'verticalInventory',
+      port: 4109,
+      publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_INVENTORY',
+      workerName: 'app-inventory',
+    }),
     partyRegistry: createRemoteManifestUrl({
       manifestEnv: 'VERTICAL_PARTY_REGISTRY_MF_MANIFEST',
       mfName: 'verticalPartyRegistry',
