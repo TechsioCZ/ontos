@@ -7,6 +7,7 @@
     "id": "shell-super-app",
     "path": "apps/shell-super-app",
     "kind": "shell",
+    "portEnv": "SHELL_SUPER_APP_PORT",
     "package": "@app/shell-super-app",
     "verticalRefs": [
       "party-registry",
