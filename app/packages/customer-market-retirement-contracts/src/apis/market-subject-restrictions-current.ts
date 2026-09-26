@@ -4,7 +4,6 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { DateTime, Schema } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
-const strict = { parseOptions: { onExcessProperty: 'error' as const } };
 const boundedOwnerReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 const profileResourceId = (brand: 'CounterpartyPurchasingProfileResourceId' | 'RetailCustomerProfileResourceId') =>
   Schema.toEncoded(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300)).pipe(Schema.brand(brand)));
@@ -56,36 +55,34 @@ export const MarketRestrictionSubjectSchema = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal('RETAIL_PROFILE'),
     profileRef: RetailCustomerProfileRefSchema,
-  }).annotate(strict),
+  }),
   Schema.Struct({
     counterpartyRef: CounterpartyRefSchema,
     kind: Schema.Literal('COUNTERPARTY'),
     profileRef: CounterpartyPurchasingProfileRefSchema,
-  })
-    .check(
-      Schema.makeFilter(({ counterpartyRef, profileRef }) =>
-        counterpartyRef.tenantId === profileRef.tenantId
-          ? undefined
-          : 'Counterparty and Purchasing Profile must belong to the same Tenant',
-      ),
-    )
-    .annotate(strict),
+  }).check(
+    Schema.makeFilter(({ counterpartyRef, profileRef }) =>
+      counterpartyRef.tenantId === profileRef.tenantId
+        ? undefined
+        : 'Counterparty and Purchasing Profile must belong to the same Tenant',
+    ),
+  ),
 ]);
 export type MarketRestrictionSubject = typeof MarketRestrictionSubjectSchema.Type;
 
 export const MarketSubjectRestrictionsCurrentRequestSchema = Schema.Struct({
   subject: MarketRestrictionSubjectSchema,
-}).annotate(strict);
+});
 export type MarketSubjectRestrictionsCurrentRequest = typeof MarketSubjectRestrictionsCurrentRequestSchema.Type;
 
 const FixedSellerConstraintSchema = Schema.Struct({
   kind: Schema.Literal('FIXED_SELLER'),
   sellerRef: SellingLegalEntityRefSchema,
-}).annotate(strict);
+});
 const AllowedSellerSetConstraintSchema = Schema.Struct({
   kind: Schema.Literal('ALLOWED_SELLERS'),
   sellerRefs: Schema.Array(SellingLegalEntityRefSchema).check(Schema.isMinLength(1)),
-}).annotate(strict);
+});
 export const MarketSubjectSellerConstraintSchema = Schema.Union([
   FixedSellerConstraintSchema,
   AllowedSellerSetConstraintSchema,
@@ -96,20 +93,20 @@ const RestrictionResourceRefSchema = Schema.Struct({
   resourceId: RestrictionResourceIdSchema,
   resourceType: boundedOwnerReference,
   tenantId: RestrictionTenantIdSchema,
-}).annotate(strict);
+});
 
 export const MarketSubjectMarketConstraintSchema = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal('ANY_MARKET') }).annotate(strict),
+  Schema.Struct({ kind: Schema.Literal('ANY_MARKET') }),
   Schema.Struct({
     kind: Schema.Literal('ALLOWED_MARKETS'),
     marketRefs: Schema.Array(RestrictionResourceRefSchema).check(Schema.isMinLength(1)),
-  }).annotate(strict),
+  }),
 ]);
 
 export const MarketSubjectChannelConstraintSchema = Schema.Struct({
   allowedChannels: Schema.Array(Schema.Literals(['B2C', 'B2B'])).check(Schema.isMinLength(1)),
   kind: Schema.Literal('ALLOWED_CHANNELS'),
-}).annotate(strict);
+});
 
 const CurrentRestrictionsSchema = Schema.Struct({
   channelConstraint: MarketSubjectChannelConstraintSchema,
@@ -123,32 +120,28 @@ const CurrentRestrictionsSchema = Schema.Struct({
   profileState: Schema.Literals(['ACTIVE', 'SUSPENDED', 'ARCHIVED']),
   sellerConstraint: MarketSubjectSellerConstraintSchema,
   subject: MarketRestrictionSubjectSchema,
-})
-  .check(
-    Schema.makeFilter((result) => {
-      if (result.ownerRevision !== result.completenessEvidence.ownerRevision) {
-        return 'Owner revision and completeness revision must agree';
-      }
-      if (
-        DateTime.toEpochMillis(result.observedAt) !== DateTime.toEpochMillis(result.completenessEvidence.observedAt)
-      ) {
-        return 'Observation instant and completeness evidence must agree';
-      }
-      if (result.subject.kind === 'RETAIL_PROFILE') {
-        return result.sellerConstraint.kind === 'FIXED_SELLER' &&
-          result.channelConstraint.allowedChannels.length === 1 &&
-          result.channelConstraint.allowedChannels[0] === 'B2C'
-          ? undefined
-          : 'Retail Profile restrictions require one fixed seller and the B2C Channel';
-      }
-      return result.sellerConstraint.kind === 'ALLOWED_SELLERS' &&
+}).check(
+  Schema.makeFilter((result) => {
+    if (result.ownerRevision !== result.completenessEvidence.ownerRevision) {
+      return 'Owner revision and completeness revision must agree';
+    }
+    if (DateTime.toEpochMillis(result.observedAt) !== DateTime.toEpochMillis(result.completenessEvidence.observedAt)) {
+      return 'Observation instant and completeness evidence must agree';
+    }
+    if (result.subject.kind === 'RETAIL_PROFILE') {
+      return result.sellerConstraint.kind === 'FIXED_SELLER' &&
         result.channelConstraint.allowedChannels.length === 1 &&
-        result.channelConstraint.allowedChannels[0] === 'B2B'
+        result.channelConstraint.allowedChannels[0] === 'B2C'
         ? undefined
-        : 'Counterparty restrictions require an allowed seller set and the B2B Channel';
-    }),
-  )
-  .annotate(strict);
+        : 'Retail Profile restrictions require one fixed seller and the B2C Channel';
+    }
+    return result.sellerConstraint.kind === 'ALLOWED_SELLERS' &&
+      result.channelConstraint.allowedChannels.length === 1 &&
+      result.channelConstraint.allowedChannels[0] === 'B2B'
+      ? undefined
+      : 'Counterparty restrictions require an allowed seller set and the B2B Channel';
+  }),
+);
 
 const subjectRestrictionsFailureSchema = <const Outcome extends string, const Retryable extends boolean>(
   outcome: Outcome,
@@ -158,7 +151,7 @@ const subjectRestrictionsFailureSchema = <const Outcome extends string, const Re
     outcome: Schema.Literal(outcome),
     reason: boundedOwnerReference,
     retryable: Schema.Literal(retryable),
-  }).annotate(strict);
+  });
 
 export const MarketSubjectRestrictionsCurrentResponseSchema = Schema.Union([
   CurrentRestrictionsSchema,

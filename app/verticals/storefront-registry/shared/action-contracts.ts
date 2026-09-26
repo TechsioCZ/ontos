@@ -6,7 +6,6 @@ import {
 import { DateTime, Schema } from 'effect';
 import { StorefrontApplicationRefSchema } from './resources/storefront-application.ts';
 
-const strict = { parseOptions: { onExcessProperty: 'error' as const } };
 const positiveRevision = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const generation = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const reason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500), Schema.isTrimmed());
@@ -20,17 +19,15 @@ export const StorefrontApplicationLifecycleSchema = Schema.Literals(['DRAFT', 'A
 export const StorefrontApplicationEffectiveIntervalSchema = Schema.Struct({
   effectiveFrom: StorefrontRegistryInstantSchema,
   effectiveTo: Schema.optionalKey(StorefrontRegistryInstantSchema),
-})
-  .check(
-    Schema.makeFilter(({ effectiveFrom, effectiveTo }) =>
-      effectiveTo === undefined ||
-      DateTime.toEpochMillis(DateTime.makeUnsafe(effectiveFrom)) <
-        DateTime.toEpochMillis(DateTime.makeUnsafe(effectiveTo))
-        ? undefined
-        : 'Effective interval end must be after its start',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ effectiveFrom, effectiveTo }) =>
+    effectiveTo === undefined ||
+    DateTime.toEpochMillis(DateTime.makeUnsafe(effectiveFrom)) <
+      DateTime.toEpochMillis(DateTime.makeUnsafe(effectiveTo))
+      ? undefined
+      : 'Effective interval end must be after its start',
+  ),
+);
 
 export const RegisterStorefrontApplicationPayloadSchema = Schema.Struct({
   allowedChannels: channels,
@@ -38,7 +35,7 @@ export const RegisterStorefrontApplicationPayloadSchema = Schema.Struct({
   lifecycle: Schema.Literals(['DRAFT', 'ACTIVE']),
   reason,
   storefrontAppId: StorefrontApplicationIdSchema,
-}).annotate(strict);
+});
 export type RegisterStorefrontApplicationPayload = typeof RegisterStorefrontApplicationPayloadSchema.Type;
 
 export const RegisterStorefrontApplicationResultSchema = Schema.Struct({
@@ -46,7 +43,7 @@ export const RegisterStorefrontApplicationResultSchema = Schema.Struct({
   generation,
   revision: Schema.Literal(1),
   storefrontApplicationRef: StorefrontApplicationRefSchema,
-}).annotate(strict);
+});
 
 export const ReviseStorefrontApplicationPayloadSchema = Schema.Struct({
   allowedChannels: channels,
@@ -55,7 +52,7 @@ export const ReviseStorefrontApplicationPayloadSchema = Schema.Struct({
   lifecycle: StorefrontApplicationLifecycleSchema,
   reason,
   storefrontApplicationRef: StorefrontApplicationRefSchema,
-}).annotate(strict);
+});
 export type ReviseStorefrontApplicationPayload = typeof ReviseStorefrontApplicationPayloadSchema.Type;
 
 export const ReviseStorefrontApplicationResultSchema = Schema.Struct({
@@ -64,7 +61,7 @@ export const ReviseStorefrontApplicationResultSchema = Schema.Struct({
   previousRevision: positiveRevision,
   revision: positiveRevision,
   storefrontApplicationRef: StorefrontApplicationRefSchema,
-}).annotate(strict);
+});
 
 export class StorefrontApplicationCommandRejected extends Schema.TaggedError<StorefrontApplicationCommandRejected>()(
   'StorefrontApplicationCommandRejected',
