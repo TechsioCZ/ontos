@@ -1,10 +1,12 @@
 import { NodeServices } from '@effect/platform-node';
-import { Crypto, Effect, Exit, FileSystem } from 'effect';
+import type { PgClient } from '@effect/sql-pg';
+import { Crypto, Effect, Exit, FileSystem, Option } from 'effect';
+import type { SqlError } from 'effect/unstable/sql/SqlError';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
-import type { PoolClient } from 'pg';
 
+import { findPostgresFailure } from '../../src/database/postgres-failure.ts';
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { makeTestPgClient } from '../support/database.ts';
 
 const migrationPath = new URL('../../drizzle/20260916130129_auth-namespace-bindings/migration.sql', import.meta.url)
   .pathname;
@@ -44,16 +46,15 @@ interface MigrationSchema {
   readonly quotedName: string;
 }
 
-const query = <Row extends object>(pool: Pool | PoolClient, text: string, values: readonly unknown[] = []) =>
-  Effect.tryPromise({
-    catch: String,
-    try: () => pool.query<Row>(text, [...values]),
-  });
+const query = <Row extends object>(client: PgClient.PgClient, text: string, values: readonly unknown[] = []) =>
+  client.unsafe<Row>(text, values);
 
-const dropSchema = (pool: Pool, schema: MigrationSchema) =>
+const failedConstraint = (failure: SqlError) => Option.getOrUndefined(findPostgresFailure(failure))?.constraint;
+
+const dropSchema = (pool: PgClient.PgClient, schema: MigrationSchema) =>
   query(pool, `drop schema if exists ${schema.quotedName} cascade`).pipe(Effect.orDie);
 
-const makeMigrationSchema = (pool: Pool, crypto: Crypto.Crypto) =>
+const makeMigrationSchema = (pool: PgClient.PgClient, crypto: Crypto.Crypto) =>
   Effect.gen(function* makeMigrationSchemaEffect() {
     const name = `core_auth_namespace_${(yield* crypto.randomUUIDv4).replaceAll('-', '')}`;
     const quotedName = `"${name}"`;
@@ -122,7 +123,12 @@ const makeMigrationSchema = (pool: Pool, crypto: Crypto.Crypto) =>
     return { name, quotedName };
   });
 
-const insertPrincipal = (pool: Pool, schema: MigrationSchema, principalId: string, tenantId: string = ids.tenant) =>
+const insertPrincipal = (
+  pool: PgClient.PgClient,
+  schema: MigrationSchema,
+  principalId: string,
+  tenantId: string = ids.tenant,
+) =>
   query(
     pool,
     `insert into ${schema.quotedName}.principals (principal_id, tenant_id)
@@ -131,7 +137,7 @@ const insertPrincipal = (pool: Pool, schema: MigrationSchema, principalId: strin
   );
 
 const insertBinding = (
-  pool: Pool | PoolClient,
+  pool: PgClient.PgClient,
   schema: MigrationSchema,
   binding: {
     readonly authenticationNamespaceId: string;
@@ -190,34 +196,16 @@ const migrationStatements = (fileSystem: FileSystem.FileSystem, schema: Migratio
     ),
   );
 
-const runMigration = (pool: Pool, statements: readonly string[]) =>
-  Effect.acquireUseRelease(
-    Effect.tryPromise(() => pool.connect()),
-    (client) =>
-      Effect.gen(function* runMigrationEffect() {
-        yield* query(client, 'begin');
-        for (const statement of statements) {
-          yield* query(client, statement);
-        }
-        yield* query(client, 'commit');
-      }).pipe(Effect.tapError(() => query(client, 'rollback').pipe(Effect.orDie))),
-    (client) => Effect.sync(() => client.release()),
+const runMigration = (pool: PgClient.PgClient, statements: readonly string[]) =>
+  pool.withTransaction(
+    Effect.forEach(statements, (statement) => query(pool, statement), { concurrency: 1, discard: true }),
   );
 
 const migrationProgram = Effect.gen(function* migrationProgramEffect() {
   const configuration = yield* loadDatabaseConnectionPair();
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
-  const pool = yield* Effect.acquireRelease(
-    Effect.sync(
-      () =>
-        new Pool({
-          connectionString: configuration.admin.connectionString,
-          max: 4,
-        }),
-    ),
-    (resource) => Effect.promise(() => resource.end()).pipe(Effect.orDie),
-  );
+  const pool = yield* makeTestPgClient(configuration.admin.connectionString, { maxConnections: 4 });
 
   const schema = yield* makeMigrationSchema(pool, crypto);
   yield* Effect.gen(function* freshDatabaseFixture() {
@@ -233,7 +221,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
          and column_name = 'authentication_namespace_id'`,
       [schema.name],
     );
-    expect(namespaceColumn.rows).toEqual([{ column_default: null, is_nullable: 'NO' }]);
+    expect(namespaceColumn).toEqual([{ column_default: null, is_nullable: 'NO' }]);
 
     const indexes = yield* query<{ indexname: string }>(
       pool,
@@ -243,7 +231,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
        order by indexname`,
       [schema.name],
     );
-    expect(indexes.rows.map(({ indexname }) => indexname)).toEqual([
+    expect(indexes.map(({ indexname }) => indexname)).toEqual([
       'core_auth_bindings_api_key_subject_global_uk',
       'core_auth_bindings_namespace_subject_uk',
       'core_auth_bindings_principal_idx',
@@ -295,7 +283,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
        order by authentication_namespace_id`,
       ['subject-001'],
     );
-    expect(sameUserAcrossNamespaces.rows).toEqual([
+    expect(sameUserAcrossNamespaces).toEqual([
       { authentication_namespace_id: 'test.provider.primary.v1' },
       { authentication_namespace_id: 'test.provider.secondary.v1' },
       { authentication_namespace_id: 'test.provider.tertiary.v1' },
@@ -312,7 +300,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
        where principal_auth_binding_id = $1`,
       [ids.bindingTwo],
     );
-    expect(bindingProvenance.rows).toEqual([
+    expect(bindingProvenance).toEqual([
       {
         binding_revision: 1,
         created_by_invocation_id: ids.invocationOne,
@@ -330,7 +318,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
         status: 'revoked',
       }),
     );
-    expect(duplicateNamespace).toMatch(/core_auth_bindings_namespace_subject_uk/u);
+    expect(failedConstraint(duplicateNamespace)).toBe('core_auth_bindings_namespace_subject_uk');
 
     yield* insertBinding(pool, schema, {
       authenticationNamespaceId: 'test.provider.primary.v1',
@@ -351,7 +339,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
         tenantId: ids.otherTenant,
       }),
     );
-    expect(duplicateApiKey).toMatch(/core_auth_bindings_api_key_subject_global_uk/u);
+    expect(failedConstraint(duplicateApiKey)).toBe('core_auth_bindings_api_key_subject_global_uk');
 
     const crossTenantForeignKey = yield* Effect.flip(
       insertBinding(pool, schema, {
@@ -363,7 +351,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
         tenantId: ids.otherTenant,
       }),
     );
-    expect(crossTenantForeignKey).toMatch(/core_auth_bindings_tenant_principal_fk/u);
+    expect(failedConstraint(crossTenantForeignKey)).toBe('core_auth_bindings_tenant_principal_fk');
 
     const raceResults = yield* Effect.forEach(
       [ids.bindingSeven, ids.bindingEight],
@@ -388,7 +376,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
   yield* Effect.gen(function* lateFailureFixture() {
     const statements = yield* migrationStatements(fileSystem, lateFailure);
     const failure = yield* Effect.flip(runMigration(pool, [...statements, 'select 1 / 0']));
-    expect(String(failure)).toMatch(/division by zero/u);
+    expect(Option.getOrUndefined(findPostgresFailure(failure))?.code).toBe('22012');
 
     const namespaceColumn = yield* query<{ column_name: string }>(
       pool,
@@ -399,7 +387,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
          and column_name = 'authentication_namespace_id'`,
       [lateFailure.name],
     );
-    expect(namespaceColumn.rows).toEqual([]);
+    expect(namespaceColumn).toEqual([]);
     const oldIndex = yield* query<{ indexname: string }>(
       pool,
       `select indexname
@@ -408,7 +396,7 @@ const migrationProgram = Effect.gen(function* migrationProgramEffect() {
          and indexname = 'core_auth_bindings_subject_uk'`,
       [lateFailure.name],
     );
-    expect(oldIndex.rows).toEqual([{ indexname: 'core_auth_bindings_subject_uk' }]);
+    expect(oldIndex).toEqual([{ indexname: 'core_auth_bindings_subject_uk' }]);
   }).pipe(Effect.ensuring(dropSchema(pool, lateFailure)));
 }).pipe(Effect.scoped);
 

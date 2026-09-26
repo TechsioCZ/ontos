@@ -56,24 +56,24 @@ export const externalIdentityProblems = [
 export const ReservePrincipalBindingRequestSchema = Schema.Struct({
   authenticationRef,
   reservation: ReservePrincipalBindingPayloadSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export const ActivatePrincipalBindingRequestSchema = Schema.Struct({
   activation: ActivatePrincipalBindingPayloadSchema,
   authenticationRef,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export const ChangePrincipalBindingStatusRequestSchema = Schema.Struct({
   authenticationRef: Schema.optionalKey(authenticationRef),
   change: ChangePrincipalBindingStatusPayloadSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export const ResolveExternalSubjectRequestSchema = Schema.Struct({
   ...ExternalAuthenticationSubjectSchema.fields,
   authenticationRef,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export const ExternalGatewayContextRequestSchema = Schema.Struct({
   ...ResolveExternalSubjectRequestSchema.fields,
   audience: GatewayAudienceSchema,
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /** Service callers are authenticated before these capabilities resolve a customer Principal. */
 export const ExternalIdentityApiGroup = HttpApiGroup.make('externalIdentity')

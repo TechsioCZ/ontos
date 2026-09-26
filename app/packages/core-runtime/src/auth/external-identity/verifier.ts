@@ -82,14 +82,15 @@ const decodeRegistrations = (
   registrations: readonly AuthenticationNamespaceRegistration[],
 ): readonly AuthenticationNamespaceRegistration[] =>
   Object.freeze(
-    Result.getOrThrow(Schema.decodeResult(AuthenticationNamespaceRegistrationListSchema)(registrations)).map(
-      (registration) =>
-        Object.freeze({
-          ...registration,
-          allowedAudiences: Object.freeze([...registration.allowedAudiences]),
-          subjectTypes: Object.freeze([...registration.subjectTypes]),
-          trustedAttesterPrincipalIds: Object.freeze([...registration.trustedAttesterPrincipalIds]),
-        }),
+    Result.getOrThrow(
+      Schema.decodeResult(AuthenticationNamespaceRegistrationListSchema, { onExcessProperty: 'error' })(registrations),
+    ).map((registration) =>
+      Object.freeze({
+        ...registration,
+        allowedAudiences: Object.freeze([...registration.allowedAudiences]),
+        subjectTypes: Object.freeze([...registration.subjectTypes]),
+        trustedAttesterPrincipalIds: Object.freeze([...registration.trustedAttesterPrincipalIds]),
+      }),
     ),
   );
 
@@ -457,7 +458,7 @@ const decodeObservation = <Observation>(
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- Provider wire observations are decoded at this boundary.
   value: unknown,
 ): Effect.Effect<Observation, ExternalIdentityFailure> =>
-  Schema.decodeUnknownEffect(schema)(value).pipe(
+  Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })(value).pipe(
     Effect.mapError((cause) => invalidWithCause('The authentication admission observation is malformed', cause)),
   );
 

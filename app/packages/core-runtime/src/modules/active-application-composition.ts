@@ -11,15 +11,13 @@ export const ActiveApplicationCompositionSnapshotSchema = Schema.Struct({
   composition: ApplicationCompositionSchema,
   observedAt: Schema.DateTimeUtcFromString,
   validUntil: Schema.DateTimeUtcFromString,
-})
-  .check(
-    Schema.makeFilter(({ observedAt, validUntil }) =>
-      DateTime.toEpochMillis(validUntil) > DateTime.toEpochMillis(observedAt)
-        ? undefined
-        : 'active Application Composition validity must end after it was observed',
-    ),
-  )
-  .annotate({ parseOptions: { onExcessProperty: 'error' } });
+}).check(
+  Schema.makeFilter(({ observedAt, validUntil }) =>
+    DateTime.toEpochMillis(validUntil) > DateTime.toEpochMillis(observedAt)
+      ? undefined
+      : 'active Application Composition validity must end after it was observed',
+  ),
+);
 export type ActiveApplicationCompositionSnapshot = typeof ActiveApplicationCompositionSnapshotSchema.Type;
 
 export interface ActiveApplicationCompositionServiceContract {

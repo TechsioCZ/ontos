@@ -1,9 +1,10 @@
 import { NodeServices } from '@effect/platform-node';
+import type { PgClient } from '@effect/sql-pg';
 import { Crypto, Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
 import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { makeTestPgSession } from '../support/database.ts';
 
 const legacyModule = 'crm.core';
 const contactsModule = 'contacts.core';
@@ -49,10 +50,15 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const columnDefinitions = (columns: readonly MigrationColumn[]): string =>
   columns.map((column) => `"${column}" text`).join(', ');
 
-const loadTableResult = (pool: Pool, quotedSchema: string, table: string, columns: readonly MigrationColumn[]) =>
-  Effect.tryPromise(() =>
-    pool.query<MigrationFixtureRow>(`select * from ${quotedSchema}."${table}" order by record_id`),
-  ).pipe(Effect.map((result) => ({ columns, result, table })));
+const loadTableResult = (
+  session: PgClient.PgClient,
+  quotedSchema: string,
+  table: string,
+  columns: readonly MigrationColumn[],
+) =>
+  session
+    .unsafe<MigrationFixtureRow>(`select * from ${quotedSchema}."${table}" order by record_id`)
+    .pipe(Effect.map((rows) => ({ columns, rows, table })));
 
 const runSequentially = <Value, Result, Failure, Requirements>(
   values: readonly Value[],
@@ -63,23 +69,13 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
   const configuration = yield* loadDatabaseConnectionPair();
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
-  const pool = yield* Effect.acquireRelease(
-    Effect.sync(
-      () =>
-        new Pool({
-          connectionString: configuration.admin.connectionString,
-          max: 1,
-        }),
-    ),
-    (resource) => Effect.tryPromise(() => resource.end()).pipe(Effect.orDie),
-  );
+  const session = yield* makeTestPgSession(configuration.admin.connectionString);
   const schema = `core_contacts_identity_${(yield* crypto.randomUUIDv4).replaceAll('-', '')}`;
   const quotedSchema = `"${schema}"`;
   yield* Effect.gen(function* exerciseContactsIdentityMigration() {
-    yield* Effect.tryPromise(() => pool.query(`create schema ${quotedSchema}`));
-    yield* Effect.tryPromise(() =>
-      pool.query(
-        `create table ${quotedSchema}.tenant_module_states (
+    yield* session.unsafe(`create schema ${quotedSchema}`);
+    yield* session.unsafe(
+      `create table ${quotedSchema}.tenant_module_states (
         record_id text primary key,
         tenant_id text not null,
         module_key text not null,
@@ -87,17 +83,14 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
         recorded_at timestamptz not null,
         unique (tenant_id, module_key)
       )`,
-      ),
     );
     yield* runSequentially(Object.entries(tableColumns), ([table, columns]) =>
-      Effect.tryPromise(() =>
-        pool.query(
-          `create table ${quotedSchema}."${table}" (
+      session.unsafe(
+        `create table ${quotedSchema}."${table}" (
             record_id text primary key,
             ${columnDefinitions(columns)},
             payload jsonb not null default '{}'::jsonb
           )`,
-        ),
       ),
     );
     const recordedAt = '2026-01-02T03:04:05.678Z';
@@ -105,14 +98,12 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
       freeText: 'crm.core must remain untouched inside arbitrary JSON',
     };
     const encodedPayload = encodeJson(payload);
-    yield* Effect.tryPromise(() =>
-      pool.query(
-        `insert into ${quotedSchema}.tenant_module_states
+    yield* session.unsafe(
+      `insert into ${quotedSchema}.tenant_module_states
         (record_id, tenant_id, module_key, payload, recorded_at)
        values ('legacy-state', 'tenant-a', $1, $2::jsonb, $3),
               ('unrelated-state', 'tenant-b', 'commerce.core', $2::jsonb, $3)`,
-        [legacyModule, encodedPayload, recordedAt],
-      ),
+      [legacyModule, encodedPayload, recordedAt],
     );
     yield* runSequentially(Object.entries(tableColumns), ([table, columns]) => {
       const names = ['record_id', ...columns, 'payload'];
@@ -125,12 +116,10 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
       const placeholders = names.map((_, index) => `$${index + 1}`).join(', ');
       const quotedNames = names.map((name) => `"${name}"`).join(', ');
       const unrelatedPlaceholders = names.map((_, index) => `$${index + names.length + 1}`).join(', ');
-      return Effect.tryPromise(() =>
-        pool.query(
-          `insert into ${quotedSchema}."${table}" (${quotedNames})
+      return session.unsafe(
+        `insert into ${quotedSchema}."${table}" (${quotedNames})
            values (${placeholders}), (${unrelatedPlaceholders})`,
-          [...oldValues, ...unrelatedValues],
-        ),
+        [...oldValues, ...unrelatedValues],
       );
     });
 
@@ -146,23 +135,19 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
       .split('--> statement-breakpoint')
       .map((statement) => statement.trim())
       .filter((statement) => statement.length > 0);
-    yield* runSequentially([...statements, ...statements], (statement) =>
-      Effect.tryPromise(() => pool.query(statement)),
-    );
+    yield* runSequentially([...statements, ...statements], (statement) => session.unsafe(statement));
 
-    const stateResult = yield* Effect.tryPromise(() =>
-      pool.query<{
-        module_key: string;
-        payload: typeof payload;
-        record_id: string;
-        recorded_at: Date;
-      }>(
-        `select record_id, module_key, payload, recorded_at
+    const stateRows = yield* session.unsafe<{
+      module_key: string;
+      payload: typeof payload;
+      record_id: string;
+      recorded_at: Date;
+    }>(
+      `select record_id, module_key, payload, recorded_at
          from ${quotedSchema}.tenant_module_states order by record_id`,
-      ),
     );
     expect(
-      stateResult.rows.map(({ module_key, record_id }) => ({
+      stateRows.map(({ module_key, record_id }) => ({
         module_key,
         record_id,
       })),
@@ -170,15 +155,15 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
       { module_key: contactsModule, record_id: 'legacy-state' },
       { module_key: 'commerce.core', record_id: 'unrelated-state' },
     ]);
-    expect(stateResult.rows[0]?.payload).toEqual(payload);
-    expect(stateResult.rows[0]?.recorded_at.toISOString()).toBe(recordedAt);
+    expect(stateRows[0]?.payload).toEqual(payload);
+    expect(stateRows[0]?.recorded_at.toISOString()).toBe(recordedAt);
     const tableResults = yield* Effect.forEach(
       Object.entries(tableColumns),
-      ([table, columns]) => loadTableResult(pool, quotedSchema, table, columns),
+      ([table, columns]) => loadTableResult(session, quotedSchema, table, columns),
       { concurrency: 'unbounded' },
     );
-    for (const { columns, result, table } of tableResults) {
-      const [migrated, unrelated] = result.rows;
+    for (const { columns, rows, table } of tableResults) {
+      const [migrated, unrelated] = rows;
       expect(migrated).toBeDefined();
       if (migrated === undefined) {
         throw new Error('Expected migrated');
@@ -194,29 +179,21 @@ const contactsIdentityMigrationProgram = Effect.gen(function* contactsIdentityMi
       expect(migrated.payload).toEqual(payload);
     }
 
-    yield* Effect.tryPromise(() => pool.query(`truncate ${quotedSchema}.tenant_module_states`));
-    yield* Effect.tryPromise(() =>
-      pool.query(
-        `insert into ${quotedSchema}.tenant_module_states
+    yield* session.unsafe(`truncate ${quotedSchema}.tenant_module_states`);
+    yield* session.unsafe(
+      `insert into ${quotedSchema}.tenant_module_states
         (record_id, tenant_id, module_key, payload, recorded_at)
        values ('legacy-collision', 'tenant-c', $1, '{}'::jsonb, now()),
               ('contacts-collision', 'tenant-c', $2, '{}'::jsonb, now())`,
-        [legacyModule, contactsModule],
-      ),
+      [legacyModule, contactsModule],
     );
-    const collisionError = yield* Effect.flip(Effect.tryPromise(() => pool.query(statements[0] ?? '')));
-    expect(String(collisionError.cause)).toMatch(/would collide/u);
-    const collisionRows = yield* Effect.tryPromise(() =>
-      pool.query<{ module_key: string }>(
-        `select module_key from ${quotedSchema}.tenant_module_states order by module_key`,
-      ),
+    const collisionError = yield* Effect.flip(session.unsafe(statements[0] ?? ''));
+    expect(String(collisionError.reason.cause)).toMatch(/would collide/u);
+    const collisionRows = yield* session.unsafe<{ module_key: string }>(
+      `select module_key from ${quotedSchema}.tenant_module_states order by module_key`,
     );
-    expect(collisionRows.rows.map((row) => row.module_key)).toEqual([contactsModule, legacyModule]);
-  }).pipe(
-    Effect.ensuring(
-      Effect.tryPromise(() => pool.query(`drop schema if exists ${quotedSchema} cascade`)).pipe(Effect.orDie),
-    ),
-  );
+    expect(collisionRows.map((row) => row.module_key)).toEqual([contactsModule, legacyModule]);
+  }).pipe(Effect.ensuring(session.unsafe(`drop schema if exists ${quotedSchema} cascade`).pipe(Effect.orDie)));
 }).pipe(Effect.scoped);
 
 it.layer(NodeServices.layer, { excludeTestServices: true })('contacts-identity-migration', (suite) => {
