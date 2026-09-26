@@ -249,12 +249,16 @@ const GeneratedOperationGatewayModuleSchema = Schema.Struct({
 });
 
 const StringRecordSchema = Schema.Record(Schema.String, Schema.String);
-const FixturePackageSchema = Schema.Struct({
-  dependencies: StringRecordSchema,
-  exports: StringRecordSchema,
-  modernjs: Schema.Record(Schema.String, Schema.Json),
-  scripts: StringRecordSchema,
-});
+// Fixture package documents are rewritten by the tests, so undeclared owner fields must round-trip.
+const FixturePackageSchema = Schema.StructWithRest(
+  Schema.Struct({
+    dependencies: StringRecordSchema,
+    exports: StringRecordSchema,
+    modernjs: Schema.Record(Schema.String, Schema.Json),
+    scripts: StringRecordSchema,
+  }),
+  [Schema.Record(Schema.String, Schema.Json)],
+);
 const EsbuildMetafileSchema = Schema.Struct({
   inputs: Schema.Record(
     Schema.String,
@@ -364,14 +368,8 @@ const InventoryLocaleSchema = Schema.Struct({
   }),
 });
 
-const decodeFixturePackage = (source: string) =>
-  Schema.decodeUnknownEffect(FixturePackageSchema, {
-    onExcessProperty: 'preserve',
-  })(JSON.parse(source));
-const decodeInventoryLocale = (source: string) =>
-  Schema.decodeUnknownEffect(InventoryLocaleSchema, {
-    onExcessProperty: 'preserve',
-  })(JSON.parse(source));
+const decodeFixturePackage = (source: string) => Schema.decodeUnknownEffect(FixturePackageSchema)(JSON.parse(source));
+const decodeInventoryLocale = (source: string) => Schema.decodeUnknownEffect(InventoryLocaleSchema)(JSON.parse(source));
 
 const inventorySlug = 'inventory-stock';
 const shellAppId = 'shell-super-app';

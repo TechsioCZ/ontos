@@ -33,9 +33,13 @@ const tenantId = '00000000-0000-4000-8000-000000000001';
 const verticalRoot = `verticals/${verticalName}`;
 const verticalPackagePath = `${verticalRoot}/package.json`;
 const verticalManifestPath = `${verticalRoot}/vertical.manifest.ts`;
-const packageJsonSchema = Schema.Struct({
-  exports: Schema.Record(Schema.String, Schema.String),
-});
+// The package document is rewritten by the tests, so undeclared owner fields must round-trip.
+const packageJsonSchema = Schema.StructWithRest(
+  Schema.Struct({
+    exports: Schema.Record(Schema.String, Schema.String),
+  }),
+  [Schema.Record(Schema.String, Schema.Json)],
+);
 const generatedResourceModuleSchema = Schema.Struct({
   RentalUnitRefSchema: Schema.declare<Schema.Top>(Schema.isSchema),
 });
@@ -226,9 +230,7 @@ it.live(
         expect(resource).toMatch(/resourceType: Schema\.Literal\('core\.identity\.legal-entity'\)/u);
         expect(resource).toMatch(/const ResourceIdSchema = Schema\.String\.check\(Schema\.isUUID\(\)\)/u);
         expect(resource).toMatch(/const TenantIdSchema = Schema\.String\.check\(Schema\.isUUID\(\)\)/u);
-        const modulePackage = yield* Schema.decodeUnknownEffect(packageJsonSchema, {
-          onExcessProperty: 'preserve',
-        })(JSON.parse(packageSource));
+        const modulePackage = yield* Schema.decodeUnknownEffect(packageJsonSchema)(JSON.parse(packageSource));
         expect(modulePackage.exports['./resources/legal-entity']).toBe('./src/resources/legal-entity.ts');
 
         const beforeUnsupported = yield* snapshotTree(root, ['node_modules']);
@@ -289,9 +291,7 @@ it.live(
           /import \{ rentalUnitResourceDescriptor \} from '\.\/shared\/resources\/rental-unit\.ts';/u,
         );
         expect(manifest).toMatch(/resourceTypes: \[[\s\S]*rentalUnitResourceDescriptor,/u);
-        const modulePackage = yield* Schema.decodeUnknownEffect(packageJsonSchema, {
-          onExcessProperty: 'preserve',
-        })(JSON.parse(packageSource));
+        const modulePackage = yield* Schema.decodeUnknownEffect(packageJsonSchema)(JSON.parse(packageSource));
         expect(modulePackage.exports['./resources/rental-unit']).toBe('./shared/resources/rental-unit.ts');
 
         const generatedModule = yield* Schema.decodeUnknownEffect(generatedResourceModuleSchema)(
@@ -388,9 +388,9 @@ it.live(
     yield* withFixture(
       Effect.fn(function* scenario15(root) {
         const packagePath = path.join(root, verticalPackagePath);
-        const packageValue = yield* Schema.decodeUnknownEffect(packageJsonSchema, {
-          onExcessProperty: 'preserve',
-        })(JSON.parse(yield* Effect.promise(() => readFile(packagePath, 'utf-8'))));
+        const packageValue = yield* Schema.decodeUnknownEffect(packageJsonSchema)(
+          JSON.parse(yield* Effect.promise(() => readFile(packagePath, 'utf-8'))),
+        );
         const packageWithExportCollision = {
           ...packageValue,
           exports: {

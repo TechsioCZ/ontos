@@ -179,9 +179,7 @@ export const reduceAuthorizationImpact = (
   }
 
   const observation = Result.getOrThrowWith(
-    Schema.decodeUnknownResult(EmptyAuthorizationObservationSchema, {
-      onExcessProperty: 'preserve',
-    })(emptyObservation),
+    Schema.decodeUnknownResult(EmptyAuthorizationObservationSchema)(emptyObservation),
     () => validationError('empty authorization impact requires explicit observation bounds'),
   );
   if (DateTime.toEpochMillis(observation.startedAt) > DateTime.toEpochMillis(observation.endedAt)) {

@@ -1,6 +1,5 @@
-import { Cause } from 'effect';
+import { Cause, Redacted, Result } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Client } from 'pg';
 
 import {
   assertDatabaseSessionIdentities,
@@ -706,16 +705,20 @@ it('does not inherit cluster attributes without SET ROLE or ADMIN OPTION', () =>
   expect(findingCodes(report)).toEqual(['runtime_role_can_assume_other_role']);
 });
 
-it('uses node-postgres effective query-parameter socket endpoints', () => {
-  const client = new Client({
-    connectionString:
-      'postgresql://authority_user:password@authority.invalid:5432/ontos?host=%2Fvar%2Frun%2Fruntime-db&port=6432',
-  });
-
-  expect(getEffectiveDatabaseEndpoint(client)).toEqual({
-    configuredHost: '/var/run/runtime-db',
-    configuredPort: 6432,
-  });
+it('uses the native driver effective query-parameter socket endpoints', () => {
+  expect(
+    getEffectiveDatabaseEndpoint(
+      Redacted.make(
+        'postgresql://authority_user:password@authority.invalid:5432/ontos?host=%2Fvar%2Frun%2Fruntime-db&port=6432',
+      ),
+    ),
+  ).toStrictEqual(Result.succeed({ configuredHost: '/var/run/runtime-db', configuredPort: 6432 }));
+  expect(getEffectiveDatabaseEndpoint(Redacted.make('postgresql://authority_user:password@[::1]/ontos'))).toStrictEqual(
+    Result.succeed({ configuredHost: '::1', configuredPort: 5432 }),
+  );
+  expect(getEffectiveDatabaseEndpoint(Redacted.make('postgresql:///ontos?user=authority_user'))).toStrictEqual(
+    Result.succeed({ configuredHost: 'localhost', configuredPort: 5432 }),
+  );
 });
 
 it('requires direct, distinct live database session identities', () => {

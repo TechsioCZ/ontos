@@ -79,9 +79,9 @@ const planCoreResourceScaffold = Effect.fn('ResourceScaffold.planCore')(function
   const packageContent = yield* fileSystem
     .readFileString(packagePath)
     .pipe(Effect.mapError((cause) => scaffoldFailure('failed to read Core package', cause)));
-  const packageObject = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(CorePackageSchema), {
-    onExcessProperty: 'preserve',
-  })(packageContent).pipe(Effect.mapError((cause) => scaffoldFailure('invalid Core package', cause)));
+  const packageObject = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(CorePackageSchema))(
+    packageContent,
+  ).pipe(Effect.mapError((cause) => scaffoldFailure('invalid Core package', cause)));
   const exportsValue = packageObject.exports;
   const contractExport = `./resources/${resource}`;
   if (exportsValue[contractExport] !== undefined) {

@@ -11,30 +11,28 @@ const packageJsonFile = 'package.json';
 const workspacePackageDirectories = ['packages', 'apps', 'verticals'];
 const DependencyMapSchema = Schema.Record(Schema.String, Schema.String);
 const PlatformFieldSchema = Schema.Union([Schema.String, Schema.Array(Schema.String)]);
-const RuntimePackageSchema = Schema.Struct({
-  cpu: Schema.optional(PlatformFieldSchema),
-  dependencies: Schema.optional(DependencyMapSchema),
-  exports: Schema.optional(Schema.Json),
-  name: Schema.optional(Schema.String),
-  optionalDependencies: Schema.optional(DependencyMapSchema),
-  os: Schema.optional(PlatformFieldSchema),
-  private: Schema.optional(Schema.Boolean),
-  scripts: Schema.optional(DependencyMapSchema),
-  version: Schema.optional(Schema.String),
-});
+// Unknown manifest fields (type, main, engines, ...) must survive the rewrite of package.json.
+const RuntimePackageSchema = Schema.StructWithRest(
+  Schema.Struct({
+    cpu: Schema.optional(PlatformFieldSchema),
+    dependencies: Schema.optional(DependencyMapSchema),
+    exports: Schema.optional(Schema.Json),
+    name: Schema.optional(Schema.String),
+    optionalDependencies: Schema.optional(DependencyMapSchema),
+    os: Schema.optional(PlatformFieldSchema),
+    private: Schema.optional(Schema.Boolean),
+    scripts: Schema.optional(DependencyMapSchema),
+    version: Schema.optional(Schema.String),
+  }),
+  [Schema.Record(Schema.String, Schema.Json)],
+);
 const ReleaseCohortSchema = Schema.Struct({
   aliases: Schema.Record(Schema.String, Schema.String),
   release: Schema.Struct({ version: Schema.String }),
 });
-const decodeRuntimePackage = Schema.decodeUnknownEffect(RuntimePackageSchema, {
-  onExcessProperty: 'preserve',
-});
-const decodeRuntimePackageJson = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimePackageSchema), {
-  onExcessProperty: 'preserve',
-});
-const decodeReleaseCohortJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseCohortSchema), {
-  onExcessProperty: 'preserve',
-});
+const decodeRuntimePackage = Schema.decodeUnknownEffect(RuntimePackageSchema);
+const decodeRuntimePackageJson = Schema.decodeUnknownEffect(Schema.fromJsonString(RuntimePackageSchema));
+const decodeReleaseCohortJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseCohortSchema));
 /** @typedef {typeof Schema.Json.Type} JsonValue */
 /** @type {import('effect/Schema').Codec<JsonValue, JsonValue>} */
 const JsonValueSchema = Schema.suspend(() =>

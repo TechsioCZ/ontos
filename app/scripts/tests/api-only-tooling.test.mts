@@ -91,6 +91,9 @@ const governedLayerAliasMutations = [
 const mfManifestPath = '/mf-manifest.json';
 
 const readinessPath = '/party-registry-api/party-registry/readiness';
+const partyContactsSsrRoute = '/en/contacts';
+const apiOnlyId = 'payment-term-catalog';
+const apiOnlyReadinessPath = '/payment-term-catalog-api/payment-term-catalog/readiness';
 
 const localePath = '/locales/en/party-registry.json';
 
@@ -2759,11 +2762,9 @@ it.live(
     const generatedProofs = yield* Effect.all(
       fixtures.map(
         Effect.fn(function* governanceScenario13(fixture) {
-          const descriptor = yield* Schema.decodeUnknownEffect(WorkspaceAppFixtureSchema, {
-            onExcessProperty: 'preserve',
-          })(descriptorModule.createVerticalDescriptor(fixture.id, fixture.port), {
-            onExcessProperty: 'preserve',
-          });
+          const descriptor = yield* Schema.decodeUnknownEffect(
+            Schema.StructWithRest(WorkspaceAppFixtureSchema, [Schema.Record(Schema.String, Schema.Unknown)]),
+          )(descriptorModule.createVerticalDescriptor(fixture.id, fixture.port));
           expect(descriptor.api).toBeTruthy();
           const generatedDescriptor = {
             ...descriptor,
@@ -3623,7 +3624,7 @@ it.live(
 );
 
 it.live(
-  'Party deployment declares no fake SSR/locale URL while retaining backend contracts',
+  'Party deployment declares only its real SSR route and no locale URL while retaining backend contracts',
   Effect.fn(function* scenario36() {
     const topology = yield* readJson(TopologySchema, path.join(workspaceRoot, topologyReferencePath));
     const party = topology.verticals.find((entry) => entry.id === partyId);
@@ -3631,7 +3632,8 @@ it.live(
     if (!party) {
       throw new Error('Party deployment is missing');
     }
-    expect(party.cloudflare.routes.ssr).toBe(undefined);
+    // Party serves the Contacts page, so its SSR route is that real page.
+    expect(party.cloudflare.routes.ssr).toBe(partyContactsSsrRoute);
     expect(party.cloudflare.routes.locale).toBe(undefined);
     expect(party.cloudflare.routes.mfManifest).toBe(mfManifestPath);
     expect(party.cloudflare.routes.apiReadiness).toBe(readinessPath);
@@ -3641,7 +3643,7 @@ it.live(
 );
 
 it.live(
-  'installed Cloudflare CLI preserves API-only routes when synthesizing the real Party contract',
+  'installed Cloudflare CLI preserves API-only routes when synthesizing a real API-only contract',
   Effect.fn(function* scenario38() {
     const fixture = yield* Effect.acquireRelease(
       Effect.promise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-api-only-proof-'))),
@@ -3649,7 +3651,7 @@ it.live(
     );
     const build = yield* readJson(
       BuildArtifactSchema,
-      path.join(workspaceRoot, 'verticals/party-registry/shared/ultramodern-build.json'),
+      path.join(workspaceRoot, 'verticals/payment-term-catalog/shared/ultramodern-build.json'),
     );
     const requestedPath = path.join(fixture, 'requested-routes.txt');
     const fetchMockPath = path.join(fixture, 'cloudflare-fetch-mock.mjs');
@@ -3660,7 +3662,7 @@ it.live(
 const requestedPath = ${JSON.stringify(requestedPath)};
 const publicUrl = ${JSON.stringify(publicUrl)};
 const manifestPath = ${JSON.stringify(mfManifestPath)};
-const readinessPath = ${JSON.stringify(readinessPath)};
+const readinessPath = ${JSON.stringify(apiOnlyReadinessPath)};
 const buildMarker = ${JSON.stringify(build.deliveryUnit.buildMarker)};
 const headers = {
   'access-control-allow-origin': '*',
@@ -3695,24 +3697,25 @@ globalThis.fetch = input => {
         pathToFileURL(fetchMockPath).href,
         path.join(generatorRoot, 'templates/workspace-scripts/proof-cloudflare-version.mjs'),
         '--app',
-        partyId,
+        apiOnlyId,
         '--require-public-urls',
         '--out',
         reportPath,
       ],
       {
         env: {
-          ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: publicUrl,
+          ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: publicUrl,
           ULTRAMODERN_WORKSPACE_ROOT: workspaceRoot,
         },
       },
     );
     const requestedSource = yield* Effect.promise(() => readFile(requestedPath, 'utf-8'));
     const requested = requestedSource.trimEnd().split('\n');
-    expect(requested).toEqual([mfManifestPath, readinessPath, readinessPath]);
+    // An API-only contract has no SSR or Module Federation route to probe: only its readiness route.
+    expect(requested).toEqual([apiOnlyReadinessPath, apiOnlyReadinessPath]);
     const report = yield* readJson(CloudflareReportSchema, reportPath);
     expect(report.status).toBe('pass');
-    expect(report.results[0].appId).toBe('party-registry');
+    expect(report.results[0].appId).toBe(apiOnlyId);
     expect(report.results[0].assertions.every((entry) => entry.status === 'pass')).toBe(true);
   }),
 );
