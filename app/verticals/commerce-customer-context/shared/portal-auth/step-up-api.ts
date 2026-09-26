@@ -125,8 +125,7 @@ const commercePortalAuthStepUpGroupDefinition = HttpApiGroup.make('portalAuthSte
       success: CommercePortalAuthStepUpCompletedResponseSchema,
     }),
   )
-  .middleware(CommercePortalAuthStepUpSchemaErrorMiddleware)
-  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
+  .middleware(CommercePortalAuthStepUpSchemaErrorMiddleware);
 
 export type CommercePortalAuthStepUpGroupContract = HttpApiGroup.HttpApiGroup<
   'portalAuthStepUp',
@@ -135,5 +134,7 @@ export type CommercePortalAuthStepUpGroupContract = HttpApiGroup.HttpApiGroup<
 
 const CommercePortalAuthStepUpGroup: CommercePortalAuthStepUpGroupContract = commercePortalAuthStepUpGroupDefinition;
 
-export const CommercePortalAuthStepUpApi =
-  HttpApi.make('CommercePortalAuthStepUpApi').add(CommercePortalAuthStepUpGroup);
+/** Request bodies are decoded closed: an undeclared field is a rejected request. */
+export const CommercePortalAuthStepUpApi = HttpApi.make('CommercePortalAuthStepUpApi')
+  .add(CommercePortalAuthStepUpGroup)
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });

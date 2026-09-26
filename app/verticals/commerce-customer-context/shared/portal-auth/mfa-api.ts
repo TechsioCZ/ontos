@@ -264,8 +264,7 @@ const commercePortalAuthMfaGroupDefinition = HttpApiGroup.make('portalAuthMfa')
       success: CommercePortalAuthMfaTotpUriResultSchema,
     }),
   )
-  .middleware(CommercePortalAuthMfaSchemaErrorMiddleware)
-  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
+  .middleware(CommercePortalAuthMfaSchemaErrorMiddleware);
 
 export type CommercePortalAuthMfaGroupContract = HttpApiGroup.HttpApiGroup<
   'portalAuthMfa',
@@ -274,4 +273,7 @@ export type CommercePortalAuthMfaGroupContract = HttpApiGroup.HttpApiGroup<
 
 const CommercePortalAuthMfaGroup: CommercePortalAuthMfaGroupContract = commercePortalAuthMfaGroupDefinition;
 
-export const CommercePortalAuthMfaApi = HttpApi.make('CommercePortalAuthMfaApi').add(CommercePortalAuthMfaGroup);
+/** Request bodies are decoded closed: an undeclared field is a rejected request. */
+export const CommercePortalAuthMfaApi = HttpApi.make('CommercePortalAuthMfaApi')
+  .add(CommercePortalAuthMfaGroup)
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
