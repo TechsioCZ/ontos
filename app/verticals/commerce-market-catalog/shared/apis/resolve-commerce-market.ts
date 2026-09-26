@@ -14,14 +14,14 @@ import { MarketRefSchema } from '../resources/market.ts';
 const marketCandidate = Schema.Struct({
   marketRef: MarketRefSchema,
   sellingLegalEntityRef: SellingLegalEntityRefSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export const ResolveCommerceMarketRequestSchema = Schema.Struct({
   bootstrapDefault: Schema.optionalKey(
     Schema.Struct({
       ...marketCandidate.fields,
       policyRevision: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500), Schema.isTrimmed()),
-    }).annotate({ parseOptions: { onExcessProperty: 'error' } }),
+    }),
   ),
   channel: MarketChannelSchema,
   effectiveAt: Schema.DateTimeUtcFromString,
@@ -29,24 +29,22 @@ export const ResolveCommerceMarketRequestSchema = Schema.Struct({
   sellingLegalEntityRestriction: Schema.optionalKey(SellingLegalEntityRefSchema),
   storefrontRef: StorefrontRefSchema,
   subject: Schema.optionalKey(PurchasingSubjectRefSchema),
-})
-  .check(
-    Schema.makeFilter(({ bootstrapDefault, explicitSelection, sellingLegalEntityRestriction, storefrontRef }) => {
-      const candidate = explicitSelection ?? bootstrapDefault;
-      if (
-        candidate !== undefined &&
-        (candidate.marketRef.tenantId !== storefrontRef.tenantId ||
-          candidate.sellingLegalEntityRef.tenantId !== storefrontRef.tenantId)
-      ) {
-        return 'Market candidate and Storefront must belong to the same Tenant';
-      }
-      return sellingLegalEntityRestriction === undefined ||
-        sellingLegalEntityRestriction.tenantId === storefrontRef.tenantId
-        ? undefined
-        : 'Seller restriction and Storefront must belong to the same Tenant';
-    }),
-  )
-  .annotate({ parseOptions: { onExcessProperty: 'error' } });
+}).check(
+  Schema.makeFilter(({ bootstrapDefault, explicitSelection, sellingLegalEntityRestriction, storefrontRef }) => {
+    const candidate = explicitSelection ?? bootstrapDefault;
+    if (
+      candidate !== undefined &&
+      (candidate.marketRef.tenantId !== storefrontRef.tenantId ||
+        candidate.sellingLegalEntityRef.tenantId !== storefrontRef.tenantId)
+    ) {
+      return 'Market candidate and Storefront must belong to the same Tenant';
+    }
+    return sellingLegalEntityRestriction === undefined ||
+      sellingLegalEntityRestriction.tenantId === storefrontRef.tenantId
+      ? undefined
+      : 'Seller restriction and Storefront must belong to the same Tenant';
+  }),
+);
 export type ResolveCommerceMarketRequest = typeof ResolveCommerceMarketRequestSchema.Type;
 export const ResolveCommerceMarketResponseSchema = MarketResolutionOutcomeSchema;
 export type ResolveCommerceMarketResponse = typeof ResolveCommerceMarketResponseSchema.Type;

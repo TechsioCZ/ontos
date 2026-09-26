@@ -5,8 +5,8 @@ import { expect, it } from 'effect-rstest';
 import { randomUUID } from 'node:crypto';
 
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   catalogRelations,
@@ -48,9 +48,9 @@ const mutation = (tenantId: string, actionInvocationId: string) => ({
 it.live('serializes category moves and retirement against assignments while enforcing tenant boundaries', () =>
   Effect.scoped(
     Effect.gen(function* categoryPostgresBoundary() {
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, catalogRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, catalogRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, catalogRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, catalogRelations);
       const withTenant = <Value, Failure>(
         tenantId: string,
         operation: (transaction: CatalogTransaction) => Effect.Effect<Value, Failure>,

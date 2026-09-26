@@ -2,9 +2,9 @@
 // @effect-diagnostics globalConsole:off strictEffectProvide:off -- Operator verifier is an executable boundary; expires: 2027-03-31.
 import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { Array as EffectArray, Effect, Layer, Order, Schema } from 'effect';
-import { Client } from 'pg';
-import type { QueryResult, QueryResultRow } from 'pg';
+import { PgClient } from '@effect/sql-pg';
+import { Array as EffectArray, Effect, Layer, Order, Redacted, Schema } from 'effect';
+import { Reactivity } from 'effect/unstable/reactivity';
 
 import { comparePriceGroupCatalog } from '../src/database/catalog.ts';
 import { PriceGroupCatalogDatabase, PriceGroupCatalogDatabaseLive } from '../src/database/client.ts';
@@ -21,16 +21,13 @@ class PriceGroupCatalogVerificationError extends Schema.TaggedError<PriceGroupCa
 const verificationFailure = (reason: string, cause?: unknown): PriceGroupCatalogVerificationError =>
   new PriceGroupCatalogVerificationError(cause === undefined ? { reason } : { cause, reason });
 
-const query = <Row extends QueryResultRow>(
-  client: Client,
+const query = <Row extends object>(
+  client: PgClient.PgClient,
   text: string,
-  values: readonly unknown[],
+  values: readonly string[],
   reason: string,
-): Effect.Effect<QueryResult<Row>, PriceGroupCatalogVerificationError> =>
-  Effect.tryPromise({
-    catch: (cause) => verificationFailure(reason, cause),
-    try: async () => await client.query<Row>(text, [...values]),
-  });
+): Effect.Effect<readonly Row[], PriceGroupCatalogVerificationError> =>
+  client.unsafe<Row>(text, values).pipe(Effect.mapError((cause) => verificationFailure(reason, cause)));
 
 const expectedColumns = EffectArray.sort(
   PRICE_GROUP_CATALOG_TABLES.flatMap((table) => {
@@ -233,16 +230,8 @@ const verification = Effect.gen(function* verifyPriceGroupCatalogDatabase() {
         Effect.mapError((cause) => verificationFailure('Typed Price Group Catalog table verification failed', cause)),
       );
   }
-  const client = yield* Effect.acquireRelease(
-    Effect.gen(function* acquireClient() {
-      const acquired = new Client({ connectionString: connections.admin.connectionString });
-      yield* Effect.tryPromise({
-        catch: (cause) => verificationFailure('Unable to connect to the Price Group Catalog database', cause),
-        try: async () => await acquired.connect(),
-      });
-      return acquired;
-    }),
-    (acquired) => Effect.promise(async () => await acquired.end()),
+  const client = yield* PgClient.makeClient({ url: Redacted.make(connections.admin.connectionString) }).pipe(
+    Effect.mapError((cause) => verificationFailure('Unable to connect to the Price Group Catalog database', cause)),
   );
 
   const tables = yield* query<{ table_name: string }>(
@@ -255,7 +244,7 @@ const verification = Effect.gen(function* verifyPriceGroupCatalogDatabase() {
     [PRICE_GROUP_CATALOG_SCHEMA_NAME],
     'Unable to compare the PostgreSQL Price Group Catalog',
   );
-  const qualifiedTables = tables.rows.map((row) => `${PRICE_GROUP_CATALOG_SCHEMA_NAME}.${row.table_name}`);
+  const qualifiedTables = tables.map((row) => `${PRICE_GROUP_CATALOG_SCHEMA_NAME}.${row.table_name}`);
   yield* verifyCatalogInventory(qualifiedTables);
 
   const columns = yield* query<{ column_name: string; table_name: string }>(
@@ -268,7 +257,7 @@ const verification = Effect.gen(function* verifyPriceGroupCatalogDatabase() {
     'Unable to compare Price Group Catalog columns',
   );
   const actualColumns = EffectArray.sort(
-    columns.rows.map((row) => `${row.table_name}.${row.column_name}`),
+    columns.map((row) => `${row.table_name}.${row.column_name}`),
     Order.String,
   );
   yield* verifyExactValues('Price Group Catalog column', actualColumns, expectedColumns);
@@ -286,7 +275,7 @@ const verification = Effect.gen(function* verifyPriceGroupCatalogDatabase() {
   );
   yield* verifyExactValues(
     'Price Group Catalog foreign-key inventory',
-    foreignKeys.rows.map(({ name }) => name),
+    foreignKeys.map(({ name }) => name),
     expectedForeignKeys,
   );
 
@@ -316,16 +305,14 @@ const verification = Effect.gen(function* verifyPriceGroupCatalogDatabase() {
   );
   yield* verifyExactValues(
     'Price Group Catalog routine inventory',
-    functions.rows.map(({ name }) => name),
+    functions.map(({ name }) => name),
     expectedFunctions,
   );
-  if (
-    functions.rows.some(({ owner_name, public_execute }) => owner_name !== connections.admin.user || public_execute)
-  ) {
+  if (functions.some(({ owner_name, public_execute }) => owner_name !== connections.admin.user || public_execute)) {
     return yield* verificationFailure('Price Group Catalog routines must be owner-controlled with no PUBLIC EXECUTE');
   }
   if (
-    functions.rows.some(({ name, safe_search_path, security_definer }) => {
+    functions.some(({ name, safe_search_path, security_definer }) => {
       const expectedSecurityDefiner = expectedSecurityDefinerFunctions.has(name);
       return security_definer !== expectedSecurityDefiner || (expectedSecurityDefiner && !safe_search_path);
     })
@@ -351,7 +338,7 @@ const verification = Effect.gen(function* verifyPriceGroupCatalogDatabase() {
   );
   yield* verifyExactValues(
     'Price Group Catalog row-level security policy',
-    policies.rows.map(({ policy }) => policy),
+    policies.map(({ policy }) => policy),
     expectedPolicies,
   );
 
@@ -368,7 +355,7 @@ const verification = Effect.gen(function* verifyPriceGroupCatalogDatabase() {
   );
   yield* verifyExactValues(
     'Price Group Catalog runtime routine grant inventory',
-    runtimeFunctions.rows.map(({ name }) => name),
+    runtimeFunctions.map(({ name }) => name),
     expectedRuntimeFunctions,
   );
 
@@ -385,7 +372,7 @@ const verification = Effect.gen(function* verifyPriceGroupCatalogDatabase() {
   );
   yield* verifyExactValues(
     'Price Group Catalog trigger inventory',
-    triggers.rows.map(({ name }) => name),
+    triggers.map(({ name }) => name),
     expectedTriggers,
   );
 
@@ -441,14 +428,17 @@ const verification = Effect.gen(function* verifyPriceGroupCatalogDatabase() {
     [PRICE_GROUP_CATALOG_SCHEMA_NAME, connections.admin.user],
     'Unable to verify Price Group Catalog ownership, forced RLS, grants, or journal',
   );
-  const [catalog] = infrastructure.rows;
+  const [catalog] = infrastructure;
   yield* verifyInfrastructure(catalog);
 
   return { typedTableCount: PRICE_GROUP_CATALOG_TABLES.length };
 });
 
-const runtime = PriceGroupCatalogDatabaseLive.pipe(
-  Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConnectionPair().pipe(Effect.map(({ admin }) => admin)))),
+const runtime = Layer.merge(
+  PriceGroupCatalogDatabaseLive.pipe(
+    Layer.provide(Layer.effect(DatabaseConfig, loadDatabaseConnectionPair().pipe(Effect.map(({ admin }) => admin)))),
+  ),
+  Reactivity.layer,
 );
 const result = await Effect.runPromise(Effect.provide(Effect.scoped(verification), runtime));
 console.log(`Verified ${result.typedTableCount} typed tables in PostgreSQL schema ${PRICE_GROUP_CATALOG_SCHEMA_NAME}`);

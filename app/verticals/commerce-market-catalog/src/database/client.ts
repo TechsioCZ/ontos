@@ -6,8 +6,6 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { Scope } from 'effect';
 import { Context, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
-import type { PoolConfig } from 'pg';
-import { Pool } from 'pg';
 import { commerceMarketCatalogRelations } from './schema.ts';
 import { CommerceMarketCatalogDatabaseConnectionError } from './connection-error.ts';
 import type { CommerceMarketCatalogDatabaseExecutor } from './types.ts';
@@ -17,31 +15,15 @@ export class CommerceMarketCatalogDatabase extends Context.Service<
   { readonly executor: CommerceMarketCatalogDatabaseExecutor }
 >()('@app/commerce-market-catalog/database/client/CommerceMarketCatalogDatabase') {}
 
-interface PoolResource {
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- pg owns this foreign driver finalizer shape.
-  readonly end: () => Promise<void>;
-}
-
 const connectionFailure = (cause: unknown): CommerceMarketCatalogDatabaseConnectionError =>
   Object.defineProperty(
     new CommerceMarketCatalogDatabaseConnectionError({
-      reason: 'Unable to initialize the Commerce Market Catalog PostgreSQL connection pool',
+      reason: 'Unable to initialize the Commerce Market Catalog PostgreSQL client',
     }),
     'cause',
     { value: cause },
   );
 
-const acquirePool = <Resource extends PoolResource>(
-  acquire: () => Resource,
-): Effect.Effect<Resource, CommerceMarketCatalogDatabaseConnectionError, Scope.Scope> =>
-  Effect.acquireRelease(
-    Effect.try({ catch: connectionFailure, try: acquire }),
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect.promise owns this foreign Promise boundary.
-    (pool) => Effect.promise(() => pool.end()),
-  );
-
-type PoolFactory = (configuration: PoolConfig) => Pool;
-const defaultPoolFactory: PoolFactory = (configuration) => new Pool(configuration);
 type ContextServiceContract<Service> =
   Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;
 
@@ -49,15 +31,17 @@ const makeCommerceMarketCatalogDatabase = Effect.fn('CommerceMarketCatalogDataba
   configuration: ContextServiceContract<typeof DatabaseConfig> & {
     readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
   },
-  poolFactory: PoolFactory = defaultPoolFactory,
-) {
+): Effect.fn.Return<
+  ContextServiceContract<typeof CommerceMarketCatalogDatabase>,
+  CommerceMarketCatalogDatabaseConnectionError,
+  Scope.Scope
+> {
   const poolConfiguration = yield* configureDatabasePool(
     Redacted.make(configuration.connectionString),
     configuration.poolDeadlines,
   ).pipe(Effect.mapError((error) => new CommerceMarketCatalogDatabaseConnectionError({ reason: error.reason })));
-  const pool = yield* acquirePool(() => poolFactory(poolConfiguration));
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
+  const client = yield* PgClient.make(poolConfiguration).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );

@@ -7,14 +7,14 @@ import { MarketDefinitionSchema, StorefrontAssociationDefinitionSchema } from '.
 
 export const CurrentMarketCatalogRequestSchema = Schema.Struct({
   at: Schema.DateTimeUtcFromString,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CurrentMarketCatalogRequest = typeof CurrentMarketCatalogRequestSchema.Type;
 export const CurrentMarketCatalogResponseSchema = Schema.Struct({
   associations: Schema.Array(StorefrontAssociationDefinitionSchema),
   completenessEvidence: OwnerVerifiableSetCompletenessEvidenceSchema,
   markets: Schema.Array(MarketDefinitionSchema),
   observedAt: Schema.DateTimeUtcFromString,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CurrentMarketCatalogResponse = typeof CurrentMarketCatalogResponseSchema.Type;
 
 export const CurrentMarketCatalogAuthenticationProblemSchema = makeProblemDetailsSchema(

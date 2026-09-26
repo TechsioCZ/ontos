@@ -311,7 +311,8 @@ describe('Commerce Market public contracts', () => {
   });
 
   it('keeps eligible tuple output browser-safe and closed to raw restriction evidence', () => {
-    const decode = Schema.decodeUnknownSync(EligibleMarketTupleSetSchema);
+    // The governed read runtime decodes every read result closed (core-runtime `reads/runtime.ts`).
+    const decode = Schema.decodeUnknownSync(EligibleMarketTupleSetSchema, { onExcessProperty: 'error' });
     expect(
       decode({
         completenessEvidence,
@@ -422,8 +423,9 @@ describe('Commerce Market public contracts', () => {
       supportedLocales: ['cs-CZ'],
     } as const;
     expect(() => Schema.decodeUnknownSync(CreateMarketPayloadSchema)(create)).not.toThrow();
+    // The platform Action boundary (decodeActionPayload) decodes payloads with these options.
     expect(() =>
-      Schema.decodeUnknownSync(ReviseMarketDefinitionPayloadSchema)({
+      Schema.decodeUnknownSync(ReviseMarketDefinitionPayloadSchema, { onExcessProperty: 'error' })({
         channels: ['B2C'],
         effectivePeriod,
         expectedCurrentDefinitionRevisionRef: definitionRevisionRef,

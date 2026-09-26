@@ -6,10 +6,10 @@ import { expect, it } from 'effect-rstest';
 import { randomUUID } from 'node:crypto';
 
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { EligibleMarketTuplesRequestSchema } from '../../shared/apis/eligible-market-tuples.ts';
 import {
   commerceMarketCatalogRelations,
@@ -71,7 +71,7 @@ const requestAt = (effectiveAt: string) =>
     storefrontRef: { appId: storefrontAppId, tenantId },
   });
 
-type MarketCatalogTestDatabase = TestDatabaseFromPool<typeof commerceMarketCatalogRelations>;
+type MarketCatalogTestDatabase = TestDatabaseFromClient<typeof commerceMarketCatalogRelations>;
 
 const readSnapshot = (runtime: MarketCatalogTestDatabase, effectiveAt: string) =>
   runtime.transaction((transaction) =>
@@ -100,9 +100,9 @@ const formatBoundary = (boundary: DateTime.Utc | undefined) =>
 it.live('returns complete exact-predicate Market eligibility snapshots from PostgreSQL', () =>
   Effect.scoped(
     Effect.gen(function* marketResolutionPostgres() {
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceMarketCatalogRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceMarketCatalogRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceMarketCatalogRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceMarketCatalogRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>

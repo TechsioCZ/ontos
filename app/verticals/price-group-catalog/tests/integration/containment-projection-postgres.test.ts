@@ -6,8 +6,8 @@ import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   priceGroupCatalogRelations,
@@ -24,9 +24,9 @@ it.live('rolls back the Price Group and its durable containment intent in the sa
       const tenantId = randomUUID();
       const principalId = randomUUID();
       const actionInvocationId = randomUUID();
-      const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, priceGroupCatalogRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, priceGroupCatalogRelations);
+      const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, priceGroupCatalogRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, priceGroupCatalogRelations);
       const cleanup = () =>
         admin.transaction((transaction) =>
           Effect.gen(function* cleanupRolledBackTenant() {

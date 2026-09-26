@@ -21,10 +21,10 @@ import { makeCoreDatabase } from '../../../../packages/core-runtime/src/db/clien
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import { makeLiveOperationFixture } from '../../../../packages/core-runtime/src/testing/live-operations.ts';
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { retireMarketAction } from '../../src/actions/retire-market.action.ts';
 import { commerceMarketCatalogRelations } from '../../src/database/schema.ts';
 import { MarketRetirementImpactAuthorityLive } from '../../src/integrations/market-retirement-impact.ts';
@@ -35,7 +35,7 @@ const SHELL_GATEWAY_BASE_URL = 'https://shell.example.test';
 const RESERVATION_TOKEN = '8c9bed83-a49d-4f21-b1e8-12efb2526174';
 const OWNER_RESOURCE_ID = '4f5cba1e-f3d1-42d6-b1bd-9923d93033a2';
 
-type MarketDatabase = TestDatabaseFromPool<typeof commerceMarketCatalogRelations>;
+type MarketDatabase = TestDatabaseFromClient<typeof commerceMarketCatalogRelations>;
 
 interface ScenarioTransport {
   readonly assessmentRequests: readonly Request[];
@@ -308,8 +308,8 @@ it.live(
           values (${fixture.tenantId}::uuid, 'commerce.market-catalog', 'active')
           on conflict (tenant_id, module_key) do update set state = excluded.state
         `);
-        const { admin: adminPool } = yield* testDatabasePools;
-        const marketAdmin = yield* makeTestDatabaseFromPool(adminPool, commerceMarketCatalogRelations);
+        const { admin: adminClient } = yield* testDatabaseClients;
+        const marketAdmin = yield* makeTestDatabaseFromClient(adminClient, commerceMarketCatalogRelations);
         const now = yield* TestClock.withLive(DateTime.now).pipe(Effect.provide(TestClock.layer()));
         const effectiveAt = DateTime.formatIso(DateTime.subtract(now, { seconds: 1 }));
         const nextApplicabilityBoundary = DateTime.formatIso(DateTime.add(now, { hours: 1 }));

@@ -1,8 +1,12 @@
 import { and, eq, gt, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
 import {
@@ -56,9 +60,13 @@ const fixtureTenants = [tenantA, tenantB] as const;
 
 it.live('enforces Party owner invariants, tenant isolation, and independent fact lifecycles', () =>
   Effect.gen(function* testEffect1() {
+    const connections = yield* loadDatabaseConnectionPair();
     const { admin, runtime } = yield* openBoundaryDatabases(
-      (pool) => makeTestDatabaseFromPool(pool, partyRelations),
-      1,
+      (client) => makeTestDatabaseFromClient(client, partyRelations),
+      {
+        admin: yield* makeTestPgClient(connections.admin.connectionString),
+        runtime: yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 1 }),
+      },
     );
 
     const cleanup = () =>

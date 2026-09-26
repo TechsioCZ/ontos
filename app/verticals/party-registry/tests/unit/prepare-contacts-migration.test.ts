@@ -1,32 +1,38 @@
+import { PgClient } from '@effect/sql-pg';
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Client } from 'pg';
+import { Reactivity } from 'effect/unstable/reactivity';
+import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 
+import { scriptedPgClientLayer } from '../../../../packages/core-runtime/src/testing/scripted-pg-client.ts';
+import { testSqlConnection } from '../../../../packages/core-runtime/tests/support/sql-connection.ts';
 import { classifyContactsJournalState, prepareContactsMigration } from '../../scripts/prepare-contacts-migration.mts';
 
-interface JournalClientFixture {
-  readonly client: Client;
-  readonly queries: string[];
-}
+const journalSelect = `select
+        to_regclass('drizzle.__drizzle_migrations_crm') is not null as legacy,
+        to_regclass('drizzle.__drizzle_migrations_contacts') is not null as contacts`;
 
-const journalClient = (legacy: boolean, contacts: boolean, renameFailure?: Error): JournalClientFixture => {
+// Runs the preparation through Effect's own transaction controls over a scripted connection.
+const prepareJournal = (legacy: boolean, contacts: boolean, renameFailure?: SqlError) => {
   const queries: string[] = [];
-  const client = new Client();
-  // Accepted foreign API fixture: pg Client.query returns Promises, consumed by the
-  // production Effect.tryPromise boundary; this is not an Effect test helper.
-  Object.defineProperty(client, 'query', {
-    value: (query: string) => {
-      queries.push(query);
-      if (query.startsWith('select')) {
-        return Promise.resolve({ rows: [{ contacts, legacy }] });
-      }
-      if (query.startsWith('alter table') && renameFailure !== undefined) {
-        return Promise.reject(renameFailure);
-      }
-      return Promise.resolve({ rows: [] });
-    },
-  });
-  return { client, queries };
+  const execute = (query: string) => {
+    queries.push(query);
+    if (query.startsWith('select')) {
+      return Effect.succeed([{ contacts, legacy }]);
+    }
+    if (query.startsWith('alter table') && renameFailure !== undefined) {
+      return Effect.fail(renameFailure);
+    }
+    return Effect.succeed([]);
+  };
+  return Effect.gen(function* prepareScriptedJournal() {
+    return yield* prepareContactsMigration(yield* PgClient.PgClient);
+  }).pipe(
+    Effect.provide(scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute)))),
+    Effect.provide(Reactivity.layer),
+    Effect.map((state) => ({ queries, state })),
+    Effect.mapError((failure) => ({ failure, queries })),
+  );
 };
 
 it('classifies fresh, legacy, migrated, and ambiguous Contacts journal states', () => {
@@ -38,16 +44,14 @@ it('classifies fresh, legacy, migrated, and ambiguous Contacts journal states', 
 
 it.effect('atomically renames the legacy journal before the Contacts migration chain', () =>
   Effect.gen(function* atomicallyRenamesLegacyJournal() {
-    const fixture = journalClient(true, false);
+    const { queries, state } = yield* prepareJournal(true, false);
 
-    expect(yield* prepareContactsMigration(fixture.client)).toBe('legacy');
-    expect(fixture.queries).toEqual([
-      'begin',
-      `select
-        to_regclass('drizzle.__drizzle_migrations_crm') is not null as legacy,
-        to_regclass('drizzle.__drizzle_migrations_contacts') is not null as contacts`,
+    expect(state).toBe('legacy');
+    expect(queries).toEqual([
+      'BEGIN',
+      journalSelect,
       'alter table drizzle.__drizzle_migrations_crm rename to __drizzle_migrations_contacts',
-      'commit',
+      'COMMIT',
     ]);
   }),
 );
@@ -60,11 +64,11 @@ it.effect('fresh and already-migrated journal states are committed no-ops', () =
     ] as const,
     ([legacy, contacts, expected]) =>
       Effect.gen(function* commitsJournalStateNoOp() {
-        const fixture = journalClient(legacy, contacts);
-        expect(yield* prepareContactsMigration(fixture.client)).toBe(expected);
-        expect(fixture.queries[0]).toBe('begin');
-        expect(fixture.queries.at(-1)).toBe('commit');
-        expect(fixture.queries.some((query) => query.startsWith('alter table'))).toBe(false);
+        const { queries, state } = yield* prepareJournal(legacy, contacts);
+        expect(state).toBe(expected);
+        expect(queries[0]).toBe('BEGIN');
+        expect(queries.at(-1)).toBe('COMMIT');
+        expect(queries.some((query) => query.startsWith('alter table'))).toBe(false);
       }),
     { concurrency: 'unbounded', discard: true },
   ),
@@ -72,19 +76,17 @@ it.effect('fresh and already-migrated journal states are committed no-ops', () =
 
 it.effect('ambiguous or failed journal handoff rolls back without claiming success', () =>
   Effect.gen(function* rollsBackFailedJournalHandoff() {
-    const ambiguous = journalClient(true, true);
-    const ambiguousFailure = yield* Effect.flip(prepareContactsMigration(ambiguous.client));
-    expect(ambiguousFailure.message).toMatch(/both CRM and Contacts journals exist/u);
-    expect(ambiguousFailure.cause).toBe('ambiguous');
-    expect(ambiguous.queries.at(-1)).toBe('rollback');
+    const ambiguous = yield* Effect.flip(prepareJournal(true, true));
+    expect(ambiguous.failure.message).toMatch(/both CRM and Contacts journals exist/u);
+    expect(ambiguous.failure.cause).toBe('ambiguous');
+    expect(ambiguous.queries.at(-1)).toBe('ROLLBACK');
     expect(ambiguous.queries.some((query) => query.startsWith('alter table'))).toBe(false);
 
-    const renameError = new Error('rename failed');
-    const renameFailure = journalClient(true, false, renameError);
-    const failure = yield* Effect.flip(prepareContactsMigration(renameFailure.client));
-    expect(failure.message).toMatch(/PostgreSQL query failed/u);
-    expect(failure.cause).toBe(renameError);
-    expect(renameFailure.queries.at(-1)).toBe('rollback');
-    expect(renameFailure.queries.includes('commit')).toBe(false);
+    const renameError = new SqlError({ reason: new UnknownError({ cause: new Error('rename failed') }) });
+    const renameFailure = yield* Effect.flip(prepareJournal(true, false, renameError));
+    expect(renameFailure.failure.message).toMatch(/PostgreSQL query failed/u);
+    expect(renameFailure.failure.cause).toBe(renameError);
+    expect(renameFailure.queries.at(-1)).toBe('ROLLBACK');
+    expect(renameFailure.queries.includes('COMMIT')).toBe(false);
   }),
 );

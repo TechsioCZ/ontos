@@ -2,10 +2,11 @@ import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Array as EffectArray, Effect, Order } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
-import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgSession,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   PAYMENT_TERM_CATALOG_SCHEMA_NAME,
   PAYMENT_TERM_CATALOG_TABLE_INVENTORY,
@@ -49,10 +50,8 @@ it.live('governs the Payment Term Catalog schema through forced RLS and routine-
   Effect.scoped(
     Effect.gen(function* databaseSecurityCatalog() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquirePoolResource(
-        () => new Pool({ connectionString: connections.admin.connectionString, max: 1 }),
-      );
-      const admin = yield* makeTestDatabaseFromPool(adminPool, paymentTermCatalogRelations);
+      const adminClient = yield* makeTestPgSession(connections.admin.connectionString);
+      const admin = yield* makeTestDatabaseFromClient(adminClient, paymentTermCatalogRelations);
       const schema = PAYMENT_TERM_CATALOG_SCHEMA_NAME;
 
       const tables = yield* admin.execute<{

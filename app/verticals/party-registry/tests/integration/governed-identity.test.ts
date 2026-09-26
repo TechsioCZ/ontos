@@ -13,10 +13,12 @@ import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Exit, Layer, Redacted, Predicate, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
 import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { committedCreateResult } from '../../shared/domain/matching-contracts.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
@@ -80,7 +82,6 @@ const readPartyDetail = (partyRef: PartyRef, principal: TrustedPrincipalContext)
       }),
     ),
   );
-const endPool = (pool: Pool) => Effect.promise(() => pool.end());
 type EncodedFixturePrincipal = typeof TrustedPrincipalContextSchema.Encoded;
 const decodeFixturePrincipal = (principal: EncodedFixturePrincipal): TrustedPrincipalContext =>
   Schema.decodeSync(TrustedPrincipalContextSchema)(principal);
@@ -119,11 +120,8 @@ it.live(
           }).pipe(Effect.orDie),
           (resource) => resource.close().pipe(Effect.orDie),
         );
-        const adminPool = yield* Effect.acquireRelease(
-          Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-          endPool,
-        );
-        const admin = yield* makeTestDatabaseFromPool(adminPool, partyRelations);
+        const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
+        const admin = yield* makeTestDatabaseFromClient(adminClient, partyRelations);
         const fixtureContext = yield* Layer.build(fixture.layer);
         const otherContext = yield* Layer.build(other.layer);
         const managerPrincipal = decodeFixturePrincipal(fixture.manager);
