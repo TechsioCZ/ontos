@@ -482,7 +482,7 @@ controlled values. Individual allowed values never create a Cartesian product of
 A single-Variant Product may have no axes.
 
 **Controlled Attribute Value** — Stable Catalog-owned value in a governed vocabulary for an
-Attribute Definition. Rename preserves identity only when meaning is unchanged. Retirement prevents
+Attribute Definition. Rename preserves identity only for unchanged meaning. Retirement prevents
 new assignment while retaining existing references and their explanation; it is not automatically
 Product retirement. Reactivation preserves the same identity. Color and Size are specialized values.
 
@@ -502,7 +502,8 @@ requires scoped evidence; a numeric Size label is not a measured value with an i
 **Product Category** — Stable Catalog classification Resource with `0..1` direct parent; multiple
 roots are allowed. Rename preserves identity only for unchanged classification meaning. Hierarchy
 is acyclic. No shared primary/main Product Category exists in the Current model. Category is not
-Product Type, navigation, publication, Assortment or Permission.
+Product Type, identity, Set marker, packaging marker or selling policy.
+Absence of a type does not permit arbitrary undeclared structured attributes.
 
 **Direct Category Assignment** — Explicit Product-to-Product Category relation. A Product has
 `0..N` such assignments; removing one preserves independent others. A Variant uses the classification
@@ -938,22 +939,75 @@ without changing the Price identity. Changing the exact Variant/selection meanin
 Entity, Channel, Commerce Market, currency, pricing Unit/basis, or Price Group selector creates a
 different Price rather than moving the existing identity.
 
-**Pricing Currency Support** — Pricing-owned statement of which purchase currencies Pricing can
-authoritatively price. Launch support is exactly CZK; support is not inferred from existing Price
-rows, Storefront, Cart, Purchasing Subject, locale, or imported foreign-currency assertions.
-Multi-currency and FX are separate Later Capability concerns.
+**Pricing Revision Schedule** — Effective-time sequence of non-overlapping revisions for one
+revisioned Pricing meaning, including any explicitly retained gaps; it is not the Quantity Tier
+threshold set or a new Resource. A value-only Current edit preserves the existing interval end,
+gaps and future revisions; changing their effectivity, cancelling or rescheduling them requires
+explicit intent rather than an automatic extension to the next future start.
+
+**Pricing Schedule Acknowledgement** — Operator's explicit acknowledgement of the already scheduled
+future changes that a Current edit will preserve, required before that edit is committed. It applies
+only to the schedule state presented to the operator, requires renewed acknowledgement if that state
+changes, and does not authorize altering the future revisions.
+_Avoid_: informational toast as consent, acknowledgement as permission to cancel future changes.
+
+**Pricing Currency Support** — One Pricing-owned Tenant-level capability with immutable revisions
+and Effective Periods defining the enabled purchase currencies within the actually supported
+capability, with Launch enabled support exactly `{CZK}`. It is not a per-Cart, subject, Selling Legal
+Entity, Channel, Market or Storefront setting, purchase-currency preference or choice, and is not
+expanded by imported Price rows or inferred FX.
 
 **Quantity Tier** — Pricing-owned threshold rule belonging to exactly one Price identity. The highest
 reached inclusive positive Quantity threshold supplies one resulting non-negative pre-Tax Unit Price
 for the whole relevant aggregated Quantity. A Tier never participates in choosing a different Price,
 and purpose-specific Tier aggregation never changes the underlying Pricing Line identities.
 
-**Pricing-owned Discount** — Pricing-owned pre-Tax reduction applied at runtime to one concrete
-Variant-based Pricing Line. Launch families are CATALOG_DISCOUNT and CONTRACTUAL_DISCOUNT, with
-PERCENTAGE or FIXED_MONETARY_AMOUNT effects. Product-level administration is only a bulk intent that
-expands to explicit Variant Discount facts; Product is not a runtime Discount target and future
-Variants are not implicitly included. Within CONTRACTUAL_DISCOUNT, an exact Counterparty Discount
-replaces the applicable Price Group Discount for the same exact path rather than stacking with it.
+**Pricing-owned Discount** — Pricing-owned pre-Tax reduction fact with distinct family, audience,
+target scope and effect meanings. Launch supports line-scoped CATALOG_DISCOUNT and manually managed
+CONTRACTUAL_DISCOUNT in its explicitly supported line or whole-purchase combinations; Product-level
+administration only expands explicit Variant facts and never creates inheritance for future Variants.
+_Avoid_: fixed amount as a synonym for line scope, Counterparty replacing Price Group.
+
+**Contractual Discount** — Manually managed CONTRACTUAL_DISCOUNT fact for a Price Group or one exact
+Counterparty, not an automatically earned level, campaign, voucher or loyalty status. Applicable
+Price Group and Counterparty benefits are independent and stack with each other and with any
+Group-specific base Price; the base-Price lookup does not remove the actual contractual audience.
+
+**Pricing Discount Scope** — Declared application scope: VARIANT_LINE applies to an eligible original
+Variant-based Pricing Line, while WHOLE_PURCHASE applies once to the whole Pricing Decision. Launch
+permits Price Group or Counterparty VARIANT_LINE percentage/fixed effects, and only exact Counterparty
+WHOLE_PURCHASE fixed effects; an allocation onto lines does not change the fact's scope.
+
+**Pricing Discount Effect** — PERCENTAGE with a level from 0 to 100 percent, or FIXED_MONETARY_AMOUNT
+with an explicit non-negative amount and currency. The effect describes the reduction, not its
+application count: fixed VARIANT_LINE is once per applicable line, fixed WHOLE_PURCHASE once per
+applicable Pricing Decision, and fixed-per-unit Discount is outside Launch.
+
+**Pricing Discount Revision** — Immutable effective version of one logical Discount, with at most one
+effective revision of the same logical key at a trusted instant. Value/level changes retain that
+identity, while changes of family, audience, scope, Variant/commercial scope, effect kind or other
+identity-defining currency/basis meaning create a different logical Discount rather than rewriting
+its history.
+
+**Pricing Discount Contribution** — Non-positive applied pre-Tax reduction produced from one
+applicable Discount revision for its declared scope. It is distinct from the configured non-negative
+Discount level and from any per-line allocation of a whole-purchase contribution.
+
+**Whole-purchase Contractual Discount** — Exact Counterparty WHOLE_PURCHASE fixed benefit applicable
+once per Pricing Decision only when the Whole-purchase Contractual Eligible Basis is strictly greater
+than its fixed amount. At or below that amount it does not apply or allocate; the amount itself is
+the activation threshold, with no separate minimum-purchase parameter or carried-over credit.
+
+**Whole-purchase Contractual Eligible Basis** — Sum of strictly positive merchandise line values after
+Price/Tier, Fees and every line-scoped Pricing-owned Discount, but before the whole-purchase
+contribution and Promotion. Shipping/Delivery and non-positive lines are not recipients or weights;
+these intermediate values are not the final published Line Commercial Values.
+
+**Whole-purchase Contractual Allocation** — Deterministic proportional distribution of one applicable
+whole-purchase contractual contribution over its eligible original lines, preserving the full
+contribution and never allocating a reduction greater than a recipient's eligible value. Allocation
+precision and remainder preserve both properties before final-line rounding, without new Discount
+facts or ZERO_FLOOR used to repair allocation-induced negatives.
 
 **Pricing Commercial Fee** — Pricing-owned non-negative pre-Tax charge applied at runtime to one
 concrete Variant-based Pricing Line. Launch families are RECYCLING_FEE and COPYRIGHT_FEE, with
@@ -962,8 +1016,9 @@ explicit Variant Fee facts; Product is not a runtime Fee target. Competing Curre
 family and exact meaning are a configuration conflict; different Fee families may both contribute.
 
 **Discountable Line Basis** — Exact pre-Tax basis equal to Base Line Value plus all applicable Pricing
-Commercial Fees before Pricing-owned Discounts. Each resolved percentage Discount family computes
-independently from this same basis rather than compounding sequentially.
+Commercial Fees before line-scoped Pricing-owned Discounts. Every applicable percentage contribution,
+including the independent Price Group and Counterparty contractual layers, uses this same basis
+rather than compounding sequentially.
 
 **Line Commercial Value** — Authoritative non-negative pre-Tax value of one stable Pricing Line after
 Price/Tier, Pricing Commercial Fees, Pricing-owned Discounts, owner-issued Promotion allocation,
@@ -974,26 +1029,54 @@ preserves the exact candidate/line bindings, one actually used Price/Price Revis
 applicable Tier and contribution breakdown, final Line Commercial Values, Pricing total, and material
 owner evidence. It contains no Tax amount and is complete without a Tax Decision.
 
-**Pricing Quotation** — Pricing-owned immutable time-bounded commercial guarantee of exact pre-Tax
-Pricing terms for one exact whole purchase candidate and its binding context. It is distinct from a
-retained Current read, Cart value, Approval, Accepted Order history, and Pricing Commitment
-Confirmation.
+**Pricing Quotation** — Pricing-owned immutable guarantee of exact pre-Tax terms for one exact whole
+purchase candidate and binding context during its half-open validity interval. A matching unexpired
+Quotation is not repriced or revoked by ordinary Current Price changes, is not transferable merely
+through possession of its reference, and is distinct from a retained read, Approval or commitment proof.
 
-**Pricing Commitment Confirmation** — Pricing-owned immutable short-lived guarantee issued from a
-complete Current PRICE_RESOLVED evaluation for one exact Order Commitment Attempt and its unchanged
-Order Acceptance Decision Bundle. It belongs to the Order Commitment Proof Set, not the Bundle hash,
-and is valid for at most 30 seconds. Renewal is a new proof after a fresh complete Current evaluation.
+**Pricing Commitment Confirmation** — Pricing-owned immutable guarantee for one exact Order Commitment
+Attempt and its unchanged Order Acceptance Decision Bundle, issued through the Current-backed or
+Quotation-backed path. It belongs to the Order Commitment Proof Set rather than the Bundle, lasts at
+most 30 seconds, and is not revoked by ordinary source changes during its valid exact binding.
 
-**ZERO_FLOOR Authorization** — Pricing-owned reusable versioned governance authorizing an explicitly
-covered Pricing configuration meaning to publish zero when exact raw line arithmetic would otherwise
-be negative. Without an applicable authorization, a negative raw line is a configuration or
-reconciliation failure. It is not a per-Order approval, Storefront exception, Tenant-wide clamp,
-Discount, Fee, Promotion, Tax adjustment, or rounding rule.
+**Current-backed Pricing Confirmation** — Pricing Commitment Confirmation issued from a fresh complete
+Current PRICE_RESOLVED evaluation with required final fact and set validation. It guarantees the
+resulting terms for its own exact Attempt, unchanged Bundle and bounded interval, not for another
+purchase or a later reprice.
+
+**Quotation-backed Pricing Confirmation** — Pricing Commitment Confirmation issued after current
+verification of a still-valid exact Pricing Quotation's authenticity, interval and candidate/context
+binding, preserving the quoted terms even when ordinary Current Prices differ. Its expiry is no later
+than either 30 seconds after issuance or the source Quotation's expiry, and it bypasses no independent
+commitment gate.
+
+**Pricing Confirmation Renewal** — Issuance of a new Pricing Commitment Confirmation instance, never
+an in-place extension, for the same Attempt only while the Bundle and purchase meaning remain
+unchanged. The Current-backed path requires fresh complete Current evaluation; the Quotation-backed
+path requires renewed verification of the still-valid exact Quotation and retains its expiry cap,
+with Accepted history preserving the actual Quotation/Confirmation lineage used.
+
+**ZERO_FLOOR Authorization** — Pricing-owned reusable versioned governance permitting raw-negative
+line arithmetic to be explicitly adjusted to zero only within its covered business scope, bounded
+economic coverage and Effective Period, with governance/audit evidence. Without applicable coverage
+the raw-negative calculation fails; the authorization is not a per-Order approval, Storefront
+exception, Tenant-wide clamp, Discount, Fee, Promotion, Tax adjustment or rounding rule.
+
+**ZERO_FLOOR Economic Coverage** — Explicit approved bounds on the floor-relevant economic meaning
+covered by one ZERO_FLOOR Authorization. Changes within those bounds and the same business scope may
+reuse the authorization after current verification, while exceeding the bounds or expanding scope
+requires a new/successor authorization and never rewrites Accepted evidence.
+_Avoid_: unbounded enabled flag, revision tuple as economic coverage, automatic coverage expansion.
 
 **Pricing Line Rounding Adjustment** — Signed difference between the authoritative published final
 Line Commercial Value and the exact post-guard pre-round value. Each Pricing Line has one ordinary
 final monetary rounding boundary; Pricing total is the exact sum of those already rounded final line
 values, not a separately rounded candidate total.
+
+**Price Reconfirmation** — Explicit confirmation by the purchasing user/Buyer of changed proposed
+prices, required for both increases and decreases before proceeding under those changed terms. A
+lower price is not automatic consent, and an unchanged valid Quotation-backed price is not repriced
+merely because ordinary Current Prices moved.
 
 **Inventory** — Domain owning Stock Items, Stock Locations/Positions, Catalog-to-Stock Binding, Stock Requirements/Allocations, stock evidence, and Inventory-recognized obligations. It consumes Purchase Demand Occurrence identity without changing its exact Catalog Selection, Quantity or Unit; Reservation and authority lifecycle semantics are owned by the Inventory context and accepted ADRs.
 
