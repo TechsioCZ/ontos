@@ -118,11 +118,8 @@ const runMfa = <ResultValue>(
     Effect.flatMap((service) => invoke(service)),
   );
 
-// The published MFA group decodes request bodies with these options (`shared/portal-auth/mfa-api.ts`).
-const publishedMfaParseOptions = Context.getOrUndefined(
-  CommercePortalAuthMfaApi.groups.portalAuthMfa.annotations,
-  HttpApi.ParseOptions,
-);
+// The published MFA API decodes request bodies with these options (`shared/portal-auth/mfa-api.ts`).
+const publishedMfaParseOptions = Context.getOrUndefined(CommercePortalAuthMfaApi.annotations, HttpApi.ParseOptions);
 
 it.effect('configures the installed two-factor plugin with the Commerce policy', () =>
   Effect.sync(() => {

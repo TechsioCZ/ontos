@@ -162,8 +162,7 @@ const commercePortalAuthRecoveryGroupDefinition = HttpApiGroup.make('portalAuthR
       ]),
     }),
   )
-  .middleware(CommercePortalAuthRecoverySchemaErrorMiddleware)
-  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
+  .middleware(CommercePortalAuthRecoverySchemaErrorMiddleware);
 
 export type CommercePortalAuthRecoveryGroupContract = HttpApiGroup.HttpApiGroup<
   'portalAuthRecovery',
@@ -173,6 +172,7 @@ export type CommercePortalAuthRecoveryGroupContract = HttpApiGroup.HttpApiGroup<
 const CommercePortalAuthRecoveryGroup: CommercePortalAuthRecoveryGroupContract =
   commercePortalAuthRecoveryGroupDefinition;
 
-export const CommercePortalAuthRecoveryApi = HttpApi.make('CommercePortalAuthRecoveryApi').add(
-  CommercePortalAuthRecoveryGroup,
-);
+/** Request bodies and queries are decoded closed: an undeclared field is a rejected request. */
+export const CommercePortalAuthRecoveryApi = HttpApi.make('CommercePortalAuthRecoveryApi')
+  .add(CommercePortalAuthRecoveryGroup)
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
