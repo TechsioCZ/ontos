@@ -186,7 +186,9 @@ const verifyingProvider = (
 ): Effect.Effect<CommercePortalAuthMfaVerificationResponse, CommercePortalAuthMfaProviderFailure> =>
   call.pipe(
     Effect.flatMap((result) =>
-      Schema.decodeEffect(CommercePortalAuthMfaVerificationResultSchema)(result.body).pipe(
+      Schema.decodeEffect(CommercePortalAuthMfaVerificationResultSchema, { onExcessProperty: 'error' })(
+        result.body,
+      ).pipe(
         Effect.map((body) => ({ ...result, body })),
         Effect.mapError((cause) =>
           commercePortalAuthMfaProviderUnavailable(operation, malformedResponseCause(cause), result.setCookieHeaders),

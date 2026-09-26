@@ -115,7 +115,7 @@ const RetailSelfEnrollmentStepIntentSchema = Schema.Union([
     sellingLegalEntityRef: SellingLegalEntityRefSchema,
     step: Schema.Literal('RETAIL_PORTAL_BINDING'),
   }),
-]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+]);
 export type RetailSelfEnrollmentStepIntent = typeof RetailSelfEnrollmentStepIntentSchema.Type;
 
 export interface RetailSelfEnrollmentDigestInput {

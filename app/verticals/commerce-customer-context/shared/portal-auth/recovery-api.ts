@@ -154,14 +154,16 @@ const commercePortalAuthRecoveryGroupDefinition = HttpApiGroup.make('portalAuthR
   .add(
     HttpApiEndpoint.get('verifyEmail', '/api/portal-auth/verify-email', {
       error: verificationRouteProblems,
-      query: Schema.Struct({ token: recoveryToken }),
+      // Better Auth issues the verification link with its own `callbackURL` query key.
+      query: Schema.Struct({ callbackURL: Schema.optionalKey(callbackURL), token: recoveryToken }),
       success: Schema.Union([
         CommercePortalAuthEmailVerificationCompletedResultSchema,
         CommercePortalAuthRecoveryReconciliationRequiredResultSchema,
       ]),
     }),
   )
-  .middleware(CommercePortalAuthRecoverySchemaErrorMiddleware);
+  .middleware(CommercePortalAuthRecoverySchemaErrorMiddleware)
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
 
 export type CommercePortalAuthRecoveryGroupContract = HttpApiGroup.HttpApiGroup<
   'portalAuthRecovery',

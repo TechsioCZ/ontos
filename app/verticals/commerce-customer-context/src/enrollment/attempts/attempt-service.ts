@@ -108,7 +108,7 @@ const invalidWithCause = (reason: string, cause: unknown): InstanceType<typeof C
 const decodeResolution = (
   resolution: ReconcileEnrollmentResolution,
 ): Effect.Effect<ReconcileEnrollmentResolution, CommerceEnrollmentAttemptError> =>
-  Schema.decodeEffect(ReconcileEnrollmentResolutionSchema)(resolution).pipe(
+  Schema.decodeEffect(ReconcileEnrollmentResolutionSchema, { onExcessProperty: 'error' })(resolution).pipe(
     Effect.mapError((cause) => invalidWithCause('The owner reconciliation result is invalid', cause)),
   );
 
@@ -117,7 +117,7 @@ const decodeOrReject = <Input>(
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- This helper is the shared request boundary and decodes the value before any persistence call.
   input: unknown,
 ): Effect.Effect<Input, CommerceEnrollmentAttemptError> =>
-  Schema.decodeUnknownEffect(schema)(input).pipe(
+  Schema.decodeUnknownEffect(schema, { onExcessProperty: 'error' })(input).pipe(
     Effect.mapError((cause) => invalidWithCause('The Enrollment Attempt request is invalid', cause)),
   );
 
@@ -223,7 +223,9 @@ const persistReconciliationResolution = (
       }
       return ensureSubjectConsistent(attempt, decodedResolution.accountSubject).pipe(
         Effect.flatMap(() =>
-          Schema.decodeUnknownEffect(ReconcileEnrollmentOutcomeInputSchema)(outcome).pipe(
+          Schema.decodeUnknownEffect(ReconcileEnrollmentOutcomeInputSchema, { onExcessProperty: 'error' })(
+            outcome,
+          ).pipe(
             Effect.mapError((cause) => invalidWithCause('The owner reconciliation result is invalid', cause)),
             Effect.flatMap((decodedOutcome) =>
               persistDecodedReconciliation(persistence, completion, attempt, decodedOutcome),

@@ -4,11 +4,10 @@ import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Context, Effect, Layer } from 'effect';
+import { Context, Duration, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { Pool } from 'pg';
-import type { PoolConfig } from 'pg';
 
 import { CommercePortalAuthDatabaseConnectionError } from '../../../api/portal-auth/db/connection-error.ts';
 import { CommercePortalAuthConfig } from '../../../api/portal-auth/provider/config.ts';
@@ -31,9 +30,6 @@ export class CommercePortalAuthDatabase extends Context.Service<
   }
 >()('@app/commerce-customer-context/portal-auth/persistence/portal-auth-database/CommercePortalAuthDatabase') {}
 
-/** Structurally derived from the real driver type, not re-declared, so the finalizer stays the pg contract. */
-export type CommercePortalAuthPoolResource = Pick<Pool, 'end'>;
-
 const connectionFailure = (cause: unknown): CommercePortalAuthDatabaseConnectionError =>
   Object.defineProperty(
     new CommercePortalAuthDatabaseConnectionError({
@@ -43,9 +39,9 @@ const connectionFailure = (cause: unknown): CommercePortalAuthDatabaseConnection
     { value: cause },
   );
 
-const acquireCommercePortalAuthPool = <Resource extends CommercePortalAuthPoolResource>(
-  acquire: () => Resource,
-): Effect.Effect<Resource, CommercePortalAuthDatabaseConnectionError, Scope.Scope> =>
+const acquireBetterAuthPool = (
+  acquire: () => Pool,
+): Effect.Effect<Pool, CommercePortalAuthDatabaseConnectionError, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.try({ catch: connectionFailure, try: acquire }),
     // pg overloads end(callback); call with no argument so an AbortSignal is not treated as one.
@@ -53,12 +49,8 @@ const acquireCommercePortalAuthPool = <Resource extends CommercePortalAuthPoolRe
     (pool) => Effect.promise(() => pool.end()),
   );
 
-export type CommercePortalAuthPoolFactory = (configuration: PoolConfig) => Pool;
-const defaultPoolFactory: CommercePortalAuthPoolFactory = (configuration) => new Pool(configuration);
-
 export const makeCommercePortalAuthDatabase = Effect.fn('CommercePortalAuthDatabase.make')(function* makeDatabase(
   configuration: Pick<CommercePortalAuthConfigValue, 'connectionString'>,
-  poolFactory: CommercePortalAuthPoolFactory = defaultPoolFactory,
 ): Effect.fn.Return<
   (typeof CommercePortalAuthDatabase)['Service'],
   CommercePortalAuthDatabaseConnectionError,
@@ -72,9 +64,8 @@ export const makeCommercePortalAuthDatabase = Effect.fn('CommercePortalAuthDatab
         }),
     ),
   );
-  const pool = yield* acquireCommercePortalAuthPool(() => poolFactory(poolConfiguration));
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
+  const client = yield* PgClient.make(poolConfiguration).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );
@@ -82,15 +73,30 @@ export const makeCommercePortalAuthDatabase = Effect.fn('CommercePortalAuthDatab
     Effect.provideService(PgClient.PgClient, client),
   );
 
+  // Better Auth's Drizzle adapter awaits Promise query builders, and no Promise Drizzle driver runs over
+  // the native Effect client, so the adapter alone keeps a pg Pool. It carries the same validated
+  // connect deadline and server-enforced statement/lock timeouts as the native client above.
+  const pool = yield* acquireBetterAuthPool(
+    () =>
+      new Pool({
+        connectionString: Redacted.value(configuration.connectionString),
+        connectionTimeoutMillis: Duration.toMillis(
+          Duration.fromInputUnsafe(poolConfiguration.connectTimeout ?? Duration.zero),
+        ),
+        options: Object.entries(poolConfiguration.startupParameters ?? {})
+          .map(([name, value]) => `-c ${name}=${value}`)
+          .join(' '),
+      }),
+  );
+
   return {
-    executor,
-    // Better Auth owns this Promise-based adapter; provider application reads use the native executor.
     adapter: drizzleAdapter(drizzle({ client: pool, relations: commercePortalAuthRelations }), {
       provider: 'pg',
       schema: commercePortalAuthDatabaseSchema,
       schemaName: COMMERCE_PORTAL_AUTH_SCHEMA_NAME,
       transaction: true,
     }),
+    executor,
   };
 });
 

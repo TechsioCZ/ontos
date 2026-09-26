@@ -12,7 +12,6 @@ import {
   CommercePortalAuthMfaUnavailableProblemSchema,
 } from '../../../../shared/portal-auth/mfa-api.ts';
 import type { CommercePortalAuthMfaProblem } from '../../../../shared/portal-auth/mfa-api.ts';
-import { withCause } from '../../problems-support.ts';
 import { CommercePortalAuthMfaChallengeExpired } from './challenge-expired.ts';
 import type { CommercePortalAuthMfaProviderFailure } from './contracts.ts';
 import { CommercePortalAuthMfaProviderRejected } from './provider-rejected.ts';
@@ -33,29 +32,6 @@ export const commercePortalAuthMfaInvalidProblem = CommercePortalAuthMfaInvalidP
   title: 'Invalid MFA request',
   type: 'https://ontos.dev/problems/commerce-portal-auth-mfa-invalid',
 });
-
-interface CommercePortalAuthMfaInvalidBodyCause {
-  readonly kind: 'invalid-request-body';
-}
-
-/**
- * The owner's re-validation schemas cover `password`, so the raw `Schema.decodeUnknownEffect`
- * failure can carry the submitted password inside its parse issue — it is never kept, only a
- * non-sensitive marker is.
- */
-const invalidRequestBodyCause = <ParseFailure>(_cause: ParseFailure): CommercePortalAuthMfaInvalidBodyCause => ({
-  kind: 'invalid-request-body',
-});
-
-/**
- * Used wherever the owner's tighter re-validation schema (`contracts.ts`) rejects an
- * already-schema-decoded payload — `enable`, `disable`, `regenerate-backup-codes` and `totp-uri` all
- * re-decode a `password` field this way. Never attach the raw parse failure directly: it can quote
- * the submitted password back in its issue message. The singleton problem is copied first, so
- * concurrent requests never race over one shared instance's `cause`.
- */
-export const commercePortalAuthMfaInvalidRequestProblem = (cause: unknown) =>
-  withCause({ ...commercePortalAuthMfaInvalidProblem }, invalidRequestBodyCause(cause));
 
 export const commercePortalAuthMfaTrustDeviceProblem = CommercePortalAuthMfaInvalidProblemSchema.make({
   code: 'trust_device_not_allowed',

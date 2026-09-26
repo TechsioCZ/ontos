@@ -47,7 +47,7 @@ const verificationLedgerEmail = Schema.String.check(Schema.isTrimmed(), Schema.i
 const VerificationLedgerRecordSchema = Schema.Struct({
   email: verificationLedgerEmail,
   providerSubjectId: CommercePortalAuthProviderSubjectIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 type VerificationLedgerRecord = typeof VerificationLedgerRecordSchema.Type;
 
 const unavailable = (operation: string, cause: unknown): CommercePortalAuthRecoveryUnavailable =>

@@ -23,14 +23,14 @@ const AttemptsRemainingSchema = Schema.Finite.check(
 export const CommercePortalAuthStepUpIssueInputSchema = Schema.Struct({
   providerSubjectId: ProviderSubjectIdSchema,
   sessionRef: CommerceSessionReferenceSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export const CommercePortalAuthStepUpVerifyInputSchema = Schema.Struct({
   challengeId: CommercePortalAuthStepUpChallengeIdSchema,
   code: StepUpCodeSchema,
   providerSubjectId: ProviderSubjectIdSchema,
   sessionRef: CommerceSessionReferenceSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /** Public issue result. It carries no code, provider cookie, MFA secret, or user record. */
 export type CommercePortalAuthStepUpRequired = Readonly<{
@@ -45,7 +45,7 @@ export const CommercePortalAuthStepUpRequiredSchema = Schema.Struct({
   challengeId: CommercePortalAuthStepUpChallengeIdSchema,
   expiresAt: Schema.Date,
   outcome: Schema.Literal('STEP_UP_REQUIRED'),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /** Private result consumed by the owner cookie adapter after a successful proof. */
 type CommercePortalAuthStepUpCompleted = Readonly<{

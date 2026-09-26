@@ -18,6 +18,7 @@ import { CommercePortalAuthConfig } from '../../api/portal-auth/provider/config-
 import { parseCommercePortalAuthConfig } from '../../api/portal-auth/provider/config.ts';
 import { makeCommercePortalAuthDatabase } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { session, user } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
+import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 /**
  * The portal realm never answers a question it was not asked: runs against the real composition
@@ -80,7 +81,7 @@ const makeEnrolledAccount = Effect.fnUntraced(function* makeEnrolledAccount(
   caseName: string,
 ): Effect.fn.Return<EnrolledAccount, unknown, Scope.Scope> {
   const configuration = yield* realmConfiguration;
-  const database = yield* makeCommercePortalAuthDatabase(configuration);
+  const database = yield* acquireOutlivingCleanup(makeCommercePortalAuthDatabase(configuration));
   const email = `non-enumeration-${caseName}-${randomUUID()}@example.test`;
   const auth = yield* makeCommercePortalAuth({
     configuration,

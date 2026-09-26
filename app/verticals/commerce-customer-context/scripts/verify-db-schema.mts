@@ -1,7 +1,7 @@
-// @effect-diagnostics asyncFunction:off globalConsole:off nodeBuiltinImport:off -- The operator-only pg verifier adapts the driver's Promise API through Effect.tryPromise; expires: 2027-03-01.
 import { loadDatabaseConnectionPair } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
-import { Client } from 'pg';
+import { PgClient } from '@effect/sql-pg';
+import { Effect, Redacted, Schema } from 'effect';
+import { Reactivity } from 'effect/unstable/reactivity';
 
 import { compareCommerceCustomerContextCatalog } from '../src/database/catalog.ts';
 import { COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME, COMMERCE_CUSTOMER_CONTEXT_TABLES } from '../src/database/schema.ts';
@@ -182,43 +182,32 @@ const failure = (reason: string, cause?: unknown) => {
 
 const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
   const connections = yield* loadDatabaseConnectionPair();
-  const client = new Client({ connectionString: connections.admin.connectionString });
-  yield* Effect.acquireUseRelease(
-    Effect.tryPromise({
-      catch: (cause) => failure('Unable to connect to PostgreSQL as the migration owner', cause),
-      // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary; an async wrapper is rejected by Effect diagnostics.
-      try: () => client.connect().then(() => client),
-    }),
-    (connected) =>
-      Effect.gen(function* inspectCatalog() {
-        const catalog = yield* Effect.tryPromise({
-          catch: (cause) => failure('Unable to read the owner table catalog', cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary; an async wrapper is rejected by Effect diagnostics.
-          try: () =>
-            connected.query<{ readonly table_name: string }>(
-              `select relation.relname as table_name
+  const connected = yield* PgClient.makeClient({ url: Redacted.make(connections.admin.connectionString) }).pipe(
+    Effect.mapError((cause) => failure('Unable to connect to PostgreSQL as the migration owner', cause)),
+  );
+  return yield* Effect.gen(function* inspectCatalog() {
+    const catalog = yield* connected
+      .unsafe<{ readonly table_name: string }>(
+        `select relation.relname as table_name
                from pg_catalog.pg_class as relation
                join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
                where namespace.nspname = $1 and relation.relkind in ('r', 'p')
                order by relation.relname`,
-              [COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME],
-            ),
-        });
-        const difference = compareCommerceCustomerContextCatalog(
-          catalog.rows.map(({ table_name }) => `${COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME}.${table_name}`),
-        );
-        if (difference.missing.length > 0 || difference.unexpected.length > 0) {
-          return yield* failure(
-            `Table catalog mismatch; missing=[${difference.missing.join(',')}], unexpected=[${difference.unexpected.join(',')}]`,
-          );
-        }
+        [COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME],
+      )
+      .pipe(Effect.mapError((cause) => failure('Unable to read the owner table catalog', cause)));
+    const difference = compareCommerceCustomerContextCatalog(
+      catalog.map(({ table_name }) => `${COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME}.${table_name}`),
+    );
+    if (difference.missing.length > 0 || difference.unexpected.length > 0) {
+      return yield* failure(
+        `Table catalog mismatch; missing=[${difference.missing.join(',')}], unexpected=[${difference.unexpected.join(',')}]`,
+      );
+    }
 
-        const result = yield* Effect.tryPromise({
-          catch: (cause) => failure('Unable to verify owner database infrastructure', cause),
-          // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary; an async wrapper is rejected by Effect diagnostics.
-          try: () =>
-            connected.query<VerificationRow>(
-              `select
+    const result = yield* connected
+      .unsafe<VerificationRow>(
+        `select
                  (select count(*)::integer
                     from information_schema.columns as column_record
                    where column_record.table_schema = $1
@@ -352,73 +341,66 @@ const verify = Effect.gen(function* verifyCommerceCustomerContextSchema() {
                  runtime.rolsuper as runtime_super,
                  runtime.rolbypassrls as runtime_bypass_rls
                from pg_catalog.pg_roles as runtime where runtime.rolname = 'ontos_runtime'`,
-              [COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME, SECURITY_DEFINER_SEARCH_PATH],
-            ),
-        });
-        const [row] = result.rows;
-        if (row === undefined) {
-          return yield* failure('Commerce Customer Context database infrastructure is absent');
-        }
-        const unsafeInfrastructure = [
-          row.applicability_projection_column_count !== 10,
-          row.applicability_constraint_count !== 5,
-          row.forced_rls_count !== COMMERCE_CUSTOMER_CONTEXT_TABLES.length,
-          row.policy_count !== COMMERCE_CUSTOMER_CONTEXT_TABLES.length * 5 + 2,
-          row.raw_runtime_privilege_count !== 0,
-          row.exclusion_count !== 11,
-          row.group_description_column_count !== 1,
-          row.group_description_constraint_count !== 1,
-          row.append_only_trigger_count !== 10,
-          row.trigger_count !== EXPECTED_TRIGGER_NAMES.length,
-          !sameStrings(row.trigger_names, EXPECTED_TRIGGER_NAMES),
-          row.journal_count !== 1,
-          row.routine_count !== EXPECTED_RUNTIME_ROUTINES.length,
-          !sameStrings(row.runtime_routines, EXPECTED_RUNTIME_ROUTINES),
-          row.unsafe_routine_count !== 0,
-          !row.runtime_usage,
-          row.runtime_create,
-          row.runtime_super,
-          row.runtime_bypass_rls,
-        ].some(Boolean);
-        if (unsafeInfrastructure) {
-          const expectedRoutines = new Set<string>(EXPECTED_RUNTIME_ROUTINES);
-          const actualRoutines = new Set(row.runtime_routines);
-          const missingRoutines = EXPECTED_RUNTIME_ROUTINES.filter((routine) => !actualRoutines.has(routine));
-          const unexpectedRoutines = row.runtime_routines.filter((routine) => !expectedRoutines.has(routine));
-          const expectedTriggers = new Set<string>(EXPECTED_TRIGGER_NAMES);
-          const actualTriggers = new Set(row.trigger_names);
-          const missingTriggers = EXPECTED_TRIGGER_NAMES.filter((trigger) => !actualTriggers.has(trigger));
-          const unexpectedTriggers = row.trigger_names.filter((trigger) => !expectedTriggers.has(trigger));
-          return yield* failure(
-            `Commerce Customer Context database infrastructure is unsafe; ` +
-              `forcedRls=${row.forced_rls_count}/${COMMERCE_CUSTOMER_CONTEXT_TABLES.length}, ` +
-              `policies=${row.policy_count}/${COMMERCE_CUSTOMER_CONTEXT_TABLES.length * 5 + 2}, ` +
-              `rawRuntimePrivileges=${row.raw_runtime_privilege_count}, exclusions=${row.exclusion_count}/11, ` +
-              `groupDescriptionColumn=${row.group_description_column_count}/1, ` +
-              `groupDescriptionConstraint=${row.group_description_constraint_count}/1, ` +
-              `appendOnlyTriggers=${row.append_only_trigger_count}/10, ` +
-              `triggers=${row.trigger_count}/${EXPECTED_TRIGGER_NAMES.length}, ` +
-              `missingTriggers=[${missingTriggers.join(',')}], unexpectedTriggers=[${unexpectedTriggers.join(',')}], ` +
-              `journal=${row.journal_count}/1, ` +
-              `runtimeRoutines=${row.routine_count}/${EXPECTED_RUNTIME_ROUTINES.length}, ` +
-              `missingRoutines=[${missingRoutines.join(',')}], unexpectedRoutines=[${unexpectedRoutines.join(',')}], ` +
-              `unsafeRoutines=${row.unsafe_routine_count}[${row.unsafe_routines.join(',')}], runtimeUsage=${row.runtime_usage}, ` +
-              `runtimeCreate=${row.runtime_create}, runtimeSuper=${row.runtime_super}, ` +
-              `runtimeBypassRls=${row.runtime_bypass_rls}`,
-          );
-        }
-        return row;
-      }),
-    () =>
-      Effect.tryPromise({
-        catch: (cause) => failure('Unable to close the PostgreSQL verifier connection', cause),
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary; an async wrapper is rejected by Effect diagnostics.
-        try: () => client.end(),
-      }),
-  );
+        [COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME, SECURITY_DEFINER_SEARCH_PATH],
+      )
+      .pipe(Effect.mapError((cause) => failure('Unable to verify owner database infrastructure', cause)));
+    const [row] = result;
+    if (row === undefined) {
+      return yield* failure('Commerce Customer Context database infrastructure is absent');
+    }
+    const unsafeInfrastructure = [
+      row.applicability_projection_column_count !== 10,
+      row.applicability_constraint_count !== 5,
+      row.forced_rls_count !== COMMERCE_CUSTOMER_CONTEXT_TABLES.length,
+      row.policy_count !== COMMERCE_CUSTOMER_CONTEXT_TABLES.length * 5 + 2,
+      row.raw_runtime_privilege_count !== 0,
+      row.exclusion_count !== 11,
+      row.group_description_column_count !== 1,
+      row.group_description_constraint_count !== 1,
+      row.append_only_trigger_count !== 10,
+      row.trigger_count !== EXPECTED_TRIGGER_NAMES.length,
+      !sameStrings(row.trigger_names, EXPECTED_TRIGGER_NAMES),
+      row.journal_count !== 1,
+      row.routine_count !== EXPECTED_RUNTIME_ROUTINES.length,
+      !sameStrings(row.runtime_routines, EXPECTED_RUNTIME_ROUTINES),
+      row.unsafe_routine_count !== 0,
+      !row.runtime_usage,
+      row.runtime_create,
+      row.runtime_super,
+      row.runtime_bypass_rls,
+    ].some(Boolean);
+    if (unsafeInfrastructure) {
+      const expectedRoutines = new Set<string>(EXPECTED_RUNTIME_ROUTINES);
+      const actualRoutines = new Set(row.runtime_routines);
+      const missingRoutines = EXPECTED_RUNTIME_ROUTINES.filter((routine) => !actualRoutines.has(routine));
+      const unexpectedRoutines = row.runtime_routines.filter((routine) => !expectedRoutines.has(routine));
+      const expectedTriggers = new Set<string>(EXPECTED_TRIGGER_NAMES);
+      const actualTriggers = new Set(row.trigger_names);
+      const missingTriggers = EXPECTED_TRIGGER_NAMES.filter((trigger) => !actualTriggers.has(trigger));
+      const unexpectedTriggers = row.trigger_names.filter((trigger) => !expectedTriggers.has(trigger));
+      return yield* failure(
+        `Commerce Customer Context database infrastructure is unsafe; ` +
+          `forcedRls=${row.forced_rls_count}/${COMMERCE_CUSTOMER_CONTEXT_TABLES.length}, ` +
+          `policies=${row.policy_count}/${COMMERCE_CUSTOMER_CONTEXT_TABLES.length * 5 + 2}, ` +
+          `rawRuntimePrivileges=${row.raw_runtime_privilege_count}, exclusions=${row.exclusion_count}/11, ` +
+          `groupDescriptionColumn=${row.group_description_column_count}/1, ` +
+          `groupDescriptionConstraint=${row.group_description_constraint_count}/1, ` +
+          `appendOnlyTriggers=${row.append_only_trigger_count}/10, ` +
+          `triggers=${row.trigger_count}/${EXPECTED_TRIGGER_NAMES.length}, ` +
+          `missingTriggers=[${missingTriggers.join(',')}], unexpectedTriggers=[${unexpectedTriggers.join(',')}], ` +
+          `journal=${row.journal_count}/1, ` +
+          `runtimeRoutines=${row.routine_count}/${EXPECTED_RUNTIME_ROUTINES.length}, ` +
+          `missingRoutines=[${missingRoutines.join(',')}], unexpectedRoutines=[${unexpectedRoutines.join(',')}], ` +
+          `unsafeRoutines=${row.unsafe_routine_count}[${row.unsafe_routines.join(',')}], runtimeUsage=${row.runtime_usage}, ` +
+          `runtimeCreate=${row.runtime_create}, runtimeSuper=${row.runtime_super}, ` +
+          `runtimeBypassRls=${row.runtime_bypass_rls}`,
+      );
+    }
+    return row;
+  });
 });
 
-await Effect.runPromise(verify);
+await Effect.runPromise(verify.pipe(Effect.scoped, Effect.provide(Reactivity.layer)));
 process.stdout.write(
   `Verified ${COMMERCE_CUSTOMER_CONTEXT_TABLES.length} governed tables in ${COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME}\n`,
 );

@@ -19,7 +19,7 @@ export const EnrollmentRetainedCorePairSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   bindingRevision: BindingRevisionSchema,
   principalId: PrincipalIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type EnrollmentRetainedCorePair = typeof EnrollmentRetainedCorePairSchema.Type;
 
 /**
@@ -29,7 +29,7 @@ export type EnrollmentRetainedCorePair = typeof EnrollmentRetainedCorePairSchema
  */
 const EnrollmentCommitResolutionOpenSchema = Schema.TaggedStruct('EnrollmentCommitResolutionOpen', {
   invocationId: EnrollmentActionInvocationIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /**
  * The original invocation is confirmed committed.  `retainedBinding` is populated only when the
@@ -39,7 +39,7 @@ const EnrollmentCommitResolutionOpenSchema = Schema.TaggedStruct('EnrollmentComm
 export const EnrollmentCommitResolutionCommittedSchema = Schema.TaggedStruct('EnrollmentCommitResolutionCommitted', {
   invocationId: EnrollmentActionInvocationIdSchema,
   retainedBinding: Schema.optionalKey(EnrollmentRetainedCorePairSchema),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /**
  * Two different attempts targeted the same exact namespace-qualified subject.  Core's own
@@ -51,7 +51,7 @@ export const EnrollmentCommitResolutionConvergedSchema = Schema.TaggedStruct('En
   convergedInvocationId: EnrollmentActionInvocationIdSchema,
   invocationId: EnrollmentActionInvocationIdSchema,
   retainedBinding: EnrollmentRetainedCorePairSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /**
  * The Action itself did not commit, but `retainedBinding`, when present, records that the owner
@@ -65,7 +65,7 @@ export const EnrollmentCommitResolutionPartialFailureSchema = Schema.TaggedStruc
     invocationId: EnrollmentActionInvocationIdSchema,
     retainedBinding: Schema.optionalKey(EnrollmentRetainedCorePairSchema),
   },
-).annotate({ parseOptions: { onExcessProperty: 'error' } });
+);
 
 export const EnrollmentCommitResolutionOutcomeSchema = Schema.Union([
   EnrollmentCommitResolutionOpenSchema,

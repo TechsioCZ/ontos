@@ -2,10 +2,10 @@ import { randomUUID } from 'node:crypto';
 
 import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
-import { Pool } from 'pg';
 
-import { layerTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { layerTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { acquireFixturePgClient } from './fixture-pg-client.ts';
 import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
 import { ActionRepositoryLive } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { ActionRuntime, ActionRuntimeLive } from '../../../../packages/core-runtime/src/actions/runtime.ts';
@@ -22,7 +22,7 @@ import type {
 import { AuthenticationNamespaceRegistry } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import type { AuthenticationNamespaceRegistryService } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import { trustResolvedSystemPrincipalContext } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
-import { acquirePoolResource, CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
+import { CoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import {
   actionInvocations,
@@ -111,13 +111,13 @@ const AcceptanceActionPermissionLive = Layer.succeed(ActionPermission, {
  */
 class AcceptanceCoreDatabase extends Context.Service<
   AcceptanceCoreDatabase,
-  TestDatabaseFromPool<typeof coreRelations>
+  TestDatabaseFromClient<typeof coreRelations>
 >()('@app/commerce-customer-context/tests/support/AcceptanceCoreDatabase') {}
 
 const acceptanceDatabase = Effect.fnUntraced(function* acceptanceDatabase(connectionString: string) {
-  const pool = yield* acquirePoolResource(() => new Pool({ connectionString, max: 3 }));
+  const client = yield* acquireFixturePgClient(connectionString, 3);
   const executor = yield* AcceptanceCoreDatabase.pipe(
-    Effect.provide(layerTestDatabaseFromPool(AcceptanceCoreDatabase, pool, coreRelations)),
+    Effect.provide(layerTestDatabaseFromClient(AcceptanceCoreDatabase, client, coreRelations)),
     Effect.orDie,
   );
   return { executor };

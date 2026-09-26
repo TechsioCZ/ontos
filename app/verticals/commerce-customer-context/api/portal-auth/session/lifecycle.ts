@@ -311,9 +311,9 @@ export const makeCommercePortalAuthSessionLifecycle = (
   const signIn = Effect.fn('CommercePortalAuthSessionLifecycle.signIn')(function* signIn(
     input: Schema.Codec.Encoded<typeof CommercePortalAuthSignInInputSchema>,
   ): Effect.fn.Return<CommercePortalAuthSessionSignInResult, CommercePortalAuthSessionFailure> {
-    const request = yield* Schema.decodeEffect(CommercePortalAuthSignInInputSchema)(input).pipe(
-      Effect.mapError((cause) => invalidRequest(cause)),
-    );
+    const request = yield* Schema.decodeEffect(CommercePortalAuthSignInInputSchema, { onExcessProperty: 'error' })(
+      input,
+    ).pipe(Effect.mapError((cause) => invalidRequest(cause)));
     const providerResult = yield* provider.signInEmail(request);
     if ('outcome' in providerResult) {
       return providerResult.outcome === 'MFA_REQUIRED'
@@ -351,9 +351,9 @@ export const makeCommercePortalAuthSessionLifecycle = (
     Extract<CommercePortalAuthSessionOutcome, { readonly outcome: 'SESSION_REVOKED' }>,
     CommercePortalAuthSessionFailure
   > {
-    const request = yield* Schema.decodeEffect(CommercePortalAuthSessionReferenceInputSchema)(input).pipe(
-      Effect.mapError((cause) => invalidRequest(cause)),
-    );
+    const request = yield* Schema.decodeEffect(CommercePortalAuthSessionReferenceInputSchema, {
+      onExcessProperty: 'error',
+    })(input).pipe(Effect.mapError((cause) => invalidRequest(cause)));
     const sessionId = yield* parseSessionId(request);
     const auditEvent: CommercePortalAuthAuditEvent = {
       eventType,
@@ -399,9 +399,9 @@ export const makeCommercePortalAuthSessionLifecycle = (
   const revokeUnaudited = Effect.fn('CommercePortalAuthSessionLifecycle.revokeUnaudited')(function* revokeUnaudited(
     input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
   ): Effect.fn.Return<boolean, CommercePortalAuthSessionFailure> {
-    const request = yield* Schema.decodeEffect(CommercePortalAuthSessionReferenceInputSchema)(input).pipe(
-      Effect.mapError((cause) => invalidRequest(cause)),
-    );
+    const request = yield* Schema.decodeEffect(CommercePortalAuthSessionReferenceInputSchema, {
+      onExcessProperty: 'error',
+    })(input).pipe(Effect.mapError((cause) => invalidRequest(cause)));
     const sessionId = yield* parseSessionId(request);
     return yield* store.revoke(
       request.expectedProviderSubjectId === undefined
@@ -432,9 +432,9 @@ export const makeCommercePortalAuthSessionLifecycle = (
   const refreshSession = Effect.fn('CommercePortalAuthSessionLifecycle.refreshSession')(function* refreshSession(
     input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
   ): Effect.fn.Return<RefreshExecution, CommercePortalAuthSessionFailure> {
-    const request = yield* Schema.decodeEffect(CommercePortalAuthSessionReferenceInputSchema)(input).pipe(
-      Effect.mapError((cause) => invalidRequest(cause)),
-    );
+    const request = yield* Schema.decodeEffect(CommercePortalAuthSessionReferenceInputSchema, {
+      onExcessProperty: 'error',
+    })(input).pipe(Effect.mapError((cause) => invalidRequest(cause)));
     const sessionId = yield* parseSessionId(request);
     const recordOption = yield* store.findById(sessionId);
     if (Option.isNone(recordOption)) {
@@ -553,9 +553,9 @@ export const makeCommercePortalAuthSessionLifecycle = (
   const revokeAll = Effect.fn('CommercePortalAuthSessionLifecycle.revokeAll')(function* revokeAll(
     input: Schema.Codec.Encoded<typeof CommercePortalAuthAccountSubjectInputSchema>,
   ): Effect.fn.Return<number, CommercePortalAuthSessionFailure> {
-    const request = yield* Schema.decodeEffect(CommercePortalAuthAccountSubjectInputSchema)(input).pipe(
-      Effect.mapError((cause) => invalidRequest(cause)),
-    );
+    const request = yield* Schema.decodeEffect(CommercePortalAuthAccountSubjectInputSchema, {
+      onExcessProperty: 'error',
+    })(input).pipe(Effect.mapError((cause) => invalidRequest(cause)));
     const auditEvent: CommercePortalAuthAuditEvent = {
       eventType: 'commerce.portal-auth.session-revoked.v1',
       occurredAt: clock.now(),
@@ -579,9 +579,9 @@ export const makeCommercePortalAuthSessionLifecycle = (
     Extract<CommercePortalAuthSessionOutcome, { readonly outcome: 'ACCOUNT_DISABLED' | 'AUTHENTICATION_FAILED' }>,
     CommercePortalAuthSessionFailure
   > {
-    const request = yield* Schema.decodeEffect(CommercePortalAuthAccountSubjectInputSchema)(input).pipe(
-      Effect.mapError((cause) => invalidRequest(cause)),
-    );
+    const request = yield* Schema.decodeEffect(CommercePortalAuthAccountSubjectInputSchema, {
+      onExcessProperty: 'error',
+    })(input).pipe(Effect.mapError((cause) => invalidRequest(cause)));
     const changed = yield* store.disableAccountWithAudit({
       audit: {
         eventType: 'commerce.portal-auth.account-disabled.v1',
@@ -622,9 +622,9 @@ export const makeCommercePortalAuthSessionLifecycle = (
       input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionRotationInputSchema>,
       completion?: CommercePortalAuthAuditEvent,
     ): Effect.fn.Return<RotationExecution, CommercePortalAuthSessionFailure> {
-      const request = yield* Schema.decodeEffect(CommercePortalAuthSessionRotationInputSchema)(input).pipe(
-        Effect.mapError((cause) => invalidRequest(cause)),
-      );
+      const request = yield* Schema.decodeEffect(CommercePortalAuthSessionRotationInputSchema, {
+        onExcessProperty: 'error',
+      })(input).pipe(Effect.mapError((cause) => invalidRequest(cause)));
       if (!isRotationEnabled(request.reason)) {
         return yield* new CommercePortalAuthSessionRotationRejected({
           reason: `Session identifier rotation is disabled by ${COMMERCE_PORTAL_AUTH_SESSION_POLICY_VERSION}`,
@@ -716,9 +716,9 @@ export const makeCommercePortalAuthSessionLifecycle = (
     function* evidenceForSession(
       input: Schema.Codec.Encoded<typeof CommercePortalAuthSessionReferenceInputSchema>,
     ): Effect.fn.Return<CommercePortalAuthSessionEvidence, CommercePortalAuthSessionEvidenceFailure> {
-      const decoded = yield* Schema.decodeEffect(CommercePortalAuthSessionReferenceInputSchema)(input).pipe(
-        Effect.mapError((cause) => invalidRequest(cause)),
-      );
+      const decoded = yield* Schema.decodeEffect(CommercePortalAuthSessionReferenceInputSchema, {
+        onExcessProperty: 'error',
+      })(input).pipe(Effect.mapError((cause) => invalidRequest(cause)));
       const sessionId = yield* parseSessionId(decoded);
       const recordOption = yield* store.findById(sessionId);
       if (Option.isNone(recordOption)) {
@@ -746,9 +746,9 @@ export const makeCommercePortalAuthSessionLifecycle = (
       };
       // Decode the final projection before handing it to a receiver adapter. This catches accidental
       // provider fields (especially token/cookie material) at the owner boundary.
-      return yield* Schema.decodeEffect(CommercePortalAuthSessionEvidenceSchema)(evidence).pipe(
-        Effect.mapError((cause) => unavailable('session-evidence', cause)),
-      );
+      return yield* Schema.decodeEffect(CommercePortalAuthSessionEvidenceSchema, { onExcessProperty: 'error' })(
+        evidence,
+      ).pipe(Effect.mapError((cause) => unavailable('session-evidence', cause)));
     },
   );
 

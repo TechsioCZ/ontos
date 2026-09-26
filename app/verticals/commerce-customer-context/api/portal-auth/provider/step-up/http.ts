@@ -67,7 +67,7 @@ const ProviderSessionIdSchema = BoundedIdentifierSchema.pipe(Schema.brand('Comme
 const CurrentSessionSchema = Schema.Struct({
   providerSubjectId: ProviderSubjectIdSchema,
   sessionId: ProviderSessionIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 const COOKIE_HANDOFF_OPERATION = 'cookie-handoff';
 const httpBridgeTimeout = Duration.millis(COMMERCE_PORTAL_AUTH_POLICY.session.providerCallTimeoutMilliseconds);

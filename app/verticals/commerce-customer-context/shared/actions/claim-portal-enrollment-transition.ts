@@ -13,11 +13,11 @@ export const ClaimPortalEnrollmentTransitionPayloadSchema = Schema.Struct({
   portalEnrollmentAttemptId: ClaimEnrollmentTransitionInputSchema.fields.portalEnrollmentAttemptId,
   requestDigest: ClaimEnrollmentTransitionInputSchema.fields.requestDigest,
   transitionKey: ClaimEnrollmentTransitionInputSchema.fields.transitionKey,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type ClaimPortalEnrollmentTransitionPayload = typeof ClaimPortalEnrollmentTransitionPayloadSchema.Type;
 
 export const ClaimPortalEnrollmentTransitionResultSchema = Schema.Struct({
   attempt: EnrollmentAttemptSnapshotSchema,
   operation: EnrollmentOwnerOperationSnapshotSchema,
   outcome: Schema.Literals(['CLAIMED', 'REPLAYED', 'ALREADY_CLAIMED']),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});

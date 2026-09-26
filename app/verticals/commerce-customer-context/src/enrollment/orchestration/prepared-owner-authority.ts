@@ -46,14 +46,14 @@ const PreparedOwnerBindingSchema = Schema.Struct({
   requestDigest: Schema.optionalKey(EnrollmentDigestSchema),
   tenantId: EnrollmentTenantIdSchema,
   transitionKey: EnrollmentTransitionKeySchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export type CommerceEnrollmentPreparedOwnerBinding = typeof PreparedOwnerBindingSchema.Type;
 
 const PreparedOwnerObservationSchema = Schema.Struct({
   evidenceRef: EnrollmentEvidenceReferenceSchema,
   resolution: Schema.optionalKey(ReconcileEnrollmentResolutionSchema),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 type CommerceEnrollmentPreparedOwnerObservation = typeof PreparedOwnerObservationSchema.Type;
 
@@ -182,7 +182,7 @@ const makePreparedOwnerCapability = (
 ): CommerceEnrollmentPreparedOwnerCapability['Service'] => {
   const service: CommerceEnrollmentPreparedOwnerCapability['Service'] = Object.freeze({
     take: (binding): Effect.Effect<CommerceEnrollmentPreparedOwnerEvidence, CommerceEnrollmentAttemptError> =>
-      Schema.decodeEffect(PreparedOwnerBindingSchema)(binding).pipe(
+      Schema.decodeEffect(PreparedOwnerBindingSchema, { onExcessProperty: 'error' })(binding).pipe(
         Effect.mapError((cause) => attemptRejected('The owner authorization binding is invalid', undefined, cause)),
         Effect.flatMap((decodedBinding) => {
           const entry = store.entries.get(decodedBinding.actionInvocationId);
@@ -277,7 +277,7 @@ const buildRecordBinding = (details: {
 const decodePreparationResult = (
   result: CommerceEnrollmentOwnerTransitionPreparationResult,
 ): Effect.Effect<CommerceEnrollmentOwnerTransitionPreparationResult, ActionPermissionCheckError> =>
-  Schema.decodeEffect(OwnerPreparationResultSchema)(result).pipe(
+  Schema.decodeEffect(OwnerPreparationResultSchema, { onExcessProperty: 'error' })(result).pipe(
     Effect.mapError((cause) => permissionUnavailable(cause)),
   );
 

@@ -37,8 +37,11 @@ it.live('a second subject can never be reserved onto an existing Principal', () 
       expect(firstReserved.outcome).toBe('RESERVED');
 
       // The reservation payload is the only way into Core from the enrollment path, and it carries
-      // no target Principal: a caller naming one is refused before any row is touched.
-      const targeted = yield* Schema.decodeUnknownEffect(ReservePrincipalBindingPayloadSchema)({
+      // no target Principal: a caller naming one is refused before any row is touched. Decoded as
+      // the governed Action runtime decodes every Action payload: closed.
+      const targeted = yield* Schema.decodeUnknownEffect(ReservePrincipalBindingPayloadSchema, {
+        onExcessProperty: 'error',
+      })({
         authenticationNamespaceId: second.authenticationNamespaceId,
         principalId: firstReserved.principalId,
         providerSubjectId: second.providerSubjectId,

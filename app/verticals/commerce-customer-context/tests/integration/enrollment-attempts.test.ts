@@ -7,10 +7,11 @@ import {
 import { eq, sql } from 'drizzle-orm';
 import { Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
-import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
 import type {
   ClaimEnrollmentTransitionInput,
@@ -57,6 +58,7 @@ import {
   portalEnrollmentAttempts,
   portalEnrollmentOwnerOperations,
 } from '../../src/database/schema.ts';
+import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('d6000000-0000-4000-8000-000000000001');
 const principalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)('d6000000-0000-4000-8000-000000000002');
@@ -189,7 +191,7 @@ const makeTransactionExecutor =
 
 /** Every scenario's fixtures are this Tenant's Attempts and owner operations, torn down the same way. */
 const cleanupTenantFixtures = (
-  admin: Effect.Success<ReturnType<typeof makeTestDatabaseFromPool<typeof commerceCustomerContextRelations>>>,
+  admin: Effect.Success<ReturnType<typeof makeTestDatabaseFromClient<typeof commerceCustomerContextRelations>>>,
 ) =>
   admin.transaction((transaction: CommerceCustomerContextTransaction) =>
     Effect.gen(function* cleanFixtures() {
@@ -205,14 +207,12 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
   Effect.scoped(
     Effect.gen(function* postgresAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquirePoolResource(
-        () => new Pool({ connectionString: connections.admin.connectionString }),
+      const adminClient = yield* acquireOutlivingCleanup(makeTestPgClient(connections.admin.connectionString));
+      const runtimeClient = yield* acquireOutlivingCleanup(
+        makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 }),
       );
-      const runtimePool = yield* acquirePoolResource(
-        () => new Pool({ connectionString: connections.runtime.connectionString, max: 4 }),
-      );
-      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
+      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 
       const cleanup = () => cleanupTenantFixtures(admin);
 
@@ -614,14 +614,12 @@ it.live('reconciles a FAILED owner_reconciliation_required outcome instead of re
   Effect.scoped(
     Effect.gen(function* reconcileOwnerRequiredFailureAcceptance() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquirePoolResource(
-        () => new Pool({ connectionString: connections.admin.connectionString }),
+      const adminClient = yield* acquireOutlivingCleanup(makeTestPgClient(connections.admin.connectionString));
+      const runtimeClient = yield* acquireOutlivingCleanup(
+        makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 }),
       );
-      const runtimePool = yield* acquirePoolResource(
-        () => new Pool({ connectionString: connections.runtime.connectionString, max: 4 }),
-      );
-      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
+      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 
       const cleanup = () => cleanupTenantFixtures(admin);
 
@@ -759,7 +757,7 @@ const scopeB = {
 };
 
 const cleanupFixturesForTenant = (
-  admin: Effect.Success<ReturnType<typeof makeTestDatabaseFromPool<typeof commerceCustomerContextRelations>>>,
+  admin: Effect.Success<ReturnType<typeof makeTestDatabaseFromClient<typeof commerceCustomerContextRelations>>>,
   forTenantId: typeof tenantId,
 ) =>
   admin.transaction((transaction: CommerceCustomerContextTransaction) =>
@@ -792,14 +790,12 @@ it.live("rejects a cross-Tenant read of another Tenant's enrollment Attempt and 
   Effect.scoped(
     Effect.gen(function* crossTenantReadRejected() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquirePoolResource(
-        () => new Pool({ connectionString: connections.admin.connectionString }),
+      const adminClient = yield* acquireOutlivingCleanup(makeTestPgClient(connections.admin.connectionString));
+      const runtimeClient = yield* acquireOutlivingCleanup(
+        makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 }),
       );
-      const runtimePool = yield* acquirePoolResource(
-        () => new Pool({ connectionString: connections.runtime.connectionString, max: 4 }),
-      );
-      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
-      const runtime = yield* makeTestDatabaseFromPool(runtimePool, commerceCustomerContextRelations);
+      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
 
       const cleanup = () =>
         Effect.all([cleanupTenantFixtures(admin), cleanupFixturesForTenant(admin, tenantB)], { concurrency: 1 });

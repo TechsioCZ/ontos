@@ -16,10 +16,11 @@ import { COMMERCE_AUTHENTICATION_NAMESPACE_ID, CommerceSessionReferenceSchema } 
  * runtime publishes them under `COMMERCE_PORTAL_AUTH_PUBLIC_BASE_PATH`.
  */
 
-/** Callers send no fields on the cookie-authenticated routes; an extra field is a rejected request. */
-const CommercePortalAuthSessionEmptyPayloadSchema = Schema.Struct({}).annotate({
-  parseOptions: { onExcessProperty: 'error' },
-});
+/**
+ * Callers send no fields on the cookie-authenticated routes; an extra field is a rejected request.
+ * Every key is refused by the schema itself, whatever the parse options of the decode.
+ */
+const CommercePortalAuthSessionEmptyPayloadSchema = Schema.Record(Schema.String, Schema.Never);
 
 /**
  * The wire projection of `CommercePortalAuthSessionSnapshot`. Dates encode as ISO-8601 strings, so
@@ -35,7 +36,7 @@ const CommercePortalAuthSessionSnapshotSchema = Schema.Struct({
   sessionRef: CommerceSessionReferenceSchema,
   subjectType: Schema.Literal('user'),
   updatedAt: Schema.Date,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export type CommercePortalAuthSessionSnapshotWire = typeof CommercePortalAuthSessionSnapshotSchema.Type;
 

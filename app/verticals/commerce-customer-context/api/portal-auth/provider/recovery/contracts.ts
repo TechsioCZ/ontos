@@ -17,7 +17,7 @@ const newPassword = Schema.Redacted(
 /** Public recovery input. The provider normalizes the identifier before invoking Better Auth. */
 export const CommercePortalAuthPasswordResetRequestSchema = Schema.Struct({
   email,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CommercePortalAuthPasswordResetRequestBoundary = Schema.Codec.Encoded<
   typeof CommercePortalAuthPasswordResetRequestSchema
 >;
@@ -26,7 +26,7 @@ export type CommercePortalAuthPasswordResetRequestBoundary = Schema.Codec.Encode
 export const CommercePortalAuthPasswordResetSchema = Schema.Struct({
   newPassword,
   token: recoveryToken,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CommercePortalAuthPasswordResetBoundary = Schema.Codec.Encoded<
   typeof CommercePortalAuthPasswordResetSchema
 >;
@@ -35,14 +35,14 @@ export type CommercePortalAuthPasswordResetBoundary = Schema.Codec.Encoded<
 export const CommercePortalAuthEmailVerificationRequestSchema = Schema.Struct({
   email,
   providerSubjectId: CommercePortalAuthProviderSubjectIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CommercePortalAuthEmailVerificationRequestBoundary = Schema.Codec.Encoded<
   typeof CommercePortalAuthEmailVerificationRequestSchema
 >;
 
 export const CommercePortalAuthEmailVerificationTokenSchema = Schema.Struct({
   token: recoveryToken,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type CommercePortalAuthEmailVerificationTokenBoundary = Schema.Codec.Encoded<
   typeof CommercePortalAuthEmailVerificationTokenSchema
 >;

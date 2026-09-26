@@ -1,7 +1,7 @@
 import { getTableConfig } from 'drizzle-orm/pg-core';
-import { Array as EffectArray, Console, Effect, Exit, Order, Redacted, Schema } from 'effect';
-import { Client } from 'pg';
-import type { QueryResultRow } from 'pg';
+import { PgClient } from '@effect/sql-pg';
+import { Array as EffectArray, Console, Effect, Exit, Order, Schema } from 'effect';
+import { Reactivity } from 'effect/unstable/reactivity';
 
 import { loadCommercePortalAuthDatabaseConfig } from './portal-auth-database-config.mts';
 import type {
@@ -25,7 +25,7 @@ export interface CommercePortalAuthTableCatalogDifference {
   readonly unexpected: readonly string[];
 }
 
-export interface CommercePortalAuthTablePrivilegeRow extends QueryResultRow {
+export interface CommercePortalAuthTablePrivilegeRow {
   readonly database_create: boolean | null;
   readonly relation_name: string;
   readonly role_bypass_rls: boolean | null;
@@ -44,16 +44,16 @@ export interface CommercePortalAuthTablePrivilegeRow extends QueryResultRow {
   readonly runtime_usage: boolean | null;
 }
 
-interface CatalogRow extends QueryResultRow {
+interface CatalogRow {
   readonly table_name: string;
 }
 
-interface DatabaseIdentityRow extends QueryResultRow {
+interface DatabaseIdentityRow {
   readonly database_name: string;
   readonly role_name: string;
 }
 
-interface JournalRow extends QueryResultRow {
+interface JournalRow {
   readonly journal_count: number;
 }
 
@@ -93,31 +93,19 @@ export const compareCommercePortalAuthCatalog = (
 const verificationFailure = (reason: string): CommercePortalAuthDatabaseVerificationError =>
   new CommercePortalAuthDatabaseVerificationError({ reason });
 
-const query = <Row extends QueryResultRow>(client: Client, text: string, values: readonly unknown[], reason: string) =>
-  Effect.tryPromise({
-    catch: () => verificationFailure(reason),
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-    try: () => client.query<Row>(text, [...values]),
-  });
+const query = <Row extends object>(
+  client: PgClient.PgClient,
+  text: string,
+  values: readonly string[],
+  reason: string,
+) => client.unsafe<Row>(text, values).pipe(Effect.mapError(() => verificationFailure(reason)));
 
 const connect = (connection: CommercePortalAuthDatabaseConnection, roleDescription: string) =>
-  Effect.tryPromise({
-    catch: () => verificationFailure(`Unable to connect to PostgreSQL as the ${roleDescription}`),
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-    try: () => {
-      const client = new Client({ connectionString: Redacted.value(connection.connectionString) });
-      return client.connect().then(() => client);
-    },
-  });
+  PgClient.makeClient({ url: connection.connectionString }).pipe(
+    Effect.mapError(() => verificationFailure(`Unable to connect to PostgreSQL as the ${roleDescription}`)),
+  );
 
-const close = (client: Client, roleDescription: string) =>
-  Effect.tryPromise({
-    catch: () => verificationFailure(`Unable to close the ${roleDescription} PostgreSQL connection`),
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect.tryPromise owns the PostgreSQL Promise boundary.
-    try: () => client.end(),
-  });
-
-const readIdentity = (client: Client, roleDescription: string) =>
+const readIdentity = (client: PgClient.PgClient, roleDescription: string) =>
   query<DatabaseIdentityRow>(
     client,
     'select current_database() as database_name, current_user as role_name',
@@ -125,14 +113,18 @@ const readIdentity = (client: Client, roleDescription: string) =>
     `Unable to read the ${roleDescription} PostgreSQL connection identity`,
   ).pipe(
     Effect.flatMap((result) => {
-      const [identity] = result.rows;
+      const [identity] = result;
       return identity === undefined
         ? Effect.fail(verificationFailure(`The ${roleDescription} PostgreSQL connection returned no identity`))
         : Effect.succeed(identity);
     }),
   );
 
-const verifyIdentities = (connections: CommercePortalAuthDatabaseConnectionPair, admin: Client, runtime: Client) =>
+const verifyIdentities = (
+  connections: CommercePortalAuthDatabaseConnectionPair,
+  admin: PgClient.PgClient,
+  runtime: PgClient.PgClient,
+) =>
   Effect.gen(function* verifyConnectionIdentities() {
     const adminIdentity = yield* readIdentity(admin, 'administrative');
     const runtimeIdentity = yield* readIdentity(runtime, 'runtime');
@@ -152,7 +144,7 @@ const verifyIdentities = (connections: CommercePortalAuthDatabaseConnectionPair,
     return yield* Effect.void;
   });
 
-const verifyCatalog = (client: Client) =>
+const verifyCatalog = (client: PgClient.PgClient) =>
   Effect.gen(function* verifyTypedCatalog() {
     const result = yield* query<CatalogRow>(
       client,
@@ -165,7 +157,7 @@ const verifyCatalog = (client: Client) =>
       'Unable to read the Commerce portal authentication table catalog',
     );
     const difference = compareCommercePortalAuthCatalog(
-      result.rows.map(({ table_name }) => `${COMMERCE_PORTAL_AUTH_SCHEMA_NAME}.${table_name}`),
+      result.map(({ table_name }) => `${COMMERCE_PORTAL_AUTH_SCHEMA_NAME}.${table_name}`),
     );
     if (difference.missing.length > 0 || difference.unexpected.length > 0) {
       return yield* verificationFailure(
@@ -175,7 +167,7 @@ const verifyCatalog = (client: Client) =>
     return yield* Effect.void;
   });
 
-const verifyPrivileges = (client: Client, runtimeUser: string, ownerUser: string) =>
+const verifyPrivileges = (client: PgClient.PgClient, runtimeUser: string, ownerUser: string) =>
   Effect.gen(function* verifyRuntimePrivileges() {
     const result = yield* query<CommercePortalAuthTablePrivilegeRow>(
       client,
@@ -207,7 +199,7 @@ const verifyPrivileges = (client: Client, runtimeUser: string, ownerUser: string
     const expectedNames = new Set(
       expectedCommercePortalAuthTableNames.map((name) => name.slice(name.indexOf('.') + 1)),
     );
-    const wrongRows = result.rows.filter(
+    const wrongRows = result.filter(
       (row) =>
         !expectedNames.has(row.relation_name) ||
         row.runtime_table_owner !== ownerUser ||
@@ -227,8 +219,8 @@ const verifyPrivileges = (client: Client, runtimeUser: string, ownerUser: string
         row.role_create_role !== false,
     );
     if (
-      result.rows.length !== COMMERCE_PORTAL_AUTH_TABLES.length ||
-      new Set(result.rows.map(({ relation_name }) => relation_name)).size !== result.rows.length ||
+      result.length !== COMMERCE_PORTAL_AUTH_TABLES.length ||
+      new Set(result.map(({ relation_name }) => relation_name)).size !== result.length ||
       wrongRows.length > 0
     ) {
       return yield* verificationFailure('Commerce portal authentication runtime privileges are unsafe');
@@ -236,7 +228,7 @@ const verifyPrivileges = (client: Client, runtimeUser: string, ownerUser: string
     return yield* Effect.void;
   });
 
-const verifyJournal = (client: Client) =>
+const verifyJournal = (client: PgClient.PgClient) =>
   Effect.gen(function* verifyMigrationJournal() {
     const result = yield* query<JournalRow>(
       client,
@@ -249,7 +241,7 @@ const verifyJournal = (client: Client) =>
       [PORTAL_AUTH_MIGRATION_JOURNAL],
       'Unable to verify the Commerce portal authentication migration journal',
     );
-    if (result.rows[0]?.journal_count !== 1) {
+    if (result[0]?.journal_count !== 1) {
       return yield* verificationFailure('Commerce portal authentication migration journal is missing or duplicated');
     }
     return yield* Effect.void;
@@ -260,20 +252,15 @@ const verify = Effect.gen(function* verifyCommercePortalAuthDatabase() {
     Effect.mapError((failure) => verificationFailure(failure.reason)),
   );
 
-  yield* Effect.acquireUseRelease(
-    connect(connections.admin, 'administrative'),
-    (admin) =>
-      Effect.acquireUseRelease(
-        connect(connections.runtime, 'runtime'),
-        (runtime) =>
-          verifyIdentities(connections, admin, runtime).pipe(
-            Effect.andThen(verifyCatalog(admin)),
-            Effect.andThen(verifyPrivileges(admin, connections.runtime.user, connections.admin.user)),
-            Effect.andThen(verifyJournal(admin)),
-          ),
-        (runtime) => close(runtime, 'runtime'),
-      ),
-    (admin) => close(admin, 'administrative'),
+  yield* Effect.scoped(
+    Effect.gen(function* verifyWithConnections() {
+      const admin = yield* connect(connections.admin, 'administrative');
+      const runtime = yield* connect(connections.runtime, 'runtime');
+      yield* verifyIdentities(connections, admin, runtime);
+      yield* verifyCatalog(admin);
+      yield* verifyPrivileges(admin, connections.runtime.user, connections.admin.user);
+      yield* verifyJournal(admin);
+    }),
   );
 
   yield* Console.log(
@@ -281,5 +268,10 @@ const verify = Effect.gen(function* verifyCommercePortalAuthDatabase() {
   );
 });
 
-const exit = await Effect.runPromiseExit(verify.pipe(Effect.tapError((failure) => Console.error(failure.reason))));
+const exit = await Effect.runPromiseExit(
+  verify.pipe(
+    Effect.provide(Reactivity.layer),
+    Effect.tapError((failure) => Console.error(failure.reason)),
+  ),
+);
 process.exitCode = Exit.isFailure(exit) ? 1 : 0;

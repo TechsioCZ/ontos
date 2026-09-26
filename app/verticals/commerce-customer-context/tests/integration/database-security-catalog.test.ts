@@ -2,15 +2,17 @@ import { loadDatabaseConnectionPair } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { Array as EffectArray, Effect, Order } from 'effect';
 import { expect, it } from 'effect-rstest';
-import { Pool } from 'pg';
 
-import { acquirePoolResource } from '../../../../packages/core-runtime/src/db/client.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME,
   COMMERCE_CUSTOMER_CONTEXT_TABLE_INVENTORY,
   commerceCustomerContextRelations,
 } from '../../src/database/schema.ts';
+import { acquireOutlivingCleanup } from '../support/fixture-pg-client.ts';
 
 const runtimeRole = 'ontos_runtime';
 const securityDefinerSearchPath = 'search_path=pg_catalog, commerce_customer_context, pg_temp';
@@ -215,10 +217,10 @@ it.live('governs the Commerce Customer Context schema through forced RLS and rou
   Effect.scoped(
     Effect.gen(function* databaseSecurityCatalog() {
       const connections = yield* loadDatabaseConnectionPair();
-      const adminPool = yield* acquirePoolResource(
-        () => new Pool({ connectionString: connections.admin.connectionString, max: 1 }),
+      const adminClient = yield* acquireOutlivingCleanup(
+        makeTestPgClient(connections.admin.connectionString, { maxConnections: 1 }),
       );
-      const admin = yield* makeTestDatabaseFromPool(adminPool, commerceCustomerContextRelations);
+      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
       const schema = COMMERCE_CUSTOMER_CONTEXT_SCHEMA_NAME;
 
       const tables = yield* admin.execute<{
