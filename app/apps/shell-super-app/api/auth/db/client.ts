@@ -3,11 +3,10 @@ import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { drizzle } from 'drizzle-orm/node-postgres';
-import { Context, Effect, Layer, Redacted } from 'effect';
+import { Context, Duration, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { Pool } from 'pg';
-import type { PoolConfig } from 'pg';
 
 import { AuthConfig } from '../config.ts';
 import type { AuthConfigValue } from '../config.ts';
@@ -49,10 +48,6 @@ export const acquirePoolResource = <Resource extends PoolResource>(
     (pool) => Effect.promise(() => pool.end()),
   );
 
-export type PoolFactory = (configuration: PoolConfig) => Pool;
-
-const defaultPoolFactory: PoolFactory = (configuration) => new Pool(configuration);
-
 const mapPoolConfigurationError = (error: { readonly reason: string }) =>
   new AuthDatabaseConnectionError({
     reason: `Unable to initialize the authentication PostgreSQL pool: ${error.reason}`,
@@ -60,27 +55,38 @@ const mapPoolConfigurationError = (error: { readonly reason: string }) =>
 
 export const makeAuthDatabase = Effect.fn('AuthDatabase.make')(function* makeDatabase(
   configuration: Pick<AuthConfigValue, 'connectionString'>,
-  poolFactory: PoolFactory = defaultPoolFactory,
 ): Effect.fn.Return<(typeof AuthDatabase)['Service'], AuthDatabaseConnectionError, Scope.Scope> {
   const poolConfiguration = yield* configureDatabasePool(Redacted.make(configuration.connectionString)).pipe(
     Effect.mapError(mapPoolConfigurationError),
   );
-  const pool = yield* acquirePoolResource(() => poolFactory(poolConfiguration));
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.fromPool({
-    acquire: Effect.succeed(pool),
-  }).pipe(Effect.provideService(Reactivity.Reactivity, reactivity), Effect.mapError(connectionFailure));
+  const client = yield* PgClient.make(poolConfiguration).pipe(
+    Effect.provideService(Reactivity.Reactivity, reactivity),
+    Effect.mapError(connectionFailure),
+  );
   const executor = yield* makeWithDefaults({ relations: authRelations }).pipe(
     Effect.provideService(PgClient.PgClient, client),
   );
+  // Better Auth's Drizzle adapter awaits Promise query builders, and no Promise Drizzle driver runs over the
+  // native Effect client, so the adapter alone keeps a pg Pool. It carries the same validated connect deadline
+  // and server-enforced statement/lock timeouts as the native client above.
+  const adapterPool = yield* acquirePoolResource(
+    () =>
+      new Pool({
+        connectionString: configuration.connectionString,
+        connectionTimeoutMillis: Duration.toMillis(poolConfiguration.connectTimeout ?? Duration.zero),
+        options: Object.entries(poolConfiguration.startupParameters ?? {})
+          .map(([name, value]) => `-c ${name}=${value}`)
+          .join(' '),
+      }),
+  );
   return {
-    executor,
-    // Better Auth owns this Promise-based adapter; application queries use the native executor.
-    adapter: drizzleAdapter(drizzle({ client: pool, relations: authRelations }), {
+    adapter: drizzleAdapter(drizzle({ client: adapterPool, relations: authRelations }), {
       provider: 'pg',
       schema: authDatabaseSchema,
       transaction: true,
     }),
+    executor,
   };
 });
 
