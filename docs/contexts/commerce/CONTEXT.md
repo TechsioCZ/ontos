@@ -958,7 +958,7 @@ expanded by imported Price rows or inferred FX.
 
 **Quantity Tier** — Pricing-owned threshold rule belonging to exactly one Price identity. The highest
 reached inclusive positive Quantity threshold supplies one resulting non-negative pre-Tax Unit Price
-for the whole relevant aggregated Quantity. A Tier never participatesates in choosing a different Price,
+for the whole relevant aggregated Quantity. A Tier never participates in choosing a different Price,
 and purpose-specific Tier aggregation never changes the underlying Pricing Line identities.
 
 **Pricing-owned Discount** — Pricing-owned pre-Tax reduction fact with distinct family, audience,
