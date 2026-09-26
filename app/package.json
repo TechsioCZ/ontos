@@ -145,7 +145,6 @@
     "jsonc-parser": "3.3.1",
     "knip": "6.34.0",
     "lefthook": "^2.1.10",
-    "miniflare": "5.20260921.0-alpha",
     "oxc-parser": "0.147.0",
     "oxfmt": "0.66.0",
     "oxlint": "1.81.0",
