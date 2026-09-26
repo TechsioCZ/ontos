@@ -22,8 +22,8 @@ export const OutboxPayloadSchema = Schema.Struct({
     principalId: PrincipalIdSchema,
     tenantId: TenantIdSchema,
     transitionRef: ActionInvocationIdSchema,
-  }).annotate({ parseOptions: { onExcessProperty: 'error' } }),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+  }),
+});
 export type OutboxPayload = Schema.Schema.Type<typeof OutboxPayloadSchema>;
 
 export const outboxTopic = 'core.identity.principal-binding-activated.v1' as const;

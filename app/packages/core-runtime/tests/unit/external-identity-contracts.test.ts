@@ -1,6 +1,7 @@
-import { DateTime, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { decodeActionPayload } from '../../src/actions/definition.ts';
 import {
   ActivatePrincipalBindingPayloadSchema,
   AuthenticationAdmissionObservationSchema,
@@ -25,6 +26,9 @@ const subject = {
 };
 const decode = <S extends Schema.ConstraintDecoder<unknown>, Value>(schema: S, value: Value): S['Type'] =>
   Schema.decodeUnknownSync(schema)(value);
+// Admission observations are closed at the verifier boundary, which decodes with these options.
+const decodeObservation = <S extends Schema.ConstraintDecoder<unknown>, Value>(schema: S, value: Value): S['Type'] =>
+  Schema.decodeUnknownSync(schema, { onExcessProperty: 'error' })(value);
 
 it('accepts distinct configured namespace shapes without a closed realm vocabulary', () => {
   for (const authenticationNamespaceId of ['test.staff', 'test.customer', 'test.third-provider.realm']) {
@@ -56,22 +60,26 @@ it('preserves opaque case-sensitive subjects and existing API-key subject vocabu
   }
 });
 
-it('rejects Commerce policy, caller-selected authority and credentials in neutral mutations', () => {
-  const boundaries = [
-    [ReservePrincipalBindingPayloadSchema, subject],
-    [ActivatePrincipalBindingPayloadSchema, { authBindingId: bindingId, expectedRevision: 1 }],
-    [ReadPrincipalBindingPayloadSchema, { authBindingId: bindingId, lookup: 'binding' }],
-    [
-      ChangePrincipalBindingStatusPayloadSchema,
-      { authBindingId: bindingId, expectedRevision: 1, reason: 'Support request', requestedStatus: 'disabled' },
-    ],
-  ] as const;
-  for (const [schema, value] of boundaries) {
-    for (const field of ['enrollmentAttemptId', 'emailVerified', 'principalId', 'tenantId', 'sessionToken']) {
-      expect(() => decode(schema, { ...value, [field]: 'untrusted' })).toThrow();
+it.effect('rejects Commerce policy, caller-selected authority and credentials in neutral mutations', () =>
+  Effect.gen(function* rejectUntrustedMutationFields() {
+    const boundaries = [
+      [ReservePrincipalBindingPayloadSchema, subject],
+      [ActivatePrincipalBindingPayloadSchema, { authBindingId: bindingId, expectedRevision: 1 }],
+      [ReadPrincipalBindingPayloadSchema, { authBindingId: bindingId, lookup: 'binding' }],
+      [
+        ChangePrincipalBindingStatusPayloadSchema,
+        { authBindingId: bindingId, expectedRevision: 1, reason: 'Support request', requestedStatus: 'disabled' },
+      ],
+    ] as const;
+    for (const [schema, value] of boundaries) {
+      yield* decodeActionPayload(schema, value);
+      for (const field of ['enrollmentAttemptId', 'emailVerified', 'principalId', 'tenantId', 'sessionToken']) {
+        const rejected = yield* Effect.flip(decodeActionPayload(schema, { ...value, [field]: 'untrusted' }));
+        expect(Predicate.isTagged(rejected, 'ActionPayloadValidationError')).toBe(true);
+      }
     }
-  }
-});
+  }),
+);
 
 it('requires pending revision one for a newly reserved identity', () => {
   const reserved = {
@@ -123,7 +131,9 @@ it('neutral admission observations bind exact operation identity without provide
     const missing = Object.fromEntries(Object.entries(value).filter(([key]) => key !== field));
     expect(() => decode(AuthenticationAdmissionObservationSchema, missing)).toThrow();
   }
-  expect(() => decode(AuthenticationAdmissionObservationSchema, { ...value, emailVerified: true })).toThrow();
+  expect(() =>
+    decodeObservation(AuthenticationAdmissionObservationSchema, { ...value, emailVerified: true }),
+  ).toThrow();
 });
 
 it('represents exact pre-binding subject evidence without inventing canonical IDs', () => {
@@ -138,8 +148,10 @@ it('represents exact pre-binding subject evidence without inventing canonical ID
     tenantId,
   };
   expect(decode(ExternalSubjectAdmissionObservationSchema, value)).toEqual(value);
-  expect(() => decode(AuthenticationAdmissionObservationSchema, value)).toThrow();
-  expect(() => decode(ExternalSubjectAdmissionObservationSchema, { ...value, authBindingId: bindingId })).toThrow();
+  expect(() => decodeObservation(AuthenticationAdmissionObservationSchema, value)).toThrow();
+  expect(() =>
+    decodeObservation(ExternalSubjectAdmissionObservationSchema, { ...value, authBindingId: bindingId }),
+  ).toThrow();
   for (const field of ['providerSubjectId', 'subjectType', 'authenticationNamespaceId']) {
     const missing = Object.fromEntries(Object.entries(value).filter(([key]) => key !== field));
     expect(() => decode(ExternalSubjectAdmissionObservationSchema, missing)).toThrow();

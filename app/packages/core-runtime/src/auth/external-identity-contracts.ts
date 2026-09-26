@@ -23,7 +23,7 @@ export const ExternalAuthenticationSubjectSchema = Schema.Struct({
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
   providerSubjectId: ProviderSubjectIdSchema,
   subjectType: BindingSubjectTypeSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type ExternalAuthenticationSubject = typeof ExternalAuthenticationSubjectSchema.Type;
 
 /** Trusted deployment data. This schema alone never grants authentication authority. */
@@ -35,7 +35,7 @@ export const AuthenticationNamespaceRegistrationSchema = Schema.Struct({
   reservationPrincipalKind: Schema.Literals(['human', 'service', 'integration']),
   subjectTypes: Schema.Array(BindingSubjectTypeSchema).check(Schema.isMinLength(1)),
   trustedAttesterPrincipalIds: Schema.Array(PrincipalIdSchema),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type AuthenticationNamespaceRegistration = typeof AuthenticationNamespaceRegistrationSchema.Type;
 
 export const ReservePrincipalBindingPayloadSchema = Schema.Struct({
@@ -43,7 +43,7 @@ export const ReservePrincipalBindingPayloadSchema = Schema.Struct({
   displayName: Schema.optionalKey(
     Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(200)),
   ),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 const identityFields = {
   authBindingId: AuthBindingIdSchema,
   bindingRevision: BindingRevisionSchema,
@@ -58,32 +58,32 @@ export const ReservePrincipalBindingResultSchema = Schema.Union([
     outcome: Schema.Literal('RESERVED'),
   }),
   Schema.Struct({ ...identityFields, outcome: Schema.Literal('EXISTING') }),
-]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+]);
 export const ActivatePrincipalBindingPayloadSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   expectedRevision: BindingRevisionSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export const ActivatePrincipalBindingResultSchema = Schema.Struct({
   ...identityFields,
   bindingStatus: Schema.Literal('active'),
   outcome: Schema.Literal('ACTIVATED'),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export const ChangePrincipalBindingStatusPayloadSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   expectedRevision: BindingRevisionSchema,
   reason: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(500)),
   reconciliationRef: Schema.optionalKey(boundedReference),
   requestedStatus: Schema.Literals(['active', 'disabled', 'revoked']),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export const ChangePrincipalBindingStatusResultSchema = Schema.Struct({
   ...identityFields,
   previousStatus: AuthBindingStatusSchema,
   transitionRef: uuid,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export const ReadPrincipalBindingPayloadSchema = Schema.Union([
   Schema.Struct({ authBindingId: AuthBindingIdSchema, lookup: Schema.Literal('binding') }),
   Schema.Struct({ ...ExternalAuthenticationSubjectSchema.fields, lookup: Schema.Literal('subject') }),
-]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+]);
 export const ReadPrincipalBindingResultSchema = Schema.Union([
   Schema.Struct({ outcome: Schema.Literal('NOT_FOUND') }),
   Schema.Struct({
@@ -94,14 +94,14 @@ export const ReadPrincipalBindingResultSchema = Schema.Union([
     principalStatus: Schema.Literals(['active', 'disabled', 'archived']),
     tenantStatus: Schema.Literals(['active', 'suspended', 'archived']),
   }),
-]).annotate({ parseOptions: { onExcessProperty: 'error' } });
+]);
 export const ResolveExternalSubjectResultSchema = Schema.Struct({
   ...identityFields,
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
   bindingStatus: Schema.Literal('active'),
   outcome: Schema.Literal('RESOLVED'),
   tenantId: TenantIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 /** Pre-binding proof: no fictitious Principal or binding IDs are required for reservation. */
 export const ExternalSubjectAdmissionObservationSchema = Schema.Struct({
@@ -113,7 +113,7 @@ export const ExternalSubjectAdmissionObservationSchema = Schema.Struct({
   observedAt: Schema.DateTimeUtc,
   operationRef: boundedReference,
   tenantId: TenantIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type ExternalSubjectAdmissionObservation = typeof ExternalSubjectAdmissionObservationSchema.Type;
 
 /** Wire shape only. Decode success does not mint trusted admission; receiver-owned validation does. */
@@ -129,7 +129,7 @@ export const AuthenticationAdmissionObservationSchema = Schema.Struct({
   operationRef: boundedReference,
   principalId: PrincipalIdSchema,
   tenantId: TenantIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type AuthenticationAdmissionObservation = typeof AuthenticationAdmissionObservationSchema.Type;
 
 export class ExternalIdentityError extends Schema.TaggedError<ExternalIdentityError>()('ExternalIdentityError', {

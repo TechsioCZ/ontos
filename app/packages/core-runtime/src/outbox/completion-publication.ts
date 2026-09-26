@@ -176,7 +176,7 @@ export const outboxWorkerCompletionPublisherFor = (
     ) {
       return Effect.fail(invalid('The worker completion scope or identity is invalid'));
     }
-    return Schema.decodeUnknownEffect(definition.payloadSchema)(input.payloadJson).pipe(
+    return Schema.decodeUnknownEffect(definition.payloadSchema, { onExcessProperty: 'error' })(input.payloadJson).pipe(
       Effect.mapError((cause) =>
         Object.defineProperty(invalid('The worker completion payload is invalid'), 'cause', {
           configurable: false,

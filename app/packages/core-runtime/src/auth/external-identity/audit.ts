@@ -24,4 +24,4 @@ export const ExternalIdentityActionAuditEvidenceSchema = Schema.Struct({
   reason: Schema.optionalKey(reason),
   reconciliationRef: Schema.optionalKey(boundedReference),
   transitionRef: Schema.optionalKey(ActionInvocationIdSchema),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
