@@ -6,8 +6,6 @@ import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import type { Scope } from 'effect';
 import { Context, Effect, Layer, Redacted } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
-import type { PoolConfig } from 'pg';
-import { Pool } from 'pg';
 
 import { InventoryDatabaseConnectionError } from './connection-error.ts';
 import { inventoryRelations } from './schema.ts';
@@ -18,11 +16,6 @@ export class InventoryDatabase extends Context.Service<
   { readonly executor: InventoryDatabaseExecutor }
 >()('@app/inventory/database/client/InventoryDatabase') {}
 
-interface PoolResource {
-  // oxlint-disable-next-line effect-native/no-promise-shaped-port -- pg owns this foreign driver finalizer shape.
-  readonly end: () => Promise<void>;
-}
-
 const connectionFailure = (cause: unknown): InventoryDatabaseConnectionError =>
   Object.defineProperty(
     new InventoryDatabaseConnectionError({ reason: 'Unable to initialize the Inventory PostgreSQL connection pool' }),
@@ -30,17 +23,6 @@ const connectionFailure = (cause: unknown): InventoryDatabaseConnectionError =>
     { value: cause },
   );
 
-const acquirePool = <Resource extends PoolResource>(
-  acquire: () => Resource,
-): Effect.Effect<Resource, InventoryDatabaseConnectionError, Scope.Scope> =>
-  Effect.acquireRelease(
-    Effect.try({ catch: connectionFailure, try: acquire }),
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect.promise owns this foreign Promise boundary.
-    (pool) => Effect.promise(() => pool.end()),
-  );
-
-type PoolFactory = (configuration: PoolConfig) => Pool;
-const defaultPoolFactory: PoolFactory = (configuration) => new Pool(configuration);
 type ContextServiceContract<Service> =
   Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;
 
@@ -48,15 +30,13 @@ const makeInventoryDatabase = Effect.fn('InventoryDatabase.make')(function* make
   configuration: ContextServiceContract<typeof DatabaseConfig> & {
     readonly poolDeadlines?: Partial<DatabasePoolDeadlines>;
   },
-  poolFactory: PoolFactory = defaultPoolFactory,
-) {
+): Effect.fn.Return<ContextServiceContract<typeof InventoryDatabase>, InventoryDatabaseConnectionError, Scope.Scope> {
   const poolConfiguration = yield* configureDatabasePool(
     Redacted.make(configuration.connectionString),
     configuration.poolDeadlines,
   ).pipe(Effect.mapError((error) => new InventoryDatabaseConnectionError({ reason: error.reason })));
-  const pool = yield* acquirePool(() => poolFactory(poolConfiguration));
   const reactivity = yield* Reactivity.make;
-  const client = yield* PgClient.fromPool({ acquire: Effect.succeed(pool) }).pipe(
+  const client = yield* PgClient.make(poolConfiguration).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
     Effect.mapError(connectionFailure),
   );
