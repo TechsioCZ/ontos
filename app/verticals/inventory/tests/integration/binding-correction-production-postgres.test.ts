@@ -26,10 +26,10 @@ import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtim
 import { testOperationalScopeResolver } from '../../../../packages/core-runtime/tests/fixtures/operational-scope.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
 import {
-  makeTestDatabaseFromPool,
-  testDatabasePools,
+  makeTestDatabaseFromClient,
+  testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import type { TestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import {
   advanceReservationConfirmationHealth,
   ReservationConfirmationRejected,
@@ -171,7 +171,7 @@ const valuesForProtection = (protection: Schema.Schema.Type<typeof CommitmentPro
   updatedAt: new Date(protection.health.observation.effectiveAt),
 });
 
-type InventoryTestDatabase = TestDatabaseFromPool<typeof inventoryRelations>;
+type InventoryTestDatabase = TestDatabaseFromClient<typeof inventoryRelations>;
 type InventoryTestTransaction = Parameters<Parameters<InventoryTestDatabase['transaction']>[0]>[0];
 
 const cleanupTenant = (admin: InventoryTestDatabase, id: string) =>
@@ -199,7 +199,7 @@ const cleanupTenant = (admin: InventoryTestDatabase, id: string) =>
     }),
   );
 
-const cleanupCoreTenant = (database: TestDatabaseFromPool<typeof coreRelations>) =>
+const cleanupCoreTenant = (database: TestDatabaseFromClient<typeof coreRelations>) =>
   database.transaction((transaction) =>
     Effect.gen(function* cleanupCoreBindingCorrectionFixture() {
       yield* transaction.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId));
@@ -324,10 +324,10 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* bindingCorrectionProductionAcceptance() {
-        const { admin: adminPool, runtimePool } = yield* testDatabasePools;
-        const admin = yield* makeTestDatabaseFromPool(adminPool, inventoryRelations);
-        const coreAdmin = yield* makeTestDatabaseFromPool(adminPool, coreRelations);
-        const runtimeDatabase = yield* makeTestDatabaseFromPool(runtimePool, coreRelations);
+        const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
+        const admin = yield* makeTestDatabaseFromClient(adminClient, inventoryRelations);
+        const coreAdmin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+        const runtimeDatabase = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
         yield* cleanupTenant(admin, tenantId);
         yield* cleanupTenant(admin, otherTenantId);
         yield* cleanupCoreTenant(coreAdmin);
@@ -903,8 +903,8 @@ it.live(
 it.live('enforces Current-only exact-meaning uniqueness in PostgreSQL', () =>
   Effect.scoped(
     Effect.gen(function* currentStockItemUniquenessRegression() {
-      const { admin: adminPool } = yield* testDatabasePools;
-      const admin = yield* makeTestDatabaseFromPool(adminPool, inventoryRelations);
+      const { admin: adminClient } = yield* testDatabaseClients;
+      const admin = yield* makeTestDatabaseFromClient(adminClient, inventoryRelations);
       const localTenant = randomUUID();
       yield* Effect.addFinalizer(() => cleanupTenant(admin, localTenant).pipe(Effect.orDie));
       const shared = {
