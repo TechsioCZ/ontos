@@ -442,9 +442,9 @@ const patchActionWithOutboxExportsEffect = (
 
 const planPackageExportMutationEffect = (vertical: OntosVerticalMetadata, topicSlug: string) =>
   Effect.gen(function* planPackageExportMutation() {
-    const packageDocument = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PackageExportsSchema), {
-      onExcessProperty: 'preserve',
-    })(vertical.packageContent).pipe(
+    const packageDocument = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PackageExportsSchema))(
+      vertical.packageContent,
+    ).pipe(
       Effect.mapError((cause) =>
         planningFailure(`vertical ${vertical.slug} package exports must be a JSON object`, cause),
       ),
@@ -495,11 +495,9 @@ const planCorePackageExportMutationEffect = (workspaceRoot: string, topicSlug: s
       .pipe(
         Effect.mapError((cause) => planningFailure(`failed to read Core package metadata at ${packagePath}`, cause)),
       );
-    const packageDocument = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PackageExportsSchema), {
-      onExcessProperty: 'preserve',
-    })(packageContent).pipe(
-      Effect.mapError((cause) => planningFailure('Core package exports must be a JSON object', cause)),
-    );
+    const packageDocument = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(PackageExportsSchema))(
+      packageContent,
+    ).pipe(Effect.mapError((cause) => planningFailure('Core package exports must be a JSON object', cause)));
     const exportsValue = packageDocument.exports;
     const contractExport = `./outbox/${topicSlug}`;
     const contractExportTarget = `./src/outbox/${topicSlug}.ts`;

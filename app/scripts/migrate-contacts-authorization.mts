@@ -3,9 +3,10 @@ import { pathToFileURL } from 'node:url';
 
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Console, Effect, Exit, ManagedRuntime, Number as EffectNumber, Redacted, Result, Schema } from 'effect';
+import { PgClient } from '@effect/sql-pg';
+import { Console, Effect, Exit, Layer, ManagedRuntime, Number as EffectNumber, Redacted, Result, Schema } from 'effect';
 import { Argument, Command } from 'effect/unstable/cli';
-import { Pool } from 'pg';
+import { Reactivity } from 'effect/unstable/reactivity';
 
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import { fullyConsistent, spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/client.ts';
@@ -137,25 +138,16 @@ export const planContactsAuthorizationContext = (
 ): ContactsAuthorizationContextPlan =>
   Result.getOrThrow(planContactsAuthorizationContextResult(mode, legacy, contacts));
 
-const acquirePool = (connection: Redacted.Redacted) =>
-  Effect.acquireRelease(
-    Effect.try({
-      catch: () => migrationFailure('The authorization migration database pool could not open'),
-      try: () => new Pool({ connectionString: Redacted.value(connection), max: 1 }),
-    }),
-    (pool) => Effect.promise(async () => await pool.end()),
-  );
-
 const loadAuthoritativeContexts = (
   connection: Redacted.Redacted,
-): Effect.Effect<AuthoritativeContext[], ContactsAuthorizationMigrationError> =>
+): Effect.Effect<AuthoritativeContext[], ContactsAuthorizationMigrationError, Reactivity.Reactivity> =>
   Effect.gen(function* loadAuthoritativeContextsEffect() {
-    const pool = yield* acquirePool(connection);
-    const contextResult = yield* Effect.tryPromise({
-      catch: () => migrationFailure('The authoritative module contexts could not be read'),
-      try: async () =>
-        await pool.query<DatabaseContextRow>(
-          `select
+    const client = yield* PgClient.makeClient({ url: connection }).pipe(
+      Effect.mapError(() => migrationFailure('The authorization migration database connection could not open')),
+    );
+    const contextRows = yield* client
+      .unsafe<DatabaseContextRow>(
+        `select
              legal_entity.legal_entity_id::text,
              module_state.module_key,
              module_state.tenant_id::text
@@ -165,43 +157,41 @@ const loadAuthoritativeContexts = (
            where module_state.module_key in ($1, $2)
            order by module_state.tenant_id, legal_entity.legal_entity_id
            limit $3`,
-          [LEGACY_MODULE_ID, CONTACTS_MODULE_ID, MAX_CONTEXTS + 1],
-        ),
-    });
-    if (contextResult.rows.length > MAX_CONTEXTS) {
+        [LEGACY_MODULE_ID, CONTACTS_MODULE_ID, MAX_CONTEXTS + 1],
+      )
+      .pipe(Effect.mapError(() => migrationFailure('The authoritative module contexts could not be read')));
+    if (contextRows.length > MAX_CONTEXTS) {
       return yield* migrationFailure(`Authorization migration exceeds the ${MAX_CONTEXTS}-context safety bound`);
     }
-    if (contextResult.rows.some((row) => row.module_key === LEGACY_MODULE_ID)) {
+    if (contextRows.some((row) => row.module_key === LEGACY_MODULE_ID)) {
       return yield* migrationFailure('Core module identity migration must complete before authorization migration');
     }
-    const tenantIds = [...new Set(contextResult.rows.map((row) => row.tenant_id))];
+    const tenantIds = [...new Set(contextRows.map((row) => row.tenant_id))];
     if (tenantIds.length === 0) {
       return [];
     }
-    const principalResult = yield* Effect.tryPromise({
-      catch: () => migrationFailure('The authoritative Principals could not be read'),
-      try: async () =>
-        await pool.query<PrincipalRow>(
-          `select principal_id::text, status, tenant_id::text
+    const principalRows = yield* client
+      .unsafe<PrincipalRow>(
+        `select principal_id::text, status, tenant_id::text
            from core.principals
            where tenant_id = any($1::uuid[])
            order by tenant_id, principal_id
            limit $2`,
-          [tenantIds, MAX_PRINCIPALS + 1],
-        ),
-    });
-    if (principalResult.rows.length > MAX_PRINCIPALS) {
+        [tenantIds, MAX_PRINCIPALS + 1],
+      )
+      .pipe(Effect.mapError(() => migrationFailure('The authoritative Principals could not be read')));
+    if (principalRows.length > MAX_PRINCIPALS) {
       return yield* migrationFailure(`Authorization migration exceeds the ${MAX_PRINCIPALS}-principal safety bound`);
     }
     const activePrincipalsByTenant = new Map<string, Set<string>>();
-    for (const principal of principalResult.rows) {
+    for (const principal of principalRows) {
       if (principal.status === 'active') {
         const ids = activePrincipalsByTenant.get(principal.tenant_id) ?? new Set<string>();
         ids.add(principal.principal_id);
         activePrincipalsByTenant.set(principal.tenant_id, ids);
       }
     }
-    return contextResult.rows.map((row) => ({
+    return contextRows.map((row) => ({
       activePrincipalIds: activePrincipalsByTenant.get(row.tenant_id) ?? new Set<string>(),
       legalEntityId: row.legal_entity_id,
       tenantId: row.tenant_id,
@@ -447,7 +437,7 @@ const acquireSpiceDbClient = (configuration: SpiceDbConfigValue) =>
 
 const migrateContactsAuthorization = (
   mode: ContactsAuthorizationMigrationMode,
-): Effect.Effect<ContactsAuthorizationMigrationResult, ContactsAuthorizationMigrationError> =>
+): Effect.Effect<ContactsAuthorizationMigrationResult, ContactsAuthorizationMigrationError, Reactivity.Reactivity> =>
   Effect.gen(function* migrateContactsAuthorizationProgram() {
     const [database, spiceDb] = yield* Effect.all(
       [
@@ -484,7 +474,7 @@ const command = Command.make(
 
 const [, invokedPath] = process.argv;
 if (invokedPath !== undefined && import.meta.url === pathToFileURL(invokedPath).href) {
-  const migrationRuntime = ManagedRuntime.make(NodeServices.layer);
+  const migrationRuntime = ManagedRuntime.make(Layer.mergeAll(NodeServices.layer, Reactivity.layer));
   const exit = await migrationRuntime.runPromiseExit(Command.run(command, { version: '1.0.0' }));
   process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
 }

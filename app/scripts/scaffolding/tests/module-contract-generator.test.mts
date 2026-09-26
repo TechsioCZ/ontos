@@ -48,20 +48,31 @@ const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
 const ModuleIdSchema = Schema.String.pipe(Schema.brand('ModuleId'));
 const OperationKeySchema = Schema.String.pipe(Schema.brand('OperationKey'));
 const StringRecordSchema = Schema.Record(Schema.String, Schema.String);
-const ModulePackageSchema = Schema.Struct({
-  dependencies: StringRecordSchema,
-  exports: StringRecordSchema,
-  modernjs: Schema.Struct({
-    ontosModule: Schema.Struct({
-      contractPath: Schema.String,
-      manifest: Schema.String,
-      moduleId: ModuleIdSchema,
-      registration: Schema.String,
-      schemaVersion: Schema.Number,
-    }),
+// The package document is rewritten by the tests, so undeclared owner fields must round-trip.
+const JsonRestSchema = [Schema.Record(Schema.String, Schema.Json)] as const;
+const ModulePackageSchema = Schema.StructWithRest(
+  Schema.Struct({
+    dependencies: StringRecordSchema,
+    exports: StringRecordSchema,
+    modernjs: Schema.StructWithRest(
+      Schema.Struct({
+        ontosModule: Schema.StructWithRest(
+          Schema.Struct({
+            contractPath: Schema.String,
+            manifest: Schema.String,
+            moduleId: ModuleIdSchema,
+            registration: Schema.String,
+            schemaVersion: Schema.Number,
+          }),
+          JsonRestSchema,
+        ),
+      }),
+      JsonRestSchema,
+    ),
+    scripts: StringRecordSchema,
   }),
-  scripts: StringRecordSchema,
-});
+  JsonRestSchema,
+);
 const ModuleTsconfigSchema = Schema.Struct({
   include: Schema.Array(Schema.String),
 });
@@ -75,14 +86,9 @@ const ModuleContractDocumentSchema = Schema.Struct({
   }),
   schemaVersion: Schema.String,
 });
-const decodeModulePackage = (source: string) =>
-  Schema.decodeUnknownEffect(ModulePackageSchema, {
-    onExcessProperty: 'preserve',
-  })(JSON.parse(source));
+const decodeModulePackage = (source: string) => Schema.decodeUnknownEffect(ModulePackageSchema)(JSON.parse(source));
 const decodeModuleContract = (source: string) =>
-  Schema.decodeUnknownEffect(ModuleContractDocumentSchema, {
-    onExcessProperty: 'preserve',
-  })(JSON.parse(source));
+  Schema.decodeUnknownEffect(ModuleContractDocumentSchema)(JSON.parse(source));
 
 const appRoot = path.resolve(import.meta.dirname, '..', '..', '..');
 const json = (value: JsonValue): string => `${JSON.stringify(value, null, 2)}\n`;

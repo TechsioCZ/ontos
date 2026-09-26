@@ -552,49 +552,47 @@ const currentCzechLaunchOwnerEvidenceFields = {
 const CzechLaunchActivationEvidenceSchema = Schema.Struct({
   catalogQuantity: CurrentCatalogQuantityEvidenceSchema,
   ...currentCzechLaunchOwnerEvidenceFields,
-})
-  .check(
-    Schema.makeFilter(({ customerCommercePolicies, marketCatalog, paymentTermCatalog, pricingCurrencies }) => {
-      const market = marketCatalog.markets.find(({ marketRef: candidate }) => candidate.resourceId === marketId);
-      const association = marketCatalog.associations.find(
-        ({ marketRef: candidate, storefrontRef: candidateStorefront }) =>
-          candidate.resourceId === marketId && candidateStorefront.appId === storefrontId,
-      );
-      const paymentTerm = paymentTermCatalog.current.find(
-        ({ paymentTermRef: candidate }) => candidate.resourceId === paymentTermRef.resourceId,
-      );
-      const bootstrapPartition = customerCommercePolicies.marketBootstrap.sellers.find(
-        ({ sellingLegalEntityId: candidate }) => candidate === sellingLegalEntityId,
-      );
-      const currencyRevisionIds = new Set(
-        customerCommercePolicies.purchaseCurrency.candidates.map(({ policyRevisionId }) => policyRevisionId),
-      );
-      const paymentRevisionIds = new Set(
-        customerCommercePolicies.paymentTerm.candidates.map(({ policyRevisionId }) => policyRevisionId),
-      );
-      const quantityRevisionIds = new Set(
-        customerCommercePolicies.quantity.ruleSet.candidates.map(({ policyRevisionId }) => policyRevisionId),
-      );
-      return market?.definitionRevisionRef.resourceId === marketDefinitionRevisionRef.resourceId &&
-        market.lifecycle === 'ACTIVE' &&
-        association?.marketDefinitionRevisionRef.resourceId === marketDefinitionRevisionRef.resourceId &&
-        paymentTerm?.lifecycle.state === 'ACTIVE' &&
-        pricingCurrencies.pricingRevision === pricingCurrencyOwnerRevision &&
-        pricingCurrencies.supportedCurrencies.length === 1 &&
-        pricingCurrencies.supportedCurrencies[0] === 'CZK' &&
-        bootstrapPartition?.candidates.some(
-          ({ policyRevisionId }) => policyRevisionId === marketBootstrapPolicyRevisionId,
-        ) === true &&
-        currencyRevisionIds.has(allowedCurrencyPolicyRevisionId) &&
-        currencyRevisionIds.has(defaultCurrencyPolicyRevisionId) &&
-        paymentRevisionIds.has(applicablePaymentTermPolicyRevisionId) &&
-        paymentRevisionIds.has(fallbackPaymentTermPolicyRevisionId) &&
-        quantityRevisionIds.has(quantityPolicyRevisionId)
-        ? undefined
-        : 'Czech Launch activation requires the exact Current owner revisions for Market, Payment Term, Pricing, and Customer Commerce Policy';
-    }),
-  )
-  .annotate({ parseOptions: { onExcessProperty: 'error' } });
+}).check(
+  Schema.makeFilter(({ customerCommercePolicies, marketCatalog, paymentTermCatalog, pricingCurrencies }) => {
+    const market = marketCatalog.markets.find(({ marketRef: candidate }) => candidate.resourceId === marketId);
+    const association = marketCatalog.associations.find(
+      ({ marketRef: candidate, storefrontRef: candidateStorefront }) =>
+        candidate.resourceId === marketId && candidateStorefront.appId === storefrontId,
+    );
+    const paymentTerm = paymentTermCatalog.current.find(
+      ({ paymentTermRef: candidate }) => candidate.resourceId === paymentTermRef.resourceId,
+    );
+    const bootstrapPartition = customerCommercePolicies.marketBootstrap.sellers.find(
+      ({ sellingLegalEntityId: candidate }) => candidate === sellingLegalEntityId,
+    );
+    const currencyRevisionIds = new Set(
+      customerCommercePolicies.purchaseCurrency.candidates.map(({ policyRevisionId }) => policyRevisionId),
+    );
+    const paymentRevisionIds = new Set(
+      customerCommercePolicies.paymentTerm.candidates.map(({ policyRevisionId }) => policyRevisionId),
+    );
+    const quantityRevisionIds = new Set(
+      customerCommercePolicies.quantity.ruleSet.candidates.map(({ policyRevisionId }) => policyRevisionId),
+    );
+    return market?.definitionRevisionRef.resourceId === marketDefinitionRevisionRef.resourceId &&
+      market.lifecycle === 'ACTIVE' &&
+      association?.marketDefinitionRevisionRef.resourceId === marketDefinitionRevisionRef.resourceId &&
+      paymentTerm?.lifecycle.state === 'ACTIVE' &&
+      pricingCurrencies.pricingRevision === pricingCurrencyOwnerRevision &&
+      pricingCurrencies.supportedCurrencies.length === 1 &&
+      pricingCurrencies.supportedCurrencies[0] === 'CZK' &&
+      bootstrapPartition?.candidates.some(
+        ({ policyRevisionId }) => policyRevisionId === marketBootstrapPolicyRevisionId,
+      ) === true &&
+      currencyRevisionIds.has(allowedCurrencyPolicyRevisionId) &&
+      currencyRevisionIds.has(defaultCurrencyPolicyRevisionId) &&
+      paymentRevisionIds.has(applicablePaymentTermPolicyRevisionId) &&
+      paymentRevisionIds.has(fallbackPaymentTermPolicyRevisionId) &&
+      quantityRevisionIds.has(quantityPolicyRevisionId)
+      ? undefined
+      : 'Czech Launch activation requires the exact Current owner revisions for Market, Payment Term, Pricing, and Customer Commerce Policy';
+  }),
+);
 
 export class CzechLaunchActivationRejected extends Schema.TaggedError<CzechLaunchActivationRejected>()(
   'CzechLaunchActivationRejected',
@@ -609,7 +607,7 @@ export type CzechLaunchActivationCandidate = typeof CzechLaunchActivationEvidenc
  * and every complete Customer Commerce policy set.
  */
 export const validateCzechLaunchActivation = (evidence: CzechLaunchActivationCandidate) =>
-  Schema.decodeUnknownEffect(CzechLaunchActivationEvidenceSchema)(evidence).pipe(
+  Schema.decodeUnknownEffect(CzechLaunchActivationEvidenceSchema, { onExcessProperty: 'error' })(evidence).pipe(
     Effect.mapError(
       (cause) =>
         new CzechLaunchActivationRejected({

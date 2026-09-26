@@ -232,6 +232,10 @@ it.effect('fails Czech Launch activation closed without every current owner proo
         },
       }).pipe(Effect.flip),
     ).toBeInstanceOf(CzechLaunchActivationRejected);
+    const withUndeclaredEvidence = { ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts, undeclaredEvidence: true };
+    expect(yield* validateCzechLaunchActivation(withUndeclaredEvidence).pipe(Effect.flip)).toBeInstanceOf(
+      CzechLaunchActivationRejected,
+    );
 
     expect(yield* validateCzechLaunchActivation(CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts)).toBeDefined();
   }),

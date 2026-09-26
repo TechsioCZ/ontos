@@ -329,9 +329,7 @@ export const deriveActivatedModuleIds = (
     const topologySource = yield* fileSystem
       .readFileString(pathService.join(workspaceRoot, 'topology/reference-topology.json'))
       .pipe(Effect.mapError(() => failure('local_contract_invalid', 'The authoritative topology could not be read')));
-    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema), {
-      onExcessProperty: 'preserve',
-    })(topologySource).pipe(
+    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema))(topologySource).pipe(
       Effect.mapError(() => failure('local_contract_invalid', 'The authoritative topology is invalid')),
     );
     if (topology.verticals.length === 0) {

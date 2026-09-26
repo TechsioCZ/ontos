@@ -141,12 +141,12 @@ const decodeRepositoryInventory = (workspaceRoot: string) =>
       ],
       { concurrency: 'unbounded' },
     ).pipe(Effect.mapError(discoveryFailure));
-    const ownership = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OwnershipSchema), {
-      onExcessProperty: 'preserve',
-    })(ownershipSource).pipe(Effect.mapError(discoveryFailure));
-    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema), {
-      onExcessProperty: 'preserve',
-    })(topologySource).pipe(Effect.mapError(discoveryFailure));
+    const ownership = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(OwnershipSchema))(ownershipSource).pipe(
+      Effect.mapError(discoveryFailure),
+    );
+    const topology = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(TopologySchema))(topologySource).pipe(
+      Effect.mapError(discoveryFailure),
+    );
     return { ownership, topology };
   });
 
