@@ -10,7 +10,6 @@ import {
   MarketRevisionSchema,
 } from './market-affected-use-assessment.ts';
 
-const strict = { parseOptions: { onExcessProperty: 'error' as const } };
 const boundedReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500), Schema.isTrimmed());
 const sha256Digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
 const checkedUuid = Schema.String.check(Schema.isUUID());
@@ -38,7 +37,7 @@ const reserve = Schema.Struct({
   operation: Schema.Literal('RESERVE'),
   reason: boundedReason,
   sourceEvidence: Schema.Array(MarketAffectedUseSourceEvidenceSchema).check(Schema.isMinLength(1)),
-}).annotate(strict);
+});
 
 const finish = <Operation extends 'COMMIT' | 'RELEASE'>(operation: Operation) =>
   Schema.Struct({
@@ -47,7 +46,7 @@ const finish = <Operation extends 'COMMIT' | 'RELEASE'>(operation: Operation) =>
     reason: boundedReason,
     reservationToken: MarketRetirementReservationTokenSchema,
     reservationVersion: MarketRetirementReservationVersionSchema,
-  }).annotate(strict);
+  });
 
 export const ReserveMarketRetirementPayloadSchema = Schema.Union([reserve, finish('COMMIT'), finish('RELEASE')]).check(
   Schema.makeFilter(({ marketRef, tenantId }) =>
@@ -62,7 +61,7 @@ export const ReserveMarketRetirementResultSchema = Schema.Struct({
   lifecycle: Schema.Literals(['RESERVED', 'COMMITTED', 'RELEASED']),
   reservationToken: MarketRetirementReservationTokenSchema,
   reservationVersion: MarketRetirementReservationVersionSchema,
-}).annotate(strict);
+});
 export type ReserveMarketRetirementResult = typeof ReserveMarketRetirementResultSchema.Type;
 
 export const ReserveMarketRetirementAuthenticationProblemSchema = makeProblemDetailsSchema(

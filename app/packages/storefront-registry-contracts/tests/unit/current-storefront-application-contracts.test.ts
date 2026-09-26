@@ -28,7 +28,11 @@ describe('Storefront Registry Current Storefront Application public contract', (
       Schema.decodeSync(CurrentStorefrontApplicationRequestSchema)({ ...request, storefrontAppId: 'Shop CZ' }),
     ).toThrow();
     const requestWithExtraField = { ...request, extra: true };
-    expect(() => Schema.decodeSync(CurrentStorefrontApplicationRequestSchema)(requestWithExtraField)).toThrow();
+    // The governed read runtime decodes read input closed (core-runtime `reads/runtime.ts`).
+    const decodeReadInput = Schema.decodeUnknownSync(CurrentStorefrontApplicationRequestSchema, {
+      onExcessProperty: 'error',
+    });
+    expect(() => decodeReadInput(requestWithExtraField)).toThrow();
   });
 
   it('accepts Current evidence only when it proves channel, lifecycle, and interval applicability', () => {

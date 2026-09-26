@@ -6,7 +6,6 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi'
 
 import { MarketRefSchema } from '../market-reference.ts';
 
-const strict = { parseOptions: { onExcessProperty: 'error' as const } };
 const boundedText = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 const positiveRevision = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1));
 const sha256Digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u));
@@ -47,13 +46,11 @@ export const MarketAffectedUseAssessmentRequestSchema = Schema.Struct({
   marketRef: MarketRefSchema,
   marketRevision: MarketRevisionSchema,
   tenantId,
-})
-  .check(
-    Schema.makeFilter(({ marketRef, tenantId: requestedTenantId }) =>
-      marketRef.tenantId === requestedTenantId ? undefined : 'Market and assessment must belong to the same Tenant',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ marketRef, tenantId: requestedTenantId }) =>
+    marketRef.tenantId === requestedTenantId ? undefined : 'Market and assessment must belong to the same Tenant',
+  ),
+);
 export type MarketAffectedUseAssessmentRequest = typeof MarketAffectedUseAssessmentRequestSchema.Type;
 
 const AffectedOwnerResourceRefSchema = Schema.Struct({
@@ -61,7 +58,7 @@ const AffectedOwnerResourceRefSchema = Schema.Struct({
   resourceId: AffectedOwnerResourceIdSchema,
   resourceType: boundedText,
   tenantId,
-}).annotate(strict);
+});
 
 const makeReferenceSchema = <Kind extends string>(kind: Kind) =>
   Schema.Struct({
@@ -70,15 +67,13 @@ const makeReferenceSchema = <Kind extends string>(kind: Kind) =>
     marketRevision: MarketRevisionSchema,
     ownerResourceRef: AffectedOwnerResourceRefSchema,
     ownerResourceRevision: boundedText,
-  })
-    .check(
-      Schema.makeFilter(({ marketRef, ownerResourceRef }) =>
-        marketRef.tenantId === ownerResourceRef.tenantId
-          ? undefined
-          : 'Market and affected resource must belong to the same Tenant',
-      ),
-    )
-    .annotate(strict);
+  }).check(
+    Schema.makeFilter(({ marketRef, ownerResourceRef }) =>
+      marketRef.tenantId === ownerResourceRef.tenantId
+        ? undefined
+        : 'Market and affected resource must belong to the same Tenant',
+    ),
+  );
 
 export const MarketBootstrapReferenceSchema = makeReferenceSchema('BOOTSTRAP_DEFAULT');
 export const MarketCurrentProposalReferenceSchema = makeReferenceSchema('CURRENT_PROPOSAL');
@@ -91,7 +86,7 @@ export const MarketAffectedUseSourceEvidenceSchema = Schema.Struct({
   generation: boundedText,
   ownerRevision: boundedText,
   sourceId: MarketAffectedUseSourceIdSchema,
-}).annotate(strict);
+});
 export type MarketAffectedUseSourceEvidence = typeof MarketAffectedUseSourceEvidenceSchema.Type;
 
 const assessmentIdentity = {
@@ -107,63 +102,60 @@ const MarketAffectedUseVerifiedSchema = Schema.Struct({
   liveBlockingReferences: Schema.Struct({
     bootstrapDefaults: Schema.Array(MarketBootstrapReferenceSchema),
     currentProposals: Schema.Array(MarketCurrentProposalReferenceSchema),
-  }).annotate(strict),
+  }),
   nextApplicabilityBoundary: Schema.optionalKey(MarketRetirementInstantSchema),
   observedAt: MarketRetirementInstantSchema,
   outcome: Schema.Literal('VERIFIED'),
   retainedHistoryReferences: Schema.Array(MarketRetainedHistoryReferenceSchema),
   sourceEvidence: Schema.Array(MarketAffectedUseSourceEvidenceSchema).check(Schema.isMinLength(1)),
-})
-  .check(
-    Schema.makeFilter((assessment) => {
-      const references = [
-        ...assessment.liveBlockingReferences.bootstrapDefaults,
-        ...assessment.liveBlockingReferences.currentProposals,
-        ...assessment.retainedHistoryReferences,
-      ];
-      return references.every(
-        ({ marketRef, marketRevision }) =>
-          marketRef.tenantId === assessment.tenantId &&
-          marketRef.resourceId === assessment.marketRef.resourceId &&
-          marketRevision === assessment.marketRevision,
-      )
-        ? undefined
-        : 'Every affected-use reference must identify the assessed Tenant, Market, and revision';
-    }),
-    Schema.makeFilter(({ evaluatedAt, nextApplicabilityBoundary, observedAt }) => {
-      const evaluated = DateTime.make(evaluatedAt);
-      const observed = DateTime.make(observedAt);
-      const boundary =
-        nextApplicabilityBoundary === undefined ? Option.none() : DateTime.make(nextApplicabilityBoundary);
-      if (Option.isNone(evaluated) || Option.isNone(observed)) {
-        return 'Verified evidence timestamps must be valid instants';
-      }
-      const evaluatedMillis = DateTime.toEpochMillis(evaluated.value);
-      const observedMillis = DateTime.toEpochMillis(observed.value);
-      const boundaryMillis = Option.match(boundary, {
-        onNone: () => null,
-        onSome: (value) => DateTime.toEpochMillis(value),
-      });
-      return observedMillis <= evaluatedMillis && (boundaryMillis === null || evaluatedMillis < boundaryMillis)
-        ? undefined
-        : 'Verified evidence must be observed by and current at the evaluation instant';
-    }),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter((assessment) => {
+    const references = [
+      ...assessment.liveBlockingReferences.bootstrapDefaults,
+      ...assessment.liveBlockingReferences.currentProposals,
+      ...assessment.retainedHistoryReferences,
+    ];
+    return references.every(
+      ({ marketRef, marketRevision }) =>
+        marketRef.tenantId === assessment.tenantId &&
+        marketRef.resourceId === assessment.marketRef.resourceId &&
+        marketRevision === assessment.marketRevision,
+    )
+      ? undefined
+      : 'Every affected-use reference must identify the assessed Tenant, Market, and revision';
+  }),
+  Schema.makeFilter(({ evaluatedAt, nextApplicabilityBoundary, observedAt }) => {
+    const evaluated = DateTime.make(evaluatedAt);
+    const observed = DateTime.make(observedAt);
+    const boundary = nextApplicabilityBoundary === undefined ? Option.none() : DateTime.make(nextApplicabilityBoundary);
+    if (Option.isNone(evaluated) || Option.isNone(observed)) {
+      return 'Verified evidence timestamps must be valid instants';
+    }
+    const evaluatedMillis = DateTime.toEpochMillis(evaluated.value);
+    const observedMillis = DateTime.toEpochMillis(observed.value);
+    const boundaryMillis = Option.match(boundary, {
+      onNone: () => null,
+      onSome: (value) => DateTime.toEpochMillis(value),
+    });
+    return observedMillis <= evaluatedMillis && (boundaryMillis === null || evaluatedMillis < boundaryMillis)
+      ? undefined
+      : 'Verified evidence must be observed by and current at the evaluation instant';
+  }),
+);
 
 const rejected = Schema.Struct({
   ...assessmentIdentity,
   code: boundedText,
   outcome: Schema.Literal('REJECTED'),
   reason: boundedText,
-}).annotate(strict);
+});
 const unavailable = Schema.Struct({
   ...assessmentIdentity,
   code: boundedText,
   outcome: Schema.Literal('UNAVAILABLE'),
   reason: boundedText,
   retryable: Schema.Boolean,
-}).annotate(strict);
+});
 const stale = Schema.Struct({
   ...assessmentIdentity,
   code: boundedText,
@@ -171,7 +163,7 @@ const stale = Schema.Struct({
   outcome: Schema.Literal('STALE'),
   reason: boundedText,
   staleSourceIds: Schema.Array(MarketAffectedUseSourceIdSchema).check(Schema.isMinLength(1)),
-}).annotate(strict);
+});
 
 export const MarketAffectedUseAssessmentResponseSchema = Schema.Union([
   MarketAffectedUseVerifiedSchema,

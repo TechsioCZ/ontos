@@ -69,9 +69,11 @@ describe('Customer-owned Market retirement public contracts', () => {
         evaluatedAt: '2026-09-22T10:00:00Z',
       }),
     ).toThrow();
-    expect(() =>
-      Schema.decodeUnknownSync(MarketAffectedUseAssessmentRequestSchema)({ ...request, extra: true }),
-    ).toThrow();
+    // The governed read runtime decodes read input closed (core-runtime `reads/runtime.ts`).
+    const decodeReadInput = Schema.decodeUnknownSync(MarketAffectedUseAssessmentRequestSchema, {
+      onExcessProperty: 'error',
+    });
+    expect(() => decodeReadInput({ ...request, extra: true })).toThrow();
   });
 
   it('separates live blockers from retained history and preserves owner-verifiable source versions', () => {

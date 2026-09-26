@@ -26,6 +26,11 @@ const request = {
   tenantId,
 };
 
+// The governed read runtime decodes read input closed (core-runtime `reads/runtime.ts`).
+const decodeReadInput = Schema.decodeUnknownSync(CurrentSupportedCurrenciesRequestSchema, {
+  onExcessProperty: 'error',
+});
+
 const completenessEvidence = {
   nextApplicabilityBoundary: '2026-09-23T00:00:00.000Z',
   observedAt: '2026-09-22T09:59:59.000Z',
@@ -49,9 +54,7 @@ const current = {
 describe('Pricing Current supported-currencies contract', () => {
   it('strictly binds every pricing input and accepts an exact guest subject', () => {
     expect(Schema.decodeSync(CurrentSupportedCurrenciesRequestSchema)(request)).toEqual(request);
-    expect(() =>
-      Schema.decodeUnknownSync(CurrentSupportedCurrenciesRequestSchema)({ ...request, extra: true }),
-    ).toThrow();
+    expect(() => decodeReadInput({ ...request, extra: true })).toThrow();
     expect(() =>
       Schema.decodeSync(CurrentSupportedCurrenciesRequestSchema)({
         ...request,
@@ -59,7 +62,7 @@ describe('Pricing Current supported-currencies contract', () => {
       }),
     ).toThrow();
     expect(() =>
-      Schema.decodeUnknownSync(CurrentSupportedCurrenciesRequestSchema)({
+      decodeReadInput({
         ...request,
         subject: { ...request.subject, extra: true },
       }),

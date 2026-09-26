@@ -4,7 +4,6 @@ import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@ap
 import { DateTime, Option, Schema, SchemaGetter } from 'effect';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi';
 
-const strict = { parseOptions: { onExcessProperty: 'error' as const } };
 const stableReference = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300), Schema.isTrimmed());
 const boundedReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
 
@@ -48,7 +47,7 @@ const tenantQualifiedResourceRef = (moduleId: string, resourceType: string) =>
     resourceId: PricingResourceIdSchema,
     resourceType: Schema.Literal(resourceType),
     tenantId: PricingTenantIdSchema,
-  }).annotate(strict);
+  });
 
 const RetailCustomerProfileRefSchema = tenantQualifiedResourceRef(
   'commerce.customer-context',
@@ -64,30 +63,28 @@ const GuestPricingSubjectSchema = Schema.Struct({
   guestEvidenceRef: stableReference,
   guestSessionRef: stableReference,
   kind: Schema.Literal('GUEST'),
-}).annotate(strict);
+});
 
 const RetailPricingSubjectSchema = Schema.Struct({
-  authorizationSubject: Schema.Struct({ kind: Schema.Literal('RETAIL') }).annotate(strict),
+  authorizationSubject: Schema.Struct({ kind: Schema.Literal('RETAIL') }),
   kind: Schema.Literal('PROFILE'),
   profileRef: RetailCustomerProfileRefSchema,
-}).annotate(strict);
+});
 
 const CounterpartyPricingSubjectSchema = Schema.Struct({
   authorizationSubject: Schema.Struct({
     counterpartyRef: CounterpartyRefSchema,
     kind: Schema.Literal('COUNTERPARTY'),
-  }).annotate(strict),
+  }),
   kind: Schema.Literal('PROFILE'),
   profileRef: CounterpartyPurchasingProfileRefSchema,
-})
-  .check(
-    Schema.makeFilter(({ authorizationSubject, profileRef }) =>
-      authorizationSubject.counterpartyRef.tenantId === profileRef.tenantId
-        ? undefined
-        : 'Counterparty and Purchasing Profile must belong to the same Tenant',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ authorizationSubject, profileRef }) =>
+    authorizationSubject.counterpartyRef.tenantId === profileRef.tenantId
+      ? undefined
+      : 'Counterparty and Purchasing Profile must belong to the same Tenant',
+  ),
+);
 
 export const PricingCurrencySubjectSchema = Schema.Union([
   GuestPricingSubjectSchema,
@@ -106,15 +103,13 @@ export const CurrentSupportedCurrenciesRequestSchema = Schema.Struct({
   storefrontId: PricingStorefrontIdSchema,
   subject: PricingCurrencySubjectSchema,
   tenantId: PricingTenantIdSchema,
-})
-  .check(
-    Schema.makeFilter(({ subject, tenantId }) =>
-      subject.kind === 'GUEST' || subject.profileRef.tenantId === tenantId
-        ? undefined
-        : 'Profile subject and pricing context must belong to the same Tenant',
-    ),
-  )
-  .annotate(strict);
+}).check(
+  Schema.makeFilter(({ subject, tenantId }) =>
+    subject.kind === 'GUEST' || subject.profileRef.tenantId === tenantId
+      ? undefined
+      : 'Profile subject and pricing context must belong to the same Tenant',
+  ),
+);
 export type CurrentSupportedCurrenciesRequest = typeof CurrentSupportedCurrenciesRequestSchema.Type;
 
 const PricingCompletenessEvidenceSchema = Schema.toEncoded(OwnerVerifiableSetCompletenessEvidenceSchema);
@@ -127,30 +122,28 @@ export const CurrentSupportedCurrenciesSuccessSchema = Schema.Struct({
   outcome: Schema.Literal('SUPPORTED_CURRENCIES_CURRENT'),
   pricingRevision: PricingRevisionSchema,
   supportedCurrencies: PricingCurrencyCodeSetSchema,
-})
-  .check(
-    Schema.makeFilter((result) => {
-      if (result.completenessEvidence.ownerRevision !== result.pricingRevision) {
-        return 'Pricing revision and completeness revision must agree';
-      }
-      if (result.completenessEvidence.observedAt !== result.observedAt) {
-        return 'Observation instant and completeness evidence must agree';
-      }
-      if (result.completenessEvidence.nextApplicabilityBoundary !== result.nextApplicabilityBoundary) {
-        return 'Next applicability boundary and completeness evidence must agree';
-      }
-      const effectiveAt = DateTime.toEpochMillis(DateTime.makeUnsafe(result.effectiveAt));
-      const observedAt = DateTime.toEpochMillis(DateTime.makeUnsafe(result.observedAt));
-      const nextBoundary =
-        result.nextApplicabilityBoundary === undefined
-          ? undefined
-          : DateTime.toEpochMillis(DateTime.makeUnsafe(result.nextApplicabilityBoundary));
-      return observedAt <= effectiveAt && (nextBoundary === undefined || effectiveAt < nextBoundary)
+}).check(
+  Schema.makeFilter((result) => {
+    if (result.completenessEvidence.ownerRevision !== result.pricingRevision) {
+      return 'Pricing revision and completeness revision must agree';
+    }
+    if (result.completenessEvidence.observedAt !== result.observedAt) {
+      return 'Observation instant and completeness evidence must agree';
+    }
+    if (result.completenessEvidence.nextApplicabilityBoundary !== result.nextApplicabilityBoundary) {
+      return 'Next applicability boundary and completeness evidence must agree';
+    }
+    const effectiveAt = DateTime.toEpochMillis(DateTime.makeUnsafe(result.effectiveAt));
+    const observedAt = DateTime.toEpochMillis(DateTime.makeUnsafe(result.observedAt));
+    const nextBoundary =
+      result.nextApplicabilityBoundary === undefined
         ? undefined
-        : 'Pricing evidence must be observed by and current at the effective instant';
-    }),
-  )
-  .annotate(strict);
+        : DateTime.toEpochMillis(DateTime.makeUnsafe(result.nextApplicabilityBoundary));
+    return observedAt <= effectiveAt && (nextBoundary === undefined || effectiveAt < nextBoundary)
+      ? undefined
+      : 'Pricing evidence must be observed by and current at the effective instant';
+  }),
+);
 export type CurrentSupportedCurrenciesSuccess = typeof CurrentSupportedCurrenciesSuccessSchema.Type;
 
 const outcomeFailure = <const Outcome extends string, const Retryable extends boolean>(
@@ -162,7 +155,7 @@ const outcomeFailure = <const Outcome extends string, const Retryable extends bo
     outcome: Schema.Literal(outcome),
     reason: boundedReason,
     retryable: Schema.Literal(retryable),
-  }).annotate(strict);
+  });
 
 export const CurrentSupportedCurrenciesInvalidSchema = outcomeFailure('SUPPORTED_CURRENCIES_INVALID', false);
 export const CurrentSupportedCurrenciesUnavailableSchema = outcomeFailure('SUPPORTED_CURRENCIES_UNAVAILABLE', true);
@@ -174,7 +167,7 @@ export const CurrentSupportedCurrenciesStaleSchema = Schema.Struct({
   pricingRevision: Schema.optionalKey(PricingRevisionSchema),
   reason: boundedReason,
   retryable: Schema.Literal(true),
-}).annotate(strict);
+});
 
 export const CurrentSupportedCurrenciesResponseSchema = Schema.Union([
   CurrentSupportedCurrenciesSuccessSchema,
