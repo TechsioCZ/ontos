@@ -211,12 +211,12 @@ const PostgreSqlUrlSchema = Schema.URLFromString.check(
 
 const configSource = Config.all({
   baseUrl: Config.schema(HttpUrlSchema, 'COMMERCE_PORTAL_AUTH_URL'),
-  databaseUrl: Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL'),
-  nodeEnvironment: Config.string('COMMERCE_PORTAL_AUTH_NODE_ENV').pipe(Config.withDefault('')),
-  secret: Config.redacted('COMMERCE_PORTAL_AUTH_SECRET'),
+  databaseUrl: Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL'),
+  nodeEnvironment: Config.String('COMMERCE_PORTAL_AUTH_NODE_ENV').pipe(Config.withDefault('')),
+  secret: Config.Redacted('COMMERCE_PORTAL_AUTH_SECRET'),
   trustedOrigins: Config.schema(Schema.Trim, 'COMMERCE_PORTAL_AUTH_TRUSTED_ORIGINS').pipe(Config.withDefault('')),
   trustedProxies: Config.schema(Schema.Trim, 'COMMERCE_PORTAL_AUTH_TRUSTED_PROXIES').pipe(Config.withDefault('')),
-  versionedSecrets: Config.redacted('COMMERCE_PORTAL_AUTH_SECRETS').pipe(Config.withDefault(Redacted.make(''))),
+  versionedSecrets: Config.Redacted('COMMERCE_PORTAL_AUTH_SECRETS').pipe(Config.withDefault(Redacted.make(''))),
 });
 
 const parseHttpOrigin = (value: string): Effect.Effect<string, CommercePortalAuthConfigError> =>

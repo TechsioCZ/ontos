@@ -576,17 +576,17 @@ const installRuntimeDependencies = (runtimeManifest, appId, runtimeDir, workspac
 const materializeCommand = Command.make(
   'materialize-zerops-runtime',
   {
-    appId: Flag.string('app'),
-    packageDir: Flag.string('package-dir'),
-    packageName: Flag.string('package'),
-    worker: Flag.boolean('worker').pipe(Flag.withDefault(false)),
+    appId: Flag.String('app'),
+    packageDir: Flag.String('package-dir'),
+    packageName: Flag.String('package'),
+    worker: Flag.Boolean('worker').pipe(Flag.withDefault(false)),
   },
   ({ appId, packageDir, packageName, worker }) =>
     Effect.gen(function* materializeCommandEffect() {
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const workspaceRoot = pathService.resolve(
-        yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(process.cwd())),
+        yield* Config.String('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(process.cwd())),
       );
       yield* assertRelativePath('--package-dir', packageDir, pathService);
       const appRoot = pathService.resolve(workspaceRoot, packageDir);

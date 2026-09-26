@@ -6,9 +6,9 @@ export function build(): unknown {
   const Config = { string: (key: string) => key };
   return {
     fields: Schema.Struct({ password: Schema.String, secret: Schema.String }),
-    key: Config.string('BETTER_AUTH_SECRET'),
+    key: Config.String('BETTER_AUTH_SECRET'),
   };
 }
 
 export const RealName = Schema.String;
-export const RealIssuer = Config.string('ONTOS_GATEWAY_ISSUER');
+export const RealIssuer = Config.String('ONTOS_GATEWAY_ISSUER');

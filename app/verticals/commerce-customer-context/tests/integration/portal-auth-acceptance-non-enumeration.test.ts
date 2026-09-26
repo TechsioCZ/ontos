@@ -28,8 +28,8 @@ const ORIGIN = 'http://localhost:3020';
 const SECRET = 'n'.repeat(64);
 const PASSWORD = 'P'.repeat(24);
 
-const providerDatabaseUrl = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 const realmConfiguration = Effect.gen(function* realmConfiguration() {

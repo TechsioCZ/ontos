@@ -486,8 +486,8 @@ export const generateOntosModuleContract = (input: GenerateInput) =>
     return { bytes, etag, path: outputPath };
   });
 
-const verticalFlag = Flag.string('vertical');
-const targetFlag = Flag.choice('target', ['cloudflare-dist', 'dist']);
+const verticalFlag = Flag.String('vertical');
+const targetFlag = Flag.Literals('target', ['cloudflare-dist', 'dist']);
 const cli = Command.make(
   'generate-ontos-module-contract',
   { target: targetFlag, vertical: verticalFlag },

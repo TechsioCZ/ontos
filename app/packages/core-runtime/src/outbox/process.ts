@@ -51,7 +51,7 @@ const waitForShutdownSignal = Effect.callback<ShutdownSignal>((resume) => {
   });
 });
 
-const healthPortConfig = Config.option(Config.port('OUTBOX_WORKER_HEALTH_PORT'));
+const healthPortConfig = Config.option(Config.Port('OUTBOX_WORKER_HEALTH_PORT'));
 
 export { OutboxRuntimeLive as OutboxWorkerInfrastructureLive } from './runtime.ts';
 

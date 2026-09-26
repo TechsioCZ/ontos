@@ -218,7 +218,7 @@ const createFixture = () =>
 const runFixture = (root: string, output: string, tool: 'all' | 'knip' | 'jscpd' | 'fallow') =>
   Effect.gen(function* runNativeFixture() {
     const nativeSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const runtimePath = yield* Config.string('PATH');
+    const runtimePath = yield* Config.String('PATH');
     // Both fixtures and analyzer subprocesses use Git inside this test runtime.
     const fixtureSpawner = ChildProcessSpawner.make((command) =>
       Match.value(command).pipe(
@@ -498,7 +498,7 @@ it.live(
           FORCE_COLOR: '1',
           GITHUB_ACTIONS: 'true',
           NO_COLOR: '1',
-          PATH: `/usr/bin:${yield* Config.string('PATH')}`,
+          PATH: `/usr/bin:${yield* Config.String('PATH')}`,
         },
         extendEnv: true,
         stderr: 'pipe',

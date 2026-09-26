@@ -70,8 +70,8 @@ const REPLACEMENT_PASSWORD = 'R'.repeat(24);
 /** Below the realm's own minimum, so Better Auth refuses it before it reads its token row. */
 const SHORT_PASSWORD = 'R'.repeat(4);
 const SECRET = 's'.repeat(64);
-const DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 const EMAIL_VERIFICATION_IDENTIFIER_PREFIX = 'commerce-email-verification:';
 const bytesToHex = (bytes: Uint8Array): string =>

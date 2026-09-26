@@ -240,7 +240,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
       path.join(workspaceRoot, 'topology/reference-topology.json'),
       path.join(runtimeDir, 'topology.json'),
     );
-    const sourceRevision = yield* Config.option(Config.string('ULTRAMODERN_SOURCE_REVISION'));
+    const sourceRevision = yield* Config.option(Config.String('ULTRAMODERN_SOURCE_REVISION'));
     const artifactAppId = yield* Schema.decodeUnknownEffect(AppIdSchema)(appId);
     const artifactServiceId = yield* Schema.decodeUnknownEffect(ServiceIdSchema)(delivery.id);
     const { inputs: sourceInputMetadata } = yield* Schema.decodeUnknownEffect(MetafileInputsSchema)(metafile);

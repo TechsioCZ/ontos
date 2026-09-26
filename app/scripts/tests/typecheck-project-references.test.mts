@@ -38,7 +38,7 @@ const executablePath = path.join(workspaceRoot, 'node_modules/.bin');
 
 const runTypecheck = (fixture: string, commandArguments: readonly string[]) =>
   Effect.gen(function* runTypecheckEffect() {
-    const inheritedPath = yield* Config.string('PATH').pipe(Config.withDefault(''));
+    const inheritedPath = yield* Config.String('PATH').pipe(Config.withDefault(''));
     return yield* collectToolingProcess(
       ChildProcess.make(typecheckExecutable, ['ultramodern', 'typecheck', ...commandArguments], {
         cwd: fixture,

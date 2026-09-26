@@ -800,8 +800,8 @@ it.effect('bounds MFA routes on the owner budget and keeps every refusal problem
  * rotation a completed step-up performs preserves `created_at` on purpose — that is what carries
  * the absolute session lifetime — so the row's age can never stand in for "recently authenticated".
  */
-const PORTAL_AUTH_DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const PORTAL_AUTH_DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 const FRESHNESS_COOKIE_NAME = `__Secure-${COMMERCE_PORTAL_AUTH_POLICY.cookie.namePrefix}.session_token`;
 const FRESHNESS_STALE_AGE_MILLIS = (COMMERCE_PORTAL_AUTH_POLICY.session.freshAgeSeconds + 600) * 1000;

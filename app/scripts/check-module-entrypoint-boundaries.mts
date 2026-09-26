@@ -626,7 +626,7 @@ const readTopologyOwners = (root: string) =>
 
 const readSourceRevision = (root: string) =>
   Effect.gen(function* readSourceRevisionEffect() {
-    const configured = yield* Config.option(Config.string('ULTRAMODERN_SOURCE_REVISION'));
+    const configured = yield* Config.option(Config.String('ULTRAMODERN_SOURCE_REVISION'));
     if (Option.isSome(configured)) {
       return configured.value;
     }
@@ -1328,7 +1328,7 @@ const [, invokedPath] = process.argv;
 if (invokedPath !== undefined && invokedPath === import.meta.filename) {
   const main = Effect.gen(function* moduleEntrypointBoundaryMain() {
     const path = yield* Path.Path;
-    const root = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(
+    const root = yield* Config.String('ULTRAMODERN_WORKSPACE_ROOT').pipe(
       Config.withDefault(path.resolve(import.meta.dirname, '..')),
     );
     yield* checkModuleEntrypointBoundariesEffect(root);

@@ -113,8 +113,8 @@ const CLAIM_INVITATION_ACTION_KEY = 'commerce.customer-context.claim-counterpart
 const BINDING_RESERVED_OUTCOME_CODE = 'principal_binding_reserved';
 const BINDING_ACTIVATED_OUTCOME_CODE = 'principal_binding_activated';
 
-const providerDatabaseUrl = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 /** Resend is answered locally: creation now awaits delivery, so the transport must accept. */

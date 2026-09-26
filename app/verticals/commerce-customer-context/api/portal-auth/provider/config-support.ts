@@ -40,7 +40,7 @@ export const optionalConfigReader = <Value, ConfigurationError>(
   parse: (provider: ConfigProvider.ConfigProvider) => Effect.Effect<Value, ConfigurationError>,
   malformed: () => ConfigurationError,
 ) => {
-  const declaredKeys = Config.all(keys.map((key) => Config.option(Config.redacted(key))));
+  const declaredKeys = Config.all(keys.map((key) => Config.option(Config.Redacted(key))));
   return Effect.fn(span)(function* readOptionalConfig(
     provider: ConfigProvider.ConfigProvider,
   ): Effect.fn.Return<Option.Option<Value>, ConfigurationError> {

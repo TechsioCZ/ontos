@@ -100,7 +100,7 @@ const writeDatabaseTrustBoundaryReport = Effect.gen(function* writeDatabaseTrust
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const defaultWorkspaceRoot = path.resolve(import.meta.dirname, '..');
-  const workspaceRoot = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(
+  const workspaceRoot = yield* Config.String('ULTRAMODERN_WORKSPACE_ROOT').pipe(
     Config.withDefault(defaultWorkspaceRoot),
     Effect.mapError(
       () =>

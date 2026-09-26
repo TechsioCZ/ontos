@@ -146,7 +146,7 @@ const loadConfiguration = (): Effect.Effect<StageContextBootstrapConfiguration, 
         spiceDbInsecure: Config.schema(Schema.Trim, 'SPICEDB_INSECURE').pipe(
           Effect.mapError((cause) => failure('SPICEDB_INSECURE must be explicitly true or false', cause)),
         ),
-        spiceDbPreSharedKey: Config.redacted('SPICEDB_PRESHARED_KEY').pipe(
+        spiceDbPreSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY').pipe(
           Effect.mapError((cause) => failure('SPICEDB_PRESHARED_KEY is required', cause)),
         ),
       },

@@ -46,7 +46,7 @@ const unavailableActiveApplicationComposition = (cause: unknown): ActiveApplicat
     reason: 'The active Application Composition snapshot is unavailable or invalid',
   });
 
-const configuredActiveApplicationCompositionSnapshot = Config.string(
+const configuredActiveApplicationCompositionSnapshot = Config.String(
   'ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON',
 ).pipe(
   Effect.flatMap((encoded) =>

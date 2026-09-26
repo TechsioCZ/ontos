@@ -19,11 +19,11 @@ export const resolveUltramodernInvocation = <E,>(options: CommandOptions<E>) =>
     const moduleDirectory = yield* path
       .fromFileUrl(new URL('.', options.moduleUrl))
       .pipe(Effect.mapError(() => options.failure(options.directoryFailure)));
-    const workspaceRoot = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(
+    const workspaceRoot = yield* Config.String('ULTRAMODERN_WORKSPACE_ROOT').pipe(
       Config.withDefault(path.resolve(moduleDirectory, '..')),
       Effect.mapError(() => options.failure('ULTRAMODERN_WORKSPACE_ROOT is invalid')),
     );
-    const createBin = yield* Config.string('ULTRAMODERN_CREATE_BIN').pipe(
+    const createBin = yield* Config.String('ULTRAMODERN_CREATE_BIN').pipe(
       Config.option,
       Effect.map(Option.filter((value) => value.length > 0)),
       Effect.mapError(() => options.failure('ULTRAMODERN_CREATE_BIN is invalid')),

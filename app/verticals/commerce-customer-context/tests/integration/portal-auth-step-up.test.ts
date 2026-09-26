@@ -16,8 +16,8 @@ import type { CommercePortalAuthStepUpChallengeStore } from '../../api/portal-au
 
 const ORIGIN = 'https://portal.example.test';
 const SECRET = 's'.repeat(64);
-const DATABASE_URL = Config.redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
-  Config.orElse(() => Config.redacted('DATABASE_URL')),
+const DATABASE_URL = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL').pipe(
+  Config.orElse(() => Config.Redacted('DATABASE_URL')),
 );
 
 type ProviderDatabase = (typeof CommercePortalAuthDatabase)['Service'];

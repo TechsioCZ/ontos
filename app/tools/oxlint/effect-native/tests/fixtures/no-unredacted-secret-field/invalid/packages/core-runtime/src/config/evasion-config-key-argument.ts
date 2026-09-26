@@ -4,10 +4,10 @@
 // it to the Config argument, and a no-substitution template literal is not a `Literal` node.
 import { Config } from 'effect';
 
-export const AuthSecret = Config.string(`BETTER_AUTH_SECRET`);
-export const SpiceDbKey = Config.string('SPICEDB_PRESHARED_KEY' as const);
-export const AdminDsn = Config.nonEmptyString('POSTGRES_ADMIN_DSN' satisfies string);
+export const AuthSecret = Config.String(`BETTER_AUTH_SECRET`);
+export const SpiceDbKey = Config.String('SPICEDB_PRESHARED_KEY' as const);
+export const AdminDsn = Config.NonEmptyString('POSTGRES_ADMIN_DSN' satisfies string);
 
 // Public keys in the same shapes must stay silent.
-export const Issuer = Config.string(`ONTOS_GATEWAY_ISSUER`);
-export const Jwks = Config.string('ONTOS_GATEWAY_PUBLIC_JWKS' as const);
+export const Issuer = Config.String(`ONTOS_GATEWAY_ISSUER`);
+export const Jwks = Config.String('ONTOS_GATEWAY_PUBLIC_JWKS' as const);

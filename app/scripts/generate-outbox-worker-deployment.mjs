@@ -131,7 +131,7 @@ const runCommand = ({ write }) =>
 
 const command = Command.make(
   'generate-outbox-worker-deployment',
-  { write: Flag.boolean('write').pipe(Flag.withDefault(false)) },
+  { write: Flag.Boolean('write').pipe(Flag.withDefault(false)) },
   runCommand,
 );
 

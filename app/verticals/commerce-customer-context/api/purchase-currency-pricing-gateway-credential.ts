@@ -21,7 +21,7 @@ const httpUrl = Schema.URLFromString.check(
 );
 
 const configuration = Config.all({
-  apiKey: Config.redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
+  apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
   pricingBaseUrl: Config.schema(httpUrl, 'ONTOS_PRICING_BASE_URL'),
   shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });

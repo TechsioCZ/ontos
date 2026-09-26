@@ -489,14 +489,14 @@ const insideWorkspace = (pathService: Path.Path, root: string, relativeFile: str
 const authorizationReadinessCommand = Command.make(
   'authorization-readiness',
   {
-    environment: Argument.choice('environment', ['development', 'production', 'stage']),
+    environment: Argument.Literals('environment', ['development', 'production', 'stage']),
   },
   ({ environment }) =>
     Effect.gen(function* authorizationReadinessProgram() {
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
       const defaultRoot = yield* pathService.fromFileUrl(new URL('..', import.meta.url));
-      const root = yield* Config.string('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(defaultRoot));
+      const root = yield* Config.String('ULTRAMODERN_WORKSPACE_ROOT').pipe(Config.withDefault(defaultRoot));
       const reportDirectory = pathService.join(root, '.codex/reports/authorization');
       const contextPath = pathService.join(root, 'topology/authorization-contexts', `${environment}.json`);
       const context = yield* readJson(FixedAuthorizationContextSchema, contextPath).pipe(
