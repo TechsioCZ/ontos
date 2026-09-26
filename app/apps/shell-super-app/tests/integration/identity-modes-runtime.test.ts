@@ -14,7 +14,6 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { Context, Effect, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
-import { Pool } from 'pg';
 
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
@@ -38,7 +37,10 @@ import {
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { createNonHumanPrincipalAction } from '../../../../packages/core-runtime/src/modules/actions/create-non-human-principal.action.ts';
 import { openActionRuntimeOptions } from '../../../../packages/core-runtime/tests/support/action-runtime-options.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { makeApiKeyService } from '../../api/auth/api-key-service.ts';
 import { AuthConfig, loadAuthConfig } from '../../api/auth/config.ts';
@@ -92,13 +94,10 @@ it.live.each([
   '$name',
   Effect.fnUntraced(function* runIntegration1({ pendingCleanupOnly }) {
     const baseConfiguration = yield* loadAuthConfig();
-    const corePool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: baseConfiguration.connectionString })),
-      (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie),
-    );
+    const coreClient = yield* makeTestPgClient(baseConfiguration.connectionString);
     const authPersistence = yield* makeAuthDatabase(baseConfiguration);
     const authDatabase = authPersistence.executor;
-    const coreDatabase = yield* makeTestDatabaseFromPool(corePool, coreRelations);
+    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const principalManagementRepository = principalManagementRepositoryFromTransaction(
       coreDatabase,
       staffAuthenticationNamespaceId,

@@ -4,7 +4,6 @@ import { NodeCrypto } from '@effect/platform-node';
 import { betterAuth } from 'better-auth';
 import { eq, inArray } from 'drizzle-orm';
 import { Crypto, Effect, Redacted, Schema } from 'effect';
-import { Pool } from 'pg';
 
 import { configureDatabasePool } from '../../../../packages/core-runtime/src/db/pool-configuration.ts';
 import {
@@ -21,21 +20,24 @@ import {
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
 } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../../api/auth/authentication-namespace.ts';
 import { loadAuthConfig } from '../../api/auth/config.ts';
-import { acquirePoolResource, makeAuthDatabase } from '../../api/auth/db/client.ts';
+import { makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, session, user } from '../../api/auth/db/schema.ts';
 
 const contactsModuleId = 'party.registry';
 const shellModuleId = 'core.shell';
 
 // Real server deadlines are what bound this fixture's finalizers: a stuck statement would
-// otherwise keep a client checked out and hold `pool.end()` open past the acquisition
-// deadline. Keep the shared connection bound and shorten the statement bound below that
-// deadline. Never use query_timeout or a Promise race -- neither cancels server work.
+// otherwise keep a pooled connection busy and hold the client scope open. Keep the shared
+// connect bound and shorten the statement bound so PostgreSQL cancels stuck work itself.
+// Never use query_timeout or a Promise race -- neither cancels server work.
 const e2ePoolDeadlines = {
-  connectionTimeoutMillis: 5000,
+  connectTimeoutMillis: 5000,
   statement_timeout: 10_000,
 } as const;
 
@@ -152,9 +154,12 @@ export const createAuthenticationFixture = Effect.fn('createAuthenticationFixtur
     });
     const { baseUrl: baseURL, connectionString, secret } = yield* loadAuthConfig({ envPath: APP_ENV_PATH });
 
-    const corePoolConfiguration = yield* configureDatabasePool(Redacted.make(connectionString), e2ePoolDeadlines);
-    const corePool = yield* acquirePoolResource(() => new Pool(corePoolConfiguration));
-    const coreDatabase = yield* makeTestDatabaseFromPool(corePool, coreRelations);
+    const { connectTimeout, startupParameters } = yield* configureDatabasePool(
+      Redacted.make(connectionString),
+      e2ePoolDeadlines,
+    );
+    const coreClient = yield* makeTestPgClient(connectionString, { connectTimeout, startupParameters });
+    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const { adapter, executor: authDatabase } = yield* makeAuthDatabase({
       connectionString,
     });

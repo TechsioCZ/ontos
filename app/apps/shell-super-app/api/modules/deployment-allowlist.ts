@@ -195,9 +195,7 @@ const invalid = (cause: unknown) =>
 /** Decodes the generated topology/overlay pairing. Reachability never adds an entry. */
 export const deriveDeploymentAllowlist = effectFn('DeploymentAllowlist.deriveDeploymentAllowlist')(
   function* deriveDeploymentAllowlist(input: DeploymentAllowlistInput) {
-    const decoded = yield* decodeUnknownEffect(DeploymentAllowlistInputSchema, {
-      onExcessProperty: 'preserve',
-    })(input).pipe(mapError(invalid));
+    const decoded = yield* decodeUnknownEffect(DeploymentAllowlistInputSchema)(input).pipe(mapError(invalid));
     const entries: DeploymentAllowlistEntry[] = [];
     for (const appId of decoded.topology.verticals
       .flatMap(({ id, surfaceProfile }) => (surfaceProfile === 'api-only' ? [] : [id]))

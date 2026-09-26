@@ -67,15 +67,9 @@ export const createModuleDeploymentAllowlistBuildInput = ({
   topology,
 }: ModuleDeploymentAllowlistBuildInput): ModuleDeploymentAllowlistBuildOutput => {
   const parsedDevelopmentOverlay = getResultOrThrow(
-    decodeUnknownResult(DeploymentAllowlistOverlaySchema, {
-      onExcessProperty: 'preserve',
-    })(developmentOverlay),
+    decodeUnknownResult(DeploymentAllowlistOverlaySchema)(developmentOverlay),
   );
-  const parsedTopology = getResultOrThrow(
-    decodeUnknownResult(DeploymentAllowlistTopologySchema, {
-      onExcessProperty: 'preserve',
-    })(topology),
-  );
+  const parsedTopology = getResultOrThrow(decodeUnknownResult(DeploymentAllowlistTopologySchema)(topology));
   const configuredEnvironment = getResultOrThrow(
     decodeUnknownResult(Trim)(readEnvironment('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT') ?? ''),
   );

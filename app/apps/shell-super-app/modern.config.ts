@@ -112,17 +112,13 @@ const appId = 'shell-super-app';
 const moduleFederationConfigPath = fileURLToPath(new URL('module-federation.config.ts', import.meta.url));
 const referenceTopologyPath = fileURLToPath(new URL('../../topology/reference-topology.json', import.meta.url));
 const referenceTopology = getResultOrThrow(
-  decodeUnknownResult(fromJsonString(DeploymentAllowlistTopologySchema), {
-    onExcessProperty: 'preserve',
-  })(readFileSync(referenceTopologyPath, 'utf-8')),
+  decodeUnknownResult(fromJsonString(DeploymentAllowlistTopologySchema))(readFileSync(referenceTopologyPath, 'utf-8')),
 );
 const developmentOverlayPath = fileURLToPath(
   new URL('../../topology/local-overlays/development.json', import.meta.url),
 );
 const developmentOverlay = getResultOrThrow(
-  decodeUnknownResult(fromJsonString(DeploymentAllowlistOverlaySchema), {
-    onExcessProperty: 'preserve',
-  })(readFileSync(developmentOverlayPath, 'utf-8')),
+  decodeUnknownResult(fromJsonString(DeploymentAllowlistOverlaySchema))(readFileSync(developmentOverlayPath, 'utf-8')),
 );
 const moduleDeploymentAllowlist = createModuleDeploymentAllowlistBuildInput({
   cloudflareDeployEnabled,

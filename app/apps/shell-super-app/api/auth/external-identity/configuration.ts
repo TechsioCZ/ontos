@@ -21,12 +21,12 @@ const ExternalIdentityWorkloadGrantSchema = Schema.Struct({
   tenantId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId')),
   workloadAuthenticationNamespaceId: AuthenticationNamespaceIdSchema,
   workloadPrincipalId: Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId')),
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 export const ExternalIdentityHttpConfigurationSchema = Schema.Struct({
   grants: Schema.Array(ExternalIdentityWorkloadGrantSchema),
   providerEndpointAudience: GatewayAudienceSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 export type ExternalIdentityWorkloadGrant = typeof ExternalIdentityWorkloadGrantSchema.Type;
 export type ExternalIdentityHttpConfiguration = typeof ExternalIdentityHttpConfigurationSchema.Type;
 

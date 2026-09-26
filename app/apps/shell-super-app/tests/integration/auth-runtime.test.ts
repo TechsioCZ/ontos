@@ -21,7 +21,6 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { Effect, Layer, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, jwtVerify } from 'jose';
-import { Pool } from 'pg';
 
 import {
   actionInvocations,
@@ -34,7 +33,10 @@ import {
   tenantModuleStates,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
-import { makeTestDatabaseFromPool } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  makeTestDatabaseFromClient,
+  makeTestPgClient,
+} from '../../../../packages/core-runtime/tests/support/database.ts';
 import { purgeFixtureRows } from '../../../../packages/core-runtime/tests/support/fixture-cleanup.ts';
 import { AuthenticationNamespaceRegistrationSchema } from '../../../../packages/core-runtime/src/auth/external-identity-contracts.ts';
 import {
@@ -277,11 +279,8 @@ it.live(
   'creates, resolves, persists, revokes, and signs out a Better Auth session',
   Effect.fnUntraced(function* runIntegration1() {
     const configuration = yield* loadAuthConfig();
-    const corePool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: configuration.connectionString })),
-      (pool) => Effect.promise(() => pool.end()),
-    );
-    const coreDatabase = yield* makeTestDatabaseFromPool(corePool, coreRelations);
+    const coreClient = yield* makeTestPgClient(configuration.connectionString);
+    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const authPersistence = yield* makeAuthDatabase(configuration);
     const authDatabase = authPersistence.executor;
     const resolver = makePrincipalResolver(
@@ -1177,23 +1176,12 @@ it.live(
     );
     const configuration = yield* loadAuthConfig();
     const databaseConnections = yield* loadDatabaseConnectionPair();
-    const adminPool = yield* Effect.acquireRelease(
-      Effect.sync(
-        () =>
-          new Pool({
-            connectionString: databaseConnections.admin.connectionString,
-          }),
-      ),
-      (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie),
-    );
-    const corePool = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: configuration.connectionString })),
-      (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie),
-    );
-    const coreDatabase = yield* makeTestDatabaseFromPool(corePool, coreRelations);
+    const adminClient = yield* makeTestPgClient(databaseConnections.admin.connectionString);
+    const coreClient = yield* makeTestPgClient(configuration.connectionString);
+    const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
     const authPersistence = yield* makeAuthDatabase(configuration);
     const authDatabase = authPersistence.executor;
-    const adminAuthDatabase = yield* makeTestDatabaseFromPool(adminPool, authRelations);
+    const adminAuthDatabase = yield* makeTestDatabaseFromClient(adminClient, authRelations);
     const resolver = makePrincipalResolver(
       { executor: coreDatabase },
       { authenticationNamespaceId: staffAuthenticationNamespaceId },

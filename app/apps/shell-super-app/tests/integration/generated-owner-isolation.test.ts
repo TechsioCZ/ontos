@@ -26,13 +26,13 @@ import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { defineEffectBff, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
+import type { PgClient } from '@effect/sql-pg';
 import { Clock, Config, ConfigProvider, Effect, Layer, Logger, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { HttpApi } from 'effect/unstable/httpapi';
 import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import { exportJWK, generateKeyPair } from 'jose';
-import { Pool } from 'pg';
 
 import {
   AuthenticationNamespaceIdSchema,
@@ -44,6 +44,7 @@ import {
 } from '../../../../packages/core-runtime/src/auth/external-identity/verifier.ts';
 import { makeActionRepository } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
+import { makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../../../../packages/core-runtime/src/modules/module-state-gate.ts';
@@ -67,10 +68,8 @@ import {
   toSpiceDbActionObjectId,
 } from '../../../../packages/core-runtime/src/permissions/service.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
-import {
-  makeFaultInjectableCoreDatabase,
-  TestQueryHook,
-} from '../../../../packages/core-runtime/tests/support/database-faults.ts';
+import { injectStatementFaults } from '../../../../packages/core-runtime/tests/support/database-faults.ts';
+import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { GatewayPrincipalVerifierLive } from '../../../../packages/gateway-principal-verifier/src/server.ts';
 import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
@@ -356,23 +355,20 @@ const decodeResponse = Effect.fnUntraced(function* runIntegration4<
 >(response: Response, schema: ResponseSchema) {
   return yield* Schema.decodeUnknownEffect(schema)(yield* Effect.tryPromise(() => response.json()));
 });
-const createOwnerSchema = Effect.fnUntraced(function* runIntegration5(admin: Pool, schemaName: string) {
+const createOwnerSchema = Effect.fnUntraced(function* runIntegration5(admin: PgClient.PgClient, schemaName: string) {
   const tenantPredicate = `tenant_id = nullif(current_setting('ontos.tenant_id', true), '')::uuid`;
   const entityPredicate = `${tenantPredicate} and legal_entity_id = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid`;
   // Dynamic identifiers are generated locally from UUID hex and never accept external input.
-  yield* Effect.tryPromise(() => admin.query(`create schema ${schemaName}`));
-  yield* Effect.tryPromise(() =>
-    admin.query(`
+  yield* admin.unsafe(`create schema ${schemaName}`);
+  yield* admin.unsafe(`
     create table ${schemaName}.tenant_records (
       tenant_id uuid not null,
       resource_id uuid not null,
       title text not null,
       primary key (tenant_id, resource_id)
     )
-  `),
-  );
-  yield* Effect.tryPromise(() =>
-    admin.query(`
+  `);
+  yield* admin.unsafe(`
     create table ${schemaName}.entity_records (
       tenant_id uuid not null,
       legal_entity_id uuid not null,
@@ -380,40 +376,29 @@ const createOwnerSchema = Effect.fnUntraced(function* runIntegration5(admin: Poo
       title text not null,
       primary key (tenant_id, legal_entity_id, resource_id)
     )
-  `),
-  );
+  `);
   const configureTable = Effect.fnUntraced(function* runIntegration6(table: string, predicate: string) {
-    yield* Effect.tryPromise(() => admin.query(`alter table ${schemaName}.${table} enable row level security`));
-    yield* Effect.tryPromise(() => admin.query(`alter table ${schemaName}.${table} force row level security`));
-    yield* Effect.tryPromise(() =>
-      admin.query(
-        `create policy ${table}_select on ${schemaName}.${table} for select to ontos_runtime using (${predicate})`,
-      ),
+    yield* admin.unsafe(`alter table ${schemaName}.${table} enable row level security`);
+    yield* admin.unsafe(`alter table ${schemaName}.${table} force row level security`);
+    yield* admin.unsafe(
+      `create policy ${table}_select on ${schemaName}.${table} for select to ontos_runtime using (${predicate})`,
     );
-    yield* Effect.tryPromise(() =>
-      admin.query(
-        `create policy ${table}_insert on ${schemaName}.${table} for insert to ontos_runtime with check (${predicate})`,
-      ),
+    yield* admin.unsafe(
+      `create policy ${table}_insert on ${schemaName}.${table} for insert to ontos_runtime with check (${predicate})`,
     );
-    yield* Effect.tryPromise(() =>
-      admin.query(
-        `create policy ${table}_update on ${schemaName}.${table} for update to ontos_runtime using (${predicate}) with check (${predicate})`,
-      ),
+    yield* admin.unsafe(
+      `create policy ${table}_update on ${schemaName}.${table} for update to ontos_runtime using (${predicate}) with check (${predicate})`,
     );
-    yield* Effect.tryPromise(() =>
-      admin.query(
-        `create policy ${table}_delete on ${schemaName}.${table} for delete to ontos_runtime using (${predicate})`,
-      ),
+    yield* admin.unsafe(
+      `create policy ${table}_delete on ${schemaName}.${table} for delete to ontos_runtime using (${predicate})`,
     );
   });
   yield* Effect.all(
     [configureTable('tenant_records', tenantPredicate), configureTable('entity_records', entityPredicate)],
     { concurrency: 'unbounded' },
   );
-  yield* Effect.tryPromise(() => admin.query(`grant usage on schema ${schemaName} to ontos_runtime`));
-  yield* Effect.tryPromise(() =>
-    admin.query(`grant select, insert, update, delete on all tables in schema ${schemaName} to ontos_runtime`),
-  );
+  yield* admin.unsafe(`grant usage on schema ${schemaName} to ontos_runtime`);
+  yield* admin.unsafe(`grant select, insert, update, delete on all tables in schema ${schemaName} to ontos_runtime`);
 });
 type CoreDatabaseService = Parameters<typeof makeActionRuntime>[0];
 type RuntimeActionRegistration = ActionRegistration<
@@ -436,7 +421,7 @@ const failingEvidenceDatabase = (database: CoreDatabaseService): CoreDatabaseSer
       database.executor.transaction(
         (transaction) =>
           runInTransaction(transaction).pipe(
-            Effect.provideService(TestQueryHook, (statement) =>
+            injectStatementFaults((statement) =>
               statement.startsWith('insert into "core"."data_access_events"')
                 ? Effect.fail(
                     new SqlError({
@@ -560,23 +545,10 @@ it.live(
     const testClockLayer = TestClock.layer();
     const connections = yield* loadDatabaseConnectionPair();
     expect(connections.runtime.user).toBe('ontos_runtime');
-    const admin = yield* Effect.acquireRelease(
-      Effect.sync(() => new Pool({ connectionString: connections.admin.connectionString })),
-      (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie),
-    );
-    // Shell and the independently deployed owner hold separate nested read transactions in this
-    // in-process fixture, so the shared test pool needs more than one physical connection.
-    const runtimePool = yield* Effect.acquireRelease(
-      Effect.sync(
-        () =>
-          new Pool({
-            connectionString: connections.runtime.connectionString,
-            max: 4,
-          }),
-      ),
-      (pool) => Effect.tryPromise(() => pool.end()).pipe(Effect.orDie),
-    );
-    const runtimeDatabase = yield* makeFaultInjectableCoreDatabase(connections.runtime);
+    const admin = yield* makeTestPgClient(connections.admin.connectionString);
+    // Probes runtime-role reads outside any request scope after the owner paths have run.
+    const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString);
+    const runtimeDatabase = yield* makeCoreDatabase(connections.runtime);
     const fixture = yield* createGeneratedOwnerFixture(schemaName).pipe(Effect.provide(NodeServices.layer));
     const contract = yield* deriveOntosModuleDeploymentContract({
       vertical: GENERATED_OWNER.slug,
@@ -750,57 +722,58 @@ it.live(
         spiceAdmin.close();
         const cleanupQueries = [
           Effect.fnUntraced(function* runIntegration15() {
-            return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.outbox_messages where tenant_id in ($1, $2)', [tenantA, tenantB]),
-            );
+            return yield* admin.unsafe('delete from core.outbox_messages where tenant_id in ($1, $2)', [
+              tenantA,
+              tenantB,
+            ]);
           }),
           Effect.fnUntraced(function* runIntegration16() {
-            return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.domain_events where tenant_id in ($1, $2)', [tenantA, tenantB]),
-            );
+            return yield* admin.unsafe('delete from core.domain_events where tenant_id in ($1, $2)', [
+              tenantA,
+              tenantB,
+            ]);
           }),
           Effect.fnUntraced(function* runIntegration17() {
-            return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.data_access_events where tenant_id in ($1, $2)', [tenantA, tenantB]),
-            );
+            return yield* admin.unsafe('delete from core.data_access_events where tenant_id in ($1, $2)', [
+              tenantA,
+              tenantB,
+            ]);
           }),
           Effect.fnUntraced(function* runIntegration18() {
-            return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.audit_events where tenant_id in ($1, $2)', [tenantA, tenantB]),
-            );
+            return yield* admin.unsafe('delete from core.audit_events where tenant_id in ($1, $2)', [tenantA, tenantB]);
           }),
           Effect.fnUntraced(function* runIntegration19() {
-            return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.action_invocations where tenant_id in ($1, $2)', [tenantA, tenantB]),
-            );
+            return yield* admin.unsafe('delete from core.action_invocations where tenant_id in ($1, $2)', [
+              tenantA,
+              tenantB,
+            ]);
           }),
           Effect.fnUntraced(function* runIntegration20() {
-            return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.tenant_module_states where tenant_id in ($1, $2)', [tenantA, tenantB]),
-            );
+            return yield* admin.unsafe('delete from core.tenant_module_states where tenant_id in ($1, $2)', [
+              tenantA,
+              tenantB,
+            ]);
           }),
           Effect.fnUntraced(function* runIntegration21() {
-            return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.principal_auth_bindings where tenant_id in ($1, $2)', [tenantA, tenantB]),
-            );
+            return yield* admin.unsafe('delete from core.principal_auth_bindings where tenant_id in ($1, $2)', [
+              tenantA,
+              tenantB,
+            ]);
           }),
           Effect.fnUntraced(function* runIntegration22() {
-            return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.principals where tenant_id in ($1, $2)', [tenantA, tenantB]),
-            );
+            return yield* admin.unsafe('delete from core.principals where tenant_id in ($1, $2)', [tenantA, tenantB]);
           }),
           Effect.fnUntraced(function* runIntegration23() {
-            return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.legal_entities where tenant_id in ($1, $2)', [tenantA, tenantB]),
-            );
+            return yield* admin.unsafe('delete from core.legal_entities where tenant_id in ($1, $2)', [
+              tenantA,
+              tenantB,
+            ]);
           }),
           Effect.fnUntraced(function* runIntegration24() {
-            return yield* Effect.tryPromise(() =>
-              admin.query('delete from core.tenants where tenant_id in ($1, $2)', [tenantA, tenantB]),
-            );
+            return yield* admin.unsafe('delete from core.tenants where tenant_id in ($1, $2)', [tenantA, tenantB]);
           }),
           Effect.fnUntraced(function* runIntegration25() {
-            return yield* Effect.tryPromise(() => admin.query(`drop schema if exists ${schemaName} cascade`));
+            return yield* admin.unsafe(`drop schema if exists ${schemaName} cascade`);
           }),
         ];
         yield* Effect.forEach(cleanupQueries, ignoreOperationFailure, {
@@ -810,58 +783,44 @@ it.live(
       }, Effect.orDie),
     );
     yield* createOwnerSchema(admin, schemaName);
-    yield* Effect.tryPromise(() =>
-      admin.query(
-        `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $3, 'Generated tenant A', 'active', 'en'), ($2, $4, 'Generated tenant B', 'active', 'en')`,
-        [tenantA, tenantB, `generated-a-${tenantA}`, `generated-b-${tenantB}`],
-      ),
+    yield* admin.unsafe(
+      `insert into core.tenants (tenant_id, slug, name, status, default_locale) values ($1, $3, 'Generated tenant A', 'active', 'en'), ($2, $4, 'Generated tenant B', 'active', 'en')`,
+      [tenantA, tenantB, `generated-a-${tenantA}`, `generated-b-${tenantB}`],
     );
-    yield* Effect.tryPromise(() =>
-      admin.query(
-        `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1, $5, 'A1', 'CZ', $7, 'active'), ($2, $5, 'A2', 'CZ', $8, 'active'), ($3, $6, 'B1', 'CZ', $9, 'active'), ($4, $6, 'B2', 'CZ', $10, 'active')`,
-        [
-          entityA1,
-          entityA2,
-          entityB1,
-          entityB2,
-          tenantA,
-          tenantB,
-          `A1-${entityA1}`,
-          `A2-${entityA2}`,
-          `B1-${entityB1}`,
-          `B2-${entityB2}`,
-        ],
-      ),
+    yield* admin.unsafe(
+      `insert into core.legal_entities (legal_entity_id, tenant_id, legal_name, registration_country, registration_number, status) values ($1, $5, 'A1', 'CZ', $7, 'active'), ($2, $5, 'A2', 'CZ', $8, 'active'), ($3, $6, 'B1', 'CZ', $9, 'active'), ($4, $6, 'B2', 'CZ', $10, 'active')`,
+      [
+        entityA1,
+        entityA2,
+        entityB1,
+        entityB2,
+        tenantA,
+        tenantB,
+        `A1-${entityA1}`,
+        `A2-${entityA2}`,
+        `B1-${entityB1}`,
+        `B2-${entityB2}`,
+      ],
     );
-    yield* Effect.tryPromise(() =>
-      admin.query(
-        `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $3, 'human', 'Generated principal A', 'active'), ($2, $4, 'human', 'Generated principal B', 'active')`,
-        [principalA, principalB, tenantA, tenantB],
-      ),
+    yield* admin.unsafe(
+      `insert into core.principals (principal_id, tenant_id, kind, display_name, status) values ($1, $3, 'human', 'Generated principal A', 'active'), ($2, $4, 'human', 'Generated principal B', 'active')`,
+      [principalA, principalB, tenantA, tenantB],
     );
-    yield* Effect.tryPromise(() =>
-      admin.query(
-        `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, authentication_namespace_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, '${staffAuthenticationNamespaceId}', 'better_auth', 'user', $7, 'active'), ($2, $4, $6, '${staffAuthenticationNamespaceId}', 'better_auth', 'user', $8, 'active')`,
-        [bindingA, bindingB, tenantA, tenantB, principalA, principalB, `user-${principalA}`, `user-${principalB}`],
-      ),
+    yield* admin.unsafe(
+      `insert into core.principal_auth_bindings (principal_auth_binding_id, tenant_id, principal_id, authentication_namespace_id, provider, subject_type, provider_subject_id, status) values ($1, $3, $5, '${staffAuthenticationNamespaceId}', 'better_auth', 'user', $7, 'active'), ($2, $4, $6, '${staffAuthenticationNamespaceId}', 'better_auth', 'user', $8, 'active')`,
+      [bindingA, bindingB, tenantA, tenantB, principalA, principalB, `user-${principalA}`, `user-${principalB}`],
     );
-    yield* Effect.tryPromise(() =>
-      admin.query(
-        `insert into core.tenant_module_states (tenant_id, module_key, state) values ($1, $3, 'active'), ($2, $3, 'active')`,
-        [tenantA, tenantB, GENERATED_OWNER.moduleId],
-      ),
+    yield* admin.unsafe(
+      `insert into core.tenant_module_states (tenant_id, module_key, state) values ($1, $3, 'active'), ($2, $3, 'active')`,
+      [tenantA, tenantB, GENERATED_OWNER.moduleId],
     );
-    yield* Effect.tryPromise(() =>
-      admin.query(
-        `insert into ${schemaName}.tenant_records (tenant_id, resource_id, title) values ($1, $3, 'Tenant A list'), ($2, $3, 'Tenant B list')`,
-        [tenantA, tenantB, collidingResourceId],
-      ),
+    yield* admin.unsafe(
+      `insert into ${schemaName}.tenant_records (tenant_id, resource_id, title) values ($1, $3, 'Tenant A list'), ($2, $3, 'Tenant B list')`,
+      [tenantA, tenantB, collidingResourceId],
     );
-    yield* Effect.tryPromise(() =>
-      admin.query(
-        `insert into ${schemaName}.entity_records (tenant_id, legal_entity_id, resource_id, title) values ($1, $2, $7, 'A1 searchable'), ($1, $3, $7, 'A2 searchable'), ($4, $5, $7, 'B1 searchable'), ($4, $6, $7, 'B2 searchable')`,
-        [tenantA, entityA1, entityA2, tenantB, entityB1, entityB2, collidingResourceId],
-      ),
+    yield* admin.unsafe(
+      `insert into ${schemaName}.entity_records (tenant_id, legal_entity_id, resource_id, title) values ($1, $2, $7, 'A1 searchable'), ($1, $3, $7, 'A2 searchable'), ($4, $5, $7, 'B1 searchable'), ($4, $6, $7, 'B2 searchable')`,
+      [tenantA, entityA1, entityA2, tenantB, entityB1, entityB2, collidingResourceId],
     );
     const legalA = requiredValue(toLegalEntityAccessObjectId(tenantA, entityA1), 'Tenant A legal entity');
     const legalB = requiredValue(toLegalEntityAccessObjectId(tenantB, entityB1), 'Tenant B legal entity');
@@ -1170,18 +1129,16 @@ it.live(
     );
     expect(deniedResponse.status).toBe(403);
     expect(generated.counts.detail).toBe(deniedBefore);
-    const deniedEvidence = yield* Effect.tryPromise(() =>
-      admin.query<{
-        outcome: string;
-        outcome_code: string;
-        query_hash: null;
-        result_count: number;
-      }>(
-        `select outcome, outcome_code, query_hash, result_count from core.data_access_events where tenant_id = $1 and target_resource_id = $2`,
-        [tenantA, deniedResourceId],
-      ),
+    const deniedEvidence = yield* admin.unsafe<{
+      outcome: string;
+      outcome_code: string;
+      query_hash: null;
+      result_count: number;
+    }>(
+      `select outcome, outcome_code, query_hash, result_count from core.data_access_events where tenant_id = $1 and target_resource_id = $2`,
+      [tenantA, deniedResourceId],
     );
-    expect(deniedEvidence.rows).toEqual([
+    expect(deniedEvidence).toEqual([
       {
         outcome: 'denied',
         outcome_code: 'spicedb_permission_denied',
@@ -1355,36 +1312,28 @@ it.live(
         ),
       ),
     ).toBe(true);
-    const ownerRows = yield* Effect.tryPromise(() =>
-      admin.query<{
-        legal_entity_id: string;
-        tenant_id: string;
-        title: string;
-      }>(`select tenant_id, legal_entity_id, title from ${schemaName}.entity_records order by title`),
+    const ownerRows = yield* admin.unsafe<{
+      legal_entity_id: string;
+      tenant_id: string;
+      title: string;
+    }>(`select tenant_id, legal_entity_id, title from ${schemaName}.entity_records order by title`);
+    expect(ownerRows.some(({ title }) => title === 'A1 action write')).toBe(true);
+    expect(ownerRows.some(({ title }) => title.startsWith('forbidden'))).toBe(false);
+    const allowedEvidence = yield* admin.unsafe<{
+      evidence_policy_key: string;
+      outcome: string;
+      query_hash: null;
+    }>(
+      `select evidence_policy_key, outcome, query_hash from core.data_access_events where tenant_id in ($1, $2) and outcome = 'allowed' order by evidence_policy_key`,
+      [tenantA, tenantB],
     );
-    expect(ownerRows.rows.some(({ title }) => title === 'A1 action write')).toBe(true);
-    expect(ownerRows.rows.some(({ title }) => title.startsWith('forbidden'))).toBe(false);
-    const allowedEvidence = yield* Effect.tryPromise(() =>
-      admin.query<{
-        evidence_policy_key: string;
-        outcome: string;
-        query_hash: null;
-      }>(
-        `select evidence_policy_key, outcome, query_hash from core.data_access_events where tenant_id in ($1, $2) and outcome = 'allowed' order by evidence_policy_key`,
-        [tenantA, tenantB],
-      ),
-    );
-    expect(allowedEvidence.rows.length >= 10).toBe(true);
-    expect(allowedEvidence.rows.every(({ outcome }) => outcome === 'allowed')).toBe(true);
-    expect(allowedEvidence.rows.every(({ query_hash }) => query_hash === null)).toBe(true);
-    const unscopedEntityRows = yield* Effect.tryPromise(() =>
-      runtimePool.query(`select * from ${schemaName}.entity_records`),
-    );
-    expect(unscopedEntityRows.rowCount, 'a reused pooled connection must not retain transaction-local scope').toBe(0);
-    const unscopedTenantRows = yield* Effect.tryPromise(() =>
-      runtimePool.query(`select * from ${schemaName}.tenant_records`),
-    );
-    expect(unscopedTenantRows.rowCount).toBe(0);
+    expect(allowedEvidence.length >= 10).toBe(true);
+    expect(allowedEvidence.every(({ outcome }) => outcome === 'allowed')).toBe(true);
+    expect(allowedEvidence.every(({ query_hash }) => query_hash === null)).toBe(true);
+    const unscopedEntityRows = yield* runtimeClient.unsafe(`select * from ${schemaName}.entity_records`);
+    expect(unscopedEntityRows.length, 'a reused pooled connection must not retain transaction-local scope').toBe(0);
+    const unscopedTenantRows = yield* runtimeClient.unsafe(`select * from ${schemaName}.tenant_records`);
+    expect(unscopedTenantRows.length).toBe(0);
     expect(capturedLogs.length > 0, 'the generated-owner path must capture runtime logs').toBe(true);
     const capturedLogText = capturedLogs.join('\n');
     expect(capturedLogText).toMatch(/Unexpected Action execution defect/u);

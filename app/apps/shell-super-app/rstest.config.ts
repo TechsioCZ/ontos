@@ -26,24 +26,18 @@ const moduleDeploymentAllowlistJsonSchema = Schema.fromJsonString(
 );
 const siteUrlJsonSchema = Schema.fromJsonString(Schema.String);
 const referenceTopology = Result.getOrThrow(
-  Schema.decodeUnknownResult(topologyJsonSchema, {
-    onExcessProperty: 'preserve',
-  })(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
+  Schema.decodeUnknownResult(topologyJsonSchema)(
+    readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'),
+  ),
 );
 const developmentOverlay = Result.getOrThrow(
-  Schema.decodeUnknownResult(overlayJsonSchema, {
-    onExcessProperty: 'preserve',
-  })(readFileSync(new URL('../../topology/local-overlays/development.json', import.meta.url), 'utf-8')),
+  Schema.decodeUnknownResult(overlayJsonSchema)(
+    readFileSync(new URL('../../topology/local-overlays/development.json', import.meta.url), 'utf-8'),
+  ),
 );
-const encodeOptions = { onExcessProperty: 'preserve' } as const;
-const encodedReferenceTopology = Result.getOrThrow(
-  Schema.encodeResult(topologyJsonSchema, encodeOptions)(referenceTopology),
-);
+const encodedReferenceTopology = Result.getOrThrow(Schema.encodeResult(topologyJsonSchema)(referenceTopology));
 const encodedModuleDeploymentAllowlist = Result.getOrThrow(
-  Schema.encodeResult(
-    moduleDeploymentAllowlistJsonSchema,
-    encodeOptions,
-  )({
+  Schema.encodeResult(moduleDeploymentAllowlistJsonSchema)({
     environment: 'development',
     overlay: developmentOverlay,
     topology: referenceTopology,

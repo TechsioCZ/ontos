@@ -326,7 +326,7 @@ const requiredHeader = (
 const BindingSubjectLookupInputSchema = Schema.Struct({
   authBindingId: AuthBindingIdSchema,
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
-}).annotate({ parseOptions: { onExcessProperty: 'error' } });
+});
 
 type BindingSubjectReadServices = Readonly<{
   readonly lookup: (input: {
