@@ -49,7 +49,7 @@ export const findEscapingDependencyLinks = (root: string) =>
     return escaping;
   });
 
-export const verifyZeropsWorkspaceInstall = (root: string) =>
+const verifyZeropsWorkspaceInstall = (root: string) =>
   Effect.gen(function* verifyInstall() {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const globalVirtualStore = yield* spawner.string(
