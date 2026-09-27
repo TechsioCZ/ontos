@@ -19,5 +19,7 @@ build/
 !**/.env.example
 .output/
 **/.output/
+# Transient module-contract bundles; a concurrent unit build reads the worktree as its release source.
+**/.ontos-contract-*/
 **/src/modern-tanstack/
 **/.tsgo.*.resolved.json
