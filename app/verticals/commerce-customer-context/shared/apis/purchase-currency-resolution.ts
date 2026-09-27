@@ -9,18 +9,12 @@ import {
   PurchaseCurrencyResolvedSchema,
 } from '../domain/purchase-currency-resolution.ts';
 
-export {
-  PurchaseCurrencyResolutionDomainConflictProblem,
-  PurchaseCurrencyResolutionDomainConflictProblemSchema,
-} from './purchase-currency-resolution-domain-conflict-problem.ts';
-export {
-  PurchaseCurrencyResolutionDomainPolicyProblem,
-  PurchaseCurrencyResolutionDomainPolicyProblemSchema,
-} from './purchase-currency-resolution-domain-policy-problem.ts';
-export {
-  PurchaseCurrencyResolutionDomainUnavailableProblem,
-  PurchaseCurrencyResolutionDomainUnavailableProblemSchema,
-} from './purchase-currency-resolution-domain-unavailable-problem.ts';
+export type { PurchaseCurrencyResolutionDomainConflictProblem } from './purchase-currency-resolution-domain-conflict-problem.ts';
+export { PurchaseCurrencyResolutionDomainConflictProblemSchema } from './purchase-currency-resolution-domain-conflict-problem.ts';
+export type { PurchaseCurrencyResolutionDomainPolicyProblem } from './purchase-currency-resolution-domain-policy-problem.ts';
+export { PurchaseCurrencyResolutionDomainPolicyProblemSchema } from './purchase-currency-resolution-domain-policy-problem.ts';
+export type { PurchaseCurrencyResolutionDomainUnavailableProblem } from './purchase-currency-resolution-domain-unavailable-problem.ts';
+export { PurchaseCurrencyResolutionDomainUnavailableProblemSchema } from './purchase-currency-resolution-domain-unavailable-problem.ts';
 
 export const PurchaseCurrencyResolutionRequestSchema = CurrencyResolutionRequestSchema;
 export type PurchaseCurrencyResolutionRequest = typeof PurchaseCurrencyResolutionRequestSchema.Type;

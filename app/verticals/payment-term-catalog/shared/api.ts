@@ -48,6 +48,7 @@ export const paymentTermCatalogApi = HttpApi.make('PaymentTermCatalogApi')
   .addHttpApi(ReconcilePaymentTermReferenceActionApi)
   .addHttpApi(RetirePaymentTermActionApi)
   // </generated-governed-http-api-additions>
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
 export const paymentTermCatalogOperationContexts = {
   readiness: createMicroVerticalOperationContext({

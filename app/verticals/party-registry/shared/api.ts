@@ -116,6 +116,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(PartyRelationshipDetailApi)
   .addHttpApi(PersonEngagementProfileApi)
   // </generated-governed-http-api-additions>
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
 
 export const partyRegistryOperationContexts = {

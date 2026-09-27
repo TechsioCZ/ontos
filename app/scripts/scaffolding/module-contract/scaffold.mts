@@ -5,6 +5,7 @@ import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
+  GOVERNED_HTTP_API_CLOSING_ANNOTATION,
   GOVERNED_HTTP_API_ADDITION_SLOT_START,
   GOVERNED_HTTP_API_IMPORT_SLOT_END,
   GOVERNED_HTTP_API_IMPORT_SLOT_START,
@@ -105,6 +106,7 @@ ${GOVERNED_HTTP_API_IMPORT_SLOT_END}
 export const governedHttpApi = HttpApi.make('${toCamelCase(vertical.slug)}GovernedApi')
   ${GOVERNED_HTTP_API_ADDITION_SLOT_START}
   ${GOVERNED_HTTP_API_ADDITION_SLOT_END}
+  ${GOVERNED_HTTP_API_CLOSING_ANNOTATION}
   .pipe(identity);
 `;
 
@@ -142,6 +144,7 @@ import { identity as governedHttpApiIdentity } from 'effect';
 ${source.slice(declarationStart, statementEnd)}
   ${GOVERNED_HTTP_API_ADDITION_SLOT_START}
   ${GOVERNED_HTTP_API_ADDITION_SLOT_END}
+  ${GOVERNED_HTTP_API_CLOSING_ANNOTATION}
   .pipe(governedHttpApiIdentity)${source.slice(statementEnd, statementEnd + 1)}
 
 /** Canonical composition-root binding consumed by generated governed HTTP adapters. */

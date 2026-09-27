@@ -591,7 +591,9 @@ export const untouched = true;
         );
         expect(generated).toMatch(/HttpApi\.make\('Fixture;Api'\)/u);
         expect(generated).toMatch(/return api;\s*\}\)\s*\/\/ <generated-governed-http-api-additions>/u);
-        expect(generated).toMatch(/<\/generated-governed-http-api-additions>\s*\.pipe\(governedHttpApiIdentity\);/u);
+        expect(generated).toMatch(
+          /<\/generated-governed-http-api-additions>\s*\.annotate\(HttpApi\.ParseOptions, \{ onExcessProperty: 'error' \}\)\s*\.pipe\(governedHttpApiIdentity\);/u,
+        );
         expect(generated).toMatch(/import \{ identity as governedHttpApiIdentity \} from 'effect';/u);
         expect(generated).toMatch(/export const governedHttpApi = fixtureApi;/u);
         expect(generated).toMatch(/export const untouched = true;/u);

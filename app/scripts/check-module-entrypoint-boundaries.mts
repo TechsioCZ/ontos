@@ -890,9 +890,12 @@ const isGeneratedActionHttpContract = (
 
 const isGeneratedDomainProblemSchema = (file: string, source: string): boolean =>
   /\/shared\/apis\/[a-z][a-z0-9-]*-domain-(?:conflict|policy|unavailable)-problem\.ts$/u.test(`/${file}`) &&
-  source.includes('Schema.TaggedError') &&
-  source.includes('HttpApiSchema.status(') &&
-  source.includes("contentType: 'application/problem+json'");
+  /^import \{ make(?:Retryable)?ProblemDetailsSchema \} from '@app\/shared-contracts\/problem-details';$/mu.test(
+    source,
+  ) &&
+  /^export const [A-Z][A-Za-z0-9]*Domain(?:Conflict|Policy|Unavailable)ProblemSchema = make(?:Retryable)?ProblemDetailsSchema\(/mu.test(
+    source,
+  );
 
 const hasGeneratedGovernedContributionHeader = (source: string): boolean =>
   ['report', SEARCH_PROVIDER_KIND].some((kind) =>

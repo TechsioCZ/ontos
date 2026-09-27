@@ -14,14 +14,10 @@ import {
 } from '../domain/price-group.ts';
 import { PriceGroupRefSchema } from '../resources/price-group.ts';
 
-export {
-  ValidatePriceGroupCompatibilityDomainConflictProblem,
-  ValidatePriceGroupCompatibilityDomainConflictProblemSchema,
-} from './validate-price-group-compatibility-domain-conflict-problem.ts';
-export {
-  ValidatePriceGroupCompatibilityDomainUnavailableProblem,
-  ValidatePriceGroupCompatibilityDomainUnavailableProblemSchema,
-} from './validate-price-group-compatibility-domain-unavailable-problem.ts';
+export type { ValidatePriceGroupCompatibilityDomainConflictProblem } from './validate-price-group-compatibility-domain-conflict-problem.ts';
+export { ValidatePriceGroupCompatibilityDomainConflictProblemSchema } from './validate-price-group-compatibility-domain-conflict-problem.ts';
+export type { ValidatePriceGroupCompatibilityDomainUnavailableProblem } from './validate-price-group-compatibility-domain-unavailable-problem.ts';
+export { ValidatePriceGroupCompatibilityDomainUnavailableProblemSchema } from './validate-price-group-compatibility-domain-unavailable-problem.ts';
 
 export const ValidatePriceGroupCompatibilityRequestSchema = Schema.Struct({
   expectedCurrent: Schema.optionalKey(ExpectedPriceGroupCurrentEvidenceSchema),

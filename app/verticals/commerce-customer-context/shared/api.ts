@@ -262,6 +262,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(UpdateCustomerGroupActionApi)
   .addHttpApi(UpdateSavedAddressActionApi)
   // </generated-governed-http-api-additions>
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
 export const commerceCustomerContextOperationContexts = {
   readiness: createMicroVerticalOperationContext({

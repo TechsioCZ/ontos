@@ -1,3 +1,4 @@
+import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   ActionRuntimeLive,
   ContextAccessLive,
@@ -534,14 +535,18 @@ export const makeCatalogApiRuntime = (
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   type CatalogHandlerRequirements =
-    typeof apiHandlersLive extends Layer.Layer<infer _Services, infer _Error, infer Requirements>
-      ? Requirements
-      : never;
+    | (typeof apiHandlersLive extends Layer.Layer<infer _Services, infer _Error, infer Requirements>
+        ? Requirements
+        : never)
+    | HttpRouter.HttpRouter;
   const resolvedApiHandlersLive: EffectBffRuntimeAssembly<
     'CatalogApi',
     CatalogApiGroups,
     CatalogHandlerRequirements
-  >['handlers'] = apiHandlersLive.pipe(Layer.provide(runtimeObservabilityLive), Layer.orDie);
+  >['handlers'] = apiHandlersLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
+    Layer.orDie,
+  );
   const transportLive = HttpRouter.cors({
     allowedHeaders: [...catalogCorsAllowedHeaders],
     allowedMethods: [...catalogCorsAllowedMethods],

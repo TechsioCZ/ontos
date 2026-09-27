@@ -626,6 +626,7 @@ export const catalogApi: CatalogApi = HttpApi.make('CatalogApi')
   .addHttpApi(UpdateProductRecoveryApi)
   .addHttpApi(VariantHistoryApi)
   // </generated-governed-http-api-additions>
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
 
 export const catalogOperationContexts = {

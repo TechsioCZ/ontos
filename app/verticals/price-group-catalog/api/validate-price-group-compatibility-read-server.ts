@@ -5,10 +5,14 @@ import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Schema } from 'effect';
 
 import { priceGroupCatalogApi } from '../shared/api.ts';
-import {
-  ValidatePriceGroupCompatibilityAuthenticationProblemSchema,
+import type {
   ValidatePriceGroupCompatibilityDomainConflictProblem,
   ValidatePriceGroupCompatibilityDomainUnavailableProblem,
+} from '../shared/apis/validate-price-group-compatibility.ts';
+import {
+  ValidatePriceGroupCompatibilityAuthenticationProblemSchema,
+  ValidatePriceGroupCompatibilityDomainConflictProblemSchema,
+  ValidatePriceGroupCompatibilityDomainUnavailableProblemSchema,
   ValidatePriceGroupCompatibilityForbiddenProblemSchema,
   ValidatePriceGroupCompatibilityInternalProblemSchema,
   ValidatePriceGroupCompatibilityInvalidProblemSchema,
@@ -40,7 +44,7 @@ const mapValidatePriceGroupCompatibilityDomainError = (
   error: ValidatePriceGroupCompatibilityDomainError,
 ): ValidatePriceGroupCompatibilityDomainConflictProblem | ValidatePriceGroupCompatibilityDomainUnavailableProblem => {
   if (Schema.is(PriceGroupExpectedCurrentConflict)(error)) {
-    return new ValidatePriceGroupCompatibilityDomainConflictProblem({
+    return ValidatePriceGroupCompatibilityDomainConflictProblemSchema.make({
       detail: 'Expected Current evidence no longer matches the authoritative Price Group definition.',
       reasonCode: 'STALE_EXPECTED_EVIDENCE',
       // oxlint-disable-next-line effect-native/no-hand-built-problem-details -- This invokes the endpoint's declared TaggedError constructor; the rule mistakes its checked literal field for an ad hoc Problem object; expires: 2027-03-31.
@@ -50,7 +54,7 @@ const mapValidatePriceGroupCompatibilityDomainError = (
     });
   }
   if (Schema.is(PriceGroupCurrentnessFailure)(error)) {
-    return new ValidatePriceGroupCompatibilityDomainUnavailableProblem({
+    return ValidatePriceGroupCompatibilityDomainUnavailableProblemSchema.make({
       detail: 'The Price Group owner cannot prove one authoritative current definition.',
       reasonCode: error.reason,
       retryable: true,
@@ -60,7 +64,7 @@ const mapValidatePriceGroupCompatibilityDomainError = (
       type: 'https://ontos.dev/problems/price-group-compatibility-unavailable',
     });
   }
-  return new ValidatePriceGroupCompatibilityDomainUnavailableProblem({
+  return ValidatePriceGroupCompatibilityDomainUnavailableProblemSchema.make({
     detail: 'The Price Group owner is temporarily unavailable.',
     reasonCode: 'OWNER_UNAVAILABLE',
     retryable: true,

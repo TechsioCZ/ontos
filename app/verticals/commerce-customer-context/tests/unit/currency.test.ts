@@ -3,11 +3,8 @@ import { Effect, Schema } from 'effect';
 import { getReadConditionalPermissionPlan } from '../../../../packages/core-runtime/src/reads/definition.ts';
 
 import {
-  PurchaseCurrencyResolutionDomainConflictProblem,
   PurchaseCurrencyResolutionDomainConflictProblemSchema,
-  PurchaseCurrencyResolutionDomainPolicyProblem,
   PurchaseCurrencyResolutionDomainPolicyProblemSchema,
-  PurchaseCurrencyResolutionDomainUnavailableProblem,
   PurchaseCurrencyResolutionDomainUnavailableProblemSchema,
   PurchaseCurrencyResolutionResponseSchema,
 } from '../../shared/apis/purchase-currency-resolution.ts';
@@ -375,7 +372,7 @@ it('keeps typed domain outcomes outside HTTP success', () => {
   expect(Schema.is(PurchaseCurrencyResolutionResponseSchema)(ineligible)).toBe(false);
   expect(
     Schema.is(PurchaseCurrencyResolutionDomainPolicyProblemSchema)(
-      new PurchaseCurrencyResolutionDomainPolicyProblem({
+      PurchaseCurrencyResolutionDomainPolicyProblemSchema.make({
         detail: 'The currency choice is not eligible.',
         reasonCode: 'EXPLICIT_CHOICE_INVALID',
         status: 422,
@@ -386,7 +383,7 @@ it('keeps typed domain outcomes outside HTTP success', () => {
   ).toBe(true);
   expect(
     Schema.is(PurchaseCurrencyResolutionDomainConflictProblemSchema)(
-      new PurchaseCurrencyResolutionDomainConflictProblem({
+      PurchaseCurrencyResolutionDomainConflictProblemSchema.make({
         detail: 'The Current currency facts conflict.',
         reasonCode: 'INCONSISTENT_CURRENCY_POLICY',
         status: 409,
@@ -397,7 +394,7 @@ it('keeps typed domain outcomes outside HTTP success', () => {
   ).toBe(true);
   expect(
     Schema.is(PurchaseCurrencyResolutionDomainUnavailableProblemSchema)(
-      new PurchaseCurrencyResolutionDomainUnavailableProblem({
+      PurchaseCurrencyResolutionDomainUnavailableProblemSchema.make({
         detail: 'Current Pricing support is unavailable.',
         reasonCode: 'pricing_currency_support_unavailable',
         retryable: true,

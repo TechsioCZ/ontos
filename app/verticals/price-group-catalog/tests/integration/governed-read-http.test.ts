@@ -17,6 +17,8 @@ import type {
   ReadCoreError,
   ReadRuntimeService,
 } from '@app/core-runtime';
+import { RequestSchemaProblemSchema } from '@app/shared-contracts/problem-details';
+import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
@@ -342,6 +344,7 @@ const mountRuntime = (
       return HttpRouter.toWebHandler(
         HttpApiBuilder.layer(api).pipe(
           Layer.provide(handlers),
+          Layer.provideMerge(RequestSchemaProblemLive),
           Layer.provideMerge(readLayer),
           Layer.provideMerge(redemptionLayer),
           Layer.provide(HttpServer.layerServices),
@@ -406,6 +409,52 @@ const expectSanitized = (problem: typeof ProblemDetailsSchema.Type, secrets: rea
 };
 
 describe('Price Group governed Read HTTP integration', () => {
+  it.effect('decodes the payload closed and ignores browser transport headers', () =>
+    Effect.gen(function* decodeClosedPayload() {
+      const assertion = yield* makeAssertion();
+      const harness = makeReadRuntime();
+      const runtime = yield* mountRuntime(assertion.environment, harness.readRuntime);
+      const [endpoint] = endpoints;
+      const browserRequest = (
+        body: typeof PriceGroupDefinitionRequestSchema.Encoded | Readonly<{ unknownField: string }>,
+      ) =>
+        new Request(`${baseUrl}${endpoint.path}`, {
+          body: JSON.stringify(body),
+          headers: {
+            accept: 'application/json, text/plain, */*',
+            'accept-encoding': 'gzip, deflate, br, zstd',
+            'accept-language': 'cs-CZ,cs;q=0.9,en;q=0.8',
+            authorization: `Bearer ${assertion.token}`,
+            'content-type': 'application/json',
+            cookie: 'better-auth.session_token=browser-session',
+            origin: 'https://shell.price-group-read.test',
+            referer: 'https://shell.price-group-read.test/cs/pricing',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+            'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+            'x-correlation-id': `price-group-read-${randomUUID()}`,
+          },
+          method: 'POST',
+        });
+      const encodedPayload = yield* Schema.encodeEffect(PriceGroupDefinitionRequestSchema)(endpoint.payload);
+
+      const accepted = yield* Effect.promise(() => handle(runtime, browserRequest(encodedPayload)));
+      expect(accepted.status).toBe(200);
+      expect(harness.readCount()).toBe(1);
+
+      const rejected = yield* Effect.promise(() =>
+        handle(runtime, browserRequest({ ...encodedPayload, unknownField: 'excess' })),
+      );
+      expect(rejected.status).toBe(400);
+      const problem = yield* Effect.promise(() => rejected.json()).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(RequestSchemaProblemSchema)),
+      );
+      expect(problem.paths).toEqual(['unknownField']);
+      expect(harness.readCount()).toBe(1);
+    }),
+  );
+
   it.effect('decodes both successful endpoints through their generated clients and assembled runtime', () =>
     Effect.gen(function* decodeSuccessfulReads() {
       const assertion = yield* makeAssertion();

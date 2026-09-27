@@ -71,6 +71,7 @@ export const pricingApi = HttpApi.make('PricingApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(CurrentSupportedCurrenciesApi)
   // </generated-governed-http-api-additions>
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
 
 export const pricingOperationContexts = {

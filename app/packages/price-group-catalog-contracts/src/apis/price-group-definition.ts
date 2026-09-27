@@ -15,10 +15,8 @@ import {
 } from '../domain/price-group.ts';
 import { PriceGroupRefSchema } from '../resources/price-group.ts';
 
-export {
-  PriceGroupDefinitionDomainUnavailableProblem,
-  PriceGroupDefinitionDomainUnavailableProblemSchema,
-} from './price-group-definition-domain-unavailable-problem.ts';
+export type { PriceGroupDefinitionDomainUnavailableProblem } from './price-group-definition-domain-unavailable-problem.ts';
+export { PriceGroupDefinitionDomainUnavailableProblemSchema } from './price-group-definition-domain-unavailable-problem.ts';
 
 export const PriceGroupDefinitionRequestSchema = Schema.Struct({
   definitionRevisionId: Schema.optionalKey(PriceGroupDefinitionRevisionIdSchema),

@@ -5,9 +5,10 @@ import { HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import { Schema } from 'effect';
 import type { PriceGroupDefinitionDomainError } from '../src/api/price-group-definition.read.ts';
 import { priceGroupCatalogApi } from '../shared/api.ts';
+import type { PriceGroupDefinitionDomainUnavailableProblem } from '../shared/apis/price-group-definition.ts';
 import {
   PriceGroupDefinitionAuthenticationProblemSchema,
-  PriceGroupDefinitionDomainUnavailableProblem,
+  PriceGroupDefinitionDomainUnavailableProblemSchema,
   PriceGroupDefinitionForbiddenProblemSchema,
   PriceGroupDefinitionInternalProblemSchema,
   PriceGroupDefinitionInvalidProblemSchema,
@@ -35,7 +36,7 @@ const mapPriceGroupDefinitionDomainError = (
   error: PriceGroupDefinitionDomainError,
 ): PriceGroupDefinitionDomainUnavailableProblem => {
   if (Schema.is(PriceGroupCurrentnessFailure)(error)) {
-    return new PriceGroupDefinitionDomainUnavailableProblem({
+    return PriceGroupDefinitionDomainUnavailableProblemSchema.make({
       detail: 'The authoritative Current Price Group definition cannot be established.',
       reasonCode: error.reason,
       retryable: true,
@@ -45,7 +46,7 @@ const mapPriceGroupDefinitionDomainError = (
       type: 'https://ontos.dev/problems/price-group-definition-unavailable',
     });
   }
-  return new PriceGroupDefinitionDomainUnavailableProblem({
+  return PriceGroupDefinitionDomainUnavailableProblemSchema.make({
     detail: 'Price Group Catalog persistence is temporarily unavailable.',
     reasonCode: 'OWNER_UNAVAILABLE',
     retryable: true,

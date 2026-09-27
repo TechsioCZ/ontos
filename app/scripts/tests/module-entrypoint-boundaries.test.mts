@@ -376,15 +376,13 @@ it('governed servers bind the trusted handler, authentication, registration, and
     group: 'stockList',
     readValue: 'stockListRead',
   });
-  const accepts = (candidate: string): boolean =>
-    hasGeneratedGovernedServerContract(
-      candidate,
-      exportedName,
-      `export const api = HttpApi.make('InventoryApi')
+  const closedApi = `export const api = HttpApi.make('InventoryApi')
 // <generated-governed-http-api-additions>
 // </generated-governed-http-api-additions>
-.pipe(identity);`,
-    );
+.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
+.pipe(identity);`;
+  const accepts = (candidate: string, api = closedApi): boolean =>
+    hasGeneratedGovernedServerContract(candidate, exportedName, api);
   expect(accepts(source)).toBe(true);
   expect(accepts(source.replace(MODULE_API_HEADER, ''))).toBe(false);
   expect(accepts(source.replace('    problems,', '    problems: problems,'))).toBe(true);
@@ -740,7 +738,8 @@ export const api = HttpApi.make('InventoryApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(StockListApi)
   // </generated-governed-http-api-additions>
-  ;
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
+  .pipe(identity);
 `,
   );
   yield* write(

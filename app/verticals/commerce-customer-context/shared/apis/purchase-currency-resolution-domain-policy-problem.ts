@@ -1,22 +1,12 @@
-import { HttpApiSchema } from '@modern-js/bff-effect/effect-client';
+import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 
-const problemDetailsRepresentation = HttpApiSchema.asJson({
-  contentType: 'application/problem+json',
-});
-
-export class PurchaseCurrencyResolutionDomainPolicyProblem extends Schema.TaggedError<PurchaseCurrencyResolutionDomainPolicyProblem>()(
+export const PurchaseCurrencyResolutionDomainPolicyProblemSchema = makeProblemDetailsSchema(
   'PurchaseCurrencyResolutionDomainPolicyProblem',
+  422,
   {
-    detail: Schema.String,
     reasonCode: Schema.Literals(['EXPLICIT_CHOICE_INVALID', 'NO_USABLE_CURRENCY']),
-    status: Schema.Literal(422),
-    title: Schema.String,
-    type: Schema.String,
   },
-) {}
-
-export const PurchaseCurrencyResolutionDomainPolicyProblemSchema = PurchaseCurrencyResolutionDomainPolicyProblem.pipe(
-  problemDetailsRepresentation,
-  HttpApiSchema.status(422),
 );
+export type PurchaseCurrencyResolutionDomainPolicyProblem =
+  typeof PurchaseCurrencyResolutionDomainPolicyProblemSchema.Type;

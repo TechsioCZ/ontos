@@ -1,3 +1,4 @@
+import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   ContextAccessLive,
   CorePersistenceLive,
@@ -82,7 +83,10 @@ export const governedReadApiHandlersLive = Layer.mergeAll(
   ),
   // </generated-governed-http-handler-support-layers>
 );
-const resolvedApiHandlersLive = governedReadApiHandlersLive.pipe(Layer.provide(runtimeObservabilityLive), Layer.orDie);
+const resolvedApiHandlersLive = governedReadApiHandlersLive.pipe(
+  Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
+  Layer.orDie,
+);
 
 export default assembleEffectBffRuntime({
   api: pricingApi,

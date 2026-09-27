@@ -1,3 +1,4 @@
+import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   ActionRuntime,
   ActionAuthorizationPreflight,
@@ -921,7 +922,10 @@ export const makeCommerceCustomerContextApiRuntime = (
       ),
     ),
   );
-  const resolvedApiHandlersLive = apiHandlersLive.pipe(Layer.provide(runtimeObservabilityLive), Layer.orDie);
+  const resolvedApiHandlersLive = apiHandlersLive.pipe(
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
+    Layer.orDie,
+  );
   const transportLive = HttpRouter.cors({
     allowedHeaders: [...commerceCustomerContextCorsAllowedHeaders],
     allowedMethods: [...commerceCustomerContextCorsAllowedMethods],

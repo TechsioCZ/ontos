@@ -41,6 +41,16 @@ export const GOVERNED_HTTP_API_IMPORT_SLOT_START = '// <generated-governed-http-
 export const GOVERNED_HTTP_API_IMPORT_SLOT_END = '// </generated-governed-http-api-imports>';
 export const GOVERNED_HTTP_API_ADDITION_SLOT_START = '// <generated-governed-http-api-additions>';
 export const GOVERNED_HTTP_API_ADDITION_SLOT_END = '// </generated-governed-http-api-additions>';
+/**
+ * Closes the composed vertical API once: every endpoint decodes its payload with excess properties
+ * rejected. Endpoints declare no header codecs, so browser transport headers stay unconstrained.
+ */
+export const GOVERNED_HTTP_API_CLOSING_ANNOTATION = ".annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })";
+const escapeGovernedPattern = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/gu, String.raw`\$&`);
+const governedHttpApiClosedTail = new RegExp(
+  String.raw`^\s*${escapeGovernedPattern(GOVERNED_HTTP_API_CLOSING_ANNOTATION)}\s*\.pipe\((?:identity|governedHttpApiIdentity)\);`,
+  'u',
+);
 export const GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START = '// <generated-governed-http-handler-imports>';
 export const GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END = '// </generated-governed-http-handler-imports>';
 export const GOVERNED_HTTP_HANDLER_LAYER_SLOT_START = '// <generated-governed-http-handler-layers>';
@@ -1655,8 +1665,13 @@ export const stabilizeGovernedHttpApiAdditionSlot = (content: string): string =>
   }
   const afterMarker = end + GOVERNED_HTTP_API_ADDITION_SLOT_END.length;
   const trailing = content.slice(afterMarker);
-  if (/^\s*\.pipe\((?:identity|governedHttpApiIdentity)\);/u.test(trailing)) {
+  if (governedHttpApiClosedTail.test(trailing)) {
     return content;
+  }
+  if (/^\s*\./u.test(trailing)) {
+    return raiseScaffoldFailure(
+      `generated owner API chain must end ${GOVERNED_HTTP_API_ADDITION_SLOT_END} with ${GOVERNED_HTTP_API_CLOSING_ANNOTATION}.pipe(identity)`,
+    );
   }
 
   let prefix = content.slice(0, end);
@@ -1673,7 +1688,7 @@ export const stabilizeGovernedHttpApiAdditionSlot = (content: string): string =>
       `generated owner API chain lacks a stable terminator at ${GOVERNED_HTTP_API_ADDITION_SLOT_END}`,
     );
   }
-  const withTerminator = `${prefix}${GOVERNED_HTTP_API_ADDITION_SLOT_END}\n  .pipe(identity);${suffix}`;
+  const withTerminator = `${prefix}${GOVERNED_HTTP_API_ADDITION_SLOT_END}\n  ${GOVERNED_HTTP_API_CLOSING_ANNOTATION}\n  .pipe(identity);${suffix}`;
   return withTerminator.includes("import { identity } from 'effect';")
     ? withTerminator
     : `import { identity } from 'effect';\n${withTerminator}`;

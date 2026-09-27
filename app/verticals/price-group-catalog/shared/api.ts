@@ -67,6 +67,7 @@ export const priceGroupCatalogApi = HttpApi.make('PriceGroupCatalogApi')
   .addHttpApi(RetirePriceGroupActionApi)
   .addHttpApi(ValidatePriceGroupCompatibilityApi)
   // </generated-governed-http-api-additions>
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
 
 export const priceGroupCatalogOperationContexts = {

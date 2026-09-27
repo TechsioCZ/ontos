@@ -3784,6 +3784,16 @@ describe('consumer migration preserves native tooling and governed safety', () =
       expect(hasGeneratedOperationGatewayContract(gateway, partyId)).toBe(true);
       expect(hasValidGovernedHttpCompositionRoot(sharedApi, handlerRoot)).toBe(true);
       expect(yield* microVerticalApiBaselineViolation(partyId, sharedApi)).toBe(undefined);
+      // The composed API is closed exactly once, after every generated addition.
+      const closing = "  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })\n";
+      expect(sharedApi).toContain(closing);
+      for (const opened of [
+        sharedApi.replace(closing, ''),
+        sharedApi.replace(closing, closing.replace("'error'", "'ignore'")),
+        sharedApi.replace(closing, `${closing}${closing}`),
+      ]) {
+        expect(hasValidGovernedHttpCompositionRoot(opened, handlerRoot)).toBe(false);
+      }
       for (const [before, after] of [
         [
           'makeMicroverticalHttpPrincipalAuthentication(verifyOperationPrincipal)',

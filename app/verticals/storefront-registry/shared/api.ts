@@ -34,6 +34,7 @@ export const storefrontRegistryApi = HttpApi.make('StorefrontRegistryApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(CurrentStorefrontApplicationApi)
   // </generated-governed-http-api-additions>
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
 
 export const storefrontRegistryOperationContexts = {

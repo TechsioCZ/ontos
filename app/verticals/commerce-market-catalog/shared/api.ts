@@ -41,6 +41,7 @@ export const commerceMarketCatalogApi = HttpApi.make('CommerceMarketCatalogApi')
   .addHttpApi(MarketHistoryApi)
   .addHttpApi(ResolveCommerceMarketApi)
   // </generated-governed-http-api-additions>
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);
 
 export const commerceMarketCatalogOperationContexts = {

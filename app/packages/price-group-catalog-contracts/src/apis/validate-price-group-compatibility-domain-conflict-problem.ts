@@ -1,20 +1,12 @@
-import { HttpApiSchema } from '@modern-js/bff-effect/effect-client';
+import { makeProblemDetailsSchema } from '@app/shared-contracts/problem-details';
 import { Schema } from 'effect';
 
-const problemDetailsRepresentation = HttpApiSchema.asJson({
-  contentType: 'application/problem+json',
-});
-
-export class ValidatePriceGroupCompatibilityDomainConflictProblem extends Schema.TaggedError<ValidatePriceGroupCompatibilityDomainConflictProblem>()(
+export const ValidatePriceGroupCompatibilityDomainConflictProblemSchema = makeProblemDetailsSchema(
   'ValidatePriceGroupCompatibilityDomainConflictProblem',
+  409,
   {
-    detail: Schema.String,
     reasonCode: Schema.Literal('STALE_EXPECTED_EVIDENCE'),
-    status: Schema.Literal(409),
-    title: Schema.String,
-    type: Schema.String,
   },
-) {}
-
-export const ValidatePriceGroupCompatibilityDomainConflictProblemSchema =
-  ValidatePriceGroupCompatibilityDomainConflictProblem.pipe(problemDetailsRepresentation, HttpApiSchema.status(409));
+);
+export type ValidatePriceGroupCompatibilityDomainConflictProblem =
+  typeof ValidatePriceGroupCompatibilityDomainConflictProblemSchema.Type;

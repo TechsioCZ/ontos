@@ -21,7 +21,6 @@ import {
 } from '../../src/api/validate-price-group-compatibility-client.ts';
 import { makeOperationGateway } from '../../src/api/action-gateway.ts';
 import {
-  ValidatePriceGroupCompatibilityDomainUnavailableProblem,
   ValidatePriceGroupCompatibilityDomainUnavailableProblemSchema,
   ValidatePriceGroupCompatibilityRequestSchema,
   ValidatePriceGroupCompatibilityResponseSchema,
@@ -290,7 +289,7 @@ describe('public Price Group governed read clients', () => {
         [`${baseUrl}/reads/validate-price-group-compatibility`, 'Bearer compatibility', 'compatibility-correlation'],
       ]);
 
-      const unavailable = new ValidatePriceGroupCompatibilityDomainUnavailableProblem({
+      const unavailable = ValidatePriceGroupCompatibilityDomainUnavailableProblemSchema.make({
         detail: 'The owner cannot prove authoritative current state.',
         reasonCode: 'OWNER_UNAVAILABLE',
         retryable: true,
