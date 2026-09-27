@@ -1,5 +1,5 @@
-import { defineScopedRoutine } from '@app/core-runtime';
-import type { OperationalScope, ReadServiceFactory, ScopedRoutineInvocationError } from '@app/core-runtime';
+import { PersistenceFailure, defineScopedRoutine } from '@app/core-runtime';
+import type { ReadServiceFactory, ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
 import type {
   CurrentSupportedCurrenciesRequest,
   PricingCurrencySubject,
@@ -62,10 +62,10 @@ export type StoredCurrencySupport = typeof StoredCurrencySupportDomainSchema.Typ
 export interface CurrencySupportPersistence {
   readonly loadCurrent: (
     input: CurrentSupportedCurrenciesRequest,
-  ) => Effect.Effect<Option.Option<StoredCurrencySupport>, CurrencySupportPersistenceUnavailable>;
+  ) => Effect.Effect<Option.Option<StoredCurrencySupport>, PersistenceFailure>;
   readonly setCurrent: (
     command: SetCurrencySupportCommand,
-  ) => Effect.Effect<SetCurrencySupportOutcome, CurrencySupportPersistenceUnavailable>;
+  ) => Effect.Effect<SetCurrencySupportOutcome, PersistenceFailure>;
 }
 export interface SetCurrencySupportCommand {
   readonly actionInvocationId: string;
@@ -98,20 +98,13 @@ const SetCurrencySupportOutcomeSchema = Schema.Union([
 ]);
 export type SetCurrencySupportOutcome = typeof SetCurrencySupportOutcomeSchema.Type;
 
-export class CurrencySupportPersistenceUnavailable extends Schema.TaggedError<CurrencySupportPersistenceUnavailable>()(
-  'CurrencySupportPersistenceUnavailable',
-  { reason: Schema.String },
-) {}
-const unavailable = (cause: unknown) => {
-  const error = new CurrencySupportPersistenceUnavailable({ reason: 'Pricing currency support could not be verified' });
-  Object.defineProperty(error, 'cause', { configurable: true, value: cause });
-  return error;
-};
+const unavailable = (cause: unknown) =>
+  new PersistenceFailure({ cause, reason: 'Pricing currency support could not be verified' });
 
 const decodeSetCurrencySupportOutcome = (
   value: typeof SetCurrencySupportResultSchema.Type | undefined,
   expectedGeneration: number,
-): Effect.Effect<SetCurrencySupportOutcome, CurrencySupportPersistenceUnavailable> => {
+): Effect.Effect<SetCurrencySupportOutcome, PersistenceFailure> => {
   if (value === undefined) {
     return Effect.fail(unavailable('Pricing write routine returned no outcome'));
   }
@@ -149,11 +142,7 @@ const subjectFingerprint = (subject: CurrentSupportedCurrenciesRequest['subject'
   return `PROFILE:COUNTERPARTY:${subject.profileRef.resourceId}:${subject.authorizationSubject.counterpartyRef.resourceId}`;
 };
 
-type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
-const persistenceForTransaction = (
-  transaction: ScopedTransaction,
-  _scope: Pick<OperationalScope, 'tenantId' | 'legalEntityId'>,
-): CurrencySupportPersistence => ({
+export const currencySupportPersistence = (transaction: ScopedRoutineInvoker): CurrencySupportPersistence => ({
   loadCurrent: (input) =>
     transaction
       .invoke(readCurrentSupportedCurrenciesRoutine, [
@@ -200,7 +189,5 @@ const persistenceForTransaction = (
         Effect.flatMap(([row]) => decodeSetCurrencySupportOutcome(row?.result, command.expectedGeneration)),
       ),
 });
-export const currencySupportPersistenceForScope: ReadServiceFactory<CurrencySupportPersistence> = (
-  transaction,
-  scope,
-) => Effect.succeed(persistenceForTransaction(transaction, scope));
+export const currencySupportPersistenceForScope: ReadServiceFactory<CurrencySupportPersistence> = (transaction) =>
+  Effect.succeed(currencySupportPersistence(transaction));

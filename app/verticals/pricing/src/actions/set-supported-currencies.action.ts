@@ -19,12 +19,11 @@ import type {
   CurrencySupportPersistence,
   SetCurrencySupportOutcome,
 } from '../persistence/currency-support-persistence.ts';
-import {
-  CurrencySupportPersistenceUnavailable,
-  currencySupportPersistenceForScope,
-} from '../persistence/currency-support-persistence.ts';
+import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
+import { CurrencySupportPersistenceUnavailable } from './currency-support-persistence-unavailable.ts';
 import { SupportedCurrenciesAdministrationRejected } from './supported-currencies-administration-rejected.ts';
 
+export { CurrencySupportPersistenceUnavailable } from './currency-support-persistence-unavailable.ts';
 export { SupportedCurrenciesAdministrationRejected } from './supported-currencies-administration-rejected.ts';
 
 const boundedReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
@@ -150,6 +149,10 @@ export const handleSetSupportedCurrencies = Effect.fn('SetSupportedCurrenciesAct
       tenantId: context.scope.tenantId,
     },
     context.services.setCurrent,
+  ).pipe(
+    Effect.catchTag('PersistenceFailure', ({ reason }) =>
+      Effect.fail(new CurrencySupportPersistenceUnavailable({ reason })),
+    ),
   );
   yield* context.recordAuditEvidence({
     changed: result.changed,

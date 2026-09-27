@@ -1,7 +1,7 @@
 import { CurrentSupportedCurrenciesRequestSchema } from '@app/pricing-contracts/current-supported-currencies';
 import { DateTime, Effect, Exit, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
-import { CurrencySupportPersistenceUnavailable } from '../../src/persistence/currency-support-persistence.ts';
+import { PersistenceFailure } from '@app/core-runtime';
 import { resolveCurrentSupportedCurrencies } from '../../src/api/current-supported-currencies.read.ts';
 
 const request = Schema.decodeSync(CurrentSupportedCurrenciesRequestSchema)({
@@ -56,7 +56,7 @@ describe('Current supported currencies owner read', () => {
     Effect.gen(function* unavailableSupportEvidence() {
       const absent = yield* resolveCurrentSupportedCurrencies(request, scope, () => Effect.succeedNone);
       const unverifiable = yield* resolveCurrentSupportedCurrencies(request, scope, () =>
-        Effect.fail(new CurrencySupportPersistenceUnavailable({ reason: 'owner read failed' })),
+        Effect.fail(new PersistenceFailure({ cause: 'driver down', reason: 'owner read failed' })),
       );
       expect(absent.outcome).toBe('SUPPORTED_CURRENCIES_UNAVAILABLE');
       expect(unverifiable.outcome).toBe('SUPPORTED_CURRENCIES_UNVERIFIABLE');

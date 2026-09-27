@@ -1,11 +1,15 @@
-import { Effect, Schema } from 'effect';
+import { PersistenceFailure, ScopedRoutineInvocationError } from '@app/core-runtime';
+import { Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import {
+  CurrencySupportPersistenceUnavailable,
   SetSupportedCurrenciesPayloadSchema,
   SupportedCurrenciesAdministrationRejected,
   SupportedCurrenciesRevisionConflict,
   applySupportedCurrencies,
+  handleSetSupportedCurrencies,
 } from '../../src/actions/set-supported-currencies.action.ts';
+import { currencySupportPersistence } from '../../src/persistence/currency-support-persistence.ts';
 
 const payload = Schema.decodeSync(SetSupportedCurrenciesPayloadSchema)({
   cartId: 'cart-333',
@@ -96,6 +100,47 @@ describe('Set supported currencies Action', () => {
         applySupportedCurrencies(profilePayload, trusted, () => Effect.die('must not persist')),
       );
       expect(scopeExit.toString()).toContain(SupportedCurrenciesAdministrationRejected.name);
+    }),
+  );
+
+  it.effect('carries the driver failure as the cause and keeps it out of the contract error', () =>
+    Effect.gen(function* persistenceFailureBoundary() {
+      const driverError = new ScopedRoutineInvocationError({
+        code: 'scoped_routine_invocation_failed',
+        constraint: Option.none(),
+        ownerModuleKey: 'commerce.pricing',
+        postgresCode: Option.some('08006'),
+        reason: 'connection lost',
+        routineKey: 'pricing.set-supported-currencies',
+      });
+      const persistence = currencySupportPersistence({ invoke: () => Effect.fail(driverError) });
+
+      const failure = yield* Effect.flip(applySupportedCurrencies(payload, trusted, persistence.setCurrent));
+      expect(failure).toBeInstanceOf(PersistenceFailure);
+      expect(failure.cause).toBe(driverError);
+
+      const contractFailure = yield* Effect.flip(
+        handleSetSupportedCurrencies(payload, {
+          actionInvocationId: trusted.actionInvocationId,
+          addDomainEvent: () => Effect.die('must not add domain events'),
+          addOutboxMessage: () => Effect.die('must not add outbox messages'),
+          recordAuditEvidence: () => Effect.die('must not record audit evidence'),
+          recordDataAccess: () => Effect.die('must not record data access'),
+          scope: {
+            authMethod: 'system',
+            correlationId: 'pricing-persistence-failure',
+            legalEntityId: trusted.legalEntityId,
+            principalId: trusted.actorPrincipalId,
+            tenantId: trusted.tenantId,
+          },
+          services: persistence,
+        }),
+      );
+      const encoded = Schema.is(CurrencySupportPersistenceUnavailable)(contractFailure)
+        ? Schema.encodeSync(CurrencySupportPersistenceUnavailable)(contractFailure)
+        : contractFailure;
+      expect(encoded).not.toHaveProperty('cause');
+      expect(encoded).toHaveProperty('reason', 'Pricing currency support could not be verified');
     }),
   );
 });
