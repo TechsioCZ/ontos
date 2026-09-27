@@ -1,0 +1,21 @@
+{
+  "name": "@app/better-auth-effect-drizzle",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Server-only Better Auth database adapter that runs on the native Effect Drizzle PostgreSQL executor.",
+  "type": "module",
+  "exports": {
+    "./server": "./src/server.ts"
+  },
+  "scripts": {
+    "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
+  },
+  "dependencies": {
+    "better-auth": "1.7.2",
+    "drizzle-orm": "1.0.0-rc.5-ab785fc",
+    "effect": "4.0.0-rc.117"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1"
+  }
+}

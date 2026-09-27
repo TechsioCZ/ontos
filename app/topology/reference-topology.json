@@ -2935,6 +2935,12 @@
       "description": "Server-only audience-bound Shell gateway assertion verification."
     },
     {
+      "id": "better-auth-effect-drizzle",
+      "package": "@app/better-auth-effect-drizzle",
+      "path": "packages/better-auth-effect-drizzle",
+      "description": "Server-only Better Auth database adapter over the native Effect Drizzle PostgreSQL executor."
+    },
+    {
       "id": "customer-payment-term-contracts",
       "package": "@app/customer-payment-term-contracts",
       "path": "packages/customer-payment-term-contracts",

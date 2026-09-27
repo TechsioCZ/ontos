@@ -1,4 +1,3 @@
-import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { betterAuth } from 'better-auth';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import {
@@ -57,7 +56,7 @@ const makeMemoryAuth = (emailDelivery: CommercePortalAuthEmailDelivery) =>
       // This realm creates no account through the private port, so nothing carries a correlation
       // and nothing may be recorded: a write here would mean the hook lost its governed identity.
       configuration,
-      databaseAdapter: drizzleAdapter({}, { provider: 'pg' }),
+      databaseAdapter: memoryAdapter({}),
       emailDelivery,
     });
     const database = { account: [], rateLimit: [], session: [], user: [], verification: [] };

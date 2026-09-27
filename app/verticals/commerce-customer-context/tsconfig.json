@@ -33,6 +33,9 @@
       "path": "../../packages/core-runtime"
     },
     {
+      "path": "../../packages/better-auth-effect-drizzle"
+    },
+    {
       "path": "../../packages/gateway-principal-verifier"
     },
     {

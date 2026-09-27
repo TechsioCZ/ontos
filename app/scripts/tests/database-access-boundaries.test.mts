@@ -9,7 +9,7 @@ import { expect, it } from 'effect-rstest';
 import { checkDatabaseAccessBoundaries } from '../check-database-access-boundaries.mts';
 
 it.live(
-  'allows owner database factories and rejects Action, read, nested BFF, and hidden Core database bypasses deterministically',
+  'allows owner database factories and rejects Action, read, nested BFF, hidden Core database, and second-driver bypasses deterministically',
   () =>
     Effect.gen(function* testEffect1() {
       const root = yield* Effect.acquireRelease(
@@ -17,6 +17,10 @@ it.live(
         (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
       );
       const files = {
+        // Auth persistence sits outside the governed paths, yet must not open a second driver pool.
+        'apps/shell/api/auth/db/client.ts':
+          "import { drizzle } from 'drizzle-orm/node-postgres';\nimport { Pool } from 'pg';\n",
+        'apps/shell/api/auth/db/types.ts': "import type { Pool } from 'pg';\n",
         'apps/shell/api/routes/private.ts': "const database = import(\n  '@app/core-runtime/db/schema'\n);\n",
         'packages/core-runtime/src/testing/actions.ts': 'export const makeActionTestHarness = () => undefined;\n',
         'verticals/stock/api/index.ts': "import { Pool } from 'pg';\n",
@@ -33,11 +37,13 @@ it.live(
         'verticals/stock/src/db/billing-leak.ts': "import { invoices } from '../../../billing/src/db/schema.ts';\n",
         'verticals/stock/src/db/cross-owner.ts': "import { coreDatabaseSchema } from '@app/core-runtime/db/schema';\n",
         'verticals/stock/src/db/dynamic-core.ts': "const core = import(\n  '@app/core-runtime/db/schema'\n);\n",
-        'verticals/stock/src/db/service-factory.ts': "import { drizzle } from 'drizzle-orm/node-postgres';\n",
+        'verticals/stock/src/db/service-factory.ts':
+          "import { makeWithDefaults } from 'drizzle-orm/effect-postgres';\n",
         'verticals/stock/src/index.ts':
           "export { InventoryPersistence } from './infrastructure/inventory-persistence.ts';\n",
         'verticals/stock/src/infrastructure/inventory-persistence.ts':
           "import { Pool } from 'pg';\nexport class InventoryPersistence {}\n",
+        'verticals/stock/src/portal-auth/persistence/auth-database.ts': "import { Pool } from 'pg';\n",
         'verticals/stock/src/reads/list.read.ts': "import { stock } from '../db/schema.ts';\n",
         'verticals/stock/src/reads/side-effect.read.ts': "import 'pg';\n",
         'verticals/stock/src/services/generated-action-service.ts':
@@ -66,6 +72,8 @@ it.live(
       );
       const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
       expect(violations.map(({ file, line }) => `${file}:${line}`)).toEqual([
+        'apps/shell/api/auth/db/client.ts:1',
+        'apps/shell/api/auth/db/client.ts:2',
         'apps/shell/api/routes/private.ts:1',
         'verticals/stock/api/index.ts:1',
         'verticals/stock/api/routes/export.ts:1',
@@ -76,6 +84,8 @@ it.live(
         'verticals/stock/src/db/billing-leak.ts:1',
         'verticals/stock/src/db/cross-owner.ts:1',
         'verticals/stock/src/db/dynamic-core.ts:1',
+        'verticals/stock/src/infrastructure/inventory-persistence.ts:1',
+        'verticals/stock/src/portal-auth/persistence/auth-database.ts:1',
         'verticals/stock/src/reads/list.read.ts:1',
         'verticals/stock/src/reads/side-effect.read.ts:1',
         'verticals/stock/src/testing-harness-dynamic-leak.ts:1',

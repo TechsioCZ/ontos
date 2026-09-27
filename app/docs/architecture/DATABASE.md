@@ -16,11 +16,11 @@ This document defines authoritative database access and schema-ownership rules f
 
 ## Drizzle Cohort
 
-OntOS runs the Drizzle v1 line (`drizzle-orm` and `drizzle-kit` at the same version) pinned identically in every owner, together with the matching Better Auth line and its `@better-auth/drizzle-adapter/relations-v2` entrypoint. The package manifests are the source of truth for the exact versions. Bump the pair only as one cohort and only through the proofs in [Drizzle v1 Upgrade](./DRIZZLE_V1_UPGRADE.md).
+OntOS runs the Drizzle v1 line (`drizzle-orm` and `drizzle-kit` at the same version) pinned identically in every owner, together with the matching Better Auth line. The package manifests are the source of truth for the exact versions. Bump the pair only as one cohort and only through the proofs in [Drizzle v1 Upgrade](./DRIZZLE_V1_UPGRADE.md).
 
 Owner conventions on v1:
 
-- Declare relations with `defineRelations(<tables>, (r) => ...)`. Core, Auth, and Party construct native executors with `makeWithDefaults({ relations })` from `drizzle-orm/effect-postgres`, supplying `PgClient` and `Reactivity`; their types are `EffectPgDatabase<typeof <owner>Relations>`. Auth's database service also creates Better Auth's supported adapter using a private `node-postgres` Drizzle handle on the same scoped pool. It exposes the adapter, never that Promise-based handle. Application Auth queries use the native executor. Relational Queries v1 (`relations(...)`, callback `where`) are unavailable.
+- Declare relations with `defineRelations(<tables>, (r) => ...)`. Core, Auth, and Party construct native executors with `makeWithDefaults({ relations })` from `drizzle-orm/effect-postgres`, supplying `PgClient` and `Reactivity`; their types are `EffectPgDatabase<typeof <owner>Relations>`. The Shell Auth and Commerce portal-auth database services build their Better Auth adapter with `makeEffectDrizzleAuthAdapter` from `@app/better-auth-effect-drizzle/server` over that same native executor, so Better Auth opens no connection of its own. A Better Auth transaction runs inside the executor's transaction. Application Auth queries use the native executor directly. Relational Queries v1 (`relations(...)`, callback `where`) are unavailable.
 - Declare governed tables with `<schema>.table.withRLS(...)` and attach `tenantRlsPolicies` or `tenantLegalEntityRlsPolicies` from `@app/core-runtime`.
 - Use `getColumns` instead of the deprecated `getTableColumns`.
 - After adding a migration or rebasing a branch that adds one, run `pnpm db:check`; it validates each owner's snapshot chain and reports non-commutative migrations across branches.
@@ -34,7 +34,7 @@ Every application query and mutation must:
 3. use Drizzle query builders for selects, inserts, updates, deletes, and transactions; and
 4. preserve expected failures in a declared Effect error channel.
 
-Application code must not use direct `pg` queries, interpolated SQL strings, string-concatenated SQL, untyped result objects, or exported promise-only database APIs when Drizzle and Effect can represent the behavior. The node-postgres pool is a private implementation detail acquired and released by an Effect scope.
+Application code must not use direct `pg` queries, interpolated SQL strings, string-concatenated SQL, untyped result objects, or exported promise-only database APIs when Drizzle and Effect can represent the behavior. `@effect/sql-pg` is the only PostgreSQL driver in application source; `pnpm database-access:check` rejects `pg` and `drizzle-orm/node-postgres` imports outside tests. Drizzle Kit still loads `pg` as a development dependency.
 
 Core, Auth, and Party persistence use `drizzle-orm/effect-postgres` with `@effect/sql-pg`. Queries are native Effects: yield the query directly and map its typed error at the owning repository or service. Transaction callbacks return an Effect; the native SQL client owns connection acquisition, commit, rollback, savepoints, and interruption. Do not wrap native queries in `Effect.tryPromise`, or start another runtime inside a transaction callback. Caller services, references, tracing, and cancellation remain in the same Effect execution.
 
@@ -56,7 +56,7 @@ Generated migration SQL is an output of the typed schema and is not application 
 
 Local Compose and application tooling share the root `DATABASE_URL` contract documented in `.env.example`. Package configuration resolves the root `.env` by an explicit path, independent of the invocation directory.
 
-Missing or malformed configuration is an expected typed Effect error. There is no silent localhost fallback. The application database layer owns a `pg.Pool`, binds it through `PgClient.fromPool` to native Drizzle Effect queries, and closes it when its Effect scope ends. Pool acquisition and server-side statement deadlines remain configured on the pool; a local timeout does not prove that PostgreSQL stopped executing a statement.
+Missing or malformed configuration is an expected typed Effect error. There is no silent localhost fallback. The application database layer creates a scoped `PgClient` pool, runs native Drizzle Effect queries on it, and closes it when its Effect scope ends. Pool acquisition and server-side statement deadlines remain configured on the pool; a local timeout does not prove that PostgreSQL stopped executing a statement.
 
 ## Core Migration Boundary
 

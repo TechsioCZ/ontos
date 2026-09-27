@@ -1,12 +1,10 @@
+import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
 import { configureDatabasePool } from '@app/core-runtime';
-import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { drizzle } from 'drizzle-orm/node-postgres';
-import { Context, Duration, Effect, Layer, Redacted } from 'effect';
+import { Context, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
-import { Pool } from 'pg';
 
 import { AuthConfig } from '../config.ts';
 import type { AuthConfigValue } from '../config.ts';
@@ -22,10 +20,6 @@ export class AuthDatabase extends Context.Service<
   }
 >()('@app/shell-super-app/api/auth/db/client/AuthDatabase') {}
 
-export interface PoolResource {
-  readonly end: () => Promise<void>;
-}
-
 const connectionFailure = (cause: unknown) =>
   Object.defineProperty(
     new AuthDatabaseConnectionError({
@@ -33,19 +27,6 @@ const connectionFailure = (cause: unknown) =>
     }),
     'cause',
     { value: cause },
-  );
-
-export const acquirePoolResource = <Resource extends PoolResource>(
-  acquire: () => Resource,
-): Effect.Effect<Resource, AuthDatabaseConnectionError, Scope.Scope> =>
-  Effect.acquireRelease(
-    Effect.try({
-      catch: connectionFailure,
-      try: acquire,
-    }),
-    // pg overloads end(callback); pass no arguments so an AbortSignal cannot become a callback.
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign Promise boundary.
-    (pool) => Effect.promise(() => pool.end()),
   );
 
 const mapPoolConfigurationError = (error: { readonly reason: string }) =>
@@ -67,27 +48,8 @@ export const makeAuthDatabase = Effect.fn('AuthDatabase.make')(function* makeDat
   const executor = yield* makeWithDefaults({ relations: authRelations }).pipe(
     Effect.provideService(PgClient.PgClient, client),
   );
-  // Better Auth's Drizzle adapter awaits Promise query builders, and no Promise Drizzle driver runs over the
-  // native Effect client, so the adapter alone keeps a pg Pool. It carries the same validated connect deadline
-  // and server-enforced statement/lock timeouts as the native client above.
-  const adapterPool = yield* acquirePoolResource(
-    () =>
-      new Pool({
-        connectionString: configuration.connectionString,
-        connectionTimeoutMillis: Duration.toMillis(poolConfiguration.connectTimeout ?? Duration.zero),
-        options: Object.entries(poolConfiguration.startupParameters ?? {})
-          .map(([name, value]) => `-c ${name}=${value}`)
-          .join(' '),
-      }),
-  );
-  return {
-    adapter: drizzleAdapter(drizzle({ client: adapterPool, relations: authRelations }), {
-      provider: 'pg',
-      schema: authDatabaseSchema,
-      transaction: true,
-    }),
-    executor,
-  };
+  const adapter = yield* makeEffectDrizzleAuthAdapter(executor, authDatabaseSchema);
+  return { adapter, executor };
 });
 
 export const AuthDatabaseLive = Layer.effect(

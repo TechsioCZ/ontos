@@ -1,5 +1,5 @@
 import { APIError } from 'better-auth';
-import { drizzleAdapter } from '@better-auth/drizzle-adapter/relations-v2';
+import { memoryAdapter } from 'better-auth/adapters/memory';
 import { getTableConfig } from 'drizzle-orm/pg-core';
 import type { OTPOptions } from 'better-auth/plugins/two-factor';
 import { DateTime, Effect, Option, Redacted, Schema } from 'effect';
@@ -82,8 +82,8 @@ const sessionId = 'session_safe-1';
 const sessionRef = `better-auth-session:${COMMERCE_AUTHENTICATION_NAMESPACE_ID}:${sessionId}`;
 const testNow = new Date(0);
 const testPassword = Redacted.make('P'.repeat(24));
-// The adapter is constructed with a dummy DB because these tests inspect options only; no query runs.
-const testDatabaseAdapter: CommercePortalAuthDatabaseAdapter = drizzleAdapter({}, { provider: 'pg' });
+// These tests inspect options only; no query runs, so an empty in-memory adapter stands in for the database.
+const testDatabaseAdapter: CommercePortalAuthDatabaseAdapter = memoryAdapter({});
 const otpDeliveryCallback: NonNullable<OTPOptions['sendOTP']> = () => Promise.resolve();
 const createdAt = new Date(testNow.getTime() - 60_000);
 const expiresAt = new Date(testNow.getTime() + 3_600_000);

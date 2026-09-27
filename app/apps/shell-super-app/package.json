@@ -38,7 +38,6 @@
     "@app/storefront-registry": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
     "@better-auth/api-key": "1.7.2",
-    "@better-auth/drizzle-adapter": "1.7.2",
     "@effect/opentelemetry": "4.0.0-rc.117",
     "@effect/sql-pg": "4.0.0-rc.117",
     "@modern-js/bff-effect": "catalog:ultramodern",
@@ -60,10 +59,10 @@
     "effect": "4.0.0-rc.117",
     "i18next": "26.4.2",
     "jose": "6.2.5",
-    "pg": "8.22.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "@app/price-group-catalog": "workspace:*"
+    "@app/price-group-catalog": "workspace:*",
+    "@app/better-auth-effect-drizzle": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260923.1",
@@ -79,7 +78,6 @@
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.1",
     "@types/node": "^26.4.1",
-    "@types/pg": "8.20.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "bun-types": "1.4.0",
@@ -90,7 +88,8 @@
     "tailwindcss": "^4.3.3",
     "typescript": "7.0.2",
     "wrangler": "4.137.0",
-    "zephyr-rspack-plugin": "1.2.4"
+    "zephyr-rspack-plugin": "1.2.4",
+    "pg": "8.22.0"
   },
   "modernjs": {
     "preset": "presetUltramodern",

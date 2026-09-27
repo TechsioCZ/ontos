@@ -68,8 +68,14 @@ const hiddenCoreSchema = /\b(?:coreDatabaseSchema|actionInvocations|CORE_TABLES)
 const isVerticalOwnerSource = (relative: string): boolean => /(?:^|\/)verticals\/[^/]+\/src\//u.test(relative);
 const importsCoreDatabaseSchema = new RegExp(`${importPrefix}['"]@app\\/core-runtime\\/db\\/schema['"]`, 'u');
 const importSpecifier = new RegExp(`${importPrefix}['"](?<specifier>[^'"]+)['"]`, 'u');
-const globalDatabaseImplementationImport =
-  /(?:import\s+(?!type\b)[^;]*?\s+from\s+|import\s*\(\s*|import\s+|export\s+(?!type\b)[^;]*?\s+from\s+)['"](?:pg|drizzle-orm\/node-postgres|@app\/core-runtime\/db\/client|[^'"]*\/db\/client(?:\.[^'"]*)?)['"]/u;
+const valueImportPrefix = String.raw`(?:import\s+(?!type\b)[^;]*?\s+from\s+|import\s*\(\s*|import\s+|export\s+(?!type\b)[^;]*?\s+from\s+)`;
+const postgresDriver = String.raw`pg|drizzle-orm\/node-postgres`;
+const globalDatabaseImplementationImport = new RegExp(
+  String.raw`${valueImportPrefix}['"](?:${postgresDriver}|@app\/core-runtime\/db\/client|[^'"]*\/db\/client(?:\.[^'"]*)?)['"]`,
+  'u',
+);
+// The native Effect client is the only PostgreSQL driver; a second one opens a second pool per owner.
+const secondPostgresDriverImport = new RegExp(String.raw`${valueImportPrefix}['"](?:${postgresDriver})['"]`, 'gu');
 
 const candidatesFor = (path: Path.Path, unresolved: string): readonly string[] => {
   const extension = path.extname(unresolved);
@@ -307,6 +313,21 @@ const recordLineDatabaseViolations = (context: SourceCheckContext): void => {
   }
 };
 
+const recordSecondPostgresDriver = (context: SourceCheckContext): void => {
+  // Governed handlers and adapters already reject every database import.
+  if (isTestSource(context.relative) || context.governedAdapter) {
+    return;
+  }
+  for (const match of context.source.matchAll(secondPostgresDriverImport)) {
+    context.record({
+      file: context.relative,
+      line: sourceLine(context.source, match.index),
+      reason:
+        'second PostgreSQL driver: build the owner database on @effect/sql-pg with drizzle-orm/effect-postgres instead of pg or drizzle-orm/node-postgres',
+    });
+  }
+};
+
 const compareViolations = (left: DatabaseAccessViolation, right: DatabaseAccessViolation): -1 | 0 | 1 => {
   const fileOrder = left.file.localeCompare(right.file);
   if (fileOrder < 0) {
@@ -371,6 +392,7 @@ export const checkDatabaseAccessBoundaries = (root: string) =>
       recordTransitiveDatabaseCapabilities(context);
       recordMultilineDatabaseImports(context);
       recordLineDatabaseViolations(context);
+      recordSecondPostgresDriver(context);
     }
     return EffectArray.sort(violations, ViolationOrder);
   });

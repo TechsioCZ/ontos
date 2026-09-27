@@ -8,6 +8,9 @@
       "path": "packages/gateway-principal-verifier"
     },
     {
+      "path": "packages/better-auth-effect-drizzle"
+    },
+    {
       "path": "packages/customer-payment-term-contracts"
     },
     {
