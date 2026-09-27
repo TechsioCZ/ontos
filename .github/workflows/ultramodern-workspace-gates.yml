@@ -1,12 +1,23 @@
 name: Ultramodern Workspace Gates and Main-to-Stage Deploy
 
+# Repository-root documentation feeds no app check (app/ tools read app/AGENTS.md, not the root one).
 on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "docs/**"
+      - CONTEXT-MAP.md
+      - README.md
+      - AGENTS.md
   pull_request:
     branches:
       - main
+    paths-ignore:
+      - "docs/**"
+      - CONTEXT-MAP.md
+      - README.md
+      - AGENTS.md
   workflow_dispatch:
     inputs:
       full:

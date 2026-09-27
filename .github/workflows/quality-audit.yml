@@ -1,11 +1,22 @@
 name: Quality Audit
 
+# Repository-root documentation is outside the audited app/ workspace.
 on:
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - CONTEXT-MAP.md
+      - README.md
+      - AGENTS.md
   push:
     branches:
       - main
       - stage
+    paths-ignore:
+      - "docs/**"
+      - CONTEXT-MAP.md
+      - README.md
+      - AGENTS.md
   workflow_dispatch:
 
 permissions:
