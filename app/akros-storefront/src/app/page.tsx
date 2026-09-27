@@ -22,7 +22,7 @@ export default function HomePage() {
             alt={benefit.alt}
             height={110}
             loading="eager"
-            sizes="(max-width: 760px) 84vw, 33vw"
+            sizes="(max-width: 760px) 340px, 323px"
             src={benefit.src}
             width={323}
           />
@@ -35,7 +35,7 @@ export default function HomePage() {
           fetchPriority="high"
           fill
           loading="eager"
-          sizes="(max-width: 760px) 100vw, 75vw"
+          sizes="(max-width: 760px) calc(100vw - 32px), 1000px"
           src="/akros/home/partner-program.png"
         />
         <div className="akros-hero__overlay">

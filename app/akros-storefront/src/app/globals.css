@@ -22,6 +22,7 @@
   --akros-featured-product-card-height: 410px;
   --akros-featured-product-image-height: 240px;
   --akros-featured-product-action-width: 106px;
+  --akros-hero-aspect-ratio: 25 / 8;
 }
 
 * {
@@ -278,7 +279,7 @@ body {
 
 .akros-hero {
   position: relative;
-  min-height: 320px;
+  aspect-ratio: var(--akros-hero-aspect-ratio);
   overflow: hidden;
   border-radius: var(--akros-radius-lg);
   color: var(--color-base);
@@ -289,22 +290,23 @@ body {
 }
 
 .akros-hero__overlay {
-  position: relative;
+  position: absolute;
+  inset: 0;
   z-index: 1;
   display: flex;
-  min-height: 320px;
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-end;
   gap: 16px;
   padding: 32px;
-  background: linear-gradient(162deg, transparent 24%, rgb(0 0 0 / 82%) 78%);
+  background: linear-gradient(166.293deg, transparent 25%, rgb(0 0 0 / 80%) 75%);
 }
 
 .akros-hero h1 {
   margin: 0;
   font-size: 32px;
-  line-height: 1.05;
+  font-weight: var(--font-weight-bold);
+  line-height: normal;
 }
 
 .akros-section {
@@ -911,18 +913,13 @@ body {
     scroll-snap-align: start;
   }
 
-  .akros-hero,
   .akros-hero__overlay {
-    min-height: 360px;
-  }
-
-  .akros-hero__overlay {
-    padding: 24px;
+    gap: 8px;
+    padding: 12px;
   }
 
   .akros-hero h1 {
-    max-width: 16ch;
-    font-size: 28px;
+    font-size: 20px;
   }
 
   .akros-product-grid {
