@@ -30,6 +30,8 @@ const ManifestSchema = Schema.fromJsonString(
 );
 
 interface Lockfile {
+  /** Dependency name -> names of the resolved packages that depend on it (transitive edges). */
+  readonly dependents: ReadonlyMap<string, ReadonlySet<string>>;
   /** Importer path -> names it depends on directly. */
   readonly importerEdges: ReadonlyMap<string, ReadonlySet<string>>;
   /** Exact `name@version` identities (without peer suffixes). */
@@ -38,8 +40,6 @@ interface Lockfile {
   readonly packageNames: ReadonlySet<string>;
   /** Package name -> peer name -> declared peer ranges. */
   readonly peerRanges: ReadonlyMap<string, ReadonlyMap<string, readonly string[]>>;
-  /** Names some resolved package depends on (transitive edges). */
-  readonly transitiveEdgeNames: ReadonlySet<string>;
 }
 
 /** `name@version(peers)` or `name@range` -> `name`, keeping scoped names intact. */
@@ -58,7 +58,7 @@ const parseLockfile = (source: string): Lockfile => {
   const packageIds = new Set<string>();
   const packageNames = new Set<string>();
   const peerRanges = new Map<string, Map<string, string[]>>();
-  const transitiveEdgeNames = new Set<string>();
+  const dependents = new Map<string, Set<string>>();
   for (const document of parseAllDocuments(source)) {
     const lock = Schema.decodeUnknownSync(LockDocumentSchema)(document.toJS() ?? {});
     for (const [importer, entry] of Object.entries(lock.importers ?? {})) {
@@ -73,13 +73,13 @@ const parseLockfile = (source: string): Lockfile => {
       }
       peerRanges.set(nameOf(key), peers);
     }
-    for (const entry of Object.values(lock.snapshots ?? {})) {
+    for (const [key, entry] of Object.entries(lock.snapshots ?? {})) {
       for (const name of edgeNames(entry)) {
-        transitiveEdgeNames.add(name);
+        dependents.set(name, (dependents.get(name) ?? new Set()).add(nameOf(key)));
       }
     }
   }
-  return { importerEdges, packageIds, packageNames, peerRanges, transitiveEdgeNames };
+  return { dependents, importerEdges, packageIds, packageNames, peerRanges };
 };
 
 /** patchedDependencies keys with the comment written above each (yaml attaches the first to the map). */
@@ -105,12 +105,13 @@ const deadOverrides = (workspace: Workspace, lock: Lockfile, manifests: Manifest
     const names = selectorNames(key);
     const target = names.at(-1) ?? key;
     const importers = [...lock.importerEdges].filter(([, edges]) => edges.has(target)).map(([importer]) => importer);
-    const transitive = lock.transitiveEdgeNames.has(target);
+    const parent = names.at(-2);
+    const transitive = lock.dependents.has(target);
     if (!transitive && importers.length === 0) {
       return [`overrides.${key} matches nothing in pnpm-lock.yaml; delete it`];
     }
-    if (names.slice(0, -1).some((parent) => !lock.packageNames.has(parent))) {
-      return [`overrides.${key} names a parent absent from pnpm-lock.yaml; delete it`];
+    if (parent !== undefined && lock.dependents.get(target)?.has(parent) !== true) {
+      return [`overrides.${key} names a parent that no longer depends on ${target} in pnpm-lock.yaml; delete it`];
     }
     if (!transitive && importers.every((importer) => manifests[importer]?.[target] === value)) {
       return [`overrides.${key} only restates the range every importer declares; delete it`];
@@ -133,9 +134,21 @@ const deadPeerRules = (workspace: Workspace, lock: Lockfile): readonly string[] 
     return [];
   });
 
+/**
+ * `name@1.2.3` must match that exact resolved version, so a pin left behind by an upgrade is dead.
+ * A bare name or a range selector matches any resolved version of the name.
+ */
+const selectsResolvedPackage = (lock: Lockfile, selector: string): boolean => {
+  const name = nameOf(selector);
+  const version = idOf(selector).slice(name.length + 1);
+  return /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u.test(version)
+    ? lock.packageIds.has(`${name}@${version}`)
+    : lock.packageNames.has(name);
+};
+
 const deadPackageExtensions = (workspace: Workspace, lock: Lockfile): readonly string[] =>
   Object.keys(workspace.packageExtensions ?? {}).flatMap((key) =>
-    lock.packageNames.has(nameOf(key)) ? [] : [`packageExtensions.${key} matches nothing in pnpm-lock.yaml; delete it`],
+    selectsResolvedPackage(lock, key) ? [] : [`packageExtensions.${key} matches nothing in pnpm-lock.yaml; delete it`],
   );
 
 const deadPatches = (workspaceYaml: string, lock: Lockfile): readonly string[] =>
@@ -212,6 +225,14 @@ snapshots:
 
 const liveWorkspace = `overrides:
   react: 19.2.8
+  '@scope/host>react': 19.2.8
+packageExtensions:
+  zod@4.6.5:
+    dependencies:
+      react: 19.2.8
+  react@^19.0.0:
+    dependencies:
+      zod: 4.6.5
 peerDependencyRules:
   allowedVersions:
     react: '>=19.0.0'
@@ -231,15 +252,17 @@ it('accepts policy entries that still act on the resolved graph', () => {
   expect(findDeadDependencyPolicy(liveWorkspace, lockFixture, { '.': { zod: '4.6.5' } })).toEqual([]);
 });
 
-it('flags overrides that match nothing or only restate every importer range', () => {
+it('flags overrides that match nothing, name a parent without that edge, or restate every importer range', () => {
   const workspace = `overrides:
   optional-peer: 0.1.0
   '@missing/parent>react': 19.2.8
+  drizzle-orm>react: 19.2.8
   zod: 4.6.5
 `;
   expect(findDeadDependencyPolicy(workspace, lockFixture, { '.': { zod: '4.6.5' } })).toEqual([
     'overrides.optional-peer matches nothing in pnpm-lock.yaml; delete it',
-    'overrides.@missing/parent>react names a parent absent from pnpm-lock.yaml; delete it',
+    'overrides.@missing/parent>react names a parent that no longer depends on react in pnpm-lock.yaml; delete it',
+    'overrides.drizzle-orm>react names a parent that no longer depends on react in pnpm-lock.yaml; delete it',
     'overrides.zod only restates the range every importer declares; delete it',
   ]);
 });
@@ -256,7 +279,7 @@ it('flags peer rules for absent parents and ranges the package already declares'
   ]);
 });
 
-it('flags stale package extensions and patches without a resolved target or upstream URL', () => {
+it('flags package extensions pinned to an unresolved version and patches without a resolved target or upstream URL', () => {
   const workspace = `patchedDependencies:
   # local fix
   drizzle-orm@1.0.0: patches/drizzle-orm.patch
@@ -266,9 +289,13 @@ packageExtensions:
   eslint-plugin-perfectionist@5.10.1:
     dependencies:
       '@typescript-eslint/types': 8.69.0
+  zod@4.6.4:
+    dependencies:
+      react: 19.2.8
 `;
   expect(findDeadDependencyPolicy(workspace, lockFixture, {})).toEqual([
     'packageExtensions.eslint-plugin-perfectionist@5.10.1 matches nothing in pnpm-lock.yaml; delete it',
+    'packageExtensions.zod@4.6.4 matches nothing in pnpm-lock.yaml; delete it',
     'patchedDependencies.drizzle-orm@1.0.0 has no upstream URL; add a "# upstream: https://..." comment above it',
     'patchedDependencies.@better-fetch/fetch@1.3.1 matches nothing in pnpm-lock.yaml; delete the patch',
   ]);
