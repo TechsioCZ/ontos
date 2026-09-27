@@ -494,15 +494,23 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
 
 export const createZephyrRspackPlugin = <Configuration>(options: {
   configure: () => Configuration;
+  failBuild: () => boolean;
   readToken: () => string | undefined;
 }) => ({
   name: 'ultramodern-zephyr-rspack-plugin',
   pre: ['@modern-js/plugin-module-federation-config'],
   setup(api: { modifyRspackConfig: (configuration: Configuration) => void }) {
     // Only authoritative CI deployments upload artifacts. Ordinary builds need
-    // no Zephyr account or network access; deployment upload failures stay fatal.
+    // no Zephyr account or network access. The deploy environment sets
+    // ZE_FAIL_BUILD=true next to ZE_CI_TOKEN, so a failed upload fails the build.
     if (options.readToken() === undefined) {
       return;
+    }
+    if (!options.failBuild()) {
+      // oxlint-disable-next-line effect-native/no-native-error-construction -- A deploy environment that would swallow a failed upload is a synchronous build-time invariant at this non-Effect tooling boundary.
+      throw new Error(
+        'ZE_CI_TOKEN is set but ZE_FAIL_BUILD is not "true", so a failed Zephyr upload would not fail the deploy. Set ZE_FAIL_BUILD=true in the deploy environment next to ZE_CI_TOKEN.',
+      );
     }
     api.modifyRspackConfig(options.configure());
   },

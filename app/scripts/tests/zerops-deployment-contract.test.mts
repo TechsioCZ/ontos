@@ -113,6 +113,16 @@ it('builds every Node service with the pinned toolchain and ships Node instead o
   }
 });
 
+it('fails every app build whose Zephyr upload fails', () => {
+  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+  const appBuilds = zeropsYaml.split(/(?=^ {2}- setup:)/mu).filter((block) => / run build$/mu.test(block));
+
+  expect(appBuilds.length).toBeGreaterThan(8);
+  for (const block of appBuilds) {
+    expect(block).toMatch(/^ {4}build:\n(?: {6}.*\n)*? {6}envVariables:\n(?: {8}.*\n)*? {8}ZE_FAIL_BUILD: 'true'\n/mu);
+  }
+});
+
 it('ships every package the migrator runs drizzle-kit in', () => {
   const migrator = serviceBlock(readFileSync(zeropsYamlPath, 'utf-8'), 'migrator');
   const runner = readFileSync(new URL('../run-zerops-migrator.mjs', import.meta.url), 'utf-8');

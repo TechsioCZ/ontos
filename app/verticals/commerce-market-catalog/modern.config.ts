@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { defineConfig } from '@modern-js/app-tools';
 import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 import type { AppTools, AppToolsUserConfig, CliPlugin } from '@modern-js/app-tools';
-import { getBuildConfigEnvironment, withBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
+import { getBuildConfigEnvironment } from '@modern-js/app-tools-extensions/config';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
 import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
@@ -36,6 +36,7 @@ const {
   buildTempDirectory,
   cloudflareDeployEnabled,
   envValue,
+  getBuildBoolean,
   moduleFederationDevServerOrigin,
   port,
   siteUrl,
@@ -59,7 +60,8 @@ const cloudflareRuntimeExternal = (
 
 const zephyrRspackPlugin = (): CliPlugin<AppTools> =>
   createZephyrRspackPlugin({
-    configure: () => withBuildConfigEnvironment('ZE_FAIL_BUILD', 'true', withZephyrRspack()),
+    configure: () => withZephyrRspack(),
+    failBuild: () => getBuildBoolean('ZE_FAIL_BUILD'),
     readToken: () => envValue('ZE_CI_TOKEN'),
   });
 
@@ -195,7 +197,7 @@ export default defineConfig(
       },
       source: {
         alias: {
-          '@modern-js/plugin-i18n/runtime': '@modern-js/plugin-i18n/runtime/no-react-i18next',
+          '@modern-js/plugin-i18n/runtime$': '@modern-js/plugin-i18n/runtime/no-react-i18next',
         },
         globalVars: {
           ULTRAMODERN_SHELL_ORIGIN: envValue('ULTRAMODERN_MF_DEV_ORIGIN') ?? 'http://localhost:3020',
