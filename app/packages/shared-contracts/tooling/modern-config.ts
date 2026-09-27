@@ -492,18 +492,26 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
   };
 };
 
+const zephyrFailBuildSchema = Literals(['true']).annotate({
+  message:
+    'ZE_CI_TOKEN is set, so ZE_FAIL_BUILD must be true: set ZE_FAIL_BUILD=true in the deploy environment next to ZE_CI_TOKEN so a failed Zephyr upload fails the deploy.',
+});
+
 export const createZephyrRspackPlugin = <Configuration>(options: {
   configure: () => Configuration;
-  readToken: () => string | undefined;
+  getBuildConfigEnvironment: BuildConfigEnvironment;
 }) => ({
   name: 'ultramodern-zephyr-rspack-plugin',
   pre: ['@modern-js/plugin-module-federation-config'],
   setup(api: { modifyRspackConfig: (configuration: Configuration) => void }) {
     // Only authoritative CI deployments upload artifacts. Ordinary builds need
-    // no Zephyr account or network access; deployment upload failures stay fatal.
-    if (options.readToken() === undefined) {
+    // no Zephyr account or network access. The deploy environment sets
+    // ZE_FAIL_BUILD=true next to ZE_CI_TOKEN so an upload failure fails the deploy.
+    const { envValue } = createBuildConfigReaders(options.getBuildConfigEnvironment);
+    if (envValue('ZE_CI_TOKEN') === undefined) {
       return;
     }
+    getResultOrThrow(decodeUnknownResult(zephyrFailBuildSchema)(options.getBuildConfigEnvironment('ZE_FAIL_BUILD')));
     api.modifyRspackConfig(options.configure());
   },
 });

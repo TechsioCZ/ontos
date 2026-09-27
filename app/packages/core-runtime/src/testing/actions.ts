@@ -1,3 +1,4 @@
+// @effect-diagnostics strictEffectProvide:off multipleEffectProvide:off -- The scripted test database is the entrypoint of its own Effect program; expires: 2026-12-31.
 import { randomUUID } from 'node:crypto';
 
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';

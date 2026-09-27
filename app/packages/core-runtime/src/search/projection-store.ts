@@ -35,5 +35,6 @@ export class CoreSearchProjectionStore extends Context.Service<
   CoreSearchProjectionStoreService
 >()(
   // Preserve the public Context identity after splitting the service into its owning module.
+  // @effect-diagnostics-next-line deterministicKeys:off -- tests/unit/search-projection.test.ts pins this public key.
   '@app/core-runtime/search/projection/CoreSearchProjectionStore',
 ) {}

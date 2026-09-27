@@ -172,6 +172,7 @@ it('rejects reserved and unconstrained extension schemas at construction', () =>
     Schema.BigInt,
     Schema.Literal(1n),
     Schema.Json,
+    // @effect-diagnostics-next-line schemaNumber:off -- The unsafe-member table lists Schema.Number on purpose.
     Schema.Number,
     Schema.Record(Schema.String, Schema.String),
     Schema.Symbol,

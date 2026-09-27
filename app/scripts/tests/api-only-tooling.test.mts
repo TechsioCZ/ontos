@@ -615,7 +615,7 @@ it.live(
     );
     expect(sharedContractsPackage.exports['./server/effect-bff-runtime']).toBeUndefined();
     expect(sharedContractsPackage.dependencies['@modern-js/plugin-bff']).toBe('catalog:ultramodern');
-    expect(sharedContractsPackage.dependencies.effect).toBe('npm:@bleedingdev/effect@4.0.0-rc.117');
+    expect(sharedContractsPackage.dependencies.effect).toBe('4.0.0-rc.117');
   }),
 );
 
@@ -2490,6 +2490,7 @@ const environment = {
   ULTRAMODERN_MF_DEV_ORIGIN: 'https://shell.example.test',
   ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
   ZE_CI_TOKEN: 'proof-token',
+  ZE_FAIL_BUILD: 'true',
 };
 const plugin = name => options => ({ name, options });
 const framework = {
@@ -2499,7 +2500,6 @@ const framework = {
   tanstackRouterPlugin: plugin('tanstack'), withZephyr: plugin('zephyr'),
   defineConfig: value => value, presetUltramodern: (value, identity) => ({ ...value, identity }),
   getBuildConfigEnvironment: name => environment[name],
-  withBuildConfigEnvironment: (_name, _value, configuration) => configuration,
   ultramodernLocalisedUrls: {},
 };
 const moduleShim = { ...nodeModule, createRequire: () => Object.assign(() => ({}), { resolve: name => '/dependencies/' + name }) };

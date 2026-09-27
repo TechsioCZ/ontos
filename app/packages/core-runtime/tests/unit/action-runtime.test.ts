@@ -207,7 +207,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     loadRecordedRejection: () => {
       const [policyDenial] = finalized;
       if (policyDenial !== undefined) {
-        return Effect.succeed(Option.some({ policyReasonCode: policyDenial.reasonCode, stage: 'policy' as const }));
+        return Effect.succeedSome({ policyReasonCode: policyDenial.reasonCode, stage: 'policy' as const });
       }
       return Effect.succeed(rejections.length > 0 ? Option.some({ stage: 'authz' as const }) : Option.none());
     },

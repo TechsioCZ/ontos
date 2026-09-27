@@ -1,7 +1,7 @@
 import { GatewayAssertionRedemptionUnavailableError, GatewayAssertionReplayError } from '@app/core-runtime';
 import { GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS } from '@app/shared-contracts';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
-import { Cause, Clock, Effect, Exit, Schema } from 'effect';
+import { Cause, Clock, Effect, Exit, Layer, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { Reactivity } from 'effect/unstable/reactivity';
@@ -28,8 +28,10 @@ const makeRedemptionFixture = (
     const executor = yield* makeWithDefaults({
       relations: partyRelations,
     }).pipe(
-      Effect.provide(scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute)))),
-      Effect.provide(Reactivity.layer),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- The scripted test database is its own entrypoint.
+      Effect.provide(
+        scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute))).pipe(Layer.provideMerge(Reactivity.layer)),
+      ),
     );
     const clock = yield* TestClock.make();
     yield* clock.setTime(expiryWithSkewMs - 1);

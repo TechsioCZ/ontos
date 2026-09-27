@@ -502,15 +502,11 @@ export const makeActionRepository = (): ActionRepositoryService => {
   // so a concurrent loser returns the durable outcome rather than its own decision.
   const earlierRejection = (transaction: CoreTransaction, invocationId: string) =>
     loadRecordedRejection(transaction, invocationId).pipe(
-      Effect.flatMap((rejection) =>
-        Option.isSome(rejection)
-          ? Effect.succeed(rejection)
-          : Effect.fail(
-              persistenceFailure(
-                'The rejected Action invocation has no recorded rejection',
-                new RepositoryInvariantError({ reason: 'The action.rejected Audit Event is missing' }),
-              ),
-            ),
+      Effect.filterOrFail(Option.isSome, () =>
+        persistenceFailure(
+          'The rejected Action invocation has no recorded rejection',
+          new RepositoryInvariantError({ reason: 'The action.rejected Audit Event is missing' }),
+        ),
       ),
     );
 

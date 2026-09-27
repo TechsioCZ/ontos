@@ -17,8 +17,10 @@ export const makeTestDatabase = (
 ) =>
   Effect.scoped(
     makeWithDefaults({ relations: coreRelations }).pipe(
-      Effect.provide(scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute)))),
-      Effect.provide(Reactivity.layer),
+      // @effect-diagnostics-next-line strictEffectProvide:off -- The scripted test database is its own entrypoint.
+      Effect.provide(
+        scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute))).pipe(Layer.provideMerge(Reactivity.layer)),
+      ),
     ),
   );
 

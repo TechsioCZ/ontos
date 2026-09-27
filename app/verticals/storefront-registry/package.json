@@ -33,7 +33,7 @@
     "@modern-js/plugin-i18n": "catalog:ultramodern",
     "@modern-js/plugin-tanstack": "catalog:ultramodern",
     "@modern-js/runtime": "catalog:ultramodern",
-    "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.1",
+    "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.2",
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.1",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.0-rc.117",
