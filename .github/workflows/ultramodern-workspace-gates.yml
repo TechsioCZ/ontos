@@ -134,7 +134,7 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --all-files --no-auto-install'
-          git diff --exit-code
+          git diff --exit-code HEAD
 
       - name: Skills
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
