@@ -5,7 +5,6 @@ import {
   createMicroVerticalOperationContext,
 } from '@modern-js/bff-effect/microvertical-api';
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
-// oxlint-disable-next-line typescript/consistent-type-imports -- The framework baseline requires Schema in the exact value import.
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 
 // <generated-governed-http-api-imports>
@@ -15,12 +14,17 @@ import { MarketHistoryApi } from './apis/market-history.ts';
 import { ResolveCommerceMarketApi } from './apis/resolve-commerce-market.ts';
 // </generated-governed-http-api-imports>
 
-export const commerceMarketCatalogMarkerSchema: Schema.Codec<typeof MicroVerticalBuildMarkerSchema.Type> =
-  MicroVerticalBuildMarkerSchema;
+export const commerceMarketCatalogMarkerSchema = Schema.Struct({
+  ...MicroVerticalBuildMarkerSchema.fields,
+  kind: Schema.Literal('microvertical-delivery-unit'),
+  schemaVersion: Schema.Literal(1),
+});
 export type CommerceMarketCatalogMarker = typeof commerceMarketCatalogMarkerSchema.Type;
 
-export const commerceMarketCatalogReadinessSchema: Schema.Codec<typeof MicroVerticalReadinessSchema.Type> =
-  MicroVerticalReadinessSchema;
+export const commerceMarketCatalogReadinessSchema = Schema.Struct({
+  ...MicroVerticalReadinessSchema.fields,
+  marker: commerceMarketCatalogMarkerSchema,
+});
 export type CommerceMarketCatalogReadiness = typeof commerceMarketCatalogReadinessSchema.Type;
 
 export type OperationContext = MicroVerticalOperationContext;

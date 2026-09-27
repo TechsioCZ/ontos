@@ -228,7 +228,7 @@ import { updateProductRecoveryReadApiLive } from './update-product-recovery-read
 import { variantHistoryReadApiLive } from './variant-history-read-server.ts';
 // </generated-governed-http-handler-imports>
 
-import { catalogApi, catalogOperationContexts } from '../shared/api.ts';
+import { catalogApi, catalogMarkerSchema, catalogOperationContexts } from '../shared/api.ts';
 import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
 import {
   catalogCorsAllowedHeaders,
@@ -239,17 +239,20 @@ import {
 
 const catalogReadinessLayer = HttpApiBuilder.group(catalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
-    Effect.succeed({
-      checks: {
-        api: 'ready' as const,
-        moduleFederation: 'ready' as const,
-        ssr: 'ready' as const,
-        translations: 'ready' as const,
-      },
-      marker: ultramodernApiMarker,
-      status: 'ready' as const,
-      versionSkew: 'none' as const,
-    }).pipe(
+    // The marker comes from JSON, so its literal fields are decoded against the published schema.
+    Schema.decodeUnknownEffect(catalogMarkerSchema)(ultramodernApiMarker).pipe(
+      Effect.orDie,
+      Effect.map((marker) => ({
+        checks: {
+          api: 'ready' as const,
+          moduleFederation: 'ready' as const,
+          ssr: 'ready' as const,
+          translations: 'ready' as const,
+        },
+        marker,
+        status: 'ready' as const,
+        versionSkew: 'none' as const,
+      })),
       Effect.withSpan('ultramodern.api.catalog.readiness', {
         attributes: microVerticalOperationAttributes(catalogOperationContexts.readiness),
         kind: 'server',

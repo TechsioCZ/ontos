@@ -206,12 +206,17 @@ import { VariantHistoryApi } from './apis/variant-history.ts';
 // </generated-governed-http-api-imports>
 import { ProductActionInvocationIdSchema } from './domain/product.ts';
 
-export const catalogMarkerSchema: Schema.Codec<typeof MicroVerticalBuildMarkerSchema.Type> =
-  MicroVerticalBuildMarkerSchema;
+export const catalogMarkerSchema = Schema.Struct({
+  ...MicroVerticalBuildMarkerSchema.fields,
+  kind: Schema.Literal('microvertical-delivery-unit'),
+  schemaVersion: Schema.Literal(1),
+});
 export type CatalogMarker = typeof catalogMarkerSchema.Type;
 
-export const catalogReadinessSchema: Schema.Codec<typeof MicroVerticalReadinessSchema.Type> =
-  MicroVerticalReadinessSchema;
+export const catalogReadinessSchema = Schema.Struct({
+  ...MicroVerticalReadinessSchema.fields,
+  marker: catalogMarkerSchema,
+});
 export type CatalogReadiness = typeof catalogReadinessSchema.Type;
 
 export type OperationContext = MicroVerticalOperationContext;

@@ -5,7 +5,6 @@ import {
   createMicroVerticalOperationContext,
 } from '@modern-js/bff-effect/microvertical-api';
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
-// oxlint-disable-next-line typescript/consistent-type-imports -- The framework baseline requires Schema in the exact value import.
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 
 // <generated-governed-http-api-imports>
@@ -17,12 +16,17 @@ import { ReconcilePaymentTermReferenceActionApi } from './apis/reconcile-payment
 import { RetirePaymentTermActionApi } from './apis/retire-payment-term-action.ts';
 // </generated-governed-http-api-imports>
 
-export const paymentTermCatalogMarkerSchema: Schema.Codec<typeof MicroVerticalBuildMarkerSchema.Type> =
-  MicroVerticalBuildMarkerSchema;
+export const paymentTermCatalogMarkerSchema = Schema.Struct({
+  ...MicroVerticalBuildMarkerSchema.fields,
+  kind: Schema.Literal('microvertical-delivery-unit'),
+  schemaVersion: Schema.Literal(1),
+});
 export type PaymentTermCatalogMarker = typeof paymentTermCatalogMarkerSchema.Type;
 
-export const paymentTermCatalogReadinessSchema: Schema.Codec<typeof MicroVerticalReadinessSchema.Type> =
-  MicroVerticalReadinessSchema;
+export const paymentTermCatalogReadinessSchema = Schema.Struct({
+  ...MicroVerticalReadinessSchema.fields,
+  marker: paymentTermCatalogMarkerSchema,
+});
 export type PaymentTermCatalogReadiness = typeof paymentTermCatalogReadinessSchema.Type;
 
 export type OperationContext = MicroVerticalOperationContext;

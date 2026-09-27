@@ -15,8 +15,11 @@ import { RetirePriceGroupActionApi } from './apis/retire-price-group-action.ts';
 import { ValidatePriceGroupCompatibilityApi } from './apis/validate-price-group-compatibility.ts';
 // </generated-governed-http-api-imports>
 
-export const priceGroupCatalogMarkerSchema: Schema.Codec<typeof MicroVerticalBuildMarkerSchema.Type> =
-  MicroVerticalBuildMarkerSchema;
+export const priceGroupCatalogMarkerSchema = Schema.Struct({
+  ...MicroVerticalBuildMarkerSchema.fields,
+  kind: Schema.Literal('microvertical-delivery-unit'),
+  schemaVersion: Schema.Literal(1),
+});
 export type PriceGroupCatalogMarker = typeof priceGroupCatalogMarkerSchema.Type;
 
 export const priceGroupCatalogItemSchema = Schema.Struct({
@@ -26,8 +29,10 @@ export const priceGroupCatalogItemSchema = Schema.Struct({
 });
 export type PriceGroupCatalogItem = typeof priceGroupCatalogItemSchema.Type;
 
-export const priceGroupCatalogReadinessSchema: Schema.Codec<typeof MicroVerticalReadinessSchema.Type> =
-  MicroVerticalReadinessSchema;
+export const priceGroupCatalogReadinessSchema = Schema.Struct({
+  ...MicroVerticalReadinessSchema.fields,
+  marker: priceGroupCatalogMarkerSchema,
+});
 export type PriceGroupCatalogReadiness = typeof priceGroupCatalogReadinessSchema.Type;
 
 export const priceGroupCatalogCreatePayloadSchema = Schema.Struct({
