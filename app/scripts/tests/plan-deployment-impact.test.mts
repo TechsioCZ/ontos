@@ -776,6 +776,23 @@ it.live('never takes a success whose log URL names no workflow run as the base',
   }),
 );
 
+it.live('takes a deployment whose older success came from another run', () =>
+  Effect.gen(function* testEffectOlderForeignSuccess() {
+    const base = yield* resolveStageDeploymentBase(
+      {
+        page: (page) => Effect.succeed(page === 1 ? [{ id: 0, sha: 'redeployed' }] : []),
+        statuses: () =>
+          Effect.succeed([
+            { logUrl: 'https://github.com/TechsioCZ/ontos/actions/runs/9/job/1', state: 'success' },
+            { logUrl: 'https://github.com/TechsioCZ/ontos/actions/runs/8/job/1', state: 'success' },
+          ]),
+      },
+      { currentRunId: '9', environment: 'stage' },
+    );
+    expect(base).toBe('redeployed');
+  }),
+);
+
 it.live('decodes deployment statuses whose log URL is null or omitted', () =>
   Effect.gen(function* testEffectNullableLogUrl() {
     const pages = yield* Schema.decodeUnknownEffect(StatusPagesJsonSchema)(

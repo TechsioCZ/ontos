@@ -56,9 +56,11 @@ export const resolveStageDeploymentBase = <E, R>(
       }
       for (const deployment of deployments) {
         const statuses = yield* source.statuses(deployment.id);
-        const success = statuses.find((status) => status.state === 'success');
-        const runId = success === undefined ? undefined : runIdOf(success.logUrl);
-        if (runId !== undefined && runId !== options.currentRunId) {
+        const deployedByAnotherRun = statuses.some((status) => {
+          const runId = runIdOf(status.logUrl);
+          return status.state === 'success' && runId !== undefined && runId !== options.currentRunId;
+        });
+        if (deployedByAnotherRun) {
           return deployment.sha;
         }
       }
