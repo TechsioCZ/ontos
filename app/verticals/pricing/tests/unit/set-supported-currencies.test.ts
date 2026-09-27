@@ -136,6 +136,7 @@ describe('Set supported currencies Action', () => {
           services: persistence,
         }),
       );
+      expect(Schema.is(CurrencySupportPersistenceUnavailable)(contractFailure)).toBe(true);
       const encoded = Schema.is(CurrencySupportPersistenceUnavailable)(contractFailure)
         ? Schema.encodeSync(CurrencySupportPersistenceUnavailable)(contractFailure)
         : contractFailure;
