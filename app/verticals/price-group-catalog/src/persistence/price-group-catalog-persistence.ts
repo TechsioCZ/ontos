@@ -1,4 +1,3 @@
-// oxlint-disable sonarjs/function-name -- Effect Match.tags keys are governed SQL outcomes; remove-when: sonarjs accepts discriminant-map properties.
 import type {
   OperationContextUnavailable,
   OperationalScope,

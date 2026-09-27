@@ -119,17 +119,13 @@ const matchesExpectedCurrent = (
   }
   return Match.value(decision).pipe(
     Match.discriminatorsExhaustive('kind')({
-      // oxlint-disable-next-line sonarjs/function-name -- Match key preserves the canonical owner outcome vocabulary.
       INCOMPATIBLE: ({ evidence }) =>
         evidence.evaluatedCatalogRevision === expected.catalogRevision &&
         evidence.definitionRevisionId === expected.definitionRevisionId &&
         evidence.definitionRevisionNumber === expected.definitionRevisionNumber &&
         evidence.meaningFingerprint === expected.meaningFingerprint,
-      // oxlint-disable-next-line sonarjs/function-name -- Match key preserves the canonical owner outcome vocabulary.
       MISSING: () => true,
-      // oxlint-disable-next-line sonarjs/function-name -- Match key preserves the canonical owner outcome vocabulary.
       RETIRED: () => true,
-      // oxlint-disable-next-line sonarjs/function-name -- Match key preserves the canonical owner outcome vocabulary.
       USABLE: ({ evidence }) =>
         evidence.catalogRevision === expected.catalogRevision &&
         evidence.definitionRevisionId === expected.definitionRevisionId &&
@@ -162,20 +158,16 @@ const validateDecision = (
 const toCommerceOutcome = (decision: PriceGroupCompatibilityDecision): PriceGroupCatalogOutcome =>
   Match.value(decision).pipe(
     Match.discriminatorsExhaustive('kind')({
-      // oxlint-disable-next-line sonarjs/function-name -- Match key preserves the canonical owner outcome vocabulary.
       INCOMPATIBLE: ({ evidence }) => ({
         _tag: 'INCOMPATIBLE' as const,
         catalogRevision: evidence.evaluatedCatalogRevision,
         contractId: evidence.requiredContract.contractId,
       }),
-      // oxlint-disable-next-line sonarjs/function-name -- Match key preserves the canonical owner outcome vocabulary.
       MISSING: () => ({ _tag: 'MISSING' as const }),
-      // oxlint-disable-next-line sonarjs/function-name -- Match key preserves the canonical owner outcome vocabulary.
       RETIRED: ({ evidence }) => ({
         _tag: 'RETIRED' as const,
         catalogRevision: evidence.acceptedCatalogRevision,
       }),
-      // oxlint-disable-next-line sonarjs/function-name -- Match key preserves the canonical owner outcome vocabulary.
       USABLE: ({ evidence }) => ({
         _tag: 'USABLE' as const,
         compatibility: evidence,

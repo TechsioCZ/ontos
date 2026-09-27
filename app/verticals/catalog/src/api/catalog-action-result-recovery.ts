@@ -12,7 +12,6 @@ import {
   catalogActionResultSnapshotForScope,
   validCatalogActionResultIdentity,
 } from '../persistence/catalog-action-result-snapshot.ts';
-// oxlint-disable sonarjs/function-name -- Effect.catchTags requires declared error tag keys. owner: Catalog #478; expires: 2027-03-31.
 
 type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
 

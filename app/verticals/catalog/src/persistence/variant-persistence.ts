@@ -530,11 +530,9 @@ export const variantPersistenceForScope = (
         .pipe(
           Effect.map((assessment) => ({ assessment, kind: 'PROVEN' as const })),
           Effect.catchTags({
-            // oxlint-disable sonarjs/function-name -- Effect catchTags keys are schema-owned error tags; #441 reactivation integration. expires: 2027-03-31.
             VariantUseChangeBasisUnavailable: () => Effect.fail(basisUnavailable()),
             VariantUseChangeConflict: (failure) =>
               Effect.succeed({ kind: reactivationConflictOutcome(failure.conflict) }),
-            // oxlint-enable sonarjs/function-name
           }),
         );
       if (assessed.kind !== 'PROVEN') {

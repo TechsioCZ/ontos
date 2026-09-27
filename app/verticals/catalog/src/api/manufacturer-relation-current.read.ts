@@ -75,13 +75,11 @@ export const manufacturerRelationCurrentRead = defineRead(
     }
     const outcome = yield* context.services.effective(input.subject, DateTime.formatIso(yield* DateTime.now)).pipe(
       Effect.catchTags({
-        // oxlint-disable sonarjs/function-name -- catchTags keys are schema-owned error tags.
         ManufacturerPersistenceUnavailable: (failure) => Effect.fail(unavailable(failure)),
         ManufacturerTargetAbsent: () => Effect.fail(notFound()),
         ManufacturerTargetForbidden: () => Effect.fail(forbidden()),
         ManufacturerTargetInvalid: (failure) => Effect.fail(unavailable(failure)),
         ManufacturerTargetUnavailable: (failure) => Effect.fail(unavailable(failure)),
-        // oxlint-enable sonarjs/function-name
       }),
     );
     if (outcome.kind === 'ABSENT') {

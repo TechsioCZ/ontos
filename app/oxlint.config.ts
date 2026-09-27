@@ -433,13 +433,6 @@ export default defineConfig({
       },
     },
     {
-      // React component names are intentionally PascalCase, contrary to SonarJS's function-name default.
-      files: ['**/*.tsx', 'apps/shell-super-app/tests/integration/module-catalog-runtime.test.ts'],
-      rules: {
-        'sonarjs/function-name': 'off',
-      },
-    },
-    {
       // UltraModern, Drizzle, generated federation declarations, and service tests mandate dotted filenames.
       files: [
         'apps/shell-super-app/drizzle.auth.config.ts',
@@ -864,7 +857,6 @@ export default defineConfig({
         'react-doctor/js-index-maps': 'off',
         'react-doctor/js-set-map-lookups': 'off',
         'effect-native/no-unbranded-identifier-schema': 'off',
-        'sonarjs/function-name': 'off',
         'sonarjs/no-duplicate-string': 'off',
         'sonarjs/no-identical-functions': 'off',
         'sonarjs/no-nested-assignment': 'off',
@@ -917,6 +909,9 @@ export default defineConfig({
     'sort-keys': 'off',
     // Effect error channels are intentionally explicit tagged unions; two members is not a useful ceiling.
     'sonarjs/max-union-size': 'off',
+    // Property keys name domain vocabulary, not functions: React components are PascalCase,
+    // Match.tags keys are Effect tags, and discriminator maps mirror encoded snake_case values.
+    'sonarjs/function-name': 'off',
     // Keep one authoritative rule for each concern instead of emitting duplicate diagnostics.
     'sonarjs/cognitive-complexity': 'off',
     'sonarjs/expression-complexity': 'off',

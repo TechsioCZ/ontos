@@ -206,11 +206,9 @@ export const manufacturerPersistenceForScope = (
   const resolve = (target: ManufacturerTarget) =>
     resolver.resolve(target, { requestId: scope.correlationId, tenantId }).pipe(
       Effect.catchTags({
-        // oxlint-disable sonarjs/function-name -- Effect catchTags keys are schema-owned error tags; #445 target read integration. expires: 2027-03-31.
         ManufacturerTargetAbsent: () => Effect.succeed({ _tag: 'not_found' as const }),
         ManufacturerTargetInvalid: () => Effect.succeed({ _tag: 'invalid_change' as const }),
         ManufacturerTargetUnavailable: (failure) => Effect.fail(unavailable(failure)),
-        // oxlint-enable sonarjs/function-name
       }),
     );
   const append = (row: RelationRow, evidence: MutationEvidence) =>

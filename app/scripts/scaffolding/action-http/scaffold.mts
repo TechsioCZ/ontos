@@ -542,7 +542,6 @@ export const renderActionHttpProblems = (
   return `${HEADER}
 // @ontos-action-http-owner ${vertical.moduleId}
 // @ontos-action-http-slug ${action}
-// oxlint-disable sonarjs/function-name -- Effect Match.tags requires owner-declared tag keys; remove-when: sonarjs accepts discriminant-map properties.
 import type { ActionCoreError } from '@app/core-runtime';
 import { Effect, HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Match, Schema } from 'effect';
