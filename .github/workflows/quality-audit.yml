@@ -55,6 +55,9 @@ jobs:
       - name: Verify audit runner and gate behavior
         run: mise exec -- pnpm quality:audit:test
 
+      - name: Hold lint suppressions at the committed baseline
+        run: mise exec -- pnpm lint:suppressions
+
       # Findings succeed; invalid or incomplete analysis fails visibly.
       - name: Audit unused code, duplication, and complexity
         id: audit
