@@ -2957,6 +2957,36 @@
       "package": "@app/shared-design-tokens",
       "path": "packages/shared-design-tokens",
       "description": "Generated design tokens consumed by shell and verticals."
+    },
+    {
+      "id": "customer-market-retirement-contracts",
+      "package": "@app/customer-market-retirement-contracts",
+      "path": "packages/customer-market-retirement-contracts",
+      "description": "Customer-owned public Market affected-use and retirement reservation contracts."
+    },
+    {
+      "id": "email-delivery",
+      "package": "@app/email-delivery",
+      "path": "packages/email-delivery",
+      "description": "Provider-neutral transactional email delivery ports and the Resend adapter."
+    },
+    {
+      "id": "price-group-catalog-contracts",
+      "package": "@app/price-group-catalog-contracts",
+      "path": "packages/price-group-catalog-contracts",
+      "description": "Pricing-owned browser-safe Price Group Catalog resource, domain, evidence, and failure contracts."
+    },
+    {
+      "id": "pricing-contracts",
+      "package": "@app/pricing-contracts",
+      "path": "packages/pricing-contracts",
+      "description": "Pricing-owned public Current supported-currencies contracts."
+    },
+    {
+      "id": "storefront-registry-contracts",
+      "package": "@app/storefront-registry-contracts",
+      "path": "packages/storefront-registry-contracts",
+      "description": "Storefront Registry-owned public Current Storefront Application contract and generated Effect client."
     }
   ],
   "validation": {

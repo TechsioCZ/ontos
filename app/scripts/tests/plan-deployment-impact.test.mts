@@ -28,6 +28,7 @@ const planningFailure = <A, E>(effect: Effect.Effect<A, E>) =>
   );
 
 interface FixtureOptions {
+  readonly extraSharedPackages?: readonly FixtureOwner[];
   readonly includeContactOwner?: boolean;
   readonly includeWorker?: boolean;
   readonly setupIds?: readonly string[];
@@ -84,6 +85,8 @@ const SHELL_OWNER = {
   path: 'apps/shell-super-app',
 } as const satisfies FixtureOwner;
 const OWNERSHIP_PATH = 'topology/ownership.json';
+const TOPOLOGY_PATH = 'topology/reference-topology.json';
+const WORKSPACE_MANIFEST_PATH = 'pnpm-workspace.yaml';
 const DOCUMENTATION_PATH = 'docs/README.md';
 
 const planDeploymentImpact = (options: PlanDeploymentImpactOptions) =>
@@ -96,6 +99,15 @@ const writeJson = (root: string, relativePath: string, value: FixtureDocument) =
     yield* Effect.tryPromise(() => writeFile(target, `${JSON.stringify(value, undefined, 2)}\n`, 'utf-8'));
   });
 
+const writeWorkspaceProject = (root: string, owner: FixtureOwner) =>
+  Effect.gen(function* writeWorkspaceProjectEffect() {
+    const projectRoot = path.join(root, owner.path);
+    yield* Effect.tryPromise(() => mkdir(projectRoot, { recursive: true }));
+    yield* Effect.tryPromise(() =>
+      writeFile(path.join(projectRoot, 'package.json'), `${JSON.stringify({ name: owner.package })}\n`, 'utf-8'),
+    );
+  });
+
 const makeFixture = (options: FixtureOptions = {}) =>
   Effect.gen(function* testEffect2() {
     const root = yield* Effect.acquireRelease(
@@ -105,9 +117,9 @@ const makeFixture = (options: FixtureOptions = {}) =>
     const verticalId = options.verticalId ?? 'contacts';
     const verticalPackage = `@app/${verticalId}`;
     const verticalPath = `verticals/${verticalId}`;
-    yield* writeJson(root, 'topology/reference-topology.json', {
+    yield* writeJson(root, TOPOLOGY_PATH, {
       schemaVersion: 1,
-      sharedPackages: [CORE_RUNTIME_OWNER, SHARED_CONTRACTS_OWNER],
+      sharedPackages: [CORE_RUNTIME_OWNER, SHARED_CONTRACTS_OWNER, ...(options.extraSharedPackages ?? [])],
       shell: {
         id: SHELL_ID,
         package: SHELL_PACKAGE,
@@ -127,12 +139,24 @@ const makeFixture = (options: FixtureOptions = {}) =>
         CORE_RUNTIME_OWNER,
         SHARED_CONTRACTS_OWNER,
         SHELL_OWNER,
+        ...(options.extraSharedPackages ?? []),
         ...(options.includeContactOwner === false
           ? []
           : [{ id: verticalId, package: verticalPackage, path: verticalPath }]),
       ],
       schemaVersion: 1,
     });
+    yield* Effect.tryPromise(() =>
+      writeFile(
+        path.join(root, WORKSPACE_MANIFEST_PATH),
+        'packages:\n  - \'apps/*\'\n  - verticals/*\n  - "packages/*"\nminimumReleaseAge: 1440\n',
+        'utf-8',
+      ),
+    );
+    for (const owner of [CORE_RUNTIME_OWNER, SHARED_CONTRACTS_OWNER, SHELL_OWNER]) {
+      yield* writeWorkspaceProject(root, owner);
+    }
+    yield* writeWorkspaceProject(root, { id: verticalId, package: verticalPackage, path: verticalPath });
     if (options.includeWorker === true) {
       const workerRoot = path.join(root, verticalPath);
       yield* Effect.tryPromise(() => mkdir(path.join(workerRoot, 'src/worker-host'), { recursive: true }));
@@ -340,7 +364,7 @@ for (const changedPath of [
   'scripts/postgres/bootstrap-spicedb-database.mts',
   'packages/core-runtime/src/install/spicedb-database-config.ts',
   'pnpm-lock.yaml',
-  'pnpm-workspace.yaml',
+  WORKSPACE_MANIFEST_PATH,
   '.mise.toml',
   'scripts/generate-outbox-worker-deployment.mjs',
   'scripts/materialize-outbox-worker.mjs',
@@ -348,7 +372,7 @@ for (const changedPath of [
   'scripts/outbox-worker-delivery.mjs',
   'scripts/install-zerops-node.sh',
   'zerops.yaml',
-  'topology/reference-topology.json',
+  TOPOLOGY_PATH,
 ]) {
   it.live(`conservatively deploys every phase for ${changedPath}`, () =>
     Effect.gen(function* testEffect24() {
@@ -505,6 +529,81 @@ it.live('uses a safe full deployment for an all-zero comparison base', () =>
         expect(plan.comparison.mode).toBe('full');
         expect(plan.comparison.reason ?? '').toMatch(/all-zero/u);
         expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', 'spicedb', 'contacts', SHELL_ID]);
+      }),
+    );
+  }),
+);
+
+const UNDECLARED_PACKAGE = {
+  id: 'foo',
+  package: '@app/foo',
+  path: 'packages/foo',
+} as const satisfies FixtureOwner;
+
+it.live('fails a full deployment for a workspace package missing from the topology', () =>
+  Effect.gen(function* testEffectUndeclaredPackage() {
+    yield* withFixture((root) =>
+      Effect.gen(function* testEffectUndeclaredPackageBody() {
+        yield* writeWorkspaceProject(root, UNDECLARED_PACKAGE);
+        const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
+        expect(failure).toContain(
+          'workspace project "packages/foo" is not declared in topology; add it to reference-topology.json sharedPackages and topology/ownership.json owners',
+        );
+      }),
+    );
+  }),
+);
+
+it.live('plans a full deployment once the workspace package is declared in topology and ownership', () =>
+  Effect.gen(function* testEffectDeclaredPackage() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* testEffectDeclaredPackageBody() {
+          yield* writeWorkspaceProject(root, UNDECLARED_PACKAGE);
+          const plan = yield* planDeploymentImpact({ rootDirectory: root });
+          expect(plan.comparison.mode).toBe('full');
+          expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', 'spicedb', 'contacts', SHELL_ID]);
+        }),
+      { extraSharedPackages: [UNDECLARED_PACKAGE] },
+    );
+  }),
+);
+
+it.live('fails a diff deployment for a workspace vertical missing from the topology', () =>
+  Effect.gen(function* testEffectUndeclaredVertical() {
+    yield* withFixture((root) =>
+      Effect.gen(function* testEffectUndeclaredVerticalBody() {
+        yield* writeWorkspaceProject(root, { id: 'orders', package: '@app/orders', path: 'verticals/orders' });
+        const failure = yield* planningFailure(
+          planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root }),
+        );
+        expect(failure).toContain('workspace project "verticals/orders" is not declared in topology');
+      }),
+    );
+  }),
+);
+
+it.live('ignores workspace directories without a package manifest', () =>
+  Effect.gen(function* testEffectNonProjectDirectory() {
+    yield* withFixture((root) =>
+      Effect.gen(function* testEffectNonProjectDirectoryBody() {
+        yield* Effect.tryPromise(() => mkdir(path.join(root, 'packages/.cache'), { recursive: true }));
+        const plan = yield* planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root });
+        expect(plan.any).toBe(false);
+      }),
+    );
+  }),
+);
+
+it.live('rejects workspace globs the planner cannot enumerate', () =>
+  Effect.gen(function* testEffectUnsupportedGlob() {
+    yield* withFixture((root) =>
+      Effect.gen(function* testEffectUnsupportedGlobBody() {
+        yield* Effect.tryPromise(() =>
+          writeFile(path.join(root, WORKSPACE_MANIFEST_PATH), "packages:\n  - 'packages/**'\n", 'utf-8'),
+        );
+        const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
+        expect(failure).toContain('pnpm-workspace.yaml glob "packages/**" is unsupported');
       }),
     );
   }),

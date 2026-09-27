@@ -130,6 +130,96 @@
       }
     },
     {
+      "id": "customer-market-retirement-contracts",
+      "package": "@app/customer-market-retirement-contracts",
+      "path": "packages/customer-market-retirement-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/commerce-customer-context.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#commerce-customer-context",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#commerce-customer-context"
+          ]
+        }
+      }
+    },
+    {
+      "id": "email-delivery",
+      "package": "@app/email-delivery",
+      "path": "packages/email-delivery",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/wave2/core-runtime.md",
+        "adrRef": "docs/super-app-rfc-adr/wave2/reference-topology.md#shared-packages",
+        "blastRadius": {
+          "tier": "tier-0-core-infrastructure",
+          "references": [
+            "docs/super-app-rfc-adr/wave2/blast-radius.md#shared-packages"
+          ]
+        }
+      }
+    },
+    {
+      "id": "price-group-catalog-contracts",
+      "package": "@app/price-group-catalog-contracts",
+      "path": "packages/price-group-catalog-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/price-group-catalog.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#price-group-catalog",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#price-group-catalog"
+          ]
+        }
+      }
+    },
+    {
+      "id": "pricing-contracts",
+      "package": "@app/pricing-contracts",
+      "path": "packages/pricing-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/pricing.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#pricing",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#pricing"
+          ]
+        }
+      }
+    },
+    {
+      "id": "storefront-registry-contracts",
+      "package": "@app/storefront-registry-contracts",
+      "path": "packages/storefront-registry-contracts",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/storefront-registry.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#storefront-registry",
+        "blastRadius": {
+          "tier": "tier-1-shared-contract",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#storefront-registry"
+          ]
+        }
+      }
+    },
+    {
       "id": "party-registry",
       "package": "@app/party-registry",
       "path": "verticals/party-registry",

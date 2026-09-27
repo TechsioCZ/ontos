@@ -404,6 +404,8 @@ const INFRASTRUCTURE_PHASES = {
 } as const;
 
 const GIT_EXECUTABLE = '/usr/bin/git';
+const PACKAGE_MANIFEST = 'package.json';
+const WORKSPACE_MANIFEST = 'pnpm-workspace.yaml';
 
 const readJson = <DocumentSchema extends Schema.ConstraintDecoder<unknown>>(schema: DocumentSchema, filePath: string) =>
   Effect.gen(function* readJsonEffect() {
@@ -649,6 +651,67 @@ const buildTopologyUnits = (
   return units;
 };
 
+const WORKSPACE_GLOB_PATTERN = /^(?<directory>[\w.-]+(?:\/[\w.-]+)*)\/\*$/u;
+
+const parseWorkspaceGlobs = (workspaceSource: string): readonly string[] => {
+  const entries = /^packages:[ \t]*\n(?<entries>(?:[ \t]+-[^\n]*(?:\n|$))+)/mu.exec(workspaceSource)?.groups?.entries;
+  if (entries === undefined) {
+    return fail('pnpm-workspace.yaml must declare a non-empty "packages" list');
+  }
+  return entries
+    .split('\n')
+    .map((line) =>
+      line
+        .replace(/^\s*-\s*/u, '')
+        .replaceAll(/['"]/gu, '')
+        .trim(),
+    )
+    .filter((glob) => glob.length > 0);
+};
+
+const listWorkspaceProjects = (rootDirectory: string, globs: readonly string[]) =>
+  Effect.gen(function* listWorkspaceProjectsEffect() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
+    const projects: string[] = [];
+    for (const glob of globs) {
+      const directory = WORKSPACE_GLOB_PATTERN.exec(glob)?.groups?.directory;
+      if (directory === undefined) {
+        return fail(
+          `pnpm-workspace.yaml glob "${glob}" is unsupported; declare workspace projects with "<directory>/*" globs`,
+        );
+      }
+      const absoluteDirectory = pathService.join(rootDirectory, directory);
+      if (!(yield* fileSystem.exists(absoluteDirectory))) {
+        continue;
+      }
+      for (const entry of yield* fileSystem.readDirectory(absoluteDirectory)) {
+        if (yield* fileSystem.exists(pathService.join(absoluteDirectory, entry, PACKAGE_MANIFEST))) {
+          projects.push(`${directory}/${entry}`);
+        }
+      }
+    }
+    return EffectArray.sort(projects, Order.String);
+  });
+
+const validateWorkspaceCompleteness = (
+  workspaceProjects: readonly string[],
+  units: readonly TopologyUnit[],
+  sharedPackages: readonly TopologyOwner[],
+): void => {
+  const declaredPaths = new Set([
+    ...units.map((unit) => unit.path),
+    ...sharedPackages.flatMap((sharedPackage) => (sharedPackage.path === undefined ? [] : [sharedPackage.path])),
+  ]);
+  for (const project of workspaceProjects) {
+    if (!declaredPaths.has(project)) {
+      fail(
+        `workspace project "${project}" is not declared in topology; add it to reference-topology.json sharedPackages and topology/ownership.json owners`,
+      );
+    }
+  }
+};
+
 const orderUnits = (units: readonly TopologyUnit[]): readonly TopologyUnit[] => {
   const unitsById = new Map(units.map((unit) => [unit.id, unit]));
   const ordered: TopologyUnit[] = [];
@@ -741,7 +804,7 @@ const isMigrationChange = (changedPath: string): boolean =>
 const isPublicContractChange = (ownerPath: string, changedPath: string): boolean => {
   const relativePath = changedPath.slice(ownerPath.length + 1);
   return (
-    relativePath === 'package.json' ||
+    relativePath === PACKAGE_MANIFEST ||
     relativePath === 'vertical.manifest.ts' ||
     relativePath === 'module-federation.config.ts' ||
     relativePath === 'backend-federation.config.ts' ||
@@ -768,9 +831,9 @@ const isAuthorizationRolloutChange = (changedPath: string): boolean =>
 
 const CONSERVATIVE_FULL_DEPLOY_PATHS = new Set([
   '.mise.toml',
-  'package.json',
+  PACKAGE_MANIFEST,
   'pnpm-lock.yaml',
-  'pnpm-workspace.yaml',
+  WORKSPACE_MANIFEST,
   'scripts/install-zerops-node.sh',
   'scripts/generate-outbox-worker-deployment.mjs',
   'scripts/materialize-outbox-worker.mjs',
@@ -965,6 +1028,14 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       yield* fileSystem.readFileString(pathService.join(rootDirectory, 'zerops.yaml')),
     );
     const orderedUnits = orderUnits(buildTopologyUnits(topology, ownership, stageSetups));
+    validateWorkspaceCompleteness(
+      yield* listWorkspaceProjects(
+        rootDirectory,
+        parseWorkspaceGlobs(yield* fileSystem.readFileString(pathService.join(rootDirectory, WORKSPACE_MANIFEST))),
+      ),
+      orderedUnits,
+      topology.sharedPackages ?? [],
+    );
     const workerDeliveries = yield* Effect.all(
       (topology.verticals ?? []).map((vertical) =>
         outboxWorkerDelivery(rootDirectory, {
