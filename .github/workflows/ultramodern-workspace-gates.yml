@@ -343,6 +343,18 @@ jobs:
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm cloudflare:build
 
+      # The Commerce Cloudflare build once crashed parsing Catalog's root HttpApi chain because React
+      # Compiler also compiled server code. Production imports only the quantity-preparation client;
+      # this case keeps the whole Catalog client barrel compiling in the Commerce workerd graph.
+      - name: Build Commerce for workerd with the whole Catalog client barrel
+        working-directory: app
+        env:
+          MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
+          ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
+        run: |
+          mise exec -- pnpm --filter @app/commerce-customer-context run cloudflare:build:full-catalog-client-guard
+          grep -qF '"CatalogApiFoundation"' verticals/commerce-customer-context/dist-cloudflare/worker/__modern_bff_effect.js
+
   deploy-stage:
     name: Deploy stage to Zerops after merge to main
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
