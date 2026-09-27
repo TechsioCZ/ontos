@@ -4,7 +4,7 @@ import type {
   MatchOutboxMessagesInput,
   OutboxRuntime,
   OutboxMatchResult,
-  OutboxPersistenceError,
+  PersistenceFailure,
   OutboxWorkerDescriptorError,
 } from '@app/core-runtime';
 import { Duration, Effect, Layer, Schedule } from 'effect';
@@ -14,16 +14,16 @@ import type { ShellInstalledModuleCatalog } from './installed-module-catalog.ts'
 
 export type InstalledOutboxMatch<Requirements = OutboxRuntime> = (
   input: MatchOutboxMessagesInput,
-) => Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError, Requirements>;
+) => Effect.Effect<OutboxMatchResult, PersistenceFailure | OutboxWorkerDescriptorError, Requirements>;
 
 /** One explicit provenance seam from the validated installed catalog into Core matching. */
 export function matchInstalledOutboxMessagesOnce(
   catalog: InstalledModuleCatalog,
-): Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError, OutboxRuntime>;
+): Effect.Effect<OutboxMatchResult, PersistenceFailure | OutboxWorkerDescriptorError, OutboxRuntime>;
 export function matchInstalledOutboxMessagesOnce<Requirements>(
   catalog: InstalledModuleCatalog,
   match: InstalledOutboxMatch<Requirements>,
-): Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError, Requirements>;
+): Effect.Effect<OutboxMatchResult, PersistenceFailure | OutboxWorkerDescriptorError, Requirements>;
 export function matchInstalledOutboxMessagesOnce<Requirements>(
   catalog: InstalledModuleCatalog,
   match?: InstalledOutboxMatch<Requirements>,

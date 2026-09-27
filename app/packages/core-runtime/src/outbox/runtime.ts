@@ -15,7 +15,8 @@ import {
   validateOutboxWorkerSubscriptions,
 } from './definition.ts';
 import { OutboxHandlerExecutionError, OutboxPayloadDecodeError, OutboxWorkerDescriptorError } from './errors.ts';
-import type { OutboxClaimLostError, OutboxPersistenceError } from './errors.ts';
+import type { PersistenceFailure } from '../database/persistence-failure.ts';
+import type { OutboxClaimLostError } from './errors.ts';
 import { OutboxRepository } from './repository.ts';
 import type { OutboxClaim, OutboxRepositoryService as OutboxRepositoryPort } from './repository.ts';
 
@@ -55,12 +56,12 @@ export interface OutboxCycleResult {
   readonly succeeded: number;
 }
 
-export type OutboxCycleError = OutboxClaimLostError | OutboxPersistenceError | OutboxWorkerDescriptorError;
+export type OutboxCycleError = OutboxClaimLostError | PersistenceFailure | OutboxWorkerDescriptorError;
 
 export interface OutboxRuntimeService {
   readonly matchMessages: (
     input: MatchOutboxMessagesInput,
-  ) => Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError>;
+  ) => Effect.Effect<OutboxMatchResult, PersistenceFailure | OutboxWorkerDescriptorError>;
   readonly runCycle: <Registration extends AnyOutboxWorkerRegistration>(
     input: RunOutboxCycleInput<Registration>,
   ) => Effect.Effect<OutboxCycleResult, OutboxCycleError, OutboxWorkerRequirements<Registration>>;
@@ -262,7 +263,7 @@ const failOutboxDelivery = Effect.fn('OutboxRuntime.failDelivery')(function* fai
   outcome: string,
 ) {
   const status = yield* repository.fail(claim, reason, now).pipe(
-    Effect.tapErrorTag('OutboxPersistenceError', () => logUnexpectedPersistence(claim)),
+    Effect.tapErrorTag('PersistenceFailure', () => logUnexpectedPersistence(claim)),
     (effect) => withOutcomeSpan(effect, claim, outcome),
   );
   return {
@@ -352,7 +353,7 @@ const processNextOutboxDelivery = Effect.fn('makeOutboxRuntime.processNextDelive
     }
 
     yield* repository.complete(claim, execution.now).pipe(
-      Effect.tapErrorTag('OutboxPersistenceError', () => logUnexpectedPersistence(claim)),
+      Effect.tapErrorTag('PersistenceFailure', () => logUnexpectedPersistence(claim)),
       (effect) => withOutcomeSpan(effect, claim, 'success'),
     );
     return { ...claimedState, succeeded: claimedState.succeeded + 1 };
@@ -429,5 +430,5 @@ export const runOutboxCycle = <Registration extends AnyOutboxWorkerRegistration>
 
 export const matchOutboxMessages = (
   input: MatchOutboxMessagesInput,
-): Effect.Effect<OutboxMatchResult, OutboxPersistenceError | OutboxWorkerDescriptorError, OutboxRuntime> =>
+): Effect.Effect<OutboxMatchResult, PersistenceFailure | OutboxWorkerDescriptorError, OutboxRuntime> =>
   Effect.flatMap(OutboxRuntime, (runtime) => runtime.matchMessages(input));

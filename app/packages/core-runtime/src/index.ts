@@ -177,6 +177,7 @@ export type {
   DatabaseDriverFailureInput,
   DatabaseDriverFailureKind,
 } from './database/driver-failure.ts';
+export { PersistenceFailure } from './database/persistence-failure.ts';
 export { findPostgresFailure } from './database/postgres-failure.ts';
 export type { PostgresFailureMetadata } from './database/postgres-failure.ts';
 export {
@@ -804,7 +805,6 @@ export {
   OutboxHandlerExecutionError,
   OutboxPayloadDecodeError,
   OutboxPollerConfigError,
-  OutboxPersistenceError,
   OutboxWorkerDescriptorError,
 } from './outbox/errors.ts';
 export type { OutboxWorkerHealth, OutboxWorkerHealthServer } from './outbox/health.ts';

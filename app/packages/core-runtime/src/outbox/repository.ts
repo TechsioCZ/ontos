@@ -20,8 +20,8 @@ import type { CoreTransaction, CoreDatabaseExecutor } from '../db/types.ts';
 import { tenantStatesAllowingAccess } from '../modules/module-state-gate.ts';
 import type { AnyOutboxWorkerRegistration, OutboxWorkerRetryPolicy, OutboxWorkerSubscription } from './definition.ts';
 import { retryBackoffMs } from './definition.ts';
-import type { OutboxPersistenceError } from './errors.ts';
-import { OutboxClaimLostError, outboxPersistenceError, sanitizeOutboxErrorMessage } from './errors.ts';
+import { PersistenceFailure } from '../database/persistence-failure.ts';
+import { OutboxClaimLostError, sanitizeOutboxErrorMessage } from './errors.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -60,26 +60,25 @@ export interface OutboxRepositoryService {
     registrations: readonly AnyOutboxWorkerRegistration[],
     claimOwner: string,
     now: Date,
-  ) => Effect.Effect<Option.Option<OutboxClaim>, OutboxPersistenceError>;
-  readonly complete: (
-    claim: OutboxClaim,
-    now: Date,
-  ) => Effect.Effect<void, OutboxClaimLostError | OutboxPersistenceError>;
+  ) => Effect.Effect<Option.Option<OutboxClaim>, PersistenceFailure>;
+  readonly complete: (claim: OutboxClaim, now: Date) => Effect.Effect<void, OutboxClaimLostError | PersistenceFailure>;
   readonly fail: (
     claim: OutboxClaim,
     safeErrorMessage: string,
     now: Date,
-  ) => Effect.Effect<OutboxFailureStatus, OutboxClaimLostError | OutboxPersistenceError>;
+  ) => Effect.Effect<OutboxFailureStatus, OutboxClaimLostError | PersistenceFailure>;
   readonly matchUnmatched: (
     subscriptions: readonly OutboxWorkerSubscription[],
     now: Date,
-  ) => Effect.Effect<OutboxMatchResult, OutboxPersistenceError>;
+  ) => Effect.Effect<OutboxMatchResult, PersistenceFailure>;
 }
 export class OutboxRepository extends Context.Service<OutboxRepository, OutboxRepositoryService>()(
   '@app/core-runtime/outbox/repository/OutboxRepository',
 ) {}
+const outboxPersistenceFailure = <FailureCause>(cause: FailureCause): PersistenceFailure =>
+  new PersistenceFailure({ cause, reason: 'The Outbox Worker persistence operation failed' });
 const claimLostOrPersistenceError = <Failure>(error: Failure) =>
-  Schema.is(OutboxClaimLostError)(error) ? error : outboxPersistenceError(error);
+  Schema.is(OutboxClaimLostError)(error) ? error : outboxPersistenceFailure(error);
 const OutboxRepositoryInvariantError = Schema.TaggedError<unknown>()('OutboxRepositoryInvariantError', {
   reason: Schema.String,
 });
@@ -262,7 +261,7 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
       )
       .pipe(
         Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
-        Effect.mapError(outboxPersistenceError),
+        Effect.mapError(outboxPersistenceFailure),
       );
   },
   complete: (claim, now) =>
@@ -497,7 +496,7 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
       )
       .pipe(
         Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
-        Effect.mapError(outboxPersistenceError),
+        Effect.mapError(outboxPersistenceFailure),
       ),
 });
 export const OutboxRepositoryLive = Layer.effect(

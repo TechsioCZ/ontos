@@ -1,23 +1,24 @@
-import { Effect, Predicate, Schema, Struct } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import type { Cause } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 
 import {
   OutboxClaimLostError,
   OutboxHandlerExecutionError,
   OutboxPayloadDecodeError,
-  OutboxPersistenceError,
   OutboxPollerConfigError,
   OutboxWorkerDescriptorError,
-  outboxPersistenceError,
   sanitizeOutboxErrorMessage,
 } from '../../src/outbox/errors.ts';
+import { PersistenceFailure } from '../../src/database/persistence-failure.ts';
+import { makeOutboxRepository } from '../../src/outbox/repository.ts';
+import { makeTestDatabase } from '../support/database.ts';
 
 const errorSchemas = [
   OutboxClaimLostError,
   OutboxHandlerExecutionError,
   OutboxPayloadDecodeError,
-  OutboxPersistenceError,
   OutboxPollerConfigError,
   OutboxWorkerDescriptorError,
 ];
@@ -93,18 +94,6 @@ checkErrorContract(
     reason: 'detail',
   },
 );
-checkErrorContract(
-  OutboxPersistenceError,
-  new OutboxPersistenceError({
-    code: 'outbox_persistence_failed',
-    reason: 'detail',
-  }),
-  {
-    _tag: 'OutboxPersistenceError',
-    code: 'outbox_persistence_failed',
-    reason: 'detail',
-  },
-);
 checkErrorContract(OutboxClaimLostError, new OutboxClaimLostError({ code: 'outbox_claim_lost', reason: 'detail' }), {
   _tag: 'OutboxClaimLostError',
   code: 'outbox_claim_lost',
@@ -135,27 +124,20 @@ checkErrorContract(
   },
 );
 
-it('persistence errors keep the original cause private and immutable', () => {
-  const cause = { secret: 'database credential' };
-  const failure = outboxPersistenceError(cause);
-  expect(Schema.is(OutboxPersistenceError)(failure)).toBeTruthy();
-  expect(Object.getOwnPropertyDescriptor(failure, 'ontosOutboxPersistenceCause')).toEqual({
-    configurable: false,
-    enumerable: false,
-    value: cause,
-    writable: false,
-  });
-  expect(Object.getOwnPropertyDescriptor(failure, 'ontosOutboxPersistenceCause')?.value).toBe(cause);
-  expect(Object.keys(failure).includes('ontosOutboxPersistenceCause')).toBe(false);
-  expect(JSON.stringify(failure).includes('database credential')).toBe(false);
-  const encoded = Schema.encodeSync(OutboxPersistenceError)(failure);
-  expect(Predicate.isTagged(encoded, 'OutboxPersistenceError')).toBe(true);
-  expect(Struct.omit(encoded, ['_tag'])).toEqual({
-    code: 'outbox_persistence_failed',
-    reason: 'The Outbox Worker persistence operation failed',
-  });
-  expect(Object.hasOwn(Schema.decodeSync(OutboxPersistenceError)(encoded), 'ontosOutboxPersistenceCause')).toBe(false);
-});
+it.effect('repository persistence failures carry the driver failure as their native cause', () =>
+  Effect.gen(function* persistenceFailureCarriesCause() {
+    const driverError = new SqlError({
+      reason: new ConnectionError({ cause: new Error('private repository defect') }),
+    });
+    const executor = yield* makeTestDatabase(() => Effect.fail(driverError));
+    const failure = yield* makeOutboxRepository(executor)
+      .matchUnmatched([], DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-03T10:00:00Z')))
+      .pipe(Effect.flip);
+    expect(failure).toBeInstanceOf(PersistenceFailure);
+    expect(failure.reason).toBe('The Outbox Worker persistence operation failed');
+    expect(failure.cause).toBe(driverError);
+  }),
+);
 
 it('sanitizer normalizes control whitespace, trims, truncates and falls back', () => {
   expect(sanitizeOutboxErrorMessage(' \r\nfirst\r\n\tsecond\t third \n')).toBe('first second  third');

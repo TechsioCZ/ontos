@@ -4,7 +4,8 @@ import { TestClock } from 'effect/testing';
 
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
-import { OutboxPersistenceError, OutboxPollerConfigError } from '../../src/outbox/errors.ts';
+import { PersistenceFailure } from '../../src/database/persistence-failure.ts';
+import { OutboxPollerConfigError } from '../../src/outbox/errors.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from '../../src/outbox/poller.ts';
 import type { OutboxCycleRunner } from '../../src/outbox/poller.ts';
 
@@ -96,8 +97,8 @@ it.effect('runs immediately, survives a typed cycle failure, and continues polli
         calls += 1;
         return calls === 1
           ? Effect.fail(
-              new OutboxPersistenceError({
-                code: 'outbox_persistence_failed',
+              new PersistenceFailure({
+                cause: 'controlled driver failure',
                 reason: 'controlled test failure',
               }),
             )

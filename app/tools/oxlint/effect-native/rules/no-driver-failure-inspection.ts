@@ -37,11 +37,11 @@
  *   audit-blessed "preserve original failures or causes" pattern:
  *   `Cause.findErrorOption(exit.cause)`, `Cause.hasDies(exit.cause)`,
  *   `Effect.logError('defect', handlerExit.cause)`, `Effect.failCause(signal.cause)`.
- * - **Explicit safe cause fields** on your own class (`this.cause`, `super.cause`) and assignments to
- *   them — A4 asks for "an explicit safe cause field", not for zero cause fields.
- * - **Constructing** a typed error that carries a cause: `new IcoConflict({ cause: e })` is an object
- *   property, never a member read, and `Effect.catchTag('DatabaseUniqueViolation', …)` is the target
- *   pattern itself.
+ * - **Constructor-carried causes.** `new PersistenceFailure({ reason, cause: e })` (Core) sets the
+ *   native `Error.cause` through the constructor; that object property is never a member read, and
+ *   `Effect.catchTag('PersistenceFailure', …)` / `Effect.catchTag('DatabaseUniqueViolation', …)` at
+ *   the handler boundary is the target pattern itself. `this.cause`/`super.cause` inside an error's
+ *   own class stay allowed.
  * - Tests (`includeTests`, default false) — `database-boundary.test.ts` asserts real SQLSTATEs on
  *   purpose — `scripts/`, `tools/`, `dist/` and generated `**​/drizzle/**` migration metadata.
  * - DOM/ORM homonyms of driver keys — `'detail' in event` (`CustomEvent`), Drizzle `schema`/`table`/
@@ -549,10 +549,11 @@ export const rule = defineRule({
         'failure decoder (`Schema.TaggedError` taxonomy for SQLSTATE, constraints, connectivity, ' +
         'deadlock, serialization and scope/RLS) and match on `_tag` with `Effect.catchTag(s)`/`Match`.',
       causeWalk:
-        'Ad hoc driver failure inspection (`{{text}}`): walking an unknown `.cause` chain. Convert the ' +
-        'driver failure once at the persistence edge (`Effect.tryPromise` inside the Core database ' +
-        'service) into the typed database failure taxonomy, and keep unexpected defects in `Cause` ' +
-        "until the outer HTTP seam. `Cause.*`/`Exit.*` reads of an `Exit`'s own cause are fine.",
+        'Ad hoc driver failure inspection (`{{text}}`): walking an unknown `.cause` chain. Wrap the ' +
+        'driver failure once at the persistence edge in Core `PersistenceFailure` (its constructor sets ' +
+        'the native cause) or decode it into the typed database failure taxonomy, then translate the ' +
+        "tag at the handler boundary with `Effect.catchTag`. `Cause.*`/`Exit.*` reads of an `Exit`'s own " +
+        'cause are fine.',
       sqlStateLiteral:
         'Ad hoc driver failure inspection (`{{text}}`): a raw PostgreSQL SQLSTATE literal. Map SQLSTATE ' +
         'to a tag once in the Core-owned database failure decoder (e.g. `23505` → ' +
