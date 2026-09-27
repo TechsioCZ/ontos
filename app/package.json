@@ -138,7 +138,7 @@
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "esbuild": "0.28.1",
     "eslint-plugin-github": "6.1.2",
-    "eslint-plugin-perfectionist": "5.10.1",
+    "eslint-plugin-perfectionist": "5.12.1",
     "eslint-plugin-sonarjs": "4.2.0",
     "fallow": "3.22.0",
     "jose": "6.2.5",

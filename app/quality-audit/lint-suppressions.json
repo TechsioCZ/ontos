@@ -68,7 +68,7 @@
     "oxc/no-barrel-file": 35,
     "perfectionist/sort-interfaces": 1,
     "perfectionist/sort-object-types": 1,
-    "perfectionist/sort-objects": 11,
+    "perfectionist/sort-objects": 10,
     "prefer-destructuring": 2,
     "prefer-object-spread": 1,
     "prefer-template": 1,
