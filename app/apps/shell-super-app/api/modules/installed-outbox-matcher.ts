@@ -47,7 +47,8 @@ const installedOutboxMatcherTick = installedModuleCatalog.pipe(
       : Effect.void,
   ),
   Effect.matchEffect({
-    onFailure: (error) => Effect.logError('Installed Outbox catalog matching failed', error),
+    onFailure: (error) =>
+      Effect.annotateLogs(Effect.logError('Installed Outbox catalog matching failed'), { errorTag: error._tag }),
     onSuccess: () => Effect.void,
   }),
 );
