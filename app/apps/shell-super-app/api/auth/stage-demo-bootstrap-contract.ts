@@ -46,6 +46,7 @@ export interface StageDemoBootstrapResult {
 }
 
 export class StageDemoBootstrapError extends Schema.TaggedError<StageDemoBootstrapError>()('StageDemoBootstrapError', {
+  cause: Schema.optionalKey(Schema.Defect()),
   code: Schema.Literals(['stage_demo_configuration_invalid', 'stage_demo_conflict', 'stage_demo_persistence_failed']),
   reason: Schema.String,
 }) {}

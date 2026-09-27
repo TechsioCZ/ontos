@@ -17,13 +17,10 @@ export class PriceGroupCatalogDatabase extends Context.Service<
 >()('@app/price-group-catalog/database/client/PriceGroupCatalogDatabase') {}
 
 const connectionFailure = (cause: unknown): PriceGroupCatalogDatabaseConnectionError =>
-  Object.defineProperty(
-    new PriceGroupCatalogDatabaseConnectionError({
-      reason: 'Unable to initialize the Price Group Catalog PostgreSQL client',
-    }),
-    'cause',
-    { value: cause },
-  );
+  new PriceGroupCatalogDatabaseConnectionError({
+    cause,
+    reason: 'Unable to initialize the Price Group Catalog PostgreSQL client',
+  });
 
 type ContextServiceContract<Service> =
   Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;

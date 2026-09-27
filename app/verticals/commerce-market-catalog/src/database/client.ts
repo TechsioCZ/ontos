@@ -16,13 +16,10 @@ export class CommerceMarketCatalogDatabase extends Context.Service<
 >()('@app/commerce-market-catalog/database/client/CommerceMarketCatalogDatabase') {}
 
 const connectionFailure = (cause: unknown): CommerceMarketCatalogDatabaseConnectionError =>
-  Object.defineProperty(
-    new CommerceMarketCatalogDatabaseConnectionError({
-      reason: 'Unable to initialize the Commerce Market Catalog PostgreSQL client',
-    }),
-    'cause',
-    { value: cause },
-  );
+  new CommerceMarketCatalogDatabaseConnectionError({
+    cause,
+    reason: 'Unable to initialize the Commerce Market Catalog PostgreSQL client',
+  });
 
 type ContextServiceContract<Service> =
   Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;

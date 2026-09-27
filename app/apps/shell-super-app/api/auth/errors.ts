@@ -4,11 +4,15 @@ const InvalidCredentialsErrorSchema = Schema.TaggedStruct('InvalidCredentialsErr
 export type InvalidCredentialsFailure = typeof InvalidCredentialsErrorSchema.Type;
 export const InvalidCredentialsError = Schema.TaggedError<InvalidCredentialsFailure>()('InvalidCredentialsError', {});
 
-const OntosIdentityForbiddenErrorSchema = Schema.TaggedStruct('OntosIdentityForbiddenError', {});
+const ontosIdentityForbiddenErrorFields = { cause: Schema.optionalKey(Schema.Defect()) };
+const OntosIdentityForbiddenErrorSchema = Schema.TaggedStruct(
+  'OntosIdentityForbiddenError',
+  ontosIdentityForbiddenErrorFields,
+);
 export type OntosIdentityForbiddenFailure = typeof OntosIdentityForbiddenErrorSchema.Type;
 export const OntosIdentityForbiddenError = Schema.TaggedError<OntosIdentityForbiddenFailure>()(
   'OntosIdentityForbiddenError',
-  {},
+  ontosIdentityForbiddenErrorFields,
 );
 
 const TenantAccessForbiddenErrorSchema = Schema.TaggedStruct('TenantAccessForbiddenError', {});

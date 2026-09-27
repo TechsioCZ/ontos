@@ -1,6 +1,9 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
-export class CommerceMarketCatalogDatabaseConnectionError extends Schema.TaggedError<CommerceMarketCatalogDatabaseConnectionError>()(
+/** The driver failure, when there is one, travels as the native `Error.cause` set by the constructor. */
+export class CommerceMarketCatalogDatabaseConnectionError extends Data.TaggedError(
   'CommerceMarketCatalogDatabaseConnectionError',
-  { reason: Schema.String },
-) {}
+)<{
+  readonly cause?: unknown;
+  readonly reason: string;
+}> {}

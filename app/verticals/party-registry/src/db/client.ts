@@ -18,13 +18,10 @@ export class PartyDatabase extends Context.Service<
 >()('@app/party-registry/db/client/PartyDatabase') {}
 
 const connectionFailure = (cause: unknown): PartyDatabaseConnectionError =>
-  Object.defineProperty(
-    new PartyDatabaseConnectionError({
-      reason: 'Unable to initialize the Party Registry PostgreSQL connection pool',
-    }),
-    'cause',
-    { value: cause },
-  );
+  new PartyDatabaseConnectionError({
+    cause,
+    reason: 'Unable to initialize the Party Registry PostgreSQL connection pool',
+  });
 
 type ContextServiceContract<Service> =
   Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;

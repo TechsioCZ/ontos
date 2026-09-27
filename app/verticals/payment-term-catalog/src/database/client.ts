@@ -16,13 +16,10 @@ export class PaymentTermCatalogDatabase extends Context.Service<
 >()('@app/payment-term-catalog/database/client/PaymentTermCatalogDatabase') {}
 
 const connectionFailure = (cause: unknown): PaymentTermCatalogDatabaseConnectionError =>
-  Object.defineProperty(
-    new PaymentTermCatalogDatabaseConnectionError({
-      reason: 'Unable to initialize the Payment Term Catalog native PostgreSQL client',
-    }),
-    'cause',
-    { value: cause },
-  );
+  new PaymentTermCatalogDatabaseConnectionError({
+    cause,
+    reason: 'Unable to initialize the Payment Term Catalog native PostgreSQL client',
+  });
 
 type ContextServiceContract<Service> =
   Service extends Context.Key<infer _Identifier, infer Contract> ? Contract : never;

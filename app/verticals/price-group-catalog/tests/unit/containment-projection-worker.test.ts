@@ -16,7 +16,7 @@ import type {
   ResourceContainmentRelationshipMutationInput,
   ResourceContainmentRelationshipMutationService,
 } from '@app/core-runtime/outbox/worker';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { PriceGroupContainmentProjectionRequestedPayloadSchema } from '../../shared/actions/create-price-group.ts';
@@ -285,7 +285,7 @@ it.effect('leaves the intent pending and publishes nothing when the external pro
         observed,
       ),
     );
-    expect(Schema.is(ResourceContainmentMutationUnavailable)(failure)).toBe(true);
+    expect(Predicate.isTagged(failure, 'ResourceContainmentMutationUnavailable')).toBe(true);
     expect(observed.touches).toHaveLength(1);
     expect(observed.routineNames).toEqual(['read_price_group_containment_projection_intent']);
     expect(observed.completions).toHaveLength(0);

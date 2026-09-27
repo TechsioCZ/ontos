@@ -25,13 +25,10 @@ export class CommercePortalAuthDatabase extends Context.Service<
 >()('@app/commerce-customer-context/portal-auth/persistence/portal-auth-database/CommercePortalAuthDatabase') {}
 
 const connectionFailure = (cause: unknown): CommercePortalAuthDatabaseConnectionError =>
-  Object.defineProperty(
-    new CommercePortalAuthDatabaseConnectionError({
-      reason: 'Unable to initialize the Commerce portal authentication PostgreSQL pool',
-    }),
-    'cause',
-    { value: cause },
-  );
+  new CommercePortalAuthDatabaseConnectionError({
+    cause,
+    reason: 'Unable to initialize the Commerce portal authentication PostgreSQL pool',
+  });
 
 export const makeCommercePortalAuthDatabase = Effect.fn('CommercePortalAuthDatabase.make')(function* makeDatabase(
   configuration: Pick<CommercePortalAuthConfigValue, 'connectionString'>,

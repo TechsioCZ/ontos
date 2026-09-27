@@ -37,15 +37,11 @@ type VerifyExternalAuthenticationResult = Effect.Success<
   ReturnType<CommercePortalAuthVerificationClient['Service']['verify']>
 >;
 
-const invalid = (reason: string, cause?: unknown): ExternalIdentityFailure => {
-  const failure = externalIdentityFailure('identity_invalid', reason);
-  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-};
+const invalid = (reason: string, cause?: unknown): ExternalIdentityFailure =>
+  externalIdentityFailure('identity_invalid', reason, cause);
 
-const unavailable = (reason: string, cause?: unknown): ExternalIdentityFailure => {
-  const failure = externalIdentityFailure('identity_unavailable', reason);
-  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-};
+const unavailable = (reason: string, cause?: unknown): ExternalIdentityFailure =>
+  externalIdentityFailure('identity_unavailable', reason, cause);
 
 const providerUnavailable = (cause: unknown): ExternalIdentityFailure =>
   unavailable('Commerce provider verification transport failed', cause);

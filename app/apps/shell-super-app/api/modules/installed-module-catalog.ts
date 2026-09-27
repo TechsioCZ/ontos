@@ -70,27 +70,19 @@ export class ShellInstalledModuleCatalog extends Context.Service<
   ShellInstalledModuleCatalogService
 >()('@app/shell-super-app/api/modules/installed-module-catalog/ShellInstalledModuleCatalog') {}
 
-const unavailable = (cause?: unknown) => {
-  const error = new InstalledModuleCatalogUnavailableError({
+const unavailable = (cause?: unknown) =>
+  new InstalledModuleCatalogUnavailableError({
+    cause,
     code: 'installed_module_catalog_unavailable',
     reason: 'An allowlisted module deployment is temporarily unavailable',
   });
-  if (cause !== undefined) {
-    Object.defineProperty(error, 'cause', { configurable: true, value: cause });
-  }
-  return error;
-};
 
-const invalid = (cause?: unknown) => {
-  const error = new InstalledModuleCatalogInvalidError({
+const invalid = (cause?: unknown) =>
+  new InstalledModuleCatalogInvalidError({
+    cause,
     code: 'installed_module_catalog_invalid',
     reason: 'The installed module catalog is contradictory or malformed',
   });
-  if (cause !== undefined) {
-    Object.defineProperty(error, 'cause', { configurable: true, value: cause });
-  }
-  return error;
-};
 
 const isInvalid = Schema.is(InstalledModuleCatalogInvalidErrorSchema);
 const decodeContractDocument = Schema.decodeUnknownEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema), {

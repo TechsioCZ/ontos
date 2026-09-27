@@ -110,9 +110,6 @@ const problem = <Tag extends string, Status extends number>(
   type: string,
 ) => ({ _tag, detail, status, title, type });
 
-const failureWithCause = <Failure extends object, CauseValue>(failure: Failure, cause: CauseValue): Failure =>
-  Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-
 const CORE_IDENTITY_MODULE_KEY = 'core.identity';
 const CORRELATION_ID_HEADER = 'x-correlation-id';
 const IDEMPOTENCY_KEY_HEADER = 'idempotency-key';
@@ -202,9 +199,6 @@ const mapLegalEntitySelectionProblem = (
   error: LegalEntitySelectionForbiddenError | LegalEntitySelectionUnavailableError,
 ): ExternalIdentityProblem =>
   Predicate.isTagged(error, 'LegalEntitySelectionForbiddenError') ? forbiddenProblem() : unavailableProblem();
-
-const mapTrustedPrincipalDecodeProblem = (error: Schema.SchemaError): ExternalIdentityProblem =>
-  failureWithCause(internalProblem(), error);
 
 const mapIdentityCode = (code: ExternalIdentityFailureCode): ExternalIdentityProblem =>
   Match.value(code).pipe(
@@ -572,7 +566,7 @@ interface AuthenticationAdmissionInput {
 }
 
 const mapAdmissionNonceError = (cause: unknown): ExternalIdentityFailure =>
-  failureWithCause(externalIdentityFailure('identity_unavailable', 'Admission nonce generation is unavailable'), cause);
+  externalIdentityFailure('identity_unavailable', 'Admission nonce generation is unavailable', cause);
 
 const nextAdmissionUuid = (crypto: Crypto.Crypto) => crypto.randomUUIDv4.pipe(Effect.mapError(mapAdmissionNonceError));
 
@@ -581,10 +575,7 @@ const makeSubjectAdmission = Effect.fn('ExternalIdentityHttp.makeSubjectAdmissio
 ) {
   const decodedTenantId = yield* Schema.decodeEffect(TenantIdSchema)(input.tenantId).pipe(
     Effect.mapError((error) =>
-      failureWithCause(
-        externalIdentityFailure('identity_invalid', 'The workload tenant identifier is malformed'),
-        error,
-      ),
+      externalIdentityFailure('identity_invalid', 'The workload tenant identifier is malformed', error),
     ),
   );
   const crypto = yield* Crypto.Crypto;
@@ -607,10 +598,7 @@ const makeAuthenticationAdmission = Effect.fn('ExternalIdentityHttp.makeAuthenti
   function* makeAuthenticationAdmission(input: AuthenticationAdmissionInput) {
     const decodedTenantId = yield* Schema.decodeEffect(TenantIdSchema)(input.tenantId).pipe(
       Effect.mapError((error) =>
-        failureWithCause(
-          externalIdentityFailure('identity_invalid', 'The workload tenant identifier is malformed'),
-          error,
-        ),
+        externalIdentityFailure('identity_invalid', 'The workload tenant identifier is malformed', error),
       ),
     );
     const crypto = yield* Crypto.Crypto;
@@ -1098,7 +1086,7 @@ const issueExternalGatewayContextHandler = Effect.fn('ExternalIdentityHttp.issue
               legalEntityId === undefined ? gatewayPrincipalBase : { ...gatewayPrincipalBase, legalEntityId };
             const validatedGatewayPrincipal = yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(
               gatewayPrincipal,
-            ).pipe(Effect.mapError(mapTrustedPrincipalDecodeProblem));
+            ).pipe(Effect.orDie);
             return yield* issueGatewayContextAssertion({
               audience: payload.audience,
               principal: validatedGatewayPrincipal,

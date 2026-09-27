@@ -37,13 +37,10 @@ export class CommercePortalAuthVerificationClient extends Context.Service<
 >()('@app/commerce-customer-context/api/portal-auth-verification/client/CommercePortalAuthVerificationClient') {}
 
 const mapTransportFailure = (cause: unknown) =>
-  Object.defineProperty(
-    new CommercePortalAuthVerificationClientUnavailable({
-      reason: 'Commerce provider verification transport failed',
-    }),
-    'cause',
-    { configurable: true, value: cause },
-  );
+  new CommercePortalAuthVerificationClientUnavailable({
+    cause,
+    reason: 'Commerce provider verification transport failed',
+  });
 
 export const makeCommercePortalAuthVerificationClient = Effect.fn('CommercePortalAuthVerificationClient.make')(
   function* makeCommercePortalAuthVerificationClient() {

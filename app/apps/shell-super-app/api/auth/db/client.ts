@@ -20,14 +20,8 @@ export class AuthDatabase extends Context.Service<
   }
 >()('@app/shell-super-app/api/auth/db/client/AuthDatabase') {}
 
-const connectionFailure = (cause: unknown) =>
-  Object.defineProperty(
-    new AuthDatabaseConnectionError({
-      reason: 'Unable to initialize the authentication PostgreSQL pool',
-    }),
-    'cause',
-    { value: cause },
-  );
+const connectionFailure = (cause: unknown): AuthDatabaseConnectionError =>
+  new AuthDatabaseConnectionError({ cause, reason: 'Unable to initialize the authentication PostgreSQL pool' });
 
 const mapPoolConfigurationError = (error: { readonly reason: string }) =>
   new AuthDatabaseConnectionError({

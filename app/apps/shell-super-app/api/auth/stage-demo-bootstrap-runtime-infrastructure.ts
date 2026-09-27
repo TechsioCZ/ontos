@@ -23,14 +23,11 @@ import type {
 } from './stage-demo-bootstrap-contract.ts';
 
 const persistenceFailure = (cause?: unknown) =>
-  Object.defineProperty(
-    new StageDemoBootstrapError({
-      code: 'stage_demo_persistence_failed',
-      reason: 'The stage demo Better Auth user could not be reconciled',
-    }),
-    'cause',
-    { value: cause },
-  );
+  new StageDemoBootstrapError({
+    cause,
+    code: 'stage_demo_persistence_failed',
+    reason: 'The stage demo Better Auth user could not be reconciled',
+  });
 
 const bootstrapSdkTimeout = Effect.timeoutOrElse({
   duration: '30 seconds',

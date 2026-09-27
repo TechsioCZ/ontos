@@ -1,6 +1,9 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
-export class PriceGroupCatalogDatabaseConnectionError extends Schema.TaggedError<PriceGroupCatalogDatabaseConnectionError>()(
+/** The driver failure, when there is one, travels as the native `Error.cause` set by the constructor. */
+export class PriceGroupCatalogDatabaseConnectionError extends Data.TaggedError(
   'PriceGroupCatalogDatabaseConnectionError',
-  { reason: Schema.String },
-) {}
+)<{
+  readonly cause?: unknown;
+  readonly reason: string;
+}> {}

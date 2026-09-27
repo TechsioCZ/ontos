@@ -9,7 +9,6 @@ import {
   ContextAccess,
   isDatabaseUnavailableFailure,
   PrincipalResolver,
-  PrincipalResolverUnavailableError,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
 import { apiKey } from '@better-auth/api-key';
@@ -251,7 +250,7 @@ export class AuthenticationService extends Context.Service<AuthenticationService
 const mapResolverError = (
   error: PrincipalResolutionError,
 ): AuthenticationUnavailableFailure | OntosIdentityForbiddenFailure =>
-  Schema.is(PrincipalResolverUnavailableError)(error)
+  Predicate.isTagged(error, 'PrincipalResolverUnavailableError')
     ? new AuthenticationUnavailableError()
     : new OntosIdentityForbiddenError();
 
@@ -265,14 +264,8 @@ type TrustedPrincipalContextInput = Readonly<{
   readonly tenantId: string;
 }>;
 
-const mapPrincipalContextDecodeError = (cause: unknown): OntosIdentityForbiddenFailure => {
-  const failure = new OntosIdentityForbiddenError();
-  Object.defineProperty(failure, 'cause', {
-    configurable: true,
-    value: cause,
-  });
-  return failure;
-};
+const mapPrincipalContextDecodeError = (cause: Schema.SchemaError): OntosIdentityForbiddenFailure =>
+  new OntosIdentityForbiddenError({ cause });
 
 const decodeTrustedPrincipalContext = (
   input: TrustedPrincipalContextInput,
@@ -282,7 +275,7 @@ const decodeTrustedPrincipalContext = (
 const mapTenantSwitchResolverError = (
   error: PrincipalResolutionError,
 ): AuthenticationUnavailableFailure | TenantAccessForbiddenFailure =>
-  Schema.is(PrincipalResolverUnavailableError)(error)
+  Predicate.isTagged(error, 'PrincipalResolverUnavailableError')
     ? new AuthenticationUnavailableError()
     : new TenantAccessForbiddenError();
 
@@ -292,7 +285,7 @@ const mapLegalEntitySelectionError = (
   Schema.is(LegalEntitySelectionUnavailableError)(error) ? new AuthenticationUnavailableError() : error;
 
 const mapResolverApiError = (error: PrincipalResolutionError): APIError =>
-  Schema.is(PrincipalResolverUnavailableError)(error)
+  Predicate.isTagged(error, 'PrincipalResolverUnavailableError')
     ? new APIError('SERVICE_UNAVAILABLE', {
         code: IDENTITY_UNAVAILABLE_CODE,
         message: 'Authentication is temporarily unavailable',

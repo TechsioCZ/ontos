@@ -128,12 +128,11 @@ export const commerceAuthenticationNamespaceRegistryLive = (
   input: unknown,
 ) => Layer.effect(AuthenticationNamespaceRegistry, makeCommerceAuthenticationNamespaceRegistryEffect(input));
 
-const mapWorkloadAssertionFailure = (cause: unknown): CommercePortalAuthVerificationClientUnavailable => {
-  const failure = new CommercePortalAuthVerificationClientUnavailable({
+const mapWorkloadAssertionFailure = (cause: unknown): CommercePortalAuthVerificationClientUnavailable =>
+  new CommercePortalAuthVerificationClientUnavailable({
+    cause,
     reason: 'The Shell workload is not authorized to call Commerce verification',
   });
-  return Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-};
 
 const requestContext = (): Effect.Effect<
   ExternalIdentityHttpWorkloadContextValue,

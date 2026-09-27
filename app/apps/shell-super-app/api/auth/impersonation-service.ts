@@ -8,7 +8,6 @@ import type {
 import {
   ActionRuntime,
   PrincipalResolver,
-  PrincipalResolverUnavailableError,
   recordSupportImpersonationAction,
   SupportRecoveryPrincipalContextResolver,
 } from '@app/core-runtime';
@@ -62,27 +61,22 @@ const denied = () =>
     code: 'support_impersonation_denied',
     reason: 'Support impersonation is not permitted',
   });
-const unavailable = (cause?: unknown): SupportImpersonationUnavailableError => {
-  const failure = new SupportImpersonationUnavailableFailure<{
+const unavailable = (cause?: unknown): SupportImpersonationUnavailableError =>
+  new SupportImpersonationUnavailableFailure<{
+    readonly cause?: unknown;
     readonly code: 'support_impersonation_unavailable';
     readonly reason: string;
   }>({
+    cause,
     code: 'support_impersonation_unavailable',
     reason: 'Support impersonation is temporarily unavailable',
   });
-  if (cause !== undefined) {
-    Object.defineProperty(failure, 'cause', {
-      configurable: true,
-      value: cause,
-    });
-  }
-  return failure;
-};
 const cookieHeaders = (headers: Headers): readonly string[] =>
   Predicate.isFunction(headers.getSetCookie) ? headers.getSetCookie() : [];
 const isAuthenticationUnavailable = Schema.is(AuthenticationUnavailableError);
 const isAuthenticationInternal = Schema.is(AuthenticationInternalError);
-const isResolverUnavailable = Schema.is(PrincipalResolverUnavailableError);
+const isResolverUnavailable = (error: PrincipalResolutionError) =>
+  Predicate.isTagged(error, 'PrincipalResolverUnavailableError');
 const mapAuthenticationError = (error: AuthenticationRuntimeError) =>
   isAuthenticationUnavailable(error) || isAuthenticationInternal(error) ? unavailable(error) : denied();
 const mapResolverError = (error: PrincipalResolutionError) =>
