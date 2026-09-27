@@ -357,15 +357,7 @@ jobs:
       contents: read
       deployments: read
     env:
-      ZEROPS_CATALOG_SERVICE_ID: ${{ vars.ZEROPS_CATALOG_SERVICE_ID }}
-      ZEROPS_COMMERCE_CUSTOMER_CONTEXT_SERVICE_ID: ${{ vars.ZEROPS_COMMERCE_CUSTOMER_CONTEXT_SERVICE_ID }}
-      ZEROPS_COMMERCE_CUSTOMER_CONTEXT_WORKER_SERVICE_ID: ${{ vars.ZEROPS_COMMERCE_CUSTOMER_CONTEXT_WORKER_SERVICE_ID }}
       ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
-      ZEROPS_PARTY_REGISTRY_SERVICE_ID: ${{ vars.ZEROPS_PARTY_REGISTRY_SERVICE_ID }}
-      ZEROPS_PARTY_REGISTRY_WORKER_SERVICE_ID: ${{ vars.ZEROPS_PARTY_REGISTRY_WORKER_SERVICE_ID }}
-      ZEROPS_PAYMENT_TERM_CATALOG_SERVICE_ID: ${{ vars.ZEROPS_PAYMENT_TERM_CATALOG_SERVICE_ID }}
-      ZEROPS_PRICE_GROUP_CATALOG_SERVICE_ID: ${{ vars.ZEROPS_PRICE_GROUP_CATALOG_SERVICE_ID }}
-      ZEROPS_PRICE_GROUP_CATALOG_WORKER_SERVICE_ID: ${{ vars.ZEROPS_PRICE_GROUP_CATALOG_WORKER_SERVICE_ID }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_SHELL_SERVICE_ID: ${{ vars.ZEROPS_SHELL_SERVICE_ID }}
       ZEROPS_SPICEDB_SERVICE_ID: ${{ vars.ZEROPS_SPICEDB_SERVICE_ID }}
@@ -498,10 +490,13 @@ jobs:
         if: steps.impact.outputs.providers != '[]'
         env:
           PROVIDERS_JSON: ${{ steps.impact.outputs.providers }}
+          # Provider units come from the topology, so their service ids are looked up by the variable
+          # name the topology implies instead of a hand-kept list that silently misses new units.
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
         run: |
           while IFS= read -r unit; do
             environment_key="ZEROPS_$(printf '%s' "$unit" | tr '[:lower:]' '[:upper:]' | tr '-' '_')_SERVICE_ID"
-            service_id="${!environment_key:-}"
+            service_id="$(jq -r --arg key "$environment_key" '.[$key] // empty' <<<"$STAGE_VARIABLES_JSON")"
             if [[ -z "$service_id" ]]; then
               echo "Missing stage service variable $environment_key for planned unit $unit" >&2
               exit 1

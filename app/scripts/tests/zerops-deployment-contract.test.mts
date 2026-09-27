@@ -61,19 +61,21 @@ it('binds Commerce to the independently deployed Price Group Catalog API base', 
   expect(priceGroupCatalog).toContain(`path: '/price-group-catalog-api/price-group-catalog/readiness'`);
 });
 
-it('declares Price Group deployment variables for Cloudflare proof and stage promotion', () => {
+it('declares Price Group Cloudflare proof variables and resolves every provider service id by topology name', () => {
   const workflow = readFileSync(
     new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url),
     'utf-8',
   );
 
   expect(workflow).toContain('ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid');
-  expect(workflow).toContain(
-    `ZEROPS_PRICE_GROUP_CATALOG_SERVICE_ID: \${{ vars.ZEROPS_PRICE_GROUP_CATALOG_SERVICE_ID }}`,
-  );
-  expect(workflow).toContain(
-    `ZEROPS_PRICE_GROUP_CATALOG_WORKER_SERVICE_ID: \${{ vars.ZEROPS_PRICE_GROUP_CATALOG_WORKER_SERVICE_ID }}`,
-  );
+  expect(workflow).toContain(`STAGE_VARIABLES_JSON: \${{ toJSON(vars) }}`);
+  expect(workflow).toContain(`jq -r --arg key "$environment_key" '.[$key] // empty' <<<"$STAGE_VARIABLES_JSON"`);
+  const providerVariables = workflow.match(/^ +ZEROPS_[A-Z_]+_SERVICE_ID: /gmu)?.map((line) => line.trim()) ?? [];
+  expect(providerVariables).toEqual([
+    'ZEROPS_MIGRATOR_SERVICE_ID:',
+    'ZEROPS_SHELL_SERVICE_ID:',
+    'ZEROPS_SPICEDB_SERVICE_ID:',
+  ]);
 });
 
 it('starts a dedicated Price Group worker that drains durable pending projections after restart', () => {
