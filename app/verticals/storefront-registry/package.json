@@ -11,7 +11,7 @@
   "scripts": {
     "build": "modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical storefront-registry --target dist && ultramodern-create ultramodern public-surface --app storefront-registry --target dist && cross-env MODERNJS_DEPLOY=node modern deploy --skip-build",
     "cloudflare:build": "cross-env MODERNJS_DEPLOY=cloudflare modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical storefront-registry --target cloudflare-dist && ultramodern-create ultramodern public-surface --app storefront-registry --target cloudflare-dist && cross-env MODERNJS_DEPLOY=cloudflare modern deploy --skip-build",
-    "cloudflare:deploy": "cross-env ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS=true pnpm run cloudflare:build && wrangler deploy --config .output/wrangler.json",
+    "cloudflare:deploy": "cross-env ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS=true pnpm run cloudflare:build && ultramodern-create ultramodern cloudflare-output-verify --app storefront-registry && wrangler deploy --config .output/wrangler.json",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app storefront-registry",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
