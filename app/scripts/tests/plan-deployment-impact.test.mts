@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Cause, Effect, Exit } from 'effect';
+import { Cause, Effect, Exit, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
@@ -681,19 +681,17 @@ it.live('rejects a comparison base that is not an ancestor of the head', () =>
 );
 
 const deploymentSource = (
-  deployments: readonly { readonly sha: string; readonly state: string; readonly runId: string }[],
+  deployments: readonly { readonly runId: string; readonly sha: string; readonly state: string }[],
 ): StageDeploymentSource<never, never> => ({
-  latestStatus: (deploymentId) => {
-    const deployment = deployments[deploymentId];
-    return Effect.succeed(
-      deployment === undefined
-        ? undefined
-        : {
-            logUrl: `https://github.com/TechsioCZ/ontos/actions/runs/${deployment.runId}/job/1`,
-            state: deployment.state,
-          },
-    );
-  },
+  latestStatus: (deploymentId) =>
+    Effect.succeed(
+      Option.fromNullishOr(deployments[deploymentId]).pipe(
+        Option.map((deployment) => ({
+          logUrl: `https://github.com/TechsioCZ/ontos/actions/runs/${deployment.runId}/job/1`,
+          state: deployment.state,
+        })),
+      ),
+    ),
   page: (page) => Effect.succeed(page === 1 ? deployments.map((deployment, id) => ({ id, sha: deployment.sha })) : []),
 });
 

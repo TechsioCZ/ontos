@@ -23,10 +23,10 @@ export interface StageDeploymentStatus {
 }
 
 export interface StageDeploymentSource<E, R> {
+  /** Latest status of a deployment, or none when it has no status yet. */
+  readonly latestStatus: (deploymentId: number) => Effect.Effect<Option.Option<StageDeploymentStatus>, E, R>;
   /** Deployments of the environment, newest first; an empty page ends the walk. */
   readonly page: (page: number) => Effect.Effect<readonly StageDeployment[], E, R>;
-  /** Latest status of a deployment, or undefined when it has none. */
-  readonly latestStatus: (deploymentId: number) => Effect.Effect<StageDeploymentStatus | undefined, E, R>;
 }
 
 export class StageDeploymentBaseError extends Schema.TaggedError<StageDeploymentBaseError>()(
@@ -49,7 +49,11 @@ export const resolveStageDeploymentBase = <E, R>(
       }
       for (const deployment of deployments) {
         const status = yield* source.latestStatus(deployment.id);
-        if (status?.state === 'success' && !status.logUrl.includes(currentRunPath)) {
+        if (
+          Option.isSome(status) &&
+          status.value.state === 'success' &&
+          !status.value.logUrl.includes(currentRunPath)
+        ) {
           return deployment.sha;
         }
       }
@@ -79,7 +83,9 @@ export const githubStageDeploymentSource = (
     githubApi(`repos/${repository}/deployments/${deploymentId}/statuses?per_page=1`).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(StatusesJsonSchema)),
       Effect.map(([latest]) =>
-        latest === undefined ? undefined : { logUrl: latest.log_url ?? '', state: latest.state },
+        Option.fromNullishOr(latest).pipe(
+          Option.map((status) => ({ logUrl: status.log_url ?? '', state: status.state })),
+        ),
       ),
     ),
   page: (page) =>
