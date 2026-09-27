@@ -4,6 +4,9 @@
 - Repository documentation work may change `README.md`, `CONTEXT-MAP.md`, `docs/`, and tracked
   documentation-routing skills under `.agents/skills/` when the task explicitly concerns
   documentation or agent discovery.
+- Git hooks live in the repository-root `lefthook.yml`; `pnpm install` in `app/` installs them. Never
+  bypass them with `--no-verify`, `LEFTHOOK=0`, or a `core.hooksPath` override. Fix the failing check.
+- Package manifests, lockfiles, and the pnpm workspace belong under `app/` only.
 - Repository-root `.github/workflows/` may be changed when required for GitHub to discover and run
   the application's CI or deployment workflows.
 - Closed GitHub issues are read-only. Do not edit, reopen, relabel, reassign, comment on, or otherwise

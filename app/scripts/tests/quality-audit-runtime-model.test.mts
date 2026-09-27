@@ -40,10 +40,11 @@ const facts = (root: string) =>
   });
 const fixture = () =>
   Effect.gen(function* testEffect3() {
+    // The app workspace sits in app/ below the repository root, as in the real repository.
     const root = yield* Effect.acquireRelease(
       Effect.sync(() => mkdtempSync(path.join(tmpdir(), 'ontos-knip-runtime-'))),
       (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
-    ).pipe(Effect.map((directory) => realpathSync(directory)));
+    ).pipe(Effect.map((directory) => path.join(realpathSync(directory), 'app')));
     write(
       root,
       'package.json',
@@ -218,15 +219,19 @@ it.live(
   'Lefthook configuration proves only intended tool usage and ignores commented hook text',
   Effect.fn(function* testEffect8() {
     const root = yield* fixture();
-    const source = 'pre-commit:\n  commands:\n    format:\n      run: pnpm format\n';
+    const source =
+      'pre-commit:\n  jobs:\n    - name: format\n      root: "app/"\n      run: pnpm exec oxfmt {staged_files}\n';
     write(root, 'lefthook.yml', source);
+    const insideApp = yield* facts(root);
+    expect(!insideApp.some((fact) => fact.target === 'lefthook')).toBe(true);
+    write(root, '../lefthook.yml', source);
     const configured = yield* facts(root);
     const tool = configured.find((fact) => fact.target === 'lefthook');
     expect(tool?.kind).toBe('dependency');
     expect(tool?.reason ?? '').toMatch(/does not establish hook activation/u);
     write(
       root,
-      'lefthook.yml',
+      '../lefthook.yml',
       source
         .split('\n')
         .map((line) => `# ${line}`)

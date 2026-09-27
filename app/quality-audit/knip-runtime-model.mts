@@ -552,14 +552,15 @@ export const buildKnipRuntimeEvidence = Effect.fn('QualityAudit.buildKnipRuntime
       }
     });
     const lefthookEvidence = Effect.fn('QualityAudit.lefthookEvidence')(function* lefthookEvidence() {
-      const file = 'lefthook.yml';
+      // Git hooks are repository-wide, so their config lives at the git root above the app workspace.
+      const file = '../lefthook.yml';
       const source = yield* read(file);
       if (source === undefined) {
         return;
       }
       for (const match of source.matchAll(/^(?:pre-commit|pre-push):\r?\n(?<body>(?:^[ \t].*(?:\r?\n|$))*)/gmu)) {
         const { body = '' } = match.groups ?? {};
-        if (/^\s+commands:\s*$/mu.test(body) && /^\s+run:\s+\S.+$/mu.test(body)) {
+        if (/^\s+(?:commands|jobs):\s*$/mu.test(body) && /^\s+-?\s*run:\s+\S.+$/mu.test(body)) {
           evidence.push(
             at(
               file,
