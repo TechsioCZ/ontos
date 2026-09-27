@@ -112,3 +112,16 @@ it('builds every Node service with the pinned toolchain and ships Node instead o
     expect(block).not.toMatch(/virtual-store|VIRTUAL_STORE|--force|reset-workspace-dependencies/u);
   }
 });
+
+it('ships every package the migrator runs drizzle-kit in', () => {
+  const migrator = serviceBlock(readFileSync(zeropsYamlPath, 'utf-8'), 'migrator');
+  const runner = readFileSync(new URL('../run-zerops-migrator.mjs', import.meta.url), 'utf-8');
+  const migratedPackages = [...runner.matchAll(/migrate\('(?<directory>[^']+)'/gu)].map(
+    (match) => match.groups?.directory ?? '',
+  );
+
+  expect(migratedPackages).toContain('verticals/catalog');
+  for (const directory of new Set(migratedPackages)) {
+    expect(migrator).toMatch(new RegExp(`^ +- 'app/(?:${directory}|${directory.split('/')[0]})'$`, 'mu'));
+  }
+});

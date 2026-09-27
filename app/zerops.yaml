@@ -28,6 +28,7 @@ zerops:
         - 'app/pnpm-workspace.yaml'
         - 'app/scripts'
         - 'app/tsconfig.base.json'
+        - 'app/verticals/catalog'
         - 'app/verticals/commerce-customer-context'
         - 'app/verticals/party-registry'
         - 'app/verticals/payment-term-catalog'
