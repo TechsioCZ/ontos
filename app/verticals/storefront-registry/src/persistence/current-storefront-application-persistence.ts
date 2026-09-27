@@ -1,6 +1,6 @@
 /* oxlint-disable effect-native/no-string-timestamp-schema -- The owner routine returns already encoded canonical UTC instants; expires: 2027-03-31. */
-import type { ReadServiceFactory, ScopedRoutineInvocationError } from '@app/core-runtime';
-import { defineScopedRoutine } from '@app/core-runtime';
+import type { ReadServiceFactory, ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
+import { PersistenceFailure, defineScopedRoutine } from '@app/core-runtime';
 import type { CurrentStorefrontApplicationRequest } from '@app/storefront-registry-contracts';
 import { DateTime, Effect, Match, Option, Schema } from 'effect';
 
@@ -34,14 +34,6 @@ const readCurrentStorefrontApplicationRoutine = defineScopedRoutine({
   schema: 'storefront_registry',
 });
 
-export class StorefrontRegistryPersistenceUnavailable extends Schema.TaggedError<StorefrontRegistryPersistenceUnavailable>()(
-  'StorefrontRegistryPersistenceUnavailable',
-  {
-    code: Schema.Literal('storefront_registry_persistence_unavailable'),
-    reason: Schema.String,
-  },
-) {}
-
 export interface CurrentStorefrontApplicationSnapshot {
   readonly allowedChannels: readonly ('B2B' | 'B2C')[];
   readonly effectiveFrom: string;
@@ -61,19 +53,11 @@ export interface CurrentStorefrontApplicationPersistenceResult {
 export interface CurrentStorefrontApplicationPersistence {
   readonly load: (
     input: CurrentStorefrontApplicationRequest,
-  ) => Effect.Effect<CurrentStorefrontApplicationPersistenceResult, StorefrontRegistryPersistenceUnavailable>;
+  ) => Effect.Effect<CurrentStorefrontApplicationPersistenceResult, PersistenceFailure>;
 }
 
-type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
-
-const unavailable = (cause: unknown): StorefrontRegistryPersistenceUnavailable => {
-  const failure = new StorefrontRegistryPersistenceUnavailable({
-    code: 'storefront_registry_persistence_unavailable',
-    reason: 'Current Storefront application authority is temporarily unavailable',
-  });
-  Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-  return failure;
-};
+const unavailable = (cause: unknown): PersistenceFailure =>
+  new PersistenceFailure({ cause, reason: 'Current Storefront application authority is temporarily unavailable' });
 
 const canonicalInstant = (value: string) =>
   Schema.decodeEffect(Schema.DateTimeUtcFromString)(value).pipe(
@@ -86,10 +70,7 @@ type FoundSnapshotPayload = Extract<typeof SnapshotPayloadSchema.Type, { readonl
 const decodeCurrentSnapshot = Effect.fn('CurrentStorefrontApplicationPersistence.decodeRow.found')(
   function* decodeCurrentSnapshot({
     current,
-  }: FoundSnapshotPayload): Effect.fn.Return<
-    CurrentStorefrontApplicationPersistenceResult,
-    StorefrontRegistryPersistenceUnavailable
-  > {
+  }: FoundSnapshotPayload): Effect.fn.Return<CurrentStorefrontApplicationPersistenceResult, PersistenceFailure> {
     const snapshotBase = {
       allowedChannels: current.allowedChannels,
       effectiveFrom: yield* canonicalInstant(current.effectiveFrom),
@@ -112,7 +93,7 @@ const decodeCurrentSnapshot = Effect.fn('CurrentStorefrontApplicationPersistence
 
 const decodeRow = Effect.fn('CurrentStorefrontApplicationPersistence.decodeRow')(function* decodeSnapshot(
   row: typeof SnapshotRowSchema.Type,
-): Effect.fn.Return<CurrentStorefrontApplicationPersistenceResult, StorefrontRegistryPersistenceUnavailable> {
+): Effect.fn.Return<CurrentStorefrontApplicationPersistenceResult, PersistenceFailure> {
   return yield* Match.value(row.payload).pipe(
     Match.tag('not_found', ({ generation: currentGeneration, observedAt }) =>
       canonicalInstant(observedAt).pipe(
@@ -128,8 +109,8 @@ const decodeRow = Effect.fn('CurrentStorefrontApplicationPersistence.decodeRow')
   );
 });
 
-const persistenceForTransaction = (
-  transaction: ScopedTransaction,
+export const currentStorefrontApplicationPersistence = (
+  transaction: ScopedRoutineInvoker,
   tenantId: string,
 ): CurrentStorefrontApplicationPersistence => ({
   load: (input) =>
@@ -153,4 +134,4 @@ const persistenceForTransaction = (
 
 export const currentStorefrontApplicationPersistenceForScope: ReadServiceFactory<
   CurrentStorefrontApplicationPersistence
-> = (transaction, scope) => Effect.succeed(persistenceForTransaction(transaction, scope.tenantId));
+> = (transaction, scope) => Effect.succeed(currentStorefrontApplicationPersistence(transaction, scope.tenantId));

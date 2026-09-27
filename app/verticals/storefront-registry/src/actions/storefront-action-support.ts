@@ -1,8 +1,11 @@
-import type { OutboxMessage } from '@app/core-runtime';
+import type { OutboxMessage, PersistenceFailure } from '@app/core-runtime';
 import { DateTime, Effect, Schema } from 'effect';
 import type { StorefrontApplicationCommandRejected } from '../../shared/action-contracts.ts';
 import { StorefrontApplicationCommandRejected as CommandRejected } from '../../shared/action-contracts.ts';
 import type { StorefrontApplicationRef } from '../../shared/resources/storefront-application.ts';
+import { StorefrontAdministrationPersistenceUnavailable } from './storefront-administration-persistence-unavailable.ts';
+
+export { StorefrontAdministrationPersistenceUnavailable } from './storefront-administration-persistence-unavailable.ts';
 
 export const MODULE_KEY = 'commerce.storefront-registry' as const;
 
@@ -27,6 +30,17 @@ export const rejectStorefrontCommand = (
   code: StorefrontApplicationCommandRejected['code'],
   reason: string,
 ): Effect.Effect<never, StorefrontApplicationCommandRejected> => Effect.fail(new CommandRejected({ code, reason }));
+
+/** Handler-boundary translation: the persistence cause stays on the PersistenceFailure, never on the contract error. */
+export const administrationPersistenceUnavailable = ({
+  reason,
+}: PersistenceFailure): Effect.Effect<never, StorefrontAdministrationPersistenceUnavailable> =>
+  Effect.fail(
+    new StorefrontAdministrationPersistenceUnavailable({
+      code: 'storefront_administration_persistence_unavailable',
+      reason,
+    }),
+  );
 
 export const storefrontDataAccessEvidence = (operation: string, resourceId: string) => ({
   accessKind: 'read' as const,

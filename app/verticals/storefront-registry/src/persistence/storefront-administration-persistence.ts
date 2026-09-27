@@ -1,5 +1,5 @@
-import type { ReadServiceFactory, ScopedRoutineInvocationError } from '@app/core-runtime';
-import { defineScopedRoutine } from '@app/core-runtime';
+import type { ReadServiceFactory, ScopedRoutineInvocationError, ScopedRoutineInvoker } from '@app/core-runtime';
+import { PersistenceFailure, defineScopedRoutine } from '@app/core-runtime';
 import type {
   RegisterStorefrontApplicationPayload,
   ReviseStorefrontApplicationPayload,
@@ -74,14 +74,6 @@ const reviseRoutine = defineScopedRoutine({
   schema: 'storefront_registry',
 });
 
-export class StorefrontAdministrationPersistenceUnavailable extends Schema.TaggedError<StorefrontAdministrationPersistenceUnavailable>()(
-  'StorefrontAdministrationPersistenceUnavailable',
-  {
-    code: Schema.Literal('storefront_administration_persistence_unavailable'),
-    reason: Schema.String,
-  },
-) {}
-
 const CommandContextSchema = Schema.Struct({
   actionInvocationId: ActionInvocationIdSchema,
   principalId: PrincipalIdSchema,
@@ -96,28 +88,19 @@ type ReviseStorefrontApplicationOutcome = typeof ReviseOutcomeSchema.Type;
 export interface StorefrontAdministrationPersistence {
   readonly register: (
     command: RegisterCommand,
-  ) => Effect.Effect<RegisterStorefrontApplicationOutcome, StorefrontAdministrationPersistenceUnavailable>;
-  readonly revise: (
-    command: ReviseCommand,
-  ) => Effect.Effect<ReviseStorefrontApplicationOutcome, StorefrontAdministrationPersistenceUnavailable>;
+  ) => Effect.Effect<RegisterStorefrontApplicationOutcome, PersistenceFailure>;
+  readonly revise: (command: ReviseCommand) => Effect.Effect<ReviseStorefrontApplicationOutcome, PersistenceFailure>;
 }
 
-type ScopedTransaction = Parameters<ReadServiceFactory<Readonly<Record<string, never>>>>[0];
-const unavailable = (cause: unknown): StorefrontAdministrationPersistenceUnavailable => {
-  const failure = new StorefrontAdministrationPersistenceUnavailable({
-    code: 'storefront_administration_persistence_unavailable',
-    reason: 'Storefront administration persistence is temporarily unavailable',
-  });
-  Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-  return failure;
-};
+const unavailable = (cause: unknown): PersistenceFailure =>
+  new PersistenceFailure({ cause, reason: 'Storefront administration persistence is temporarily unavailable' });
 
 const invoke = <A, I extends object>(
-  transaction: ScopedTransaction,
+  transaction: ScopedRoutineInvoker,
   routine: typeof registerRoutine,
   input: I,
   schema: Schema.Decoder<A>,
-): Effect.Effect<A, StorefrontAdministrationPersistenceUnavailable> =>
+): Effect.Effect<A, PersistenceFailure> =>
   transaction.invoke(routine, [input]).pipe(
     Effect.mapError((cause: ScopedRoutineInvocationError) => unavailable(cause)),
     Effect.flatMap(([row]) =>
@@ -127,11 +110,13 @@ const invoke = <A, I extends object>(
     ),
   );
 
-const forTransaction = (transaction: ScopedTransaction): StorefrontAdministrationPersistence => ({
+export const storefrontAdministrationPersistence = (
+  transaction: ScopedRoutineInvoker,
+): StorefrontAdministrationPersistence => ({
   register: (command) => invoke(transaction, registerRoutine, command, RegisterOutcomeSchema),
   revise: (command) => invoke(transaction, reviseRoutine, command, ReviseOutcomeSchema),
 });
 
 export const storefrontAdministrationPersistenceForScope: ReadServiceFactory<StorefrontAdministrationPersistence> = (
   transaction,
-) => Effect.succeed(forTransaction(transaction));
+) => Effect.succeed(storefrontAdministrationPersistence(transaction));

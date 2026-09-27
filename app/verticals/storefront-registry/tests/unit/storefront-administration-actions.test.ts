@@ -1,5 +1,6 @@
+import { PersistenceFailure, ScopedRoutineInvocationError } from '@app/core-runtime';
 import { describe, expect, it } from 'effect-rstest';
-import { Effect, Predicate, Schema } from 'effect';
+import { Effect, Option, Predicate, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { getActionHandler } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
@@ -10,6 +11,8 @@ import {
   ReviseStorefrontApplicationPayloadSchema,
   reviseStorefrontApplicationAction,
 } from '../../src/actions/revise-storefront-application.action.ts';
+import { StorefrontAdministrationPersistenceUnavailable } from '../../src/actions/storefront-action-support.ts';
+import { storefrontAdministrationPersistence } from '../../src/persistence/storefront-administration-persistence.ts';
 import type { StorefrontAdministrationService } from '../../src/services/storefront-administration.service.ts';
 import { StorefrontApplicationRefSchema } from '../../shared/resources/storefront-application.ts';
 
@@ -195,6 +198,53 @@ describe('Storefront Registry administration Actions', () => {
       expect(successCollector.snapshot().auditEvidence).toMatchObject({ operation: 'REVISE', revision: 2 });
       expect(successCollector.snapshot().domainEvents).toHaveLength(1);
       expect(successCollector.snapshot().outboxMessages).toHaveLength(1);
+    }),
+  );
+
+  it.effect('keeps the routine failure as the cause and out of the contract error', () =>
+    Effect.gen(function* persistenceFailureBoundary() {
+      const driverError = new ScopedRoutineInvocationError({
+        code: 'scoped_routine_invocation_failed',
+        constraint: Option.none(),
+        ownerModuleKey: 'commerce.storefront-registry',
+        postgresCode: Option.some('08006'),
+        reason: 'connection lost',
+        routineKey: 'storefront-administration.register',
+      });
+      const services = storefrontAdministrationPersistence({ invoke: () => Effect.fail(driverError) });
+      const persistenceFailure = yield* Effect.flip(
+        services.register({
+          ...registerPayload,
+          actionInvocationId,
+          principalId,
+          recordedAt: '2026-09-22T10:00:00.000Z',
+        }),
+      );
+      expect(persistenceFailure).toBeInstanceOf(PersistenceFailure);
+      expect(persistenceFailure.cause).toBe(driverError);
+
+      const collector = createActionCollector(
+        registerStorefrontApplicationAction.descriptor.domainEvents,
+        'commerce.storefront-registry',
+        registerStorefrontApplicationAction.descriptor.accessEvidencePolicy,
+        registerStorefrontApplicationAction.descriptor.auditEvidenceSchema,
+      );
+      const contractFailure = yield* getActionHandler(registerStorefrontApplicationAction)(registerPayload, {
+        actionInvocationId,
+        addDomainEvent: collector.addDomainEvent,
+        addOutboxMessage: collector.addOutboxMessage,
+        recordAuditEvidence: collector.recordAuditEvidence,
+        recordDataAccess: collector.recordDataAccess,
+        scope,
+        services,
+      }).pipe(Effect.flip);
+      expect(Schema.is(StorefrontAdministrationPersistenceUnavailable)(contractFailure)).toBe(true);
+      const encoded = Schema.is(StorefrontAdministrationPersistenceUnavailable)(contractFailure)
+        ? Schema.encodeSync(StorefrontAdministrationPersistenceUnavailable)(contractFailure)
+        : contractFailure;
+      expect(encoded).not.toHaveProperty('cause');
+      expect(encoded).toHaveProperty('code', 'storefront_administration_persistence_unavailable');
+      expect(collector.snapshot().domainEvents).toHaveLength(0);
     }),
   );
 });

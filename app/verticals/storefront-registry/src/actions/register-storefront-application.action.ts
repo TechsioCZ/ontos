@@ -13,12 +13,11 @@ import {
 import type { RegisterStorefrontApplicationPayload } from '../../shared/action-contracts.ts';
 import { StorefrontApplicationRefSchema } from '../../shared/resources/storefront-application.ts';
 import type { StorefrontAdministrationService } from '../services/storefront-administration.service.ts';
-import {
-  StorefrontAdministrationPersistenceUnavailable,
-  storefrontAdministrationService,
-} from '../services/storefront-administration.service.ts';
+import { storefrontAdministrationService } from '../services/storefront-administration.service.ts';
 import {
   MODULE_KEY,
+  StorefrontAdministrationPersistenceUnavailable,
+  administrationPersistenceUnavailable,
   StorefrontAdministrationAuditEvidenceSchema,
   rejectStorefrontCommand,
   storefrontApplicationRef,
@@ -50,12 +49,14 @@ export const handleRegisterStorefrontApplication = Effect.fn('RegisterStorefront
     payload: RegisterStorefrontApplicationPayload,
     context: ActionHandlerContext<typeof domainEvents, StorefrontAdministrationService>,
   ) {
-    const outcome = yield* context.services.register({
-      ...payload,
-      actionInvocationId: context.actionInvocationId,
-      principalId: context.scope.principalId,
-      recordedAt: yield* storefrontRecordedAt,
-    });
+    const outcome = yield* context.services
+      .register({
+        ...payload,
+        actionInvocationId: context.actionInvocationId,
+        principalId: context.scope.principalId,
+        recordedAt: yield* storefrontRecordedAt,
+      })
+      .pipe(Effect.catchTag('PersistenceFailure', administrationPersistenceUnavailable));
     const result = yield* Match.value(outcome).pipe(
       Match.tag('created', ({ generation, revision, storefrontApplicationId }) =>
         Effect.succeed({

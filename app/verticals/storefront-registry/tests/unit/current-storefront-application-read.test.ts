@@ -1,5 +1,5 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { ReadPermissionDenied } from '@app/core-runtime';
+import { PersistenceFailure, ReadPermissionDenied, ScopedRoutineInvocationError } from '@app/core-runtime';
 import {
   CurrentStorefrontApplicationRequestSchema,
   CurrentStorefrontApplicationResponseSchema,
@@ -7,11 +7,11 @@ import {
 import { describe, expect, it } from 'effect-rstest';
 import { Effect, Option, Schema } from 'effect';
 import { handleCurrentStorefrontApplication } from '../../src/api/current-storefront-application.read.ts';
+import { currentStorefrontApplicationPersistence } from '../../src/persistence/current-storefront-application-persistence.ts';
 import type {
   CurrentStorefrontApplicationPersistence,
   CurrentStorefrontApplicationSnapshot,
 } from '../../src/persistence/current-storefront-application-persistence.ts';
-import { StorefrontRegistryPersistenceUnavailable } from '../../src/persistence/current-storefront-application-persistence.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const request = Schema.decodeSync(CurrentStorefrontApplicationRequestSchema)({
@@ -101,13 +101,7 @@ describe('Current Storefront Application governed owner read', () => {
       expect(interval.result.outcome).toBe('UNVERIFIABLE');
 
       const unavailable: CurrentStorefrontApplicationPersistence = {
-        load: () =>
-          Effect.fail(
-            new StorefrontRegistryPersistenceUnavailable({
-              code: 'storefront_registry_persistence_unavailable',
-              reason: 'fixture',
-            }),
-          ),
+        load: () => Effect.fail(new PersistenceFailure({ cause: 'fixture driver failure', reason: 'fixture' })),
       };
       const ownerUnavailable = yield* handleCurrentStorefrontApplication(request, context(unavailable));
       expect(ownerUnavailable.result).toMatchObject({ outcome: 'UNAVAILABLE', retryable: true });
@@ -129,6 +123,24 @@ describe('Current Storefront Application governed owner read', () => {
       ).pipe(Effect.flip);
       expect(Schema.is(ReadPermissionDenied)(failure)).toBe(true);
       expect(calls).toHaveLength(0);
+    }),
+  );
+
+  it.effect('carries the routine failure as the native cause of the persistence failure', () =>
+    Effect.gen(function* persistenceFailureCause() {
+      const driverError = new ScopedRoutineInvocationError({
+        code: 'scoped_routine_invocation_failed',
+        constraint: Option.none(),
+        ownerModuleKey: 'commerce.storefront-registry',
+        postgresCode: Option.some('08006'),
+        reason: 'connection lost',
+        routineKey: 'storefront-application.read-current',
+      });
+      const failure = yield* Effect.flip(
+        currentStorefrontApplicationPersistence({ invoke: () => Effect.fail(driverError) }, tenantId).load(request),
+      );
+      expect(failure).toBeInstanceOf(PersistenceFailure);
+      expect(failure.cause).toBe(driverError);
     }),
   );
 });
