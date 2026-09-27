@@ -92,7 +92,12 @@ import {
 } from '../operations/errors.ts';
 import type { ActionPolicy, ActionPolicyEvaluatorInput } from './policy.ts';
 import { PolicyDenied } from './policy.ts';
-import type { ActionInvocationRecord, ActionPolicyEvidence, ActionRepositoryService } from './repository.ts';
+import type {
+  ActionInvocationRecord,
+  ActionPolicyEvidence,
+  ActionRecordedRejection,
+  ActionRepositoryService,
+} from './repository.ts';
 import {
   ActionRepository,
   computeActionRequestHash,
@@ -321,6 +326,12 @@ const alreadyCommitted = (invocationId: string) =>
     code: 'action_already_committed',
     invocationId,
     reason: 'This idempotency key already committed successfully',
+  });
+
+const permissionDeniedFailure = () =>
+  new ActionPermissionDenied({
+    code: 'action_permission_denied',
+    reason: 'The principal is not permitted to execute this Action',
   });
 
 const requestHashConflict = () =>
@@ -557,12 +568,40 @@ const resolveActionBusinessPermissionTarget = <Payload>(
     );
   });
 
+const terminalInvocation = () =>
+  new ActionInvocationStateError({
+    code: 'action_invocation_state_invalid',
+    reason: 'This Action invocation is terminal and cannot execute again',
+  });
+
+// A same-key retry of a rejected invocation reports the recorded rejection, so the outcome does
+// not depend on whether the retry arrived before or after the first request committed it.
+const recordedRejectionFailure = (rejection: Option.Option<ActionRecordedRejection>) => {
+  if (Option.isNone(rejection)) {
+    return terminalInvocation();
+  }
+  return rejection.value.stage === 'authz'
+    ? permissionDeniedFailure()
+    : new ActionPolicyDenied({
+        code: 'action_policy_denied',
+        policyReasonCode: rejection.value.policyReasonCode,
+        reason: 'A required Action Policy rejected this invocation',
+      });
+};
+
 const verifyInvocation = (
   invocation: ActionInvocationRecord,
   requestHash: string,
+  recordedRejection: Effect.Effect<Option.Option<ActionRecordedRejection>, ActionInvocationPersistenceError>,
 ): Effect.Effect<
   void,
-  ActionAlreadyCommitted | ActionCommitIndeterminate | ActionInvocationStateError | ActionRequestHashConflict
+  | ActionAlreadyCommitted
+  | ActionCommitIndeterminate
+  | ActionInvocationPersistenceError
+  | ActionInvocationStateError
+  | ActionPermissionDenied
+  | ActionPolicyDenied
+  | ActionRequestHashConflict
 > => {
   if (invocation.requestHash !== requestHash) {
     return Effect.fail(requestHashConflict());
@@ -582,12 +621,10 @@ const verifyInvocation = (
   if ((invocation.status === 'received' || invocation.status === 'running') && invocation.completedAt === null) {
     return Effect.void;
   }
-  return Effect.fail(
-    new ActionInvocationStateError({
-      code: 'action_invocation_state_invalid',
-      reason: 'This Action invocation is terminal and cannot execute again',
-    }),
-  );
+  if (invocation.status === 'rejected') {
+    return recordedRejection.pipe(Effect.flatMap((rejection) => Effect.fail(recordedRejectionFailure(rejection))));
+  }
+  return Effect.fail(terminalInvocation());
 };
 
 const StoppedCheckpointPayloadSchema = Schema.Struct({
@@ -1098,7 +1135,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           ),
         );
       notifyStage('invocation_prepared');
-      yield* verifyInvocation(invocation, requestHash);
+      yield* verifyInvocation(
+        invocation,
+        requestHash,
+        repository.loadRecordedRejection(database.executor, invocation.actionInvocationId),
+      );
       return { invocation, requestHash };
     });
 
@@ -1182,14 +1223,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         .pipe(
           Effect.tapErrorTag('ActionInvocationPersistenceError', logPermissionInvocationFailure),
           Effect.tapErrorTag('ActionTransactionError', logPermissionTransactionFailure),
-          Effect.flatMap(() =>
-            Effect.fail(
-              new ActionPermissionDenied({
-                code: 'action_permission_denied',
-                reason: 'The principal is not permitted to execute this Action',
-              }),
-            ),
-          ),
+          Effect.flatMap(() => Effect.fail(permissionDeniedFailure())),
         );
 
     const prepareAuthorizationPreflight = Effect.fn('ActionRuntime.prepareAuthorizationPreflight')(
@@ -1386,7 +1420,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
               ),
             );
           notifyStage('invocation_locked');
-          yield* verifyInvocation(lockedInvocation, requestHash);
+          yield* verifyInvocation(
+            lockedInvocation,
+            requestHash,
+            repository.loadRecordedRejection(drizzleTransaction, lockedInvocation.actionInvocationId),
+          );
 
           const scopedTransaction = yield* installScope(drizzleTransaction, scope);
           notifyStage('database_scope_installed');
@@ -1424,7 +1462,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 }),
               ),
             );
-          yield* verifyInvocation(runningInvocation, requestHash);
+          yield* verifyInvocation(
+            runningInvocation,
+            requestHash,
+            repository.loadRecordedRejection(scopedTransaction, runningInvocation.actionInvocationId),
+          );
           const serviceFactory = resolveServiceFactory(input.registration);
           const services = yield* serviceFactory(scopedTransaction, scope);
           const handler = resolveHandler(input.registration);

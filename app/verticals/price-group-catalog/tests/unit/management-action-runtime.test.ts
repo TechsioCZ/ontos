@@ -1,4 +1,4 @@
-import { Struct, DateTime, Effect, Predicate, Schema } from 'effect';
+import { Struct, DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import { TestClock } from 'effect/testing';
@@ -261,6 +261,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       };
       return Effect.void;
     },
+    loadRecordedRejection: () => Effect.succeed(Option.some({ stage: 'authz' as const })),
     lockInvocation: () => Effect.succeed(currentInvocation),
     rejectPermissionDenied: () => {
       currentInvocation = {

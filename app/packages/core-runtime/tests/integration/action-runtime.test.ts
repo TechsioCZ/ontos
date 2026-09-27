@@ -7,7 +7,7 @@ import { ConnectionError, SqlError, UnknownError } from 'effect/unstable/sql/Sql
 import { commitActionThenReject } from '../../src/actions/context.ts';
 import type { ActionHandlerContext } from '../../src/actions/context.ts';
 import { defineAction } from '../../src/actions/definition.ts';
-import { ActionInvocationPersistenceError } from '../../src/actions/errors.ts';
+import { ActionInvocationPersistenceError, ActionPolicyDenied } from '../../src/actions/errors.ts';
 import { createDomainEventReference } from '../../src/actions/events.ts';
 import type { ActionPolicy } from '../../src/actions/policy.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy } from '../../src/actions/policy.ts';
@@ -1170,11 +1170,11 @@ const testProgram8 = () =>
         transport: transport(key),
       };
       const first = yield* Effect.exit(runtime.runAction(input));
-      const retry = yield* Effect.exit(runtime.runAction(input));
+      const retry = yield* Effect.flip(runtime.runAction(input));
       const { audits, invocation } = yield* invocationEvidence(database, key);
 
       expect(hasFailure(first, 'ActionPolicyDenied')).toBe(true);
-      expect(hasFailure(retry, 'ActionInvocationStateError')).toBe(true);
+      expect(Schema.is(ActionPolicyDenied)(retry) && retry.policyReasonCode).toBe('terminal_rejection');
       expect(evaluations).toBe(1);
       expect(handlerExecutions).toBe(0);
       expect(invocation.status).toBe('rejected');

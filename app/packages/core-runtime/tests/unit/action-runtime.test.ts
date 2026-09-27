@@ -11,6 +11,7 @@ import { commitActionThenReject } from '../../src/actions/context.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import {
   ActionInvocationPersistenceError,
+  ActionInvocationStateError,
   ActionPermissionCheckError,
   ActionPermissionDenied,
   ActionTransactionError,
@@ -198,6 +199,13 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
     flushSuccess: (_transaction, input) => {
       flushed.push(input);
       return Effect.void;
+    },
+    loadRecordedRejection: () => {
+      const [policyDenial] = finalized;
+      if (policyDenial !== undefined) {
+        return Effect.succeed(Option.some({ policyReasonCode: policyDenial.reasonCode, stage: 'policy' as const }));
+      }
+      return Effect.succeed(rejections.length > 0 ? Option.some({ stage: 'authz' as const }) : Option.none());
     },
     lockInvocation: () => {
       lockCount += 1;
@@ -3373,6 +3381,51 @@ it.effect(
 
     expect(terminal.counts().transitionCount).toBe(0);
     expect(terminal.counts().transactionCount).toBe(0);
+  }),
+);
+
+it.effect(
+  'returns the recorded permission denial to a same-key retry without re-checking permission',
+  Effect.fn(function* testRetryAfterRecordedDenial() {
+    const harness = yield* makeHarness({ permissionDecision: 'denied' });
+    const input = {
+      payload: { amount: 1 },
+      principal,
+      registration: registration(),
+      transport: transport('denied-retry'),
+    };
+    const first = yield* Effect.flip(harness.runtime.runAction(input));
+    const retry = yield* Effect.flip(harness.runtime.runAction(input));
+
+    expect(Schema.is(ActionPermissionDenied)(first)).toBe(true);
+    expect(Schema.is(ActionPermissionDenied)(retry)).toBe(true);
+    expect(harness.permissionChecks).toHaveLength(1);
+    expect(harness.rejections).toHaveLength(1);
+    expect(harness.counts().transactionCount).toBe(0);
+  }),
+);
+
+it.effect(
+  'keeps a rejected invocation without a recorded rejection reason terminal',
+  Effect.fn(function* testRejectedWithoutRecordedReason() {
+    const harness = yield* makeHarness({
+      createRecord: {
+        actionInvocationId: 'rejected-without-reason',
+        completedAt: completionTime(),
+        requestHash: '',
+        status: 'rejected',
+      },
+    });
+    const error = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport(),
+      }),
+    );
+
+    expect(Schema.is(ActionInvocationStateError)(error)).toBe(true);
   }),
 );
 

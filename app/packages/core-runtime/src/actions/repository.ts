@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 
 import { and, eq, inArray, isNull } from 'drizzle-orm';
 import type { Cause } from 'effect';
-import { Context, DateTime, Effect, Layer, Predicate, Result, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
 import { isSqlError } from 'effect/unstable/sql/SqlError';
 
 import type { ActionInvocationStatus } from '../db/schema.ts';
@@ -218,6 +218,11 @@ export interface ActionInvocationRecord {
   readonly status: ActionInvocationStatus;
 }
 
+/** The recorded reason a terminal `rejected` invocation was refused. */
+export type ActionRecordedRejection =
+  | { readonly stage: 'authz' }
+  | { readonly policyReasonCode: string; readonly stage: 'policy' };
+
 export interface ActionPolicyEvidence {
   readonly owningModuleKey?: string;
   readonly policyKey: string;
@@ -270,6 +275,10 @@ export interface ActionRepositoryService {
     transaction: CoreTransaction,
     input: FlushActionSuccessInput,
   ) => Effect.Effect<void, ActionTransactionError>;
+  readonly loadRecordedRejection: (
+    executor: Pick<CoreDatabaseExecutor, 'select'>,
+    invocationId: string,
+  ) => Effect.Effect<Option.Option<ActionRecordedRejection>, ActionInvocationPersistenceError>;
   readonly lockInvocation: (
     transaction: CoreTransaction,
     invocationId: string,
@@ -464,6 +473,27 @@ export const makeActionRepository = (): ActionRepositoryService => {
       return invocation;
     },
   );
+
+  // The `action.rejected` Audit Event commits atomically with the `rejected` status, so any reader
+  // that observed that status can read the recorded rejection reason without another lock.
+  const loadRecordedRejection: ActionRepositoryService['loadRecordedRejection'] = Effect.fn(
+    'makeActionRepository.loadRecordedRejection',
+  )(function* loadRecordedRejectionEffect(executor: Pick<CoreDatabaseExecutor, 'select'>, invocationId: string) {
+    const rows = yield* executor
+      .select({ outcomeCode: auditEvents.outcomeCode, outcomeStage: auditEvents.outcomeStage })
+      .from(auditEvents)
+      .where(and(eq(auditEvents.actionInvocationId, invocationId), eq(auditEvents.eventType, 'action.rejected')))
+      .limit(1)
+      .pipe(Effect.mapError((cause) => persistenceFailure('Unable to load the recorded Action rejection', cause)));
+    const [rejection] = rows;
+    if (rejection?.outcomeStage === 'authz') {
+      return Option.some<ActionRecordedRejection>({ stage: 'authz' });
+    }
+    if (rejection?.outcomeStage === 'policy') {
+      return Option.some<ActionRecordedRejection>({ policyReasonCode: rejection.outcomeCode, stage: 'policy' });
+    }
+    return Option.none();
+  });
 
   const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) =>
     executor
@@ -892,6 +922,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
     createOrResolveInvocation,
     finalizePolicyDenial,
     flushSuccess,
+    loadRecordedRejection,
     lockInvocation,
     rejectPermissionDenied,
     resolveInvocation,
