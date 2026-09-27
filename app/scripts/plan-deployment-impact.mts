@@ -653,20 +653,32 @@ const buildTopologyUnits = (
 
 const WORKSPACE_GLOB_PATTERN = /^(?<directory>[\w.-]+(?:\/[\w.-]+)*)\/\*$/u;
 
+const WORKSPACE_ENTRY_PATTERN = /^\s+-\s+(?<quote>['"]?)(?<glob>[^'"#\s]+)\k<quote>\s*(?:#.*)?$/u;
+
 const parseWorkspaceGlobs = (workspaceSource: string): readonly string[] => {
-  const entries = /^packages:[ \t]*\n(?<entries>(?:[ \t]+-[^\n]*(?:\n|$))+)/mu.exec(workspaceSource)?.groups?.entries;
-  if (entries === undefined) {
-    return fail('pnpm-workspace.yaml must declare a non-empty "packages" list');
+  const lines = workspaceSource.split(/\r?\n/u);
+  const start = lines.findIndex((line) => /^packages:\s*(?:#.*)?$/u.test(line));
+  if (start === -1) {
+    return fail('pnpm-workspace.yaml must declare a block "packages:" list');
   }
-  return entries
-    .split('\n')
-    .map((line) =>
-      line
-        .replace(/^\s*-\s*/u, '')
-        .replaceAll(/['"]/gu, '')
-        .trim(),
-    )
-    .filter((glob) => glob.length > 0);
+  const following = lines.slice(start + 1);
+  const blockEnd = following.findIndex((line) => /^[^\s#]/u.test(line));
+  const globs: string[] = [];
+  for (const line of following.slice(0, blockEnd === -1 ? undefined : blockEnd)) {
+    if (!/^\s*(?:#.*)?$/u.test(line)) {
+      const glob = WORKSPACE_ENTRY_PATTERN.exec(line)?.groups?.glob;
+      if (glob === undefined) {
+        return fail(
+          `pnpm-workspace.yaml packages entry "${line.trim()}" is unsupported; list one glob per "- <glob>" line`,
+        );
+      }
+      globs.push(glob);
+    }
+  }
+  if (globs.length === 0) {
+    return fail('pnpm-workspace.yaml must declare a block "packages:" list');
+  }
+  return globs;
 };
 
 const listWorkspaceProjects = (rootDirectory: string, globs: readonly string[]) =>
