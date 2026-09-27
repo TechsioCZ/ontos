@@ -36,7 +36,6 @@ const {
   buildTempDirectory,
   cloudflareDeployEnabled,
   envValue,
-  getBuildBoolean,
   moduleFederationDevServerOrigin,
   port,
   siteUrl,
@@ -60,8 +59,7 @@ const cloudflareRuntimeExternal = (
 
 const zephyrRspackPlugin = (): CliPlugin<AppTools> =>
   createZephyrRspackPlugin({
-    failBuild: () => getBuildBoolean('ZE_FAIL_BUILD'),
-    readToken: () => envValue('ZE_CI_TOKEN'),
+    readEnvironment: envValue,
     configure: () => withZephyrRspack(),
   });
 

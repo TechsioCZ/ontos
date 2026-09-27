@@ -105,8 +105,7 @@ const cloudflareRuntimeExternal = (
 const zephyrRspackPlugin = (): CliPlugin<AppTools> =>
   createZephyrRspackPlugin({
     configure: () => withZephyrRspack(),
-    failBuild: () => getBuildBoolean('ZE_FAIL_BUILD'),
-    readToken: () => getOptionalBuildConfig('ZE_CI_TOKEN'),
+    readEnvironment: getOptionalBuildConfig,
   });
 
 const appId = 'shell-super-app';

@@ -36,7 +36,6 @@ const {
   buildTempDirectory,
   cloudflareDeployEnabled,
   envValue,
-  getBuildBoolean,
   moduleFederationDevServerOrigin,
   port,
   siteUrl,
@@ -61,8 +60,7 @@ const cloudflareRuntimeExternal = (
 const zephyrRspackPlugin = (): CliPlugin<AppTools> =>
   createZephyrRspackPlugin({
     configure: () => withZephyrRspack(),
-    failBuild: () => getBuildBoolean('ZE_FAIL_BUILD'),
-    readToken: () => envValue('ZE_CI_TOKEN'),
+    readEnvironment: envValue,
   });
 
 // The dev server serves federated assets to every local app origin, so the
