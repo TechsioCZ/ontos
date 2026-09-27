@@ -36,12 +36,16 @@ export class StageDeploymentBaseError extends Schema.TaggedError<StageDeployment
   { message: Schema.String },
 ) {}
 
+const RUN_PATH_PATTERN = /\/actions\/runs\/(\d+)(?:\/|$)/u;
+
+/** Run id of a deployment status log URL, which may end at the run or continue into a job or attempt. */
+const runIdOf = (logUrl: string) => RUN_PATH_PATTERN.exec(URL.parse(logUrl)?.pathname ?? '')?.[1];
+
 export const resolveStageDeploymentBase = <E, R>(
   source: StageDeploymentSource<E, R>,
   options: { readonly currentRunId: string; readonly environment: string },
 ) =>
   Effect.gen(function* resolveStageDeploymentBaseEffect() {
-    const currentRunPath = `/actions/runs/${options.currentRunId}/`;
     for (let page = 1; ; page += 1) {
       const deployments = yield* source.page(page);
       if (deployments.length === 0) {
@@ -52,7 +56,7 @@ export const resolveStageDeploymentBase = <E, R>(
       for (const deployment of deployments) {
         const statuses = yield* source.statuses(deployment.id);
         const success = statuses.find((status) => status.state === 'success');
-        if (success !== undefined && !success.logUrl.includes(currentRunPath)) {
+        if (success !== undefined && runIdOf(success.logUrl) !== options.currentRunId) {
           return deployment.sha;
         }
       }

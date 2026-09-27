@@ -681,7 +681,12 @@ it.live('rejects a comparison base that is not an ancestor of the head', () =>
 );
 
 const deploymentSource = (
-  deployments: readonly { readonly runId: string; readonly sha: string; readonly states: readonly string[] }[],
+  deployments: readonly {
+    readonly logPath?: string;
+    readonly runId: string;
+    readonly sha: string;
+    readonly states: readonly string[];
+  }[],
 ): StageDeploymentSource<never, never> => ({
   page: (page) => Effect.succeed(page === 1 ? deployments.map((deployment, id) => ({ id, sha: deployment.sha })) : []),
   statuses: (deploymentId) => {
@@ -690,7 +695,7 @@ const deploymentSource = (
       deployment === undefined
         ? []
         : deployment.states.map((state) => ({
-            logUrl: `https://github.com/TechsioCZ/ontos/actions/runs/${deployment.runId}/job/1`,
+            logUrl: `https://github.com/TechsioCZ/ontos/actions/runs/${deployment.runId}${deployment.logPath ?? '/job/1'}`,
             state,
           })),
     );
@@ -745,7 +750,7 @@ it.live('skips a successful deployment of the current run and keeps the base Git
   Effect.gen(function* testEffectCurrentRun() {
     const base = yield* resolveStageDeploymentBase(
       deploymentSource([
-        { runId: '9', sha: 'rerun-of-current', states: ['success', 'in_progress'] },
+        { logPath: '', runId: '9', sha: 'rerun-of-current', states: ['success', 'in_progress'] },
         { runId: '8', sha: 'previous', states: ['inactive', 'success', 'in_progress'] },
       ]),
       { currentRunId: '9', environment: 'stage' },
