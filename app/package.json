@@ -67,6 +67,7 @@
     "lint:effect": "node tools/oxlint/effect-native/report.mts",
     "test:generation": "rstest --project generation",
     "test:deployment-impact": "node scripts/generate-outbox-worker-deployment.mjs && node ./scripts/check-module-entrypoint-boundaries.mts && node ./scripts/plan-deployment-impact.mts --authorization-environment stage && rstest --project scripts scripts/tests/plan-deployment-impact scripts/tests/outbox-worker-delivery",
+    "deployment-base:resolve": "node ./scripts/resolve-stage-deployment-base.mts",
     "deployment-impact:plan": "node ./scripts/plan-deployment-impact.mts",
     "action:test:unit": "pnpm --filter @app/core-runtime action:test:unit",
     "action:test:integration": "pnpm --filter @app/core-runtime action:test:integration",

@@ -117,7 +117,6 @@ export interface DeploymentImpactPlan {
     readonly baseRevision?: string;
     readonly headRevision?: string;
     readonly mode: 'diff' | 'full';
-    readonly reason?: string;
   };
   readonly phases: readonly DeploymentPhase[];
   readonly schemaVersion: 1;
@@ -289,7 +288,6 @@ const DeploymentImpactPlanSchema = Schema.Struct({
     baseRevision: Schema.optional(Schema.String),
     headRevision: Schema.optional(Schema.String),
     mode: Schema.Literals(['diff', 'full']),
-    reason: Schema.optional(Schema.String),
   }),
   phases: Schema.Array(DeploymentPhaseSchema),
   schemaVersion: Schema.Literal(1),
@@ -740,47 +738,36 @@ const orderUnits = (units: readonly TopologyUnit[]): readonly TopologyUnit[] => 
   return ordered;
 };
 
-const invalidBaseReason = (rootDirectory: string, baseRevision: string | undefined, headRevision: string) =>
-  Effect.gen(function* invalidBaseReasonEffect() {
-    if (baseRevision === undefined || baseRevision.length === 0 || /^0+$/u.test(baseRevision)) {
-      return 'comparison base is unavailable or all-zero';
-    }
+export const FULL_PLAN_SEED_INSTRUCTION =
+  'plan the whole topology once instead: dispatch "Ultramodern Workspace Gates and Main-to-Stage Deploy" on main with full=true (gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true)';
+
+const gitSucceeds = (rootDirectory: string, args: readonly string[]) =>
+  Effect.gen(function* gitSucceedsEffect() {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const revisionExists = yield* spawner
-      .exitCode(
-        ChildProcess.make(GIT_EXECUTABLE, ['cat-file', '-e', `${baseRevision}^{commit}`], {
-          cwd: rootDirectory,
-          stderr: 'ignore',
-          stdout: 'ignore',
-        }),
-      )
+    return yield* spawner
+      .exitCode(ChildProcess.make(GIT_EXECUTABLE, args, { cwd: rootDirectory, stderr: 'ignore', stdout: 'ignore' }))
       .pipe(
         Effect.map((exitCode) => exitCode === 0),
         Effect.catch(() => Effect.succeed(false)),
       );
-    if (!revisionExists) {
-      return `comparison base "${baseRevision}" is unavailable`;
+  });
+
+const requireComparableBase = (rootDirectory: string, baseRevision: string, headRevision: string) =>
+  Effect.gen(function* requireComparableBaseEffect() {
+    if (!(yield* gitSucceeds(rootDirectory, ['cat-file', '-e', `${baseRevision}^{commit}`]))) {
+      return fail(`comparison base "${baseRevision}" is not a commit in this checkout; ${FULL_PLAN_SEED_INSTRUCTION}`);
     }
-    const isAncestor = yield* spawner
-      .exitCode(
-        ChildProcess.make(GIT_EXECUTABLE, ['merge-base', '--is-ancestor', baseRevision, headRevision], {
-          cwd: rootDirectory,
-          stderr: 'ignore',
-          stdout: 'ignore',
-        }),
-      )
-      .pipe(
-        Effect.map((exitCode) => exitCode === 0),
-        Effect.catch(() => Effect.succeed(false)),
+    if (!(yield* gitSucceeds(rootDirectory, ['merge-base', '--is-ancestor', baseRevision, headRevision]))) {
+      return fail(
+        `comparison base "${baseRevision}" is not an ancestor of "${headRevision}" (history was rewritten); ${FULL_PLAN_SEED_INSTRUCTION}`,
       );
-    if (!isAncestor) {
-      return `comparison base "${baseRevision}" is not an ancestor of "${headRevision}"`;
     }
     return yield* Effect.undefined;
   });
 
 const changedPathsFromGit = (rootDirectory: string, baseRevision: string, headRevision: string) =>
   Effect.gen(function* changedPathsFromGitEffect() {
+    yield* requireComparableBase(rootDirectory, baseRevision, headRevision);
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const output = yield* spawner.string(
       ChildProcess.make(GIT_EXECUTABLE, ['diff', '--name-only', '--no-renames', '-z', baseRevision, headRevision], {
@@ -851,22 +838,12 @@ const toPhase = (unit: TopologyUnit): DeploymentPhase => ({
 });
 
 const makeComparison = (
-  options: PlanDeploymentImpactOptions,
+  baseRevision: string | undefined,
   headRevision: string,
-  fallbackReason: string | undefined,
+  fullDeploy: boolean,
 ): DeploymentImpactPlan['comparison'] => {
-  const mode = fallbackReason === undefined ? 'diff' : 'full';
-  if (options.baseRevision === undefined) {
-    return fallbackReason === undefined ? { headRevision, mode } : { headRevision, mode, reason: fallbackReason };
-  }
-  return fallbackReason === undefined
-    ? { baseRevision: options.baseRevision, headRevision, mode }
-    : {
-        baseRevision: options.baseRevision,
-        headRevision,
-        mode,
-        reason: fallbackReason,
-      };
+  const mode = fullDeploy ? 'full' : 'diff';
+  return baseRevision === undefined ? { headRevision, mode } : { baseRevision, headRevision, mode };
 };
 
 interface DeploymentImpactState {
@@ -980,22 +957,15 @@ const deriveDeploymentImpact = (
 const deploymentComparison = (options: PlanDeploymentImpactOptions, rootDirectory: string) =>
   Effect.gen(function* deploymentComparisonEffect() {
     const headRevision = options.headRevision ?? 'HEAD';
-    const fallbackReason =
-      options.changedPaths === undefined
-        ? yield* invalidBaseReason(rootDirectory, options.baseRevision, headRevision)
-        : undefined;
-    const fullDeploy = fallbackReason !== undefined;
+    const { baseRevision } = options;
+    if (options.changedPaths === undefined && baseRevision === undefined) {
+      return { baseRevision, changedPaths: [], fullDeploy: true, headRevision };
+    }
     const comparedPaths =
       options.changedPaths ??
-      (fullDeploy
-        ? []
-        : yield* changedPathsFromGit(
-            rootDirectory,
-            requireString(options.baseRevision, 'base revision'),
-            headRevision,
-          ));
+      (yield* changedPathsFromGit(rootDirectory, requireString(baseRevision, 'base revision'), headRevision));
     const changedPaths = EffectArray.sort([...new Set(comparedPaths.map(normalizeChangedPath))], Order.String);
-    return { changedPaths, fallbackReason, fullDeploy, headRevision };
+    return { baseRevision, changedPaths, fullDeploy: false, headRevision };
   });
 
 const validateWorkerStageSetups = (
@@ -1053,7 +1023,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       return fail('reference topology has no Shell delivery unit');
     }
 
-    const { changedPaths, fallbackReason, fullDeploy, headRevision } = yield* deploymentComparison(
+    const { baseRevision, changedPaths, fullDeploy, headRevision } = yield* deploymentComparison(
       options,
       rootDirectory,
     );
@@ -1089,7 +1059,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
     const plan: DeploymentImpactPlan = {
       any: phases.length > 0,
       changedPaths,
-      comparison: makeComparison(options, headRevision, fallbackReason),
+      comparison: makeComparison(baseRevision, headRevision, fullDeploy),
       phases,
       schemaVersion: 1,
       units: {

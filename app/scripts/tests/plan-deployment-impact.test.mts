@@ -13,6 +13,8 @@ import {
   validateAuthorizationPromotionGate,
 } from '../plan-deployment-impact.mts';
 import type { AuthorizationPromotionGateInput, PlanDeploymentImpactOptions } from '../plan-deployment-impact.mts';
+import { resolveStageDeploymentBase } from '../resolve-stage-deployment-base.mts';
+import type { StageDeploymentSource } from '../resolve-stage-deployment-base.mts';
 
 const planningFailure = <A, E>(effect: Effect.Effect<A, E>) =>
   effect.pipe(
@@ -518,18 +520,19 @@ it.live('fails closed when a topology unit has no supported stage setup', () =>
   }),
 );
 
-it.live('uses a safe full deployment for an all-zero comparison base', () =>
+it.live('rejects an all-zero comparison base instead of planning a full deployment', () =>
   Effect.gen(function* testEffect38() {
     yield* withFixture((root) =>
       Effect.gen(function* testEffect39() {
-        const plan = yield* planDeploymentImpact({
-          baseRevision: '0000000000000000000000000000000000000000',
-          headRevision: 'HEAD',
-          rootDirectory: root,
-        });
-        expect(plan.comparison.mode).toBe('full');
-        expect(plan.comparison.reason ?? '').toMatch(/all-zero/u);
-        expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', 'spicedb', 'contacts', SHELL_ID]);
+        const failure = yield* planningFailure(
+          planDeploymentImpact({
+            baseRevision: '0000000000000000000000000000000000000000',
+            headRevision: 'HEAD',
+            rootDirectory: root,
+          }),
+        );
+        expect(failure).toContain('is not a commit in this checkout');
+        expect(failure).toContain('-f full=true');
       }),
     );
   }),
@@ -629,23 +632,24 @@ it.live('rejects workspace globs the planner cannot enumerate', () =>
   }),
 );
 
-it.live('uses a safe full deployment for an unavailable comparison base', () =>
+it.live('rejects an unavailable comparison base', () =>
   Effect.gen(function* testEffect40() {
     yield* withFixture((root) =>
       Effect.gen(function* testEffect41() {
-        const plan = yield* planDeploymentImpact({
-          baseRevision: 'missing-base-revision',
-          headRevision: 'HEAD',
-          rootDirectory: root,
-        });
-        expect(plan.comparison.mode).toBe('full');
-        expect(plan.comparison.reason ?? '').toMatch(/comparison base "missing-base-revision" is unavailable/u);
+        const failure = yield* planningFailure(
+          planDeploymentImpact({
+            baseRevision: 'missing-base-revision',
+            headRevision: 'HEAD',
+            rootDirectory: root,
+          }),
+        );
+        expect(failure).toContain('comparison base "missing-base-revision" is not a commit in this checkout');
       }),
     );
   }),
 );
 
-it.live('uses a safe full deployment when the comparison base is not an ancestor', () =>
+it.live('rejects a comparison base that is not an ancestor of the head', () =>
   Effect.gen(function* testEffect42() {
     yield* withFixture((root) =>
       Effect.gen(function* testEffect43() {
@@ -662,15 +666,107 @@ it.live('uses a safe full deployment when the comparison base is not an ancestor
         runGit(root, ['add', 'rewritten-marker.txt']);
         runGit(root, ['commit', '-m', 'rewritten change']);
 
-        const plan = yield* planDeploymentImpact({
-          baseRevision: rewrittenBase,
-          headRevision: 'HEAD',
-          rootDirectory: root,
-        });
-        expect(plan.comparison.mode).toBe('full');
-        expect(plan.comparison.reason ?? '').toMatch(/is not an ancestor/u);
+        const failure = yield* planningFailure(
+          planDeploymentImpact({
+            baseRevision: rewrittenBase,
+            headRevision: 'HEAD',
+            rootDirectory: root,
+          }),
+        );
+        expect(failure).toContain(`comparison base "${rewrittenBase}" is not an ancestor of "HEAD"`);
+        expect(failure).toContain('-f full=true');
       }),
     );
+  }),
+);
+
+const deploymentSource = (
+  deployments: readonly { readonly sha: string; readonly state: string; readonly runId: string }[],
+): StageDeploymentSource<never, never> => ({
+  latestStatus: (deploymentId) => {
+    const deployment = deployments[deploymentId];
+    return Effect.succeed(
+      deployment === undefined
+        ? undefined
+        : {
+            logUrl: `https://github.com/TechsioCZ/ontos/actions/runs/${deployment.runId}/job/1`,
+            state: deployment.state,
+          },
+    );
+  },
+  page: (page) => Effect.succeed(page === 1 ? deployments.map((deployment, id) => ({ id, sha: deployment.sha })) : []),
+});
+
+it.live('diffs from the last successful stage deployment so failed and cancelled ranges are redeployed', () =>
+  Effect.gen(function* testEffectDeploymentBase() {
+    yield* withFixture((root) =>
+      Effect.gen(function* testEffectDeploymentBaseBody() {
+        runGit(root, ['init']);
+        runGit(root, ['add', '.']);
+        runGit(root, ['commit', '-m', 'A deployed']);
+        const deployedA = runGit(root, ['rev-parse', 'HEAD']);
+        yield* Effect.tryPromise(() => mkdir(path.join(root, 'verticals/contacts/src'), { recursive: true }));
+        yield* Effect.tryPromise(() =>
+          writeFile(path.join(root, 'verticals/contacts/src/failed.ts'), 'export {};\n', 'utf-8'),
+        );
+        runGit(root, ['add', '.']);
+        runGit(root, ['commit', '-m', 'B failed']);
+        const failedB = runGit(root, ['rev-parse', 'HEAD']);
+        yield* Effect.tryPromise(() => writeFile(path.join(root, 'cancelled-marker.txt'), 'cancelled\n', 'utf-8'));
+        runGit(root, ['add', '.']);
+        runGit(root, ['commit', '-m', 'C cancelled']);
+        const cancelledC = runGit(root, ['rev-parse', 'HEAD']);
+        yield* Effect.tryPromise(() => writeFile(path.join(root, 'head-marker.txt'), 'head\n', 'utf-8'));
+        runGit(root, ['add', '.']);
+        runGit(root, ['commit', '-m', 'D head']);
+        const headD = runGit(root, ['rev-parse', 'HEAD']);
+
+        const base = yield* resolveStageDeploymentBase(
+          deploymentSource([
+            { runId: '4', sha: headD, state: 'in_progress' },
+            { runId: '3', sha: cancelledC, state: 'inactive' },
+            { runId: '2', sha: failedB, state: 'failure' },
+            { runId: '1', sha: deployedA, state: 'success' },
+          ]),
+          { currentRunId: '4', environment: 'stage' },
+        );
+        expect(base).toBe(deployedA);
+
+        const plan = yield* planDeploymentImpact({ baseRevision: base, headRevision: headD, rootDirectory: root });
+        expect(plan.comparison).toEqual({ baseRevision: deployedA, headRevision: headD, mode: 'diff' });
+        expect(plan.changedPaths).toContain('verticals/contacts/src/failed.ts');
+        expect(plan.units.providers).toContain('contacts');
+      }),
+    );
+  }),
+);
+
+it.live('skips a successful deployment of the current run', () =>
+  Effect.gen(function* testEffectCurrentRun() {
+    const base = yield* resolveStageDeploymentBase(
+      deploymentSource([
+        { runId: '9', sha: 'rerun-of-current', state: 'success' },
+        { runId: '8', sha: 'previous', state: 'success' },
+      ]),
+      { currentRunId: '9', environment: 'stage' },
+    );
+    expect(base).toBe('previous');
+  }),
+);
+
+it.live('names the missing seed when no successful stage deployment exists', () =>
+  Effect.gen(function* testEffectNoDeployment() {
+    const failure = yield* planningFailure(
+      resolveStageDeploymentBase(
+        deploymentSource([
+          { runId: '2', sha: 'current', state: 'in_progress' },
+          { runId: '1', sha: 'failed', state: 'failure' },
+        ]),
+        { currentRunId: '2', environment: 'stage' },
+      ),
+    );
+    expect(failure).toContain('no successful "stage" deployment exists outside run 2');
+    expect(failure).toContain('gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true');
   }),
 );
 

@@ -7,6 +7,12 @@ on:
   pull_request:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Deploy the whole stage topology instead of the diff since the last successful stage deployment (seeding or rewritten history).
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -298,12 +304,14 @@ jobs:
 
   deploy-stage:
     name: Deploy stage to Zerops after merge to main
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: [workspace-gate, service-integration, node-runtime, cloudflare-runtime]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: stage
+    permissions:
+      contents: read
+      deployments: read
     env:
       ZEROPS_CATALOG_SERVICE_ID: ${{ vars.ZEROPS_CATALOG_SERVICE_ID }}
       ZEROPS_COMMERCE_CUSTOMER_CONTEXT_SERVICE_ID: ${{ vars.ZEROPS_COMMERCE_CUSTOMER_CONTEXT_SERVICE_ID }}
@@ -347,16 +355,29 @@ jobs:
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm authorization:inventory:check
 
+      - name: Resolve the last successful stage deployment
+        id: base
+        if: ${{ !inputs.full }}
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: mise exec -- pnpm deployment-base:resolve --environment stage
+
       - name: Generate topology-driven deployment impact plan
         id: impact
         working-directory: app
         env:
-          BEFORE_SHA: ${{ github.event.before }}
-        run: >-
-          mise exec -- pnpm deployment-impact:plan
-          --authorization-environment stage
-          --base "$BEFORE_SHA"
-          --head "$GITHUB_SHA"
+          BASE_SHA: ${{ steps.base.outputs.base }}
+          FULL_PLAN: ${{ inputs.full }}
+        run: |
+          base_arguments=()
+          if [[ "$FULL_PLAN" != 'true' ]]; then
+            base_arguments=(--base "$BASE_SHA")
+          fi
+          mise exec -- pnpm deployment-impact:plan \
+            --authorization-environment stage \
+            "${base_arguments[@]}" \
+            --head "$GITHUB_SHA"
 
       - name: Record reviewed deployment impact plan
         env:
