@@ -278,7 +278,8 @@ export default defineConfig(
         },
         output: {
           assetPrefix,
-          disableTsChecker: false,
+          // `pnpm typecheck` (tsc --build over the reference graph) owns type diagnostics.
+          disableTsChecker: true,
           distPath: {
             html: './',
             root: buildOutputRoot,

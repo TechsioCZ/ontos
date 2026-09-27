@@ -439,7 +439,8 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
     },
     output: {
       assetPrefix: build.assetPrefix,
-      disableTsChecker: false,
+      // `pnpm typecheck` (tsc --build over the reference graph) owns type diagnostics.
+      disableTsChecker: true,
       distPath: {
         html: './',
         root: build.buildOutputRoot,
