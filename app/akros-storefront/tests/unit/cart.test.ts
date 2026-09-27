@@ -39,6 +39,15 @@ describe("local demo cart", () => {
     ).toEqual([]);
   });
 
+  it("clears all lines after completing the local checkout", () => {
+    const cart = {
+      version: 1 as const,
+      lines: [{ productId: "product-screw", quantity: 2 }],
+    };
+
+    expect(cartReducer(cart, { type: "clear" })).toEqual(createEmptyCart());
+  });
+
   it("calculates totals in minor currency units without floating point drift", () => {
     const cart = {
       version: 1 as const,

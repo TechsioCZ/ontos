@@ -11,6 +11,8 @@ describe("mock catalog gateway", () => {
   it("returns featured products in their configured display order", () => {
     expect(getFeaturedProducts().map((product) => product.slug)).toEqual([
       "vrut-univerzalni-se-zapustnou-hlavou",
+      "matice-sestihranna-m8-din-934-a2",
+      "podlozka-plocha-m8-din-125a-a2",
       "nerezove-lano-7x7",
       "nerezovy-retez-din-766-a4",
       "nerezova-kulatina-aisi-304",

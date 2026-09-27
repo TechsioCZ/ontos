@@ -5,9 +5,19 @@ import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 
 import type { ReactNode } from "react";
 
-export function PrimaryLinkButton({ href, children }: { href: string; children: ReactNode }) {
+export function PrimaryLinkButton({
+  href,
+  children,
+  size = "md",
+  uppercase = true,
+}: {
+  href: string;
+  children: ReactNode;
+  size?: "sm" | "md" | "lg";
+  uppercase?: boolean;
+}) {
   return (
-    <LinkButton as={NextLink} href={href} size="md" uppercase variant="primary">
+    <LinkButton as={NextLink} href={href} size={size} uppercase={uppercase} variant="primary">
       {children}
     </LinkButton>
   );

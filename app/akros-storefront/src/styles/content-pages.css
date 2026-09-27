@@ -1,0 +1,724 @@
+.akros-content-page,
+.akros-content-section {
+  display: grid;
+  gap: 24px;
+}
+
+.akros-content-page__heading,
+.akros-content-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.akros-content-page h1,
+.akros-content-page h2,
+.akros-content-page h3,
+.akros-content-page p,
+.akros-landing-page h1,
+.akros-landing-page h2,
+.akros-landing-page h3,
+.akros-landing-page p,
+.akros-blog-page h1,
+.akros-blog-page h2,
+.akros-blog-page h3,
+.akros-blog-page p,
+.akros-news-page h1,
+.akros-news-page h2,
+.akros-news-page h3,
+.akros-news-page p {
+  margin: 0;
+}
+
+.akros-content-page h1,
+.akros-content-hero h1,
+.akros-blog-featured h1,
+.akros-news-hero h1 {
+  font-size: clamp(28px, 3vw, 40px);
+  line-height: 1.15;
+}
+
+.akros-content-page h2,
+.akros-shipping-layout h2,
+.akros-blog-layout h2,
+.akros-news-section h2 {
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.akros-content-page p,
+.akros-landing-page p,
+.akros-blog-page p,
+.akros-news-page p {
+  line-height: 1.5;
+}
+
+.akros-content-panel {
+  border-radius: var(--akros-radius-md);
+  padding: 24px;
+  background: var(--color-base);
+}
+
+.akros-content-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 360px));
+  gap: 20px;
+}
+
+.akros-content-gallery figure {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.akros-content-gallery img {
+  width: 100%;
+  height: 230px;
+  border-radius: var(--akros-radius-lg);
+  object-fit: cover;
+}
+
+.akros-content-gallery figcaption {
+  line-height: 1.5;
+}
+
+.akros-service-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.akros-service-list li {
+  position: relative;
+  border-radius: var(--akros-radius-md);
+  padding: 16px 16px 16px 36px;
+  background: var(--color-base);
+}
+
+.akros-service-list li::before {
+  position: absolute;
+  top: 50%;
+  left: 16px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-primary);
+  content: "";
+  transform: translateY(-50%);
+}
+
+.akros-anchor-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.akros-anchor-nav a {
+  min-height: 36px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--akros-radius-md);
+  padding: 8px 14px;
+  background: var(--color-base);
+  color: var(--color-fg-primary);
+  text-decoration: none;
+}
+
+.akros-anchor-nav a:hover,
+.akros-anchor-nav a:focus-visible {
+  border-color: var(--color-primary);
+}
+
+.akros-branch {
+  display: grid;
+  gap: 12px;
+  scroll-margin-top: 184px;
+}
+
+.akros-branch__body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(220px, 0.7fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.akros-branch__body img {
+  width: 100%;
+  height: auto;
+  border-radius: var(--akros-radius-md);
+}
+
+.akros-branch address {
+  display: grid;
+  gap: 12px;
+  padding-block: 8px;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.akros-branch address a {
+  color: var(--color-link);
+}
+
+.akros-contact-form {
+  display: grid;
+  max-width: 760px;
+  gap: 20px;
+}
+
+.akros-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.akros-contact-form > button {
+  justify-self: start;
+}
+
+.akros-form-success {
+  border-left: 4px solid var(--color-success);
+  padding: 12px 16px;
+  background: var(--color-base);
+  color: var(--color-fg-status-success);
+}
+
+.akros-landing-page,
+.akros-blog-page,
+.akros-news-page,
+.akros-faq-page {
+  margin-inline: calc(var(--akros-page-gutter) * -1);
+}
+
+.akros-content-hero {
+  position: relative;
+  min-height: 280px;
+  overflow: hidden;
+  color: var(--color-fg-light);
+}
+
+.akros-content-hero > img,
+.akros-news-hero > img {
+  object-fit: cover;
+}
+
+.akros-content-hero__overlay {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-height: 280px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 16px;
+  padding: 48px var(--akros-page-gutter);
+  background: linear-gradient(90deg, rgb(9 18 37 / 88%), rgb(9 18 37 / 32%));
+}
+
+.akros-content-hero__overlay p {
+  max-width: 72ch;
+}
+
+.akros-shipping-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.9fr);
+  gap: 40px;
+  padding: 40px var(--akros-page-gutter) 64px;
+}
+
+.akros-shipping-layout > section {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+}
+
+.akros-option-list {
+  display: grid;
+  gap: 16px;
+}
+
+.akros-option-list article,
+.akros-free-shipping,
+.akros-blog-sidebar section,
+.akros-blog-card,
+.akros-news-grid article {
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--akros-radius-md);
+  background: var(--color-base);
+}
+
+.akros-option-list article {
+  display: grid;
+  gap: 8px;
+  padding: 20px;
+}
+
+.akros-option-list h3 {
+  font-size: 16px;
+}
+
+.akros-option-list__heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.akros-option-list__heading strong,
+.akros-free-shipping span,
+.akros-discount {
+  color: var(--color-fg-accent-danger);
+}
+
+.akros-option-list__status {
+  color: var(--color-fg-status-success);
+  font-weight: 600;
+}
+
+.akros-option-list--compact article {
+  padding: 16px;
+}
+
+.akros-free-shipping {
+  display: grid;
+  gap: 14px;
+  border-color: var(--color-primary);
+  padding: 20px;
+}
+
+.akros-free-shipping div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.akros-free-shipping progress {
+  width: 100%;
+  accent-color: var(--color-primary);
+}
+
+.akros-faq-hero {
+  display: grid;
+  justify-items: center;
+  gap: 20px;
+  padding: 48px var(--akros-page-gutter) 24px;
+  background: var(--color-base);
+  text-align: center;
+}
+
+.akros-faq-search {
+  padding: 0 var(--akros-page-gutter) 36px;
+  background: var(--color-base);
+}
+
+.akros-faq-search > input {
+  max-width: 760px;
+  margin-inline: auto;
+}
+
+.akros-faq-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 36px;
+  padding: 40px var(--akros-page-gutter);
+}
+
+.akros-faq-categories,
+.akros-faq-results {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+}
+
+.akros-faq-categories h2,
+.akros-faq-results h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.akros-faq-categories button {
+  min-height: 44px;
+  border: 0;
+  border-radius: var(--akros-radius-md);
+  padding: 10px 12px;
+  background: transparent;
+  color: var(--color-fg-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.akros-faq-categories button:hover,
+.akros-faq-categories button[aria-current="page"] {
+  background: var(--color-primary);
+  color: var(--color-fg-primary);
+}
+
+.akros-faq-contact {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  padding: 48px var(--akros-page-gutter) 64px;
+  background: var(--color-base);
+  text-align: center;
+}
+
+.akros-faq-contact h2,
+.akros-faq-contact p {
+  margin: 0;
+}
+
+.akros-faq-contact .akros-contact-form {
+  width: min(100%, 760px);
+  margin-top: 12px;
+  text-align: left;
+}
+
+.akros-blog-featured {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 40px;
+  align-items: center;
+  padding: 48px var(--akros-page-gutter);
+  background: var(--color-base);
+}
+
+.akros-blog-featured > img {
+  width: 100%;
+  height: 400px;
+  border-radius: var(--akros-radius-lg);
+  object-fit: cover;
+}
+
+.akros-blog-featured > div {
+  display: grid;
+  gap: 20px;
+}
+
+.akros-blog-meta,
+.akros-blog-featured__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.akros-blog-meta span,
+.akros-blog-featured__actions > span {
+  color: var(--color-fg-secondary);
+  font-size: 13px;
+}
+
+.akros-blog-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 40px;
+  padding: 40px var(--akros-page-gutter) 64px;
+}
+
+.akros-blog-layout > section {
+  display: grid;
+  gap: 24px;
+}
+
+.akros-blog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.akros-blog-card {
+  overflow: hidden;
+}
+
+.akros-blog-card > img {
+  width: 100%;
+  height: 180px;
+  object-fit: cover;
+}
+
+.akros-blog-card__content {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.akros-blog-card h3 {
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.akros-blog-card a,
+.akros-section__heading a {
+  color: var(--color-link);
+  text-underline-offset: 3px;
+}
+
+.akros-blog-sidebar {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+}
+
+.akros-blog-sidebar section {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+}
+
+.akros-blog-sidebar h2 {
+  font-size: 18px;
+}
+
+.akros-blog-sidebar ul {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  color: var(--color-fg-secondary);
+  list-style: none;
+}
+
+.akros-news-hero {
+  position: relative;
+  min-height: 430px;
+  overflow: hidden;
+  color: var(--color-fg-light);
+}
+
+.akros-news-hero__overlay {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  min-height: 430px;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 48px;
+  align-items: center;
+  padding: 48px var(--akros-page-gutter);
+  background: linear-gradient(90deg, rgb(7 17 33 / 92%), rgb(7 17 33 / 48%));
+}
+
+.akros-news-hero__overlay > div {
+  display: grid;
+  justify-items: start;
+  gap: 20px;
+}
+
+.akros-countdown {
+  display: grid;
+  gap: 20px;
+  border-radius: var(--akros-radius-lg);
+  padding: 28px;
+  background: var(--color-base);
+  color: var(--color-fg-primary);
+}
+
+.akros-countdown > strong {
+  font-size: 12px;
+}
+
+.akros-countdown > div {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+.akros-countdown span {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  color: var(--color-fg-secondary);
+  font-size: 11px;
+}
+
+.akros-countdown b {
+  color: var(--color-fg-primary);
+  font-size: 28px;
+}
+
+.akros-countdown p {
+  color: var(--color-fg-status-success);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.akros-news-section {
+  display: grid;
+  gap: 24px;
+  padding: 40px var(--akros-page-gutter);
+}
+
+.akros-news-section:nth-of-type(odd) {
+  background: var(--color-base);
+}
+
+.akros-news-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.akros-news-grid article {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  padding: 12px;
+}
+
+.akros-news-grid img {
+  width: 100%;
+  height: 220px;
+  border-radius: var(--akros-radius-md);
+  object-fit: contain;
+}
+
+.akros-news-grid h3 {
+  font-size: 16px;
+  line-height: 1.3;
+}
+
+.akros-not-found {
+  display: grid;
+  min-height: 680px;
+  justify-items: center;
+  align-content: center;
+  gap: 24px;
+  padding: 64px 16px;
+  text-align: center;
+}
+
+.akros-not-found > p {
+  max-width: 600px;
+  margin: 0;
+  color: var(--color-fg-secondary);
+  line-height: 1.5;
+}
+
+.akros-not-found h1 {
+  max-width: 600px;
+  margin: 0;
+  font-size: clamp(28px, 4vw, 40px);
+}
+
+.akros-not-found__code {
+  display: flex;
+  align-items: center;
+  color: var(--color-float);
+  font-size: clamp(88px, 12vw, 132px);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.akros-not-found__product {
+  display: grid;
+  width: 120px;
+  height: 120px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--color-primary-disabled);
+}
+
+.akros-not-found__product img {
+  width: 76px;
+  height: 76px;
+  object-fit: contain;
+}
+
+.akros-not-found__search,
+.akros-not-found__categories {
+  display: grid;
+  width: min(100%, 600px);
+  gap: 12px;
+}
+
+.akros-not-found__categories > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+
+@media (max-width: 1100px) {
+  .akros-shipping-layout,
+  .akros-blog-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .akros-blog-sidebar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .akros-news-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .akros-form-grid,
+  .akros-content-gallery,
+  .akros-branch__body,
+  .akros-faq-layout,
+  .akros-blog-featured,
+  .akros-blog-grid,
+  .akros-blog-sidebar,
+  .akros-news-hero__overlay {
+    grid-template-columns: 1fr;
+  }
+
+  .akros-landing-page,
+  .akros-blog-page,
+  .akros-news-page,
+  .akros-faq-page {
+    margin-inline: 0;
+  }
+
+  .akros-content-gallery img {
+    height: auto;
+    aspect-ratio: 1.56;
+  }
+
+  .akros-content-hero__overlay,
+  .akros-shipping-layout,
+  .akros-blog-featured,
+  .akros-blog-layout,
+  .akros-news-hero__overlay,
+  .akros-news-section,
+  .akros-faq-layout,
+  .akros-faq-contact {
+    padding-inline: 16px;
+  }
+
+  .akros-content-hero,
+  .akros-content-hero__overlay {
+    min-height: 360px;
+  }
+
+  .akros-faq-hero {
+    padding-inline: 16px;
+  }
+
+  .akros-faq-search {
+    padding-inline: 16px;
+  }
+
+  .akros-blog-featured > img {
+    height: auto;
+  }
+
+  .akros-news-hero,
+  .akros-news-hero__overlay {
+    min-height: 620px;
+  }
+
+  .akros-news-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .akros-not-found__code {
+    font-size: 84px;
+  }
+
+  .akros-not-found__product {
+    width: 88px;
+    height: 88px;
+  }
+}

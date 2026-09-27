@@ -12,9 +12,18 @@ npm run dev
 
 Open <http://localhost:3000>.
 
+## Theme tokens
+
+The storefront imports the generated AKROS variable export from
+`@techsio/ui-kit/tokens/figma/akros/variables`. Color and spacing values should be updated in the
+AKROS Figma theme and released through the UI kit instead of being copied into this application.
+The local token file contains only the storefront typography stack, which is not part of the
+Figma variable export.
+
 ## Prototype boundary
 
-- Catalog data lives in `src/mock-storefront/fixtures/catalog.ts`.
+- Catalog, editorial, account, order, delivery, and payment demo data lives under
+  `src/mock-storefront/fixtures/`.
 - The cart is browser-local and persists under `akros-demo-cart-v1`.
 - No API, database, authentication, checkout submission, or OntOS application module is used.
 - `npm run check` runs formatting, linting, type checking, tests, and the production build.

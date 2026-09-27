@@ -114,10 +114,10 @@ export function CartContent() {
             <dd>{formatPrice(subtotal + shipping)}</dd>
           </div>
         </dl>
-        <Button block disabled size="md" variant="primary">
+        <LinkButton as={NextLink} block href="/pokladna" size="md" variant="primary">
           {cs.actions.proceedToCheckout}
-        </Button>
-        <p>{cs.cart.demoCheckoutNotice}</p>
+        </LinkButton>
+        <p>Pokladna pracuje pouze s lokálními mock daty a neprovádí skutečnou platbu.</p>
       </aside>
     </div>
   );

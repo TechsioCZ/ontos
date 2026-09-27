@@ -1,5 +1,8 @@
 @import "@techsio/ui-kit/tokens-with-tailwind";
-@import "../tokens/_akros-semantic.css";
+@import "@techsio/ui-kit/tokens/figma/akros/variables";
+@import "../tokens/_akros-typography.css";
+@import "../styles/content-pages.css";
+@import "../styles/account-checkout.css";
 @source "../../node_modules/@techsio/ui-kit/dist";
 
 :root {
@@ -17,23 +20,16 @@
 
 html {
   min-width: 320px;
-  background: var(--color-surface);
+  background: var(--color-fill-surface);
   scroll-behavior: smooth;
 }
 
 body {
   min-height: 100vh;
   margin: 0;
-  background: var(--color-surface);
+  background: var(--color-fill-surface);
   color: var(--color-fg-primary);
   font-family: var(--font-body);
-}
-
-button,
-input,
-select,
-textarea {
-  font: inherit;
 }
 
 .akros-shell {
@@ -45,7 +41,7 @@ textarea {
   z-index: 20;
   top: 0;
   border-bottom: 1px solid var(--color-border-primary);
-  background: var(--color-surface);
+  background: var(--color-fill-surface);
 }
 
 .akros-header__utility,
