@@ -34,10 +34,8 @@ const directiveRules = (comment: string): readonly string[] => {
     return [];
   }
   const [ruleList = ''] = body.split(/\s--(?:\s|$)/u);
-  const rules = ruleList
-    .split(',')
-    .map((rule) => rule.trim())
-    .filter((rule) => rule.length > 0);
+  // Oxlint accepts comma- and whitespace-separated rule lists.
+  const rules = ruleList.split(/[\s,]+/u).filter((rule) => rule.length > 0);
   return rules.length > 0 ? rules : [ALL_RULES];
 };
 

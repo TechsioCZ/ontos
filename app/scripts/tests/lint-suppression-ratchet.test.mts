@@ -11,18 +11,25 @@ const source = [
   "const directive = '// oxlint-disable-next-line effect-native/no-ambient-date';",
   '// A comment that mentions oxlint-disable later is not a directive.',
   '/* oxlint-disable */',
+  '// oxlint-disable-next-line anti-slop/no-reflect-get effect-native/no-ambient-date -- whitespace-separated list',
   'void first;',
   'void directive;',
   '',
 ].join('\n');
 const baseline = JSON.stringify({
-  rules: { '*': 1, 'effect-native/no-ambient-date': 1, 'sonarjs/no-duplicate-string': 2 },
+  rules: {
+    '*': 1,
+    'anti-slop/no-reflect-get': 1,
+    'effect-native/no-ambient-date': 2,
+    'sonarjs/no-duplicate-string': 2,
+  },
 });
 
 it('counts disable directives per rule from comments only', () => {
   expect(countLintSuppressions([{ path: fixturePath, source }])).toEqual({
     '*': 1,
-    'effect-native/no-ambient-date': 1,
+    'anti-slop/no-reflect-get': 1,
+    'effect-native/no-ambient-date': 2,
     'sonarjs/no-duplicate-string': 2,
   });
 });
@@ -42,7 +49,7 @@ it.effect('fails when one disable is added', () =>
     const result = yield* checkLintSuppressions(baseline, current).pipe(Effect.result);
     expect(Result.isFailure(result)).toBe(true);
     if (Result.isFailure(result)) {
-      expect(result.failure.message).toMatch(/increased: effect-native\/no-ambient-date 1 -> 2/u);
+      expect(result.failure.message).toMatch(/increased: effect-native\/no-ambient-date 2 -> 3/u);
     }
   }),
 );
