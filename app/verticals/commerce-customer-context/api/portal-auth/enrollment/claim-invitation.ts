@@ -71,6 +71,7 @@ import {
 } from './contracts.ts';
 import { commercePortalAuthEnrollmentSessionSubject } from './session-subject.ts';
 import {
+  answerEnrollmentFailure,
   commercePortalAuthEnrollmentAuthenticationProblem,
   commercePortalAuthEnrollmentBindingPendingProblem,
   commercePortalAuthEnrollmentInvalidProblem,
@@ -312,8 +313,8 @@ const claimInvitationEffect = (
  */
 const claimRefusalProblem = (outcome: { readonly failureReason?: string; readonly outcomeCode?: string }) =>
   outcome.outcomeCode === 'invitation_claim_proof_invalid' || outcome.outcomeCode === 'invitation_invalid'
-    ? commercePortalAuthEnrollmentInvalidProblem(outcome.failureReason)
-    : commercePortalAuthEnrollmentRejectedProblem(outcome.outcomeCode);
+    ? commercePortalAuthEnrollmentInvalidProblem()
+    : commercePortalAuthEnrollmentRejectedProblem();
 
 /** What one claim request settled on, once the driver's phases have run as far as they can. */
 type ClaimSettlement =
@@ -428,8 +429,8 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
     .pipe(
       Effect.mapError((failure) =>
         failure.retryable
-          ? commercePortalAuthEnrollmentUnavailableProblem(failure)
-          : commercePortalAuthEnrollmentNotFoundProblem(failure),
+          ? commercePortalAuthEnrollmentUnavailableProblem()
+          : commercePortalAuthEnrollmentNotFoundProblem(),
       ),
     );
   const { accountSubject, invitationId, targetLegalEntityId } = attempt;
@@ -476,7 +477,7 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
     { concurrency: 3 },
   ).pipe(
     Effect.map((entries) => entries.flatMap((entry) => (Option.isNone(entry) ? [] : [entry.value]))),
-    Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)),
+    Effect.catch(answerEnrollmentFailure(() => commercePortalAuthEnrollmentUnavailableProblem())),
   );
   if (!commercePortalAuthEnrollmentClaimantBinding(operations, principal.authBindingId)) {
     return yield* Effect.fail(commercePortalAuthEnrollmentNotFoundProblem());
@@ -598,8 +599,8 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
   const executed = yield* claimWithReconciliation(driver, store, transition).pipe(
     Effect.mapError((failure) =>
       failure.retryable
-        ? commercePortalAuthEnrollmentUnavailableProblem(failure)
-        : commercePortalAuthEnrollmentRejectedProblem(failure),
+        ? commercePortalAuthEnrollmentUnavailableProblem()
+        : commercePortalAuthEnrollmentRejectedProblem(),
     ),
   );
   if (executed.kind === 'LEASE_HELD') {
@@ -610,7 +611,7 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
   }
   const settled = yield* store
     .read({ portalEnrollmentAttemptId, tenantId })
-    .pipe(Effect.mapError((failure) => commercePortalAuthEnrollmentUnavailableProblem(failure)));
+    .pipe(Effect.catch(answerEnrollmentFailure(() => commercePortalAuthEnrollmentUnavailableProblem())));
   // Detached for the same reason the start route detaches: cancelling this request must never
   // cancel a claimed owner transition mid-flight.
   yield* continuation.advance({ portalEnrollmentAttemptId, tenantId }).pipe(

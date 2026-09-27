@@ -15,9 +15,21 @@ import {
 
 /**
  * Every published enrollment problem body. None of them carries a provider message, an owner
- * reason, an Attempt identity the caller did not already name, or any part of the credential: a
- * failing owner value is preserved as a non-enumerable `cause` for diagnostics and never encoded.
+ * reason, an Attempt identity the caller did not already name, or any part of the credential. A
+ * problem is exactly its schema: the composed API encodes it closed.
  */
+
+/**
+ * Answers with a published problem after logging the failing owner value it stands for. The problem
+ * is exactly its schema, because the composed API encodes it closed; the failing value belongs to
+ * the operator log, never to the response.
+ */
+export const answerEnrollmentFailure =
+  <Problem>(problem: () => Problem) =>
+  <Failure>(failure: Failure) =>
+    Effect.logWarning('Commerce portal enrollment answered a failure with a published problem', failure).pipe(
+      Effect.andThen(Effect.fail(problem())),
+    );
 
 const PROBLEM_TYPE_PREFIX = 'https://ontos.dev/problems/commerce-portal-auth-enrollment-';
 
@@ -25,21 +37,14 @@ const problemStatus = {
   unavailable: 503,
 } as const;
 
-/** The failing value is retained as a non-enumerable `cause`; it never reaches the encoded body. */
-const withCause = <Problem extends object>(problem: Problem, cause: unknown): Problem =>
-  cause === undefined ? problem : Object.defineProperty(problem, 'cause', { configurable: true, value: cause });
-
-export const commercePortalAuthEnrollmentInvalidProblem = (cause?: unknown) =>
-  withCause(
-    CommercePortalAuthEnrollmentInvalidProblemSchema.make({
-      code: 'invalid_request',
-      detail: 'The Commerce portal enrollment request is invalid.',
-      status: 400,
-      title: 'Invalid enrollment request',
-      type: `${PROBLEM_TYPE_PREFIX}invalid`,
-    }),
-    cause,
-  );
+export const commercePortalAuthEnrollmentInvalidProblem = () =>
+  CommercePortalAuthEnrollmentInvalidProblemSchema.make({
+    code: 'invalid_request',
+    detail: 'The Commerce portal enrollment request is invalid.',
+    status: 400,
+    title: 'Invalid enrollment request',
+    type: `${PROBLEM_TYPE_PREFIX}invalid`,
+  });
 
 export const commercePortalAuthEnrollmentAuthenticationProblem =
   CommercePortalAuthEnrollmentAuthenticationProblemSchema.make({
@@ -60,21 +65,17 @@ const forbiddenProblem = (code: 'enrollment_rejected' | 'origin_not_trusted') =>
   });
 
 export const commercePortalAuthEnrollmentUntrustedOriginProblem = forbiddenProblem('origin_not_trusted');
-export const commercePortalAuthEnrollmentRejectedProblem = (cause?: unknown) =>
-  withCause(forbiddenProblem('enrollment_rejected'), cause);
+export const commercePortalAuthEnrollmentRejectedProblem = () => forbiddenProblem('enrollment_rejected');
 
 /** An Attempt owned by another subject answers exactly as an absent one does. */
-export const commercePortalAuthEnrollmentNotFoundProblem = (cause?: unknown) =>
-  withCause(
-    CommercePortalAuthEnrollmentNotFoundProblemSchema.make({
-      code: 'attempt_not_found',
-      detail: 'No Commerce portal enrollment attempt is available for this caller.',
-      status: 404,
-      title: 'Enrollment attempt not found',
-      type: `${PROBLEM_TYPE_PREFIX}not-found`,
-    }),
-    cause,
-  );
+export const commercePortalAuthEnrollmentNotFoundProblem = () =>
+  CommercePortalAuthEnrollmentNotFoundProblemSchema.make({
+    code: 'attempt_not_found',
+    detail: 'No Commerce portal enrollment attempt is available for this caller.',
+    status: 404,
+    title: 'Enrollment attempt not found',
+    type: `${PROBLEM_TYPE_PREFIX}not-found`,
+  });
 
 /**
  * The journey itself is refused, not this request: no Attempt is persisted and no provider account
@@ -94,17 +95,14 @@ export const commercePortalAuthEnrollmentJourneyUnavailableProblem =
  * under. It names no transition and no owner: a caller learns only that its own Attempt is not
  * there yet, which is the same thing a read of the Attempt would have told it.
  */
-export const commercePortalAuthEnrollmentBindingPendingProblem = (cause?: unknown) =>
-  withCause(
-    CommercePortalAuthEnrollmentConflictProblemSchema.make({
-      code: 'enrollment_binding_pending',
-      detail: 'This Commerce portal enrollment attempt is not ready to claim its invitation yet.',
-      status: 409,
-      title: 'Enrollment binding pending',
-      type: `${PROBLEM_TYPE_PREFIX}binding-pending`,
-    }),
-    cause,
-  );
+export const commercePortalAuthEnrollmentBindingPendingProblem = () =>
+  CommercePortalAuthEnrollmentConflictProblemSchema.make({
+    code: 'enrollment_binding_pending',
+    detail: 'This Commerce portal enrollment attempt is not ready to claim its invitation yet.',
+    status: 409,
+    title: 'Enrollment binding pending',
+    type: `${PROBLEM_TYPE_PREFIX}binding-pending`,
+  });
 
 /**
  * `retryAfterSeconds` names the window of the rule that actually refused the request: the route
@@ -121,23 +119,18 @@ export const commercePortalAuthEnrollmentRateLimitedProblem = (rule: { readonly 
     type: `${PROBLEM_TYPE_PREFIX}rate-limited`,
   });
 
-/** The failing owner value is retained for diagnostics; it never reaches the encoded body. */
-export const commercePortalAuthEnrollmentUnavailableProblem = (cause?: unknown) =>
-  withCause(
-    CommercePortalAuthEnrollmentUnavailableProblemSchema.make({
-      code: 'enrollment_unavailable',
-      detail: 'Commerce portal enrollment is temporarily unavailable.',
-      retryable: true,
-      status: problemStatus.unavailable,
-      title: 'Enrollment unavailable',
-      type: `${PROBLEM_TYPE_PREFIX}unavailable`,
-    }),
-    cause,
-  );
+export const commercePortalAuthEnrollmentUnavailableProblem = () =>
+  CommercePortalAuthEnrollmentUnavailableProblemSchema.make({
+    code: 'enrollment_unavailable',
+    detail: 'Commerce portal enrollment is temporarily unavailable.',
+    retryable: true,
+    status: problemStatus.unavailable,
+    title: 'Enrollment unavailable',
+    type: `${PROBLEM_TYPE_PREFIX}unavailable`,
+  });
 
 export const commercePortalAuthEnrollmentSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   CommercePortalAuthEnrollmentSchemaErrorMiddleware,
-  // The schema failure is preserved as the problem's non-enumerable `cause`; the encoded body
-  // stays the group's one invalid-request answer and never names the offending field.
-  (schemaFailure) => Effect.fail(commercePortalAuthEnrollmentInvalidProblem(schemaFailure)),
+  // The group's one invalid-request answer never names the offending field.
+  () => Effect.fail(commercePortalAuthEnrollmentInvalidProblem()),
 );
