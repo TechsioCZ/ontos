@@ -30,16 +30,14 @@ const ManifestSchema = Schema.fromJsonString(
 );
 
 interface Lockfile {
-  /** Dependency name -> names of the resolved packages that depend on it (transitive edges). */
+  /** Dependency name -> `name@version` of the resolved packages that depend on it (transitive edges). */
   readonly dependents: ReadonlyMap<string, ReadonlySet<string>>;
   /** Importer path -> names it depends on directly. */
   readonly importerEdges: ReadonlyMap<string, ReadonlySet<string>>;
   /** Exact `name@version` identities (without peer suffixes). */
   readonly packageIds: ReadonlySet<string>;
-  /** Package names with at least one resolved `name@version` entry. */
-  readonly packageNames: ReadonlySet<string>;
-  /** Package name -> peer name -> declared peer ranges. */
-  readonly peerRanges: ReadonlyMap<string, ReadonlyMap<string, readonly string[]>>;
+  /** `name@version` -> peer name -> declared peer range. */
+  readonly peerRanges: ReadonlyMap<string, ReadonlyMap<string, string>>;
 }
 
 /** `name@version(peers)` or `name@range` -> `name`, keeping scoped names intact. */
@@ -56,8 +54,7 @@ const edgeNames = (entry: typeof EdgeSetSchema.Type): readonly string[] =>
 const parseLockfile = (source: string): Lockfile => {
   const importerEdges = new Map<string, Set<string>>();
   const packageIds = new Set<string>();
-  const packageNames = new Set<string>();
-  const peerRanges = new Map<string, Map<string, string[]>>();
+  const peerRanges = new Map<string, Map<string, string>>();
   const dependents = new Map<string, Set<string>>();
   for (const document of parseAllDocuments(source)) {
     const lock = Schema.decodeUnknownSync(LockDocumentSchema)(document.toJS() ?? {});
@@ -66,20 +63,15 @@ const parseLockfile = (source: string): Lockfile => {
     }
     for (const [key, { peerDependencies }] of Object.entries(lock.packages ?? {})) {
       packageIds.add(idOf(key));
-      packageNames.add(nameOf(key));
-      const peers = peerRanges.get(nameOf(key)) ?? new Map<string, string[]>();
-      for (const [peer, range] of Object.entries(peerDependencies ?? {})) {
-        peers.set(peer, [...(peers.get(peer) ?? []), range]);
-      }
-      peerRanges.set(nameOf(key), peers);
+      peerRanges.set(idOf(key), new Map(Object.entries(peerDependencies ?? {})));
     }
     for (const [key, entry] of Object.entries(lock.snapshots ?? {})) {
       for (const name of edgeNames(entry)) {
-        dependents.set(name, (dependents.get(name) ?? new Set()).add(nameOf(key)));
+        dependents.set(name, (dependents.get(name) ?? new Set()).add(idOf(key)));
       }
     }
   }
-  return { dependents, importerEdges, packageIds, packageNames, peerRanges };
+  return { dependents, importerEdges, packageIds, peerRanges };
 };
 
 /** patchedDependencies keys with the comment written above each (yaml attaches the first to the map). */
@@ -95,61 +87,78 @@ const patchEntries = (workspaceYaml: string): readonly { readonly comment: strin
   );
 };
 
-/** `parent@range>child@range` -> the package names in the selector chain. */
-const selectorNames = (selector: string): readonly string[] => selector.split('>').map(nameOf);
+interface SelectorPart {
+  readonly name: string;
+  /** Exact version the selector pins, or '' for a bare name. */
+  readonly version: string;
+}
 
-type Workspace = typeof WorkspaceSchema.Type;
+const isExactVersion = (version: string): boolean => /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u.test(version);
 
-const deadOverrides = (workspace: Workspace, lock: Lockfile, manifests: Manifests): readonly string[] =>
-  Object.entries(workspace.overrides ?? {}).flatMap(([key, value]) => {
-    const names = selectorNames(key);
-    const target = names.at(-1) ?? key;
-    const importers = [...lock.importerEdges].filter(([, edges]) => edges.has(target)).map(([importer]) => importer);
-    const parent = names.at(-2);
-    const transitive = lock.dependents.has(target);
-    if (!transitive && importers.length === 0) {
-      return [`overrides.${key} matches nothing in pnpm-lock.yaml; delete it`];
-    }
-    if (parent !== undefined && lock.dependents.get(target)?.has(parent) !== true) {
-      return [`overrides.${key} names a parent that no longer depends on ${target} in pnpm-lock.yaml; delete it`];
-    }
-    if (!transitive && importers.every((importer) => manifests[importer]?.[target] === value)) {
-      return [`overrides.${key} only restates the range every importer declares; delete it`];
-    }
-    return [];
-  });
-
-const deadPeerRules = (workspace: Workspace, lock: Lockfile): readonly string[] =>
-  Object.entries(workspace.peerDependencyRules?.allowedVersions ?? {}).flatMap(([key, value]) => {
-    const names = selectorNames(key);
-    const peer = names.at(-1) ?? key;
-    const owners = names.length > 1 ? names.slice(0, -1) : [...lock.peerRanges.keys()];
-    const ranges = owners.flatMap((owner) => lock.peerRanges.get(owner)?.get(peer) ?? []);
-    if (ranges.length === 0) {
-      return [`peerDependencyRules.allowedVersions.${key} matches no peer in pnpm-lock.yaml; delete it`];
-    }
-    if (ranges.every((range) => range === value)) {
-      return [`peerDependencyRules.allowedVersions.${key} only restates the declared peer range; delete it`];
-    }
-    return [];
-  });
-
-/**
- * `name@1.2.3` must match that exact resolved version, so a pin left behind by an upgrade is dead.
- * A bare name or a range selector matches any resolved version of the name.
- */
-const selectsResolvedPackage = (lock: Lockfile, selector: string): boolean => {
-  const name = nameOf(selector);
-  const version = idOf(selector).slice(name.length + 1);
-  return /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u.test(version)
-    ? lock.packageIds.has(`${name}@${version}`)
-    : lock.packageNames.has(name);
+/** `parent@1.2.3>child` -> its parts; `undefined` when a part uses a range this gate cannot evaluate. */
+const selectorParts = (selector: string): readonly SelectorPart[] | undefined => {
+  const parts = selector
+    .split('>')
+    .map((part) => ({ name: nameOf(part), version: part.slice(nameOf(part).length + 1) }));
+  return parts.every(({ version }) => version === '' || isExactVersion(version)) ? parts : undefined;
 };
 
-const deadPackageExtensions = (workspace: Workspace, lock: Lockfile): readonly string[] =>
-  Object.keys(workspace.packageExtensions ?? {}).flatMap((key) =>
-    selectsResolvedPackage(lock, key) ? [] : [`packageExtensions.${key} matches nothing in pnpm-lock.yaml; delete it`],
-  );
+/** A bare name matches every resolved version; `name@1.2.3` matches only that version. */
+const matchesPackage = (part: SelectorPart, id: string): boolean =>
+  part.version === '' ? nameOf(id) === part.name : id === `${part.name}@${part.version}`;
+
+const rangeSelector = (section: string, key: string): string =>
+  `${section}.${key} selects a version range this gate cannot evaluate; select an exact version or the bare name`;
+
+const deadOverride = (key: string, value: string, lock: Lockfile, manifests: Manifests): readonly string[] => {
+  const parts = selectorParts(key);
+  if (parts === undefined) {
+    return [rangeSelector('overrides', key)];
+  }
+  const target = parts.at(-1)?.name ?? key;
+  const parent = parts.at(-2);
+  const importers = [...lock.importerEdges].filter(([, edges]) => edges.has(target)).map(([importer]) => importer);
+  const dependents = [...(lock.dependents.get(target) ?? [])];
+  if (dependents.length === 0 && importers.length === 0) {
+    return [`overrides.${key} matches nothing in pnpm-lock.yaml; delete it`];
+  }
+  if (parent !== undefined && !dependents.some((id) => matchesPackage(parent, id))) {
+    return [`overrides.${key} names a parent that no longer depends on ${target} in pnpm-lock.yaml; delete it`];
+  }
+  if (dependents.length === 0 && importers.every((importer) => manifests[importer]?.[target] === value)) {
+    return [`overrides.${key} only restates the range every importer declares; delete it`];
+  }
+  return [];
+};
+
+const deadPeerRule = (key: string, value: string, lock: Lockfile): readonly string[] => {
+  const parts = selectorParts(key);
+  if (parts === undefined) {
+    return [rangeSelector('peerDependencyRules.allowedVersions', key)];
+  }
+  const peer = parts.at(-1)?.name ?? key;
+  const parent = parts.at(-2);
+  const ranges = [...lock.peerRanges]
+    .filter(([id]) => parent === undefined || matchesPackage(parent, id))
+    .flatMap(([, peers]) => peers.get(peer) ?? []);
+  if (ranges.length === 0) {
+    return [`peerDependencyRules.allowedVersions.${key} matches no peer in pnpm-lock.yaml; delete it`];
+  }
+  if (ranges.every((range) => range === value)) {
+    return [`peerDependencyRules.allowedVersions.${key} only restates the declared peer range; delete it`];
+  }
+  return [];
+};
+
+const deadPackageExtension = (key: string, lock: Lockfile): readonly string[] => {
+  const part = selectorParts(key)?.[0];
+  if (part === undefined) {
+    return [rangeSelector('packageExtensions', key)];
+  }
+  return [...lock.packageIds].some((id) => matchesPackage(part, id))
+    ? []
+    : [`packageExtensions.${key} matches nothing in pnpm-lock.yaml; delete it`];
+};
 
 const deadPatches = (workspaceYaml: string, lock: Lockfile): readonly string[] =>
   patchEntries(workspaceYaml).flatMap(({ comment, key }) => [
@@ -169,9 +178,11 @@ const findDeadDependencyPolicy = (
   const lock = parseLockfile(lockSource);
   const workspace = Schema.decodeUnknownSync(WorkspaceSchema)(parseDocument(workspaceYaml).toJS() ?? {});
   return [
-    ...deadOverrides(workspace, lock, manifests),
-    ...deadPeerRules(workspace, lock),
-    ...deadPackageExtensions(workspace, lock),
+    ...Object.entries(workspace.overrides ?? {}).flatMap(([key, value]) => deadOverride(key, value, lock, manifests)),
+    ...Object.entries(workspace.peerDependencyRules?.allowedVersions ?? {}).flatMap(([key, value]) =>
+      deadPeerRule(key, value, lock),
+    ),
+    ...Object.keys(workspace.packageExtensions ?? {}).flatMap((key) => deadPackageExtension(key, lock)),
     ...deadPatches(workspaceYaml, lock),
   ];
 };
@@ -225,18 +236,18 @@ snapshots:
 
 const liveWorkspace = `overrides:
   react: 19.2.8
-  '@scope/host>react': 19.2.8
+  '@scope/host@1.0.0>react': 19.2.8
 packageExtensions:
   zod@4.6.5:
     dependencies:
       react: 19.2.8
-  react@^19.0.0:
+  react:
     dependencies:
       zod: 4.6.5
 peerDependencyRules:
   allowedVersions:
     react: '>=19.0.0'
-    '@scope/host>react': '>=19.0.0'
+    '@scope/host@1.0.0>react': '>=19.0.0'
 patchedDependencies:
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380
   drizzle-orm@1.0.0: patches/drizzle-orm.patch
@@ -267,15 +278,19 @@ it('flags overrides that match nothing, name a parent without that edge, or rest
   ]);
 });
 
-it('flags peer rules for absent parents and ranges the package already declares', () => {
+it('flags peer rules for absent or unresolved parent versions, range selectors, and restated peer ranges', () => {
   const workspace = `peerDependencyRules:
   allowedVersions:
     '@effect/vitest>effect': 4.0.0
     optional-peer: 0.1.0
+    '@scope/host@2.0.0>react': '>=19.0.0'
+    '@scope/host@^1.0.0>react': '>=19.0.0'
 `;
   expect(findDeadDependencyPolicy(workspace, lockFixture, {})).toEqual([
     'peerDependencyRules.allowedVersions.@effect/vitest>effect matches no peer in pnpm-lock.yaml; delete it',
     'peerDependencyRules.allowedVersions.optional-peer only restates the declared peer range; delete it',
+    'peerDependencyRules.allowedVersions.@scope/host@2.0.0>react matches no peer in pnpm-lock.yaml; delete it',
+    'peerDependencyRules.allowedVersions.@scope/host@^1.0.0>react selects a version range this gate cannot evaluate; select an exact version or the bare name',
   ]);
 });
 
