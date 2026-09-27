@@ -1,9 +1,7 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
-export class TenantModuleStateReadUnavailableError extends Schema.TaggedError<TenantModuleStateReadUnavailableError>()(
-  'TenantModuleStateReadUnavailableError',
-  {
-    code: Schema.Literal('tenant_module_state_read_unavailable'),
-    reason: Schema.String,
-  },
-) {}
+export class TenantModuleStateReadUnavailableError extends Data.TaggedError('TenantModuleStateReadUnavailableError')<{
+  readonly cause?: unknown;
+  readonly code: 'tenant_module_state_read_unavailable';
+  readonly reason: string;
+}> {}

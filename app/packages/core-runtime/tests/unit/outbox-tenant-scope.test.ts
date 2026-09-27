@@ -1,9 +1,9 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { ScopedRoutineInvoker } from '../../src/db/scoped-routine.ts';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
-import { makeOutboxWorkerTenantScope, OutboxWorkerTenantScopeError } from '../../src/outbox/tenant-scope.ts';
+import { makeOutboxWorkerTenantScope } from '../../src/outbox/tenant-scope.ts';
 import type { OutboxWorkerTenantScopeBackend } from '../../src/outbox/tenant-scope.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -68,7 +68,7 @@ it.effect('rejects unverified or Legal-Entity-scoped worker contexts before open
         service.run(attestOutboxWorkerHandlerContext({ ...context, tenantId: 'other-tenant' }), () => Effect.void),
       ),
     ];
-    expect(failures.every((failure) => Schema.is(OutboxWorkerTenantScopeError)(failure))).toBe(true);
+    expect(failures.every((failure) => Predicate.isTagged(failure, 'OutboxWorkerTenantScopeError'))).toBe(true);
     expect(failures.every((failure) => !failure.retryable)).toBe(true);
     expect(calls).toBe(0);
   }),

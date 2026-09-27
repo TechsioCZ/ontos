@@ -1,4 +1,4 @@
-import { Effect, Schema, Predicate } from 'effect';
+import { Data, Effect, Predicate, Schema } from 'effect';
 
 import { TrustedPrincipalContextSchema } from '../actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../actions/principal-context.ts';
@@ -18,10 +18,9 @@ const PrincipalContextProvenanceInvariant = Schema.TaggedError<Error>()('Princip
   reason: Schema.String,
 });
 
-export class TrustedPrincipalContextDecodeError extends Schema.TaggedError<TrustedPrincipalContextDecodeError>()(
-  'TrustedPrincipalContextDecodeError',
-  {},
-) {}
+export class TrustedPrincipalContextDecodeError extends Data.TaggedError('TrustedPrincipalContextDecodeError')<{
+  readonly cause?: unknown;
+}> {}
 
 type PrincipalContextProvenanceToken =
   | typeof supportRecoveryProvenance
@@ -166,21 +165,17 @@ export const decodeTrustedPrincipalContext = <Input>(
   input: Input,
 ): Effect.Effect<TrustedPrincipalContext, TrustedPrincipalContextDecodeError> => {
   if (Schema.is(SystemPrincipalContextSchema)(input) && !isTrustedSystemPrincipalContext(input)) {
-    return Effect.fail(new TrustedPrincipalContextDecodeError());
+    return Effect.fail(new TrustedPrincipalContextDecodeError({}));
   }
   if (
     Schema.is(TrustedPrincipalContextSchema)(input) &&
     input.trustedStorefrontId !== undefined &&
     !isVerifiedGatewayPrincipalContext(input)
   ) {
-    return Effect.fail(new TrustedPrincipalContextDecodeError());
+    return Effect.fail(new TrustedPrincipalContextDecodeError({}));
   }
   return Schema.decodeUnknownEffect(TrustedPrincipalContextSchema)(input).pipe(
-    Effect.mapError((cause) =>
-      Object.defineProperty(new TrustedPrincipalContextDecodeError(), 'cause', {
-        value: cause,
-      }),
-    ),
+    Effect.mapError((cause) => new TrustedPrincipalContextDecodeError({ cause })),
     Effect.map((context) => preserveSystemPrincipalContextTrust(input, context)),
   );
 };

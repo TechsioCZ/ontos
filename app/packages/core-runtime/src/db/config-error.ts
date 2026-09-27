@@ -1,5 +1,7 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
-export class DatabaseConfigError extends Schema.TaggedError<DatabaseConfigError>()('DatabaseConfigError', {
-  reason: Schema.String,
-}) {}
+/** The driver failure, when there is one, travels as the native `Error.cause` set by the constructor. */
+export class DatabaseConfigError extends Data.TaggedError('DatabaseConfigError')<{
+  readonly cause?: unknown;
+  readonly reason: string;
+}> {}

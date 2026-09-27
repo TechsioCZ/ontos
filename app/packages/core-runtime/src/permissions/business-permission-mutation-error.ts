@@ -1,6 +1,6 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
-export class BusinessPermissionMutationUnavailable extends Schema.TaggedError<BusinessPermissionMutationUnavailable>()(
-  'BusinessPermissionMutationUnavailable',
-  { reason: Schema.String },
-) {}
+export class BusinessPermissionMutationUnavailable extends Data.TaggedError('BusinessPermissionMutationUnavailable')<{
+  readonly cause?: unknown;
+  readonly reason: string;
+}> {}

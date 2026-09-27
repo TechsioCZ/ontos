@@ -51,10 +51,8 @@ export interface LoadDatabaseConfigOptions {
   readonly envPath?: string;
 }
 
-const configFailure = (reason: string, cause?: unknown): DatabaseConfigError => {
-  const failure = new DatabaseConfigError({ reason });
-  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
-};
+const configFailure = (reason: string, cause?: unknown): DatabaseConfigError =>
+  new DatabaseConfigError({ cause, reason });
 
 interface ReadDatabaseUrlOptions {
   readonly configKey: string;

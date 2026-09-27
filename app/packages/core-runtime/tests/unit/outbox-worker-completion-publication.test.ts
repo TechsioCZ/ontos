@@ -208,6 +208,7 @@ it.effect('rejects a foreign worker, owner, event topic, or invalid payload', ()
       }),
     );
     expect(badPayload.code).toBe('outbox_worker_completion_invalid');
+    expect(Schema.isSchemaError(badPayload.cause)).toBe(true);
     expect(calls).toBe(0);
   }),
 );

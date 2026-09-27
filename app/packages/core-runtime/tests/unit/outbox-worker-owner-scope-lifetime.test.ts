@@ -1,12 +1,9 @@
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { defineScopedRoutine, ScopedRoutineInvocationError } from '../../src/db/scoped-routine.ts';
 import type { ScopedRoutineInvoker } from '../../src/db/scoped-routine.ts';
-import {
-  defineOutboxWorkerCompletion,
-  OutboxWorkerCompletionPublicationError,
-} from '../../src/outbox/completion-publication.ts';
+import { defineOutboxWorkerCompletion } from '../../src/outbox/completion-publication.ts';
 import type { OutboxWorkerCompletionPublisher } from '../../src/outbox/completion-publication.ts';
 import { lifetimeBoundOutboxWorkerOwnerCapabilities } from '../../src/outbox/worker-owner-scope-lifetime.ts';
 
@@ -63,7 +60,7 @@ it.effect('checks routine and completion lifetimes when deferred Effects execute
     const routineFailure = yield* Effect.flip(deferredRoutine);
     const completionFailure = yield* Effect.flip(deferredCompletion);
     expect(Schema.is(ScopedRoutineInvocationError)(routineFailure)).toBe(true);
-    expect(Schema.is(OutboxWorkerCompletionPublicationError)(completionFailure)).toBe(true);
+    expect(Predicate.isTagged(completionFailure, 'OutboxWorkerCompletionPublicationError')).toBe(true);
     expect(routineCalls).toBe(0);
     expect(completionCalls).toBe(0);
   }),

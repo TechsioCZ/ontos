@@ -1,11 +1,10 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPermissionCheckError } from '../../src/actions/errors.ts';
 import type { SpiceDbPermissionClientError } from '../../src/permissions/client.ts';
 import { spiceDbPermissionClientError } from '../../src/permissions/client.ts';
-import { SpiceDbConfigError } from '../../src/permissions/config-error.ts';
 import { SPICEDB_ROOT_ENV_PATH, loadSpiceDbConfig, parseSpiceDbConfig } from '../../src/permissions/config.ts';
 import {
   SPICEDB_ACTION_OBJECT_TYPE,
@@ -119,7 +118,7 @@ it.effect('requires complete configuration and explicit secure or localhost-inse
       insecureLocal: false,
       preSharedKey: 'test-key',
     });
-    expect(failures.every(Schema.is(SpiceDbConfigError))).toBe(true);
+    expect(failures.every((failure) => Predicate.isTagged(failure, 'SpiceDbConfigError'))).toBe(true);
     expect(failures.some((failure) => failure.reason.includes('test-key'))).toBe(false);
   }),
 );
@@ -161,7 +160,7 @@ it.effect('allows insecure transport only for the exact Zerops stage private end
       insecureLocal: true,
       preSharedKey: 'test-key',
     });
-    expect(rejected.every(Schema.is(SpiceDbConfigError))).toBe(true);
+    expect(rejected.every((failure) => Predicate.isTagged(failure, 'SpiceDbConfigError'))).toBe(true);
   }),
 );
 

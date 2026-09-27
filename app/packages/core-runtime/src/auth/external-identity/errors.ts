@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
 /**
  * Internal failures for the Core external identity boundary.
@@ -20,10 +20,14 @@ const EXTERNAL_IDENTITY_FAILURE_CODES = [
 
 export type ExternalIdentityFailureCode = (typeof EXTERNAL_IDENTITY_FAILURE_CODES)[number];
 
-export class ExternalIdentityFailure extends Schema.TaggedError<ExternalIdentityFailure>()('ExternalIdentityFailure', {
-  code: Schema.Literals(EXTERNAL_IDENTITY_FAILURE_CODES),
-  reason: Schema.String,
-}) {}
+export class ExternalIdentityFailure extends Data.TaggedError('ExternalIdentityFailure')<{
+  readonly cause?: unknown;
+  readonly code: (typeof EXTERNAL_IDENTITY_FAILURE_CODES)[number];
+  readonly reason: string;
+}> {}
 
-export const externalIdentityFailure = (code: ExternalIdentityFailureCode, reason: string): ExternalIdentityFailure =>
-  new ExternalIdentityFailure({ code, reason });
+export const externalIdentityFailure = (
+  code: ExternalIdentityFailureCode,
+  reason: string,
+  cause?: unknown,
+): ExternalIdentityFailure => new ExternalIdentityFailure({ cause, code, reason });

@@ -190,13 +190,8 @@ export class ExternalIdentityRepository extends Context.Service<
   ExternalIdentityRepositoryService
 >()('@app/core-runtime/auth/external-identity/repository/ExternalIdentityRepository') {}
 
-const persistenceFailure = (reason: string, cause?: unknown): ExternalIdentityFailure => {
-  const failure = externalIdentityFailure('identity_unavailable', reason);
-  if (cause !== undefined) {
-    Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-  }
-  return failure;
-};
+const persistenceFailure = (reason: string, cause?: unknown): ExternalIdentityFailure =>
+  externalIdentityFailure('identity_unavailable', reason, cause);
 const conflict = (reason: string): ExternalIdentityFailure => externalIdentityFailure('identity_conflict', reason);
 const invalid = (reason: string): ExternalIdentityFailure => externalIdentityFailure('identity_invalid', reason);
 const unusable = (reason: string): ExternalIdentityFailure => externalIdentityFailure('identity_unusable', reason);

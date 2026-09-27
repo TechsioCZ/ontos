@@ -134,16 +134,12 @@ export class TenantModuleStateService extends Context.Service<
   TenantModuleStateServiceContract
 >()('@app/core-runtime/modules/tenant-module-state-service/TenantModuleStateService') {}
 
-const tenantModuleStateReadUnavailable = (cause?: unknown) => {
-  const error = new TenantModuleStateReadUnavailableError({
+const tenantModuleStateReadUnavailable = (cause?: unknown) =>
+  new TenantModuleStateReadUnavailableError({
+    cause,
     code: 'tenant_module_state_read_unavailable',
     reason: 'Tenant module state is temporarily unavailable',
   });
-  if (cause !== undefined) {
-    Object.defineProperty(error, 'cause', { configurable: true, value: cause });
-  }
-  return error;
-};
 
 export const makeTenantModuleStateService = (database: {
   readonly executor: Pick<CoreDatabaseExecutor, 'select'>;

@@ -68,17 +68,12 @@ interface SystemPrincipalContextRecordReader<Result extends SystemPrincipalConte
   readonly load: (input: { readonly principalId: string; readonly tenantId: string }) => Result;
 }
 
-const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
-  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
-
 const unavailable = (cause?: unknown): SystemPrincipalContextUnavailableError =>
-  attachCause(
-    new SystemPrincipalContextUnavailableError({
-      code: 'system_principal_context_unavailable',
-      reason: 'The system principal could not be revalidated',
-    }),
+  new SystemPrincipalContextUnavailableError({
     cause,
-  );
+    code: 'system_principal_context_unavailable',
+    reason: 'The system principal could not be revalidated',
+  });
 
 const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
 
@@ -164,14 +159,13 @@ export const systemPrincipalContextResolverFromRepository = <Result extends Syst
         principalId: input.principalId,
         tenantId: input.tenantId,
       }).pipe(
-        Effect.mapError((cause) =>
-          attachCause(
+        Effect.mapError(
+          (cause) =>
             new SystemPrincipalContextInvalidError({
+              cause,
               code: 'system_principal_context_invalid',
               reason: 'The trusted system workload registration is invalid',
             }),
-            cause,
-          ),
         ),
       );
       return trustResolvedSystemPrincipalContext(Object.freeze(context));

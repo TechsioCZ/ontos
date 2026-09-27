@@ -33,22 +33,15 @@ const failure = (
   reason: string,
   externalMutationMayHaveSucceeded: boolean,
   cause?: unknown,
-): AuthorizationMutationSagaError => {
-  const error = new AuthorizationMutationSagaError({
+): AuthorizationMutationSagaError =>
+  new AuthorizationMutationSagaError({
+    cause,
     code,
     externalMutationMayHaveSucceeded,
     reason,
     retryable:
       code !== 'authorization_mutation_intent_invalid' && code !== 'authorization_mutation_final_state_invalid',
   });
-  return cause === undefined
-    ? error
-    : Object.defineProperty(error, 'cause', {
-        configurable: false,
-        enumerable: false,
-        value: cause,
-      });
-};
 
 const desiredState = (operation: AuthorizationMutationJournalEntry['operation']): 'ACTIVE' | 'REVOKED' =>
   operation === 'grant' ? 'ACTIVE' : 'REVOKED';

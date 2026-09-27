@@ -22,14 +22,6 @@ export class CoreDatabase extends Context.Service<
   }
 >()('@app/core-runtime/db/client/CoreDatabase') {}
 
-const connectionFailure = (reason: string, cause: unknown): DatabaseConnectionError =>
-  Object.defineProperty(new DatabaseConnectionError({ reason }), 'cause', {
-    configurable: false,
-    enumerable: false,
-    value: cause,
-    writable: false,
-  });
-
 export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* makeDatabase(
   configuration: DatabaseConfigValue & {
     readonly maxConnections?: number;
@@ -43,7 +35,9 @@ export const makeCoreDatabase = Effect.fn('Client.makeCoreDatabase')(function* m
   const reactivity = yield* Reactivity.make;
   const client = yield* PgClient.make({ ...poolConfiguration, maxConnections: configuration.maxConnections }).pipe(
     Effect.provideService(Reactivity.Reactivity, reactivity),
-    Effect.mapError((cause) => connectionFailure('Unable to initialize the native PostgreSQL client', cause)),
+    Effect.mapError(
+      (cause) => new DatabaseConnectionError({ cause, reason: 'Unable to initialize the native PostgreSQL client' }),
+    ),
   );
   return {
     executor: yield* makeWithDefaults({ relations: coreRelations }).pipe(

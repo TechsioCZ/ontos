@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
@@ -146,7 +146,9 @@ it.effect('rejects malformed, duplicate, or unsupported topology before transpor
       ),
       yield* Effect.flip(service.touch({ relationships: [unsupportedPrincipalRelationship] })),
     ];
-    expect(failures.every((failure) => Schema.is(ResourceContainmentMutationUnavailable)(failure))).toBe(true);
+    expect(failures.every((failure) => Predicate.isTagged(failure, 'ResourceContainmentMutationUnavailable'))).toBe(
+      true,
+    );
     expect(requests).toHaveLength(0);
   }),
 );
@@ -219,7 +221,9 @@ it.effect('rejects cross-tenant and dual-catalog containment relationships', () 
         }),
       ),
     ];
-    expect(failures.every((failure) => Schema.is(ResourceContainmentMutationUnavailable)(failure))).toBe(true);
+    expect(failures.every((failure) => Predicate.isTagged(failure, 'ResourceContainmentMutationUnavailable'))).toBe(
+      true,
+    );
     expect(requests).toHaveLength(0);
   }),
 );

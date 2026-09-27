@@ -78,17 +78,12 @@ interface SupportRecoveryPrincipalContextEffectRecordReader {
   >;
 }
 
-const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
-  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
-
 const unavailable = (cause?: unknown): SupportRecoveryPrincipalContextUnavailableError =>
-  attachCause(
-    new SupportRecoveryPrincipalContextUnavailableError({
-      code: 'support_recovery_context_unavailable',
-      reason: 'The support recovery identity could not be revalidated',
-    }),
+  new SupportRecoveryPrincipalContextUnavailableError({
     cause,
-  );
+    code: 'support_recovery_context_unavailable',
+    reason: 'The support recovery identity could not be revalidated',
+  });
 
 const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
 

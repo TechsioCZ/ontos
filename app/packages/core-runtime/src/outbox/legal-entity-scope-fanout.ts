@@ -67,22 +67,13 @@ const empty = () =>
     retryable: true,
   });
 
-const unavailable = (cause?: unknown) => {
-  const failure = new OutboxWorkerLegalEntityScopeError({
+const unavailable = (cause?: unknown) =>
+  new OutboxWorkerLegalEntityScopeError({
+    cause,
     code: 'outbox_worker_scope_unavailable',
     reason: 'Legal-entity worker scope is temporarily unavailable',
     retryable: true,
   });
-  if (cause !== undefined) {
-    Object.defineProperty(failure, 'cause', {
-      configurable: false,
-      enumerable: false,
-      value: cause,
-      writable: false,
-    });
-  }
-  return failure;
-};
 
 const legalEntityStatuses = ['active', 'archived', 'suspended'] as const;
 

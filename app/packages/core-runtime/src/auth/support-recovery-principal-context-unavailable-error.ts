@@ -1,9 +1,9 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
-export class SupportRecoveryPrincipalContextUnavailableError extends Schema.TaggedError<SupportRecoveryPrincipalContextUnavailableError>()(
+export class SupportRecoveryPrincipalContextUnavailableError extends Data.TaggedError(
   'SupportRecoveryPrincipalContextUnavailableError',
-  {
-    code: Schema.Literal('support_recovery_context_unavailable'),
-    reason: Schema.String,
-  },
-) {}
+)<{
+  readonly cause?: unknown;
+  readonly code: 'support_recovery_context_unavailable';
+  readonly reason: string;
+}> {}

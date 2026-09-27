@@ -1,8 +1,6 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
-export class ResourceContainmentMutationUnavailable extends Schema.TaggedError<ResourceContainmentMutationUnavailable>()(
-  'ResourceContainmentMutationUnavailable',
-  {
-    reason: Schema.String,
-  },
-) {}
+export class ResourceContainmentMutationUnavailable extends Data.TaggedError('ResourceContainmentMutationUnavailable')<{
+  readonly cause?: unknown;
+  readonly reason: string;
+}> {}

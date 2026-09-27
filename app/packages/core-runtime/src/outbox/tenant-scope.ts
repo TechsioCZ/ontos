@@ -50,21 +50,13 @@ const invalid = () =>
     retryable: false,
   });
 
-const unavailable = (cause?: unknown) => {
-  const failure = new OutboxWorkerTenantScopeError({
+const unavailable = (cause?: unknown) =>
+  new OutboxWorkerTenantScopeError({
+    cause,
     code: 'outbox_worker_tenant_scope_unavailable',
     reason: 'Tenant-only worker scope is temporarily unavailable',
     retryable: true,
   });
-  return cause === undefined
-    ? failure
-    : Object.defineProperty(failure, 'cause', {
-        configurable: false,
-        enumerable: false,
-        value: cause,
-        writable: false,
-      });
-};
 
 const hasVerifiedTenantOnlyContext = (context: OutboxWorkerHandlerContext): boolean =>
   isVerifiedOutboxWorkerHandlerContext(context) &&

@@ -144,16 +144,11 @@ interface LegalEntityContextRecordReader<Result extends LegalEntityContextRecord
   readonly load: (tenantId: string, legalEntityId?: string) => Result;
 }
 
-const attachCause = <Failure extends object, FailureCause>(failure: Failure, cause?: FailureCause): Failure =>
-  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
-
 const unavailable = <FailureCause>(cause?: FailureCause): LegalEntityContextUnavailableError =>
-  attachCause(
-    new LegalEntityContextUnavailableError({
-      reason: 'Unable to resolve the legal-entity context',
-    }),
+  new LegalEntityContextUnavailableError({
     cause,
-  );
+    reason: 'Unable to resolve the legal-entity context',
+  });
 
 const DATABASE_OPERATION_TIMEOUT = Duration.seconds(30);
 

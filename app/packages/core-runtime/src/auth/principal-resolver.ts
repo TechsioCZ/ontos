@@ -84,11 +84,8 @@ interface PrincipalResolutionRecordReader<Result extends PrincipalResolutionReco
 
 type PrincipalResolutionRecordRepository = PrincipalResolutionRecordReader<PrincipalResolutionRecordLoadResult>;
 
-const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
-  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
-
 const unavailable = (reason: string, cause?: unknown): PrincipalResolverUnavailableError =>
-  attachCause(new PrincipalResolverUnavailableError({ reason }), cause);
+  new PrincipalResolverUnavailableError({ cause, reason });
 
 const loadPrincipalResolutionRecords = <Result extends PrincipalResolutionRecordLoadResult>(
   repository: PrincipalResolutionRecordReader<Result>,

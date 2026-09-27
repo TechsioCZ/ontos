@@ -1,5 +1,6 @@
-import { Schema } from 'effect';
+import { Data } from 'effect';
 
-export class SpiceDbConfigError extends Schema.TaggedError<SpiceDbConfigError>()('SpiceDbConfigError', {
-  reason: Schema.String,
-}) {}
+export class SpiceDbConfigError extends Data.TaggedError('SpiceDbConfigError')<{
+  readonly cause?: unknown;
+  readonly reason: string;
+}> {}

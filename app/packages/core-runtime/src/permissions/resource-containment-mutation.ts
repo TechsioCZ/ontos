@@ -64,18 +64,11 @@ export interface ResourceContainmentRelationshipMutationClient {
   readonly writeRelationships: PermissionRelationshipMutationClient<ResourceContainmentMutationUnavailable>['writeRelationships'];
 }
 
-const unavailable = (cause?: unknown): ResourceContainmentMutationUnavailable => {
-  const failure = new ResourceContainmentMutationUnavailable({
+const unavailable = (cause?: unknown): ResourceContainmentMutationUnavailable =>
+  new ResourceContainmentMutationUnavailable({
+    cause,
     reason: 'The resource containment relationship mutation could not be completed safely',
   });
-  return cause === undefined
-    ? failure
-    : Object.defineProperty(failure, 'cause', {
-        configurable: false,
-        enumerable: false,
-        value: cause,
-      });
-};
 
 const ContextAccessObjectIdParts = Schema.fromJsonString(Schema.Array(Schema.String));
 const decodeContextAccessObjectIdParts = Schema.decodeUnknownOption(ContextAccessObjectIdParts);

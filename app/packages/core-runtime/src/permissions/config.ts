@@ -47,10 +47,7 @@ export interface LoadSpiceDbConfigOptions {
 
 const configFailure = (reason: string) => new SpiceDbConfigError({ reason });
 
-const configFailureWithCause = <Cause>(reason: string, cause: Cause) => {
-  const failure = new SpiceDbConfigError({ reason });
-  return Object.defineProperty(failure, 'cause', { value: cause });
-};
+const configFailureWithCause = (reason: string, cause: unknown) => new SpiceDbConfigError({ cause, reason });
 
 const isLocalhostEndpoint = (endpoint: string): boolean => {
   try {

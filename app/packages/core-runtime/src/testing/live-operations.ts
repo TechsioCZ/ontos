@@ -1,6 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
 import { eq } from 'drizzle-orm';
-import { Context, Duration, Effect, Exit, Layer, Random, Redacted, Schema, Scope } from 'effect';
+import { Context, Data, Duration, Effect, Exit, Layer, Predicate, Random, Redacted, Schema, Scope } from 'effect';
 
 import { ActionCommitIndeterminate, ActionTransactionError } from '../actions/errors.ts';
 import type { ActionRepositoryService } from '../actions/repository.ts';
@@ -65,14 +65,13 @@ const LiveOperationFixtureConfigurationSchema = Schema.Struct({
 
 export type LiveOperationFixtureConfiguration = typeof LiveOperationFixtureConfigurationSchema.Encoded;
 
-class LiveOperationFixtureError extends Schema.TaggedError<LiveOperationFixtureError>()('LiveOperationFixtureError', {
-  reason: Schema.String,
-}) {}
+class LiveOperationFixtureError extends Data.TaggedError('LiveOperationFixtureError')<{
+  readonly cause?: unknown;
+  readonly reason: string;
+}> {}
 
-const fixtureFailure = (reason: string, cause?: unknown): LiveOperationFixtureError => {
-  const failure = new LiveOperationFixtureError({ reason });
-  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
-};
+const fixtureFailure = (reason: string, cause?: unknown): LiveOperationFixtureError =>
+  new LiveOperationFixtureError({ cause, reason });
 
 const attemptFixturePromise = <Value>(
   reason: string,
@@ -537,7 +536,7 @@ export const makeLiveOperationFixture = Effect.fn('LiveOperations.makeLiveOperat
   function* makeLiveOperationFixturePublicEffect(input: LiveOperationFixtureConfiguration) {
     return yield* makeLiveOperationFixtureEffect(input).pipe(
       Effect.mapError((cause) =>
-        Schema.is(LiveOperationFixtureError)(cause)
+        Predicate.isTagged(cause, 'LiveOperationFixtureError')
           ? cause
           : fixtureFailure('Unable to create live operation fixture', cause),
       ),

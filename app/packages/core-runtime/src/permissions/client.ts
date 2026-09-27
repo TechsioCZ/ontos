@@ -1,5 +1,5 @@
 import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
-import { Cause, Duration, Effect, Schema } from 'effect';
+import { Cause, Data, Duration, Effect } from 'effect';
 import type { Scope } from 'effect';
 
 import { SpiceDbConfigError } from './config-error.ts';
@@ -19,21 +19,16 @@ export interface CloseableSpiceDbClient {
   readonly close: () => void;
 }
 
-export class SpiceDbPermissionClientError extends Schema.TaggedError<SpiceDbPermissionClientError>()(
-  'SpiceDbPermissionClientError',
-  { reason: Schema.String },
-) {}
-
-const attachCause = <Failure extends object>(failure: Failure, cause: unknown): Failure =>
-  cause === undefined ? failure : Object.defineProperty(failure, 'cause', { value: cause });
+export class SpiceDbPermissionClientError extends Data.TaggedError('SpiceDbPermissionClientError')<{
+  readonly cause?: unknown;
+  readonly reason: string;
+}> {}
 
 export const spiceDbPermissionClientError = (cause?: unknown): SpiceDbPermissionClientError =>
-  attachCause(
-    new SpiceDbPermissionClientError({
-      reason: 'The SpiceDB client operation did not complete safely',
-    }),
+  new SpiceDbPermissionClientError({
     cause,
-  );
+    reason: 'The SpiceDB client operation did not complete safely',
+  });
 
 export interface SpiceDbPermissionClient extends CloseableSpiceDbClient {
   readonly checkBulkPermissions: (

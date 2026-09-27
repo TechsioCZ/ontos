@@ -26,12 +26,11 @@ import type { PrincipalRef } from './principal-ref.ts';
 
 export { BusinessPermissionMutationUnavailable } from './business-permission-mutation-error.ts';
 
-const unavailable = (cause?: unknown): BusinessPermissionMutationUnavailable => {
-  const failure = new BusinessPermissionMutationUnavailable({
+const unavailable = (cause?: unknown): BusinessPermissionMutationUnavailable =>
+  new BusinessPermissionMutationUnavailable({
+    cause,
     reason: 'The business permission relationship mutation could not be completed safely',
   });
-  return cause === undefined ? failure : Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-};
 
 export interface BusinessPermissionRelationshipMutationInput {
   readonly operation: 'grant' | 'revoke';

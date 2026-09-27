@@ -89,8 +89,9 @@ export type PersistOutboxWorkerCompletion = (
   input: PersistOutboxWorkerCompletionInput,
 ) => Effect.Effect<OutboxWorkerCompletionPublicationResult, OutboxWorkerCompletionPublicationError>;
 
-const invalid = (reason: string): OutboxWorkerCompletionPublicationError =>
+const invalid = (reason: string, cause?: unknown): OutboxWorkerCompletionPublicationError =>
   new OutboxWorkerCompletionPublicationError({
+    cause,
     code: 'outbox_worker_completion_invalid',
     reason,
     retryable: false,
@@ -103,20 +104,13 @@ const conflict = (): OutboxWorkerCompletionPublicationError =>
     retryable: false,
   });
 
-const unavailable = (cause?: unknown): OutboxWorkerCompletionPublicationError => {
-  const error = new OutboxWorkerCompletionPublicationError({
+const unavailable = (cause?: unknown): OutboxWorkerCompletionPublicationError =>
+  new OutboxWorkerCompletionPublicationError({
+    cause,
     code: 'outbox_worker_completion_unavailable',
     reason: 'The worker completion could not be published durably',
     retryable: true,
   });
-  return cause === undefined
-    ? error
-    : Object.defineProperty(error, 'cause', {
-        configurable: false,
-        enumerable: false,
-        value: cause,
-      });
-};
 
 export const defineOutboxWorkerCompletion = <PayloadSchema extends Schema.ConstraintDecoder<unknown>>(
   input: OutboxWorkerCompletionDefinitionInput<PayloadSchema>,
@@ -177,13 +171,7 @@ export const outboxWorkerCompletionPublisherFor = (
       return Effect.fail(invalid('The worker completion scope or identity is invalid'));
     }
     return Schema.decodeUnknownEffect(definition.payloadSchema, { onExcessProperty: 'error' })(input.payloadJson).pipe(
-      Effect.mapError((cause) =>
-        Object.defineProperty(invalid('The worker completion payload is invalid'), 'cause', {
-          configurable: false,
-          enumerable: false,
-          value: cause,
-        }),
-      ),
+      Effect.mapError((cause) => invalid('The worker completion payload is invalid', cause)),
       Effect.flatMap((payloadJson) =>
         persist({
           completionId: input.completionId,

@@ -1,5 +1,5 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Schema } from 'effect';
+import { Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { BusinessPermissionCodeSchema } from '../../src/permissions/business-permission.ts';
@@ -224,7 +224,9 @@ it.effect('rejects incompatible permission targets and noncanonical Pricing iden
     for (const input of invalidInputs) {
       failures.push(yield* Effect.flip(service.mutate(input)));
     }
-    expect(failures.every((failure) => Schema.is(BusinessPermissionMutationUnavailable)(failure))).toBe(true);
+    expect(failures.every((failure) => Predicate.isTagged(failure, 'BusinessPermissionMutationUnavailable'))).toBe(
+      true,
+    );
     expect(calls).toBe(0);
   }),
 );
