@@ -11,10 +11,6 @@ import {
 
 export { PromotePackageDefinitionPayloadSchema } from '../actions/promote-package-definition.ts';
 
-const PromotePackageDefinitionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const PromotePackageDefinitionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'PromotePackageDefinitionActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const PromotePackageDefinitionActionApi = HttpApi.make('PromotePackageDef
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/promote-package-definition', {
         error: actionErrors,
-        headers: PromotePackageDefinitionActionHeadersSchema,
         payload: Schema.toEncoded(PromotePackageDefinitionPayloadSchema),
         success: PromotePackageDefinitionResultSchema,
       }),

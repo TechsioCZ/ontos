@@ -40,7 +40,7 @@ export const executePackageOptionHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PackageOptionHistoryAuthorizedInvocation
 ) =>
   packageOptionHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.packageOptionHistory.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.packageOptionHistory.execute({ payload })),
   );
 
 export const executePackageOptionHistory = (

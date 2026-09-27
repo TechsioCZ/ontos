@@ -40,9 +40,7 @@ export const executeCustomerProfileTradingGateWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerProfileTradingGateAuthorizedInvocation
 ) =>
   customerProfileTradingGateClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.customerProfileTradingGate.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.customerProfileTradingGate.execute({ payload })),
   );
 
 export const executeCustomerProfileTradingGate = (

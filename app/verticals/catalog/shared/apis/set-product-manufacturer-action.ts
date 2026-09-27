@@ -11,10 +11,6 @@ import {
 
 export { SetProductManufacturerPayloadSchema } from '../actions/set-product-manufacturer.ts';
 
-const SetProductManufacturerActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const SetProductManufacturerActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetProductManufacturerActionInvalidProblem',
   400,
@@ -134,7 +130,6 @@ export const SetProductManufacturerActionApi = HttpApi.make('SetProductManufactu
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/set-product-manufacturer', {
         error: actionErrors,
-        headers: SetProductManufacturerActionHeadersSchema,
         payload: Schema.toEncoded(SetProductManufacturerPayloadSchema),
         success: SetProductManufacturerResultSchema,
       }),

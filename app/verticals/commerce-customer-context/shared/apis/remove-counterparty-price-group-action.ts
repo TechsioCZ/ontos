@@ -11,10 +11,6 @@ import {
 
 export { RemoveCounterpartyPriceGroupPayloadSchema } from '../actions/remove-counterparty-price-group.ts';
 
-const RemoveCounterpartyPriceGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RemoveCounterpartyPriceGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveCounterpartyPriceGroupActionInvalidProblem',
   400,
@@ -163,7 +159,6 @@ export const removeCounterpartyPriceGroupActionGroupDefinition = HttpApiGroup.ma
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/remove-counterparty-price-group', {
       error: actionErrors,
-      headers: RemoveCounterpartyPriceGroupActionHeadersSchema,
       payload: Schema.toEncoded(RemoveCounterpartyPriceGroupPayloadSchema),
       success: RemoveCounterpartyPriceGroupResultSchema,
     }),

@@ -41,14 +41,7 @@ export const executePartyOfficialIdentifierDetailWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PartyOfficialIdentifierDetailAuthorizedInvocation
 ) =>
   partyOfficialIdentifierDetailClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.partyOfficialIdentifierDetail.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.partyOfficialIdentifierDetail.execute({ payload })),
   );
 
 export const executePartyOfficialIdentifierDetail = (

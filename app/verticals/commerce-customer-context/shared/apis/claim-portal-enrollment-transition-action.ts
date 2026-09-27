@@ -11,10 +11,6 @@ import {
 
 export { ClaimPortalEnrollmentTransitionPayloadSchema } from '../actions/claim-portal-enrollment-transition.ts';
 
-const ClaimPortalEnrollmentTransitionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ClaimPortalEnrollmentTransitionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ClaimPortalEnrollmentTransitionActionInvalidProblem',
   400,
@@ -153,7 +149,6 @@ export const claimPortalEnrollmentTransitionActionGroupDefinition = HttpApiGroup
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/claim-portal-enrollment-transition', {
       error: actionErrors,
-      headers: ClaimPortalEnrollmentTransitionActionHeadersSchema,
       payload: Schema.toEncoded(ClaimPortalEnrollmentTransitionPayloadSchema),
       success: ClaimPortalEnrollmentTransitionResultSchema,
     }),

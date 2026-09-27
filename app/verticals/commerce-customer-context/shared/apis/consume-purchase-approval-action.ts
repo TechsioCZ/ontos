@@ -11,10 +11,6 @@ import {
 
 export { ConsumePurchaseApprovalPayloadSchema } from '../actions/consume-purchase-approval.ts';
 
-const ConsumePurchaseApprovalActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ConsumePurchaseApprovalActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ConsumePurchaseApprovalActionInvalidProblem',
   400,
@@ -172,7 +168,6 @@ export const consumePurchaseApprovalActionGroupDefinition = HttpApiGroup.make('c
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/consume-purchase-approval', {
       error: actionErrors,
-      headers: ConsumePurchaseApprovalActionHeadersSchema,
       payload: Schema.toEncoded(ConsumePurchaseApprovalPayloadSchema),
       success: ConsumePurchaseApprovalResultSchema,
     }),

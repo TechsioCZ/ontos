@@ -11,10 +11,6 @@ import {
 
 export { RenameControlledAttributeValuePayloadSchema } from '../actions/rename-controlled-attribute-value.ts';
 
-const RenameControlledAttributeValueActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RenameControlledAttributeValueActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RenameControlledAttributeValueActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const RenameControlledAttributeValueActionApi = HttpApi.make('RenameContr
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/rename-controlled-attribute-value', {
         error: actionErrors,
-        headers: RenameControlledAttributeValueActionHeadersSchema,
         payload: Schema.toEncoded(RenameControlledAttributeValuePayloadSchema),
         success: RenameControlledAttributeValueResultSchema,
       }),

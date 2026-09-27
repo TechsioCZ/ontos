@@ -8,10 +8,6 @@ import { ReviseProductUnitPayloadSchema, ReviseProductUnitResultSchema } from '.
 
 export { ReviseProductUnitPayloadSchema } from '../actions/revise-product-unit.ts';
 
-const ReviseProductUnitActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReviseProductUnitActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReviseProductUnitActionInvalidProblem',
   400,
@@ -127,7 +123,6 @@ export const ReviseProductUnitActionApi = HttpApi.make('ReviseProductUnitActionA
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/revise-product-unit', {
         error: actionErrors,
-        headers: ReviseProductUnitActionHeadersSchema,
         payload: Schema.toEncoded(ReviseProductUnitPayloadSchema),
         success: ReviseProductUnitResultSchema,
       }),

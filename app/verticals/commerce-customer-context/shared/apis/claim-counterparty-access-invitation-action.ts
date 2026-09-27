@@ -11,10 +11,6 @@ import {
 
 export { ClaimCounterpartyAccessInvitationPayloadSchema } from '../actions/claim-counterparty-access-invitation.ts';
 
-const ClaimCounterpartyAccessInvitationActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ClaimCounterpartyAccessInvitationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ClaimCounterpartyAccessInvitationActionInvalidProblem',
   400,
@@ -180,7 +176,6 @@ export const claimCounterpartyAccessInvitationActionGroupDefinition = HttpApiGro
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/claim-counterparty-access-invitation', {
       error: actionErrors,
-      headers: ClaimCounterpartyAccessInvitationActionHeadersSchema,
       payload: Schema.toEncoded(ClaimCounterpartyAccessInvitationPayloadSchema),
       success: ClaimCounterpartyAccessInvitationResultSchema,
     }),

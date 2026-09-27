@@ -40,7 +40,7 @@ export const executeCatalogMediaCurrentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CatalogMediaCurrentAuthorizedInvocation
 ) =>
   catalogMediaCurrentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.catalogMediaCurrent.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.catalogMediaCurrent.execute({ payload })),
   );
 
 export const executeCatalogMediaCurrent = (

@@ -41,6 +41,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: ClearDefaultDeliveryDestinationActionApi,
       credential,
       defaultApiPrefix: '/commerce-customer-context-api',
+      idempotencyKey: options.idempotencyKey,
       requestCorrelation,
     },
     options,
@@ -53,12 +54,7 @@ export const executeClearDefaultDeliveryDestinationWithAuthorization = (
   Schema.encodeUnknownEffect(ClearDefaultDeliveryDestinationPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.clearDefaultDeliveryDestinationAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.clearDefaultDeliveryDestinationAction.execute({ payload: encoded })),
       ),
     ),
   );

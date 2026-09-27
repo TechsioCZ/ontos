@@ -11,10 +11,6 @@ import {
 
 export { BindRetailPortalProfilePayloadSchema } from '../actions/bind-retail-portal-profile.ts';
 
-const BindRetailPortalProfileActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const BindRetailPortalProfileActionInvalidProblemSchema = makeProblemDetailsSchema(
   'BindRetailPortalProfileActionInvalidProblem',
   400,
@@ -160,7 +156,6 @@ export const bindRetailPortalProfileActionGroupDefinition = HttpApiGroup.make('b
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/bind-retail-portal-profile', {
       error: actionErrors,
-      headers: BindRetailPortalProfileActionHeadersSchema,
       payload: Schema.toEncoded(BindRetailPortalProfilePayloadSchema),
       success: RetailPortalBindingResultSchema,
     }),

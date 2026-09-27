@@ -40,7 +40,7 @@ export const executeCurrentMarketCatalogWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CurrentMarketCatalogAuthorizedInvocation
 ) =>
   currentMarketCatalogClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.currentMarketCatalog.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.currentMarketCatalog.execute({ payload })),
   );
 
 export const executeCurrentMarketCatalog = (

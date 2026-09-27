@@ -40,9 +40,7 @@ export const executePurchaseCurrencyPolicyCurrentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PurchaseCurrencyPolicyCurrentAuthorizedInvocation
 ) =>
   purchaseCurrencyPolicyCurrentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.purchaseCurrencyPolicyCurrent.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.purchaseCurrencyPolicyCurrent.execute({ payload })),
   );
 
 export const executePurchaseCurrencyPolicyCurrent = (

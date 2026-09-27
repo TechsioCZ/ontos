@@ -11,10 +11,6 @@ import {
 
 export { CreatePackageDefinitionPayloadSchema } from '../actions/create-package-definition.ts';
 
-const CreatePackageDefinitionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreatePackageDefinitionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreatePackageDefinitionActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const CreatePackageDefinitionActionApi = HttpApi.make('CreatePackageDefin
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/create-package-definition', {
         error: actionErrors,
-        headers: CreatePackageDefinitionActionHeadersSchema,
         payload: Schema.toEncoded(CreatePackageDefinitionPayloadSchema),
         success: CreatePackageDefinitionResultSchema,
       }),

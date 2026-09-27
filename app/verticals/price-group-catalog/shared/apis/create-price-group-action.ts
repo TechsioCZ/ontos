@@ -9,10 +9,6 @@ import { PriceGroupActionCommittedRetryReceiptSchema } from '../domain/action-co
 
 export { CreatePriceGroupPayloadSchema } from '../actions/create-price-group.ts';
 
-const CreatePriceGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreatePriceGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreatePriceGroupActionInvalidProblem',
   400,
@@ -143,7 +139,6 @@ export const createPriceGroupActionGroupDefinition = HttpApiGroup.make('createPr
   .add(
     HttpApiEndpoint.post('execute', '/price-group-catalog/actions/create-price-group', {
       error: actionErrors,
-      headers: CreatePriceGroupActionHeadersSchema,
       payload: Schema.toEncoded(CreatePriceGroupPayloadSchema),
       success: Schema.Union([CreatePriceGroupResultSchema, PriceGroupActionCommittedRetryReceiptSchema]),
     }),

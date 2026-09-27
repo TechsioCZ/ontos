@@ -11,10 +11,6 @@ import {
 
 export { SetVariantLocalizedFactsPayloadSchema } from '../actions/set-variant-localized-facts.ts';
 
-const SetVariantLocalizedFactsActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const SetVariantLocalizedFactsActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetVariantLocalizedFactsActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const SetVariantLocalizedFactsActionApi = HttpApi.make('SetVariantLocaliz
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/set-variant-localized-facts', {
         error: actionErrors,
-        headers: SetVariantLocalizedFactsActionHeadersSchema,
         payload: Schema.toEncoded(SetVariantLocalizedFactsPayloadSchema),
         success: SetVariantLocalizedFactsResultSchema,
       }),

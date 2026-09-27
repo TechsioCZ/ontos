@@ -40,7 +40,7 @@ export const executeCatalogDocumentCurrentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CatalogDocumentCurrentAuthorizedInvocation
 ) =>
   catalogDocumentCurrentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.catalogDocumentCurrent.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.catalogDocumentCurrent.execute({ payload })),
   );
 
 export const executeCatalogDocumentCurrent = (

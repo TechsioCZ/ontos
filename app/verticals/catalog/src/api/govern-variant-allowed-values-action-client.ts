@@ -37,7 +37,13 @@ interface MakeClientOptions {
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
-    { api: GovernVariantAllowedValuesActionApi, credential, defaultApiPrefix: '/catalog-api', requestCorrelation },
+    {
+      api: GovernVariantAllowedValuesActionApi,
+      credential,
+      defaultApiPrefix: '/catalog-api',
+      idempotencyKey: options.idempotencyKey,
+      requestCorrelation,
+    },
     options,
   );
 
@@ -48,12 +54,7 @@ export const executeGovernVariantAllowedValuesWithAuthorization = (
   Schema.encodeUnknownEffect(GovernVariantAllowedValuesPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.governVariantAllowedValuesAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.governVariantAllowedValuesAction.execute({ payload: encoded })),
       ),
     ),
   );

@@ -40,14 +40,7 @@ export const executeCounterpartyOrderHistoryDetailWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CounterpartyOrderHistoryDetailAuthorizedInvocation
 ) =>
   counterpartyOrderHistoryDetailClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.counterpartyOrderHistoryDetail.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.counterpartyOrderHistoryDetail.execute({ payload })),
   );
 
 export const executeCounterpartyOrderHistoryDetail = (

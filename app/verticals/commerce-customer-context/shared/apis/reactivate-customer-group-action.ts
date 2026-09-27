@@ -11,10 +11,6 @@ import {
 
 export { ReactivateCustomerGroupPayloadSchema } from '../actions/reactivate-customer-group.ts';
 
-const ReactivateCustomerGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReactivateCustomerGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReactivateCustomerGroupActionInvalidProblem',
   400,
@@ -150,7 +146,6 @@ export const reactivateCustomerGroupActionGroupDefinition = HttpApiGroup.make('r
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/reactivate-customer-group', {
       error: actionErrors,
-      headers: ReactivateCustomerGroupActionHeadersSchema,
       payload: Schema.toEncoded(ReactivateCustomerGroupPayloadSchema),
       success: ReactivateCustomerGroupResultSchema,
     }),

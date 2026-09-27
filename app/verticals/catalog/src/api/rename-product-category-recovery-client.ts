@@ -40,9 +40,7 @@ export const executeRenameProductCategoryRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RenameProductCategoryRecoveryAuthorizedInvocation
 ) =>
   renameProductCategoryRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.renameProductCategoryRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.renameProductCategoryRecovery.execute({ payload })),
   );
 
 export const executeRenameProductCategoryRecovery = (

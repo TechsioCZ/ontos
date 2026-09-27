@@ -11,10 +11,6 @@ import {
 
 export { MigrateCounterpartyPriceGroupPayloadSchema } from '../actions/migrate-counterparty-price-group.ts';
 
-const MigrateCounterpartyPriceGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const MigrateCounterpartyPriceGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'MigrateCounterpartyPriceGroupActionInvalidProblem',
   400,
@@ -156,7 +152,6 @@ export const migrateCounterpartyPriceGroupActionGroupDefinition = HttpApiGroup.m
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/migrate-counterparty-price-group', {
       error: actionErrors,
-      headers: MigrateCounterpartyPriceGroupActionHeadersSchema,
       payload: Schema.toEncoded(MigrateCounterpartyPriceGroupPayloadSchema),
       success: MigrateCounterpartyPriceGroupResultSchema,
     }),

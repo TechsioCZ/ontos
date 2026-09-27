@@ -40,9 +40,7 @@ export const executeSetVariantLocalizedFactsRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SetVariantLocalizedFactsRecoveryAuthorizedInvocation
 ) =>
   setVariantLocalizedFactsRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.setVariantLocalizedFactsRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.setVariantLocalizedFactsRecovery.execute({ payload })),
   );
 
 export const executeSetVariantLocalizedFactsRecovery = (

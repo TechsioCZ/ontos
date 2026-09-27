@@ -11,10 +11,6 @@ import {
 
 export { ArchiveCustomerProfilePayloadSchema } from '../actions/archive-customer-profile.ts';
 
-const ArchiveCustomerProfileActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ArchiveCustomerProfileActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ArchiveCustomerProfileActionInvalidProblem',
   400,
@@ -152,7 +148,6 @@ export const archiveCustomerProfileActionGroupDefinition = HttpApiGroup.make('ar
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/archive-customer-profile', {
       error: actionErrors,
-      headers: ArchiveCustomerProfileActionHeadersSchema,
       payload: Schema.toEncoded(ArchiveCustomerProfilePayloadSchema),
       success: ArchiveCustomerProfileResultSchema,
     }),

@@ -11,10 +11,6 @@ import {
 
 export { ConfirmVariantCombinationPayloadSchema } from '../actions/confirm-variant-combination.ts';
 
-const ConfirmVariantCombinationActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ConfirmVariantCombinationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ConfirmVariantCombinationActionInvalidProblem',
   400,
@@ -137,7 +133,6 @@ export const ConfirmVariantCombinationActionApi = HttpApi.make('ConfirmVariantCo
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/confirm-variant-combination', {
         error: actionErrors,
-        headers: ConfirmVariantCombinationActionHeadersSchema,
         payload: Schema.toEncoded(ConfirmVariantCombinationPayloadSchema),
         success: ConfirmVariantCombinationResultSchema,
       }),

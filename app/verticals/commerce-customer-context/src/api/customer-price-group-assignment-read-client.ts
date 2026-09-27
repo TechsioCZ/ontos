@@ -40,14 +40,7 @@ export const executeCustomerPriceGroupAssignmentReadWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerPriceGroupAssignmentReadAuthorizedInvocation
 ) =>
   customerPriceGroupAssignmentReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.customerPriceGroupAssignmentRead.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.customerPriceGroupAssignmentRead.execute({ payload })),
   );
 
 export const executeCustomerPriceGroupAssignmentRead = (

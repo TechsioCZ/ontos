@@ -40,9 +40,7 @@ export const executeGovernProductAttributeApplicabilityRecoveryWithAuthorization
   ...[credential, requestCorrelation, options = {}]: GovernProductAttributeApplicabilityRecoveryAuthorizedInvocation
 ) =>
   governProductAttributeApplicabilityRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.governProductAttributeApplicabilityRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.governProductAttributeApplicabilityRecovery.execute({ payload })),
   );
 
 export const executeGovernProductAttributeApplicabilityRecovery = (

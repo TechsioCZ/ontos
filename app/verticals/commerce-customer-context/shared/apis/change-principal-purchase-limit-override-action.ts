@@ -11,10 +11,6 @@ import {
 
 export { ChangePrincipalPurchaseLimitOverridePayloadSchema } from '../actions/change-principal-purchase-limit-override.ts';
 
-const ChangePrincipalPurchaseLimitOverrideActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ChangePrincipalPurchaseLimitOverrideActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ChangePrincipalPurchaseLimitOverrideActionInvalidProblem',
   400,
@@ -155,7 +151,6 @@ export const changePrincipalPurchaseLimitOverrideActionGroupDefinition = HttpApi
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/change-principal-purchase-limit-override', {
       error: actionErrors,
-      headers: ChangePrincipalPurchaseLimitOverrideActionHeadersSchema,
       payload: Schema.toEncoded(ChangePrincipalPurchaseLimitOverridePayloadSchema),
       success: ChangePrincipalPurchaseLimitOverrideResultSchema,
     }),

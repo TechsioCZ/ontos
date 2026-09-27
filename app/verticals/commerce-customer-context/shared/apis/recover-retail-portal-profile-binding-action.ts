@@ -11,10 +11,6 @@ import {
 
 export { RecoverRetailPortalProfileBindingPayloadSchema } from '../actions/recover-retail-portal-profile-binding.ts';
 
-const RecoverRetailPortalProfileBindingActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RecoverRetailPortalProfileBindingActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecoverRetailPortalProfileBindingActionInvalidProblem',
   400,
@@ -162,7 +158,6 @@ export const recoverRetailPortalProfileBindingActionGroupDefinition = HttpApiGro
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/recover-retail-portal-profile-binding', {
       error: actionErrors,
-      headers: RecoverRetailPortalProfileBindingActionHeadersSchema,
       payload: Schema.toEncoded(RecoverRetailPortalProfileBindingPayloadSchema),
       success: RecoverRetailPortalProfileBindingResultSchema,
     }),

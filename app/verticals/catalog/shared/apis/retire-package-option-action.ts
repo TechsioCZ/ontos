@@ -8,10 +8,6 @@ import { RetirePackageOptionPayloadSchema, RetirePackageOptionResultSchema } fro
 
 export { RetirePackageOptionPayloadSchema } from '../actions/retire-package-option.ts';
 
-const RetirePackageOptionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RetirePackageOptionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RetirePackageOptionActionInvalidProblem',
   400,
@@ -129,7 +125,6 @@ export const RetirePackageOptionActionApi = HttpApi.make('RetirePackageOptionAct
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/retire-package-option', {
         error: actionErrors,
-        headers: RetirePackageOptionActionHeadersSchema,
         payload: Schema.toEncoded(RetirePackageOptionPayloadSchema),
         success: RetirePackageOptionResultSchema,
       }),

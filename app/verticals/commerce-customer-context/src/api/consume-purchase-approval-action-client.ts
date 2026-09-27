@@ -37,6 +37,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: ConsumePurchaseApprovalActionApi,
       credential,
       defaultApiPrefix: '/commerce-customer-context-api',
+      idempotencyKey: options.idempotencyKey,
       requestCorrelation,
     },
     options,
@@ -49,12 +50,7 @@ export const executeConsumePurchaseApprovalWithAuthorization = (
   Schema.encodeUnknownEffect(ConsumePurchaseApprovalPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.consumePurchaseApprovalAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.consumePurchaseApprovalAction.execute({ payload: encoded })),
       ),
     ),
   );

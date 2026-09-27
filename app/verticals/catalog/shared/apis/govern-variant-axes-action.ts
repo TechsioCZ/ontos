@@ -8,10 +8,6 @@ import { GovernVariantAxesPayloadSchema, GovernVariantAxesResultSchema } from '.
 
 export { GovernVariantAxesPayloadSchema } from '../actions/govern-variant-axes.ts';
 
-const GovernVariantAxesActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const GovernVariantAxesActionInvalidProblemSchema = makeProblemDetailsSchema(
   'GovernVariantAxesActionInvalidProblem',
   400,
@@ -133,7 +129,6 @@ export const GovernVariantAxesActionApi = HttpApi.make('GovernVariantAxesActionA
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/govern-variant-axes', {
         error: actionErrors,
-        headers: GovernVariantAxesActionHeadersSchema,
         payload: Schema.toEncoded(GovernVariantAxesPayloadSchema),
         success: GovernVariantAxesResultSchema,
       }),

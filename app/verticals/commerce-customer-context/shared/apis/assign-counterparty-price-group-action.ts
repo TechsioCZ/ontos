@@ -11,10 +11,6 @@ import {
 
 export { AssignCounterpartyPriceGroupPayloadSchema } from '../actions/assign-counterparty-price-group.ts';
 
-const AssignCounterpartyPriceGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const AssignCounterpartyPriceGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssignCounterpartyPriceGroupActionInvalidProblem',
   400,
@@ -166,7 +162,6 @@ export const assignCounterpartyPriceGroupActionGroupDefinition = HttpApiGroup.ma
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/assign-counterparty-price-group', {
       error: actionErrors,
-      headers: AssignCounterpartyPriceGroupActionHeadersSchema,
       payload: Schema.toEncoded(AssignCounterpartyPriceGroupPayloadSchema),
       success: AssignCounterpartyPriceGroupResultSchema,
     }),

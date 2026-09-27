@@ -11,10 +11,6 @@ import {
 
 export { SetDefaultDeliveryDestinationPayloadSchema } from '../actions/set-default-delivery-destination.ts';
 
-const SetDefaultDeliveryDestinationActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const SetDefaultDeliveryDestinationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetDefaultDeliveryDestinationActionInvalidProblem',
   400,
@@ -157,7 +153,6 @@ export const setDefaultDeliveryDestinationActionGroupDefinition = HttpApiGroup.m
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/set-default-delivery-destination', {
       error: actionErrors,
-      headers: SetDefaultDeliveryDestinationActionHeadersSchema,
       payload: Schema.toEncoded(SetDefaultDeliveryDestinationPayloadSchema),
       success: SetDefaultDeliveryDestinationResultSchema,
     }),

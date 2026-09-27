@@ -41,9 +41,7 @@ export const executeMarketAffectedUseAssessmentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: MarketAffectedUseAssessmentAuthorizedInvocation
 ) =>
   marketAffectedUseAssessmentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.marketAffectedUseAssessment.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.marketAffectedUseAssessment.execute({ payload })),
   );
 
 export const executeMarketAffectedUseAssessment = (

@@ -29,29 +29,25 @@ export const executeReserveMarketRetirementWithAuthorization = (
           api: ReserveMarketRetirementApi,
           credential: Redacted.make(credential),
           defaultApiPrefix: '/commerce-customer-context-api',
+          idempotencyKey: options.idempotencyKey,
           requestCorrelation,
         },
         options,
       ).pipe(
-        Effect.flatMap((client) => {
-          const request = {
-            headers: { 'idempotency-key': options.idempotencyKey },
-            params: {},
-            query: {},
-          } as const;
-          return Match.value(encoded).pipe(
+        Effect.flatMap((client) =>
+          Match.value(encoded).pipe(
             Match.when({ operation: 'COMMIT' }, (commitPayload) =>
-              client.reserveMarketRetirement.execute({ ...request, payload: commitPayload }),
+              client.reserveMarketRetirement.execute({ payload: commitPayload }),
             ),
             Match.when({ operation: 'RELEASE' }, (releasePayload) =>
-              client.reserveMarketRetirement.execute({ ...request, payload: releasePayload }),
+              client.reserveMarketRetirement.execute({ payload: releasePayload }),
             ),
             Match.when({ operation: 'RESERVE' }, (reservePayload) =>
-              client.reserveMarketRetirement.execute({ ...request, payload: reservePayload }),
+              client.reserveMarketRetirement.execute({ payload: reservePayload }),
             ),
             Match.exhaustive,
-          );
-        }),
+          ),
+        ),
       ),
     ),
   );

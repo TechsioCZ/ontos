@@ -41,6 +41,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: ChangeRetailPaymentTermPreferenceActionApi,
       credential,
       defaultApiPrefix: '/commerce-customer-context-api',
+      idempotencyKey: options.idempotencyKey,
       requestCorrelation,
     },
     options,
@@ -53,12 +54,7 @@ export const executeChangeRetailPaymentTermPreferenceWithAuthorization = (
   Schema.encodeUnknownEffect(ChangeRetailPaymentTermPreferencePayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.changeRetailPaymentTermPreferenceAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.changeRetailPaymentTermPreferenceAction.execute({ payload: encoded })),
       ),
     ),
   );

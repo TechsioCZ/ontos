@@ -11,10 +11,6 @@ import {
 
 export { TerminatePortalEnrollmentPayloadSchema } from '../actions/terminate-portal-enrollment.ts';
 
-const TerminatePortalEnrollmentActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const TerminatePortalEnrollmentActionInvalidProblemSchema = makeProblemDetailsSchema(
   'TerminatePortalEnrollmentActionInvalidProblem',
   400,
@@ -151,7 +147,6 @@ export const terminatePortalEnrollmentActionGroupDefinition = HttpApiGroup.make(
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/terminate-portal-enrollment', {
       error: actionErrors,
-      headers: TerminatePortalEnrollmentActionHeadersSchema,
       payload: Schema.toEncoded(TerminatePortalEnrollmentPayloadSchema),
       success: TerminatePortalEnrollmentResultSchema,
     }),

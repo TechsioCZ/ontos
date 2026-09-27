@@ -40,14 +40,7 @@ export const executeCounterpartyCommerceAccessDetailWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CounterpartyCommerceAccessDetailAuthorizedInvocation
 ) =>
   counterpartyCommerceAccessDetailClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.counterpartyCommerceAccessDetail.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.counterpartyCommerceAccessDetail.execute({ payload })),
   );
 
 export const executeCounterpartyCommerceAccessDetail = (

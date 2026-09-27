@@ -40,9 +40,7 @@ export const executeConfirmVariantCombinationRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ConfirmVariantCombinationRecoveryAuthorizedInvocation
 ) =>
   confirmVariantCombinationRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.confirmVariantCombinationRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.confirmVariantCombinationRecovery.execute({ payload })),
   );
 
 export const executeConfirmVariantCombinationRecovery = (

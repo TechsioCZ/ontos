@@ -40,9 +40,7 @@ export const executeMarketBootstrapPolicyCurrentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: MarketBootstrapPolicyCurrentAuthorizedInvocation
 ) =>
   marketBootstrapPolicyCurrentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.marketBootstrapPolicyCurrent.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.marketBootstrapPolicyCurrent.execute({ payload })),
   );
 
 export const executeMarketBootstrapPolicyCurrent = (

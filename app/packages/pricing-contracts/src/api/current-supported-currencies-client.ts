@@ -40,9 +40,7 @@ export const executeCurrentSupportedCurrenciesWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CurrentSupportedCurrenciesAuthorizedInvocation
 ) =>
   currentSupportedCurrenciesClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.currentSupportedCurrencies.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.currentSupportedCurrencies.execute({ payload })),
   );
 
 export const executeCurrentSupportedCurrencies = (

@@ -41,6 +41,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: ReactivateControlledAttributeValueActionApi,
       credential,
       defaultApiPrefix: '/catalog-api',
+      idempotencyKey: options.idempotencyKey,
       requestCorrelation,
     },
     options,
@@ -53,12 +54,7 @@ export const executeReactivateControlledAttributeValueWithAuthorization = (
   Schema.encodeUnknownEffect(ReactivateControlledAttributeValuePayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.reactivateControlledAttributeValueAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.reactivateControlledAttributeValueAction.execute({ payload: encoded })),
       ),
     ),
   );

@@ -33,7 +33,7 @@ export const executeSkuLookupWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SkuLookupAuthorizedInvocation
 ) =>
   skuLookupClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.skuLookup.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.skuLookup.execute({ payload })),
   );
 
 export const executeSkuLookup = (

@@ -40,9 +40,7 @@ export const executeRetireProductCategoryRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetireProductCategoryRecoveryAuthorizedInvocation
 ) =>
   retireProductCategoryRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.retireProductCategoryRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.retireProductCategoryRecovery.execute({ payload })),
   );
 
 export const executeRetireProductCategoryRecovery = (

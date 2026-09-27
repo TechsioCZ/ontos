@@ -11,10 +11,6 @@ import {
 
 export { DecideProductTypeUnnecessaryPayloadSchema } from '../actions/decide-product-type-unnecessary.ts';
 
-const DecideProductTypeUnnecessaryActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const DecideProductTypeUnnecessaryActionInvalidProblemSchema = makeProblemDetailsSchema(
   'DecideProductTypeUnnecessaryActionInvalidProblem',
   400,
@@ -130,7 +126,6 @@ export const DecideProductTypeUnnecessaryActionApi = HttpApi.make('DecideProduct
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/decide-product-type-unnecessary', {
         error: actionErrors,
-        headers: DecideProductTypeUnnecessaryActionHeadersSchema,
         payload: Schema.toEncoded(DecideProductTypeUnnecessaryPayloadSchema),
         success: DecideProductTypeUnnecessaryResultSchema,
       }),

@@ -41,14 +41,7 @@ export const executePartyMergeReadinessWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PartyMergeReadinessAuthorizedInvocation
 ) =>
   partyMergeReadinessClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.partyMergeReadiness.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.partyMergeReadiness.execute({ payload })),
   );
 
 export const executePartyMergeReadiness = (

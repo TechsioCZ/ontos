@@ -11,10 +11,6 @@ import {
 
 export { RevalidatePurchaseApprovalPayloadSchema } from '../actions/revalidate-purchase-approval.ts';
 
-const RevalidatePurchaseApprovalActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RevalidatePurchaseApprovalActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RevalidatePurchaseApprovalActionInvalidProblem',
   400,
@@ -172,7 +168,6 @@ export const revalidatePurchaseApprovalActionGroupDefinition = HttpApiGroup.make
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/revalidate-purchase-approval', {
       error: actionErrors,
-      headers: RevalidatePurchaseApprovalActionHeadersSchema,
       payload: Schema.toEncoded(RevalidatePurchaseApprovalPayloadSchema),
       success: RevalidatePurchaseApprovalResultSchema,
     }),

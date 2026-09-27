@@ -11,10 +11,6 @@ import {
 
 export { AttributeGuestRetailCustomerPayloadSchema } from '../actions/attribute-guest-retail-customer.ts';
 
-const AttributeGuestRetailCustomerActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const AttributeGuestRetailCustomerActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AttributeGuestRetailCustomerActionInvalidProblem',
   400,
@@ -150,7 +146,6 @@ export const attributeGuestRetailCustomerActionGroupDefinition = HttpApiGroup.ma
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/attribute-guest-retail-customer', {
       error: actionErrors,
-      headers: AttributeGuestRetailCustomerActionHeadersSchema,
       payload: Schema.toEncoded(AttributeGuestRetailCustomerPayloadSchema),
       success: AttributeGuestRetailCustomerResultSchema,
     }),

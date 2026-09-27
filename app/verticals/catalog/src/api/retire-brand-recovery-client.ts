@@ -40,7 +40,7 @@ export const executeRetireBrandRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetireBrandRecoveryAuthorizedInvocation
 ) =>
   retireBrandRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.retireBrandRecovery.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.retireBrandRecovery.execute({ payload })),
   );
 
 export const executeRetireBrandRecovery = (

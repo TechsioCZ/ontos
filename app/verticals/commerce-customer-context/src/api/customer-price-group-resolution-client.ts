@@ -40,9 +40,7 @@ export const executeCustomerPriceGroupResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerPriceGroupResolutionAuthorizedInvocation
 ) =>
   customerPriceGroupResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.customerPriceGroupResolution.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.customerPriceGroupResolution.execute({ payload })),
   );
 
 export const executeCustomerPriceGroupResolution = (

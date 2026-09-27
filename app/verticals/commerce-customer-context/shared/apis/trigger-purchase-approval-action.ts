@@ -11,10 +11,6 @@ import {
 
 export { TriggerPurchaseApprovalPayloadSchema } from '../actions/trigger-purchase-approval.ts';
 
-const TriggerPurchaseApprovalActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const TriggerPurchaseApprovalActionInvalidProblemSchema = makeProblemDetailsSchema(
   'TriggerPurchaseApprovalActionInvalidProblem',
   400,
@@ -143,7 +139,6 @@ export const triggerPurchaseApprovalActionGroupDefinition = HttpApiGroup.make('t
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/trigger-purchase-approval', {
       error: actionErrors,
-      headers: TriggerPurchaseApprovalActionHeadersSchema,
       payload: Schema.toEncoded(TriggerPurchaseApprovalPayloadSchema),
       success: TriggerPurchaseApprovalResultSchema,
     }),

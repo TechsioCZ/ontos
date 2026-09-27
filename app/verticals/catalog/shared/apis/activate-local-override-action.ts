@@ -11,10 +11,6 @@ import {
 
 export { ActivateLocalOverridePayloadSchema } from '../actions/activate-local-override.ts';
 
-const ActivateLocalOverrideActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ActivateLocalOverrideActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ActivateLocalOverrideActionInvalidProblem',
   400,
@@ -130,7 +126,6 @@ export const ActivateLocalOverrideActionApi = HttpApi.make('ActivateLocalOverrid
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/activate-local-override', {
         error: actionErrors,
-        headers: ActivateLocalOverrideActionHeadersSchema,
         payload: Schema.toEncoded(ActivateLocalOverridePayloadSchema),
         success: ActivateLocalOverrideResultSchema,
       }),

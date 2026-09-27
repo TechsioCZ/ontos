@@ -40,9 +40,7 @@ export const executeProfileReconciliationReadWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ProfileReconciliationReadAuthorizedInvocation
 ) =>
   profileReconciliationReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.profileReconciliationRead.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.profileReconciliationRead.execute({ payload })),
   );
 
 export const executeProfileReconciliationRead = (

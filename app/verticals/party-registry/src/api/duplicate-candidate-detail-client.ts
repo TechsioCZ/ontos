@@ -41,14 +41,7 @@ export const executeDuplicateCandidateDetailWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: DuplicateCandidateDetailAuthorizedInvocation
 ) =>
   duplicateCandidateDetailClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.duplicateCandidateDetail.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.duplicateCandidateDetail.execute({ payload })),
   );
 
 export const executeDuplicateCandidateDetail = (

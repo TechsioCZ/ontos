@@ -34,7 +34,13 @@ interface MakeClientOptions {
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
-    { api: CreateProductUnitActionApi, credential, defaultApiPrefix: '/catalog-api', requestCorrelation },
+    {
+      api: CreateProductUnitActionApi,
+      credential,
+      defaultApiPrefix: '/catalog-api',
+      idempotencyKey: options.idempotencyKey,
+      requestCorrelation,
+    },
     options,
   );
 
@@ -45,12 +51,7 @@ export const executeCreateProductUnitWithAuthorization = (
   Schema.encodeUnknownEffect(CreateProductUnitPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.createProductUnitAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.createProductUnitAction.execute({ payload: encoded })),
       ),
     ),
   );

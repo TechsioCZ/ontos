@@ -40,14 +40,7 @@ export const executeRetailPortalProfileBindingReadWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetailPortalProfileBindingReadAuthorizedInvocation
 ) =>
   retailPortalProfileBindingReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.retailPortalProfileBindingRead.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.retailPortalProfileBindingRead.execute({ payload })),
   );
 
 export const executeRetailPortalProfileBindingRead = (

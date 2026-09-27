@@ -8,10 +8,6 @@ import { RenameSkuPayloadSchema, RenameSkuResultSchema } from '../actions/rename
 
 export { RenameSkuPayloadSchema } from '../actions/rename-sku.ts';
 
-const RenameSkuActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RenameSkuActionInvalidProblemSchema = makeProblemDetailsSchema('RenameSkuActionInvalidProblem', 400);
 export const RenameSkuActionAuthenticationProblemSchema = makeProblemDetailsSchema(
   'RenameSkuActionAuthenticationProblem',
@@ -118,7 +114,6 @@ export const RenameSkuActionApi = HttpApi.make('RenameSkuActionApi').add(
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/rename-sku', {
         error: actionErrors,
-        headers: RenameSkuActionHeadersSchema,
         payload: Schema.toEncoded(RenameSkuPayloadSchema),
         success: RenameSkuResultSchema,
       }),

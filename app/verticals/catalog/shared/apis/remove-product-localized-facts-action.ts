@@ -11,10 +11,6 @@ import {
 
 export { RemoveProductLocalizedFactsPayloadSchema } from '../actions/remove-product-localized-facts.ts';
 
-const RemoveProductLocalizedFactsActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RemoveProductLocalizedFactsActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveProductLocalizedFactsActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const RemoveProductLocalizedFactsActionApi = HttpApi.make('RemoveProductL
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/remove-product-localized-facts', {
         error: actionErrors,
-        headers: RemoveProductLocalizedFactsActionHeadersSchema,
         payload: Schema.toEncoded(RemoveProductLocalizedFactsPayloadSchema),
         success: RemoveProductLocalizedFactsResultSchema,
       }),

@@ -87,6 +87,8 @@ interface GovernedEffectBffClientConfig<ApiId extends string, Groups extends Htt
   readonly api: HttpApi.HttpApi<ApiId, Groups>;
   readonly credential: Redacted.Redacted;
   readonly defaultApiPrefix: string | URL;
+  /** Action transport header; endpoint contracts declare no header codec. */
+  readonly idempotencyKey?: string | undefined;
   readonly requestCorrelation: string;
   readonly requestTrace?: string;
 }
@@ -107,21 +109,25 @@ const isGovernedBaseUrl = (value: string): boolean => {
 
 /** Fresh per-invocation transport; credentials remain redacted until HTTP header construction. */
 export const makeGovernedEffectBffClient = <ApiId extends string, Groups extends HttpApiGroup.Constraint>(
-  { api, credential, defaultApiPrefix, requestCorrelation, requestTrace }: GovernedEffectBffClientConfig<ApiId, Groups>,
+  {
+    api,
+    credential,
+    defaultApiPrefix,
+    idempotencyKey,
+    requestCorrelation,
+    requestTrace,
+  }: GovernedEffectBffClientConfig<ApiId, Groups>,
   options: Pick<EffectBffClientOptions, 'baseUrl'>,
 ) => {
   const baseUrl = String(options.baseUrl ?? defaultApiPrefix);
+  // Header construction skips undefined values, so absent optional headers stay absent.
   const transportHeaders = {
     authorization: Redacted.value(credential),
+    'idempotency-key': idempotencyKey,
     'x-correlation-id': requestCorrelation,
+    'x-trace-id': requestTrace,
   };
-  const clientConfig = {
-    api,
-    baseUrl,
-    defaultApiPrefix,
-    transportHeaders:
-      requestTrace === undefined ? transportHeaders : { ...transportHeaders, 'x-trace-id': requestTrace },
-  };
+  const clientConfig = { api, baseUrl, defaultApiPrefix, transportHeaders };
   return Schema.decodeUnknownEffect(Schema.Literal(true))(isGovernedBaseUrl(baseUrl)).pipe(
     Effect.map(() => clientConfig),
     Effect.flatMap(makeEffectBffClient),

@@ -40,7 +40,7 @@ export const executeProductSizeCurrentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ProductSizeCurrentAuthorizedInvocation
 ) =>
   productSizeCurrentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.productSizeCurrent.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.productSizeCurrent.execute({ payload })),
   );
 
 export const executeProductSizeCurrent = (

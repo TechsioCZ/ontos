@@ -11,10 +11,6 @@ import {
 
 export { ChangeRetailPaymentTermPreferencePayloadSchema } from '../actions/change-retail-payment-term-preference.ts';
 
-const ChangeRetailPaymentTermPreferenceActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ChangeRetailPaymentTermPreferenceActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ChangeRetailPaymentTermPreferenceActionInvalidProblem',
   400,
@@ -163,7 +159,6 @@ export const changeRetailPaymentTermPreferenceActionGroupDefinition = HttpApiGro
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/change-retail-payment-term-preference', {
       error: actionErrors,
-      headers: ChangeRetailPaymentTermPreferenceActionHeadersSchema,
       payload: Schema.toEncoded(ChangeRetailPaymentTermPreferencePayloadSchema),
       success: ChangeRetailPaymentTermPreferenceResultSchema,
     }),

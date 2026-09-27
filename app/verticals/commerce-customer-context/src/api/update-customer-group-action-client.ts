@@ -38,6 +38,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: UpdateCustomerGroupActionApi,
       credential,
       defaultApiPrefix: '/commerce-customer-context-api',
+      idempotencyKey: options.idempotencyKey,
       requestCorrelation,
     },
     options,
@@ -50,12 +51,7 @@ export const executeUpdateCustomerGroupWithAuthorization = (
   Schema.encodeUnknownEffect(UpdateCustomerGroupPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.updateCustomerGroupAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.updateCustomerGroupAction.execute({ payload: encoded })),
       ),
     ),
   );

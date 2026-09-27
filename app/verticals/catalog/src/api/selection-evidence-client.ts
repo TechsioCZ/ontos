@@ -40,7 +40,7 @@ export const executeSelectionEvidenceWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SelectionEvidenceAuthorizedInvocation
 ) =>
   selectionEvidenceClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.selectionEvidence.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.selectionEvidence.execute({ payload })),
   );
 
 export const executeSelectionEvidence = (

@@ -38,7 +38,7 @@ export const executeAresLookupWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: AresLookupAuthorizedInvocation
 ) =>
   aresLookupClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.aresLookup.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.aresLookup.execute({ payload })),
   );
 
 export const executeAresLookup = (

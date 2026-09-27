@@ -11,10 +11,6 @@ import {
 
 export { RemoveCustomerPaymentTermPayloadSchema } from '../actions/remove-customer-payment-term.ts';
 
-const RemoveCustomerPaymentTermActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RemoveCustomerPaymentTermActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveCustomerPaymentTermActionInvalidProblem',
   400,
@@ -170,7 +166,6 @@ export const removeCustomerPaymentTermActionGroupDefinition = HttpApiGroup.make(
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/remove-customer-payment-term', {
       error: actionErrors,
-      headers: RemoveCustomerPaymentTermActionHeadersSchema,
       payload: Schema.toEncoded(RemoveCustomerPaymentTermPayloadSchema),
       success: RemoveCustomerPaymentTermResultSchema,
     }),

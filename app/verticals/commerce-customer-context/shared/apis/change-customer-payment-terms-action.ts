@@ -11,10 +11,6 @@ import {
 
 export { ChangeCustomerPaymentTermsPayloadSchema } from '../actions/change-customer-payment-terms.ts';
 
-const ChangeCustomerPaymentTermsActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ChangeCustomerPaymentTermsActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ChangeCustomerPaymentTermsActionInvalidProblem',
   400,
@@ -170,7 +166,6 @@ export const changeCustomerPaymentTermsActionGroupDefinition = HttpApiGroup.make
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/change-customer-payment-terms', {
       error: actionErrors,
-      headers: ChangeCustomerPaymentTermsActionHeadersSchema,
       payload: Schema.toEncoded(ChangeCustomerPaymentTermsPayloadSchema),
       success: ChangeCustomerPaymentTermsResultSchema,
     }),

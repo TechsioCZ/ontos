@@ -11,10 +11,6 @@ import {
 
 export { ReactivateControlledAttributeValuePayloadSchema } from '../actions/reactivate-controlled-attribute-value.ts';
 
-const ReactivateControlledAttributeValueActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReactivateControlledAttributeValueActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReactivateControlledAttributeValueActionInvalidProblem',
   400,
@@ -138,7 +134,6 @@ export const ReactivateControlledAttributeValueActionApi = HttpApi.make(
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/reactivate-controlled-attribute-value', {
         error: actionErrors,
-        headers: ReactivateControlledAttributeValueActionHeadersSchema,
         payload: Schema.toEncoded(ReactivateControlledAttributeValuePayloadSchema),
         success: ReactivateControlledAttributeValueResultSchema,
       }),

@@ -223,9 +223,7 @@ export const ${options.authorizedOperation} = (
   ...[credential, requestCorrelation, options = {}]: ${apiStem}AuthorizedInvocation
 ) =>
   ${options.clientHelper}(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.${options.endpointGroup}.execute(${
-      options.invocationKind === MODULE_API_KIND ? '{ headers: {}, params: {}, payload, query: {} }' : '{ payload }'
-    })),
+    Effect.flatMap((client) => client.${options.endpointGroup}.execute({ payload })),
   );
 export const ${options.publicOperation} = (
   payload: ${requestType},
@@ -1281,7 +1279,7 @@ export const executeStockListWithAuthorization`,
       .replaceAll('executeStockList', 'decoy')}
 export const executeStockListWithAuthorization = (payload, credential, requestCorrelation, options) =>
   stockListClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.stockList.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.stockList.execute({ payload })),
   );
 export const executeStockList = (payload, requestCorrelation, options) =>
   executeStockListWithAuthorization(payload, 'Bearer bypass', requestCorrelation, options);`;
@@ -1290,7 +1288,7 @@ export const executeStockList = (payload, requestCorrelation, options) =>
       'export const executeStockList = (\n  operationGateway: unknown,\n  payload:',
     );
     const bypassedEndpointClient = validClient.replace(
-      'Effect.flatMap((client) => client.stockList.execute({ headers: {}, params: {}, payload, query: {} }))',
+      'Effect.flatMap((client) => client.stockList.execute({ payload }))',
       'Effect.flatMap(() => Effect.succeed({ bypass: true }))',
     );
     const shadowedFactoryClient = validClient.replace(

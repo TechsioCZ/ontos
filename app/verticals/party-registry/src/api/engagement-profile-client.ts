@@ -48,7 +48,7 @@ export const createContactsClient = (options: ContactsClientOptions = {}): Conta
   createPartyRegistryHttpClient(options);
 
 const invoke = <Success, Failure>(
-  options: ContactsOperationOptions,
+  options: ContactsOperationOptions & { readonly idempotencyKey?: string },
   context: OperationContext,
   operation: (client: ContactsClient) => Effect.Effect<Success, Failure>,
 ) =>
@@ -61,23 +61,21 @@ const invoke = <Success, Failure>(
       'x-correlation-id',
       options[traceIdOption],
     );
-    return invokePartyRegistryHttpClient(requestContext, operation);
+    return invokePartyRegistryHttpClient(
+      options.idempotencyKey === undefined
+        ? requestContext
+        : { ...requestContext, idempotencyKey: options.idempotencyKey },
+      operation,
+    );
   }, options.gateway);
 
 const engagementMutation =
   <Payload, Success, Failure>(
     context: OperationContext,
-    endpoint: (
-      client: ContactsClient,
-    ) => (request: { headers: { 'idempotency-key': string }; payload: Payload }) => Effect.Effect<Success, Failure>,
+    endpoint: (client: ContactsClient) => (request: { payload: Payload }) => Effect.Effect<Success, Failure>,
   ) =>
   (payload: Payload, options: ContactsMutationOptions) =>
-    invoke(options, context, (client) =>
-      endpoint(client)({
-        headers: { 'idempotency-key': options.idempotencyKey },
-        payload,
-      }),
-    );
+    invoke(options, context, (client) => endpoint(client)({ payload }));
 
 export const getContactsReadiness = (
   options: ContactsClientOptions = {},

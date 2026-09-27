@@ -8,10 +8,6 @@ import { ConfirmGtinPayloadSchema, ConfirmGtinResultSchema } from '../actions/co
 
 export { ConfirmGtinPayloadSchema } from '../actions/confirm-gtin.ts';
 
-const ConfirmGtinActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ConfirmGtinActionInvalidProblemSchema = makeProblemDetailsSchema('ConfirmGtinActionInvalidProblem', 400);
 export const ConfirmGtinActionAuthenticationProblemSchema = makeProblemDetailsSchema(
   'ConfirmGtinActionAuthenticationProblem',
@@ -128,7 +124,6 @@ export const ConfirmGtinActionApi = HttpApi.make('ConfirmGtinActionApi').add(
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/confirm-gtin', {
         error: actionErrors,
-        headers: ConfirmGtinActionHeadersSchema,
         payload: Schema.toEncoded(ConfirmGtinPayloadSchema),
         success: ConfirmGtinResultSchema,
       }),

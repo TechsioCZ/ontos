@@ -11,10 +11,6 @@ import {
 
 export { ChangeProductManufacturerPayloadSchema } from '../actions/change-product-manufacturer.ts';
 
-const ChangeProductManufacturerActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ChangeProductManufacturerActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ChangeProductManufacturerActionInvalidProblem',
   400,
@@ -134,7 +130,6 @@ export const ChangeProductManufacturerActionApi = HttpApi.make('ChangeProductMan
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/change-product-manufacturer', {
         error: actionErrors,
-        headers: ChangeProductManufacturerActionHeadersSchema,
         payload: Schema.toEncoded(ChangeProductManufacturerPayloadSchema),
         success: ChangeProductManufacturerResultSchema,
       }),

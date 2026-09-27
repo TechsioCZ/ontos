@@ -40,7 +40,7 @@ export const executeAssignSkuRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: AssignSkuRecoveryAuthorizedInvocation
 ) =>
   assignSkuRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.assignSkuRecovery.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.assignSkuRecovery.execute({ payload })),
   );
 
 export const executeAssignSkuRecovery = (

@@ -34,7 +34,13 @@ interface MakeClientOptions {
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
-    { api: MarkGtinUnresolvedActionApi, credential, defaultApiPrefix: '/catalog-api', requestCorrelation },
+    {
+      api: MarkGtinUnresolvedActionApi,
+      credential,
+      defaultApiPrefix: '/catalog-api',
+      idempotencyKey: options.idempotencyKey,
+      requestCorrelation,
+    },
     options,
   );
 
@@ -45,12 +51,7 @@ export const executeMarkGtinUnresolvedWithAuthorization = (
   Schema.encodeUnknownEffect(MarkGtinUnresolvedPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.markGtinUnresolvedAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.markGtinUnresolvedAction.execute({ payload: encoded })),
       ),
     ),
   );

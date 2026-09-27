@@ -39,9 +39,7 @@ export const executeCreateAttributeDefinitionRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CreateAttributeDefinitionRecoveryAuthorizedInvocation
 ) =>
   attributeDefinitionRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.createAttributeDefinitionRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.createAttributeDefinitionRecovery.execute({ payload })),
   );
 
 export const executeCreateAttributeDefinitionRecovery = (

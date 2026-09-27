@@ -4,11 +4,7 @@ import { NodeFileSystem } from '@effect/platform-node';
 import { FileSystem, Effect, Schema, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import {
-  partyRegistryCommandsApi,
-  PartyCommandAliasWriteRejectedProblemSchema,
-  PartyCommandHeadersSchema,
-} from '../../shared/command-api.ts';
+import { partyRegistryCommandsApi, PartyCommandAliasWriteRejectedProblemSchema } from '../../shared/command-api.ts';
 
 const ref = (id: string) => ({
   moduleId: 'party.registry',
@@ -39,17 +35,6 @@ it.layer(NodeFileSystem.layer)('api-integration-command-contract', (suite) => {
           .join('');
         expect(Object.hasOwn(partyRegistryCommandsApi.groups.partyCommands.endpoints, name)).toBe(true);
       }
-    }),
-  );
-
-  suite.effect('missing idempotency reaches the declared 428 while malformed supplied values fail decoding', () =>
-    Effect.gen(function* decodeContract1() {
-      expect(yield* Schema.decodeEffect(PartyCommandHeadersSchema)({})).toEqual({});
-      expect(() =>
-        Schema.decodeSync(PartyCommandHeadersSchema)({
-          'idempotency-key': '',
-        }),
-      ).toThrow();
     }),
   );
 

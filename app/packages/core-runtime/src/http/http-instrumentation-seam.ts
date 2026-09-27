@@ -1,5 +1,6 @@
 import { Cause, Effect, Exit, Schema } from 'effect';
 import type { Redacted } from 'effect';
+import type { Headers } from 'effect/unstable/http';
 
 import type { ActionTransportMetadata } from '../actions/context.ts';
 import type { ActionRegistration } from '../actions/definition.ts';
@@ -14,6 +15,28 @@ export interface ActionHttpEndpointHeaders {
   readonly idempotencyKey: string | undefined;
   readonly traceId: string | undefined;
 }
+
+const ActionIdempotencyKeySchema = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
+  Schema.brand('ActionIdempotencyKey'),
+);
+
+/**
+ * Reads the Action transport headers an HTTP handler owns. Endpoint contracts declare no header
+ * codec: the composed API decodes closed, and a header codec would receive every browser header.
+ * A supplied Idempotency-Key is decoded alone; absence reaches the runtime's own 428 precondition.
+ */
+export const decodeActionEndpointHeaders = (
+  headers: Headers.Headers,
+): Effect.Effect<ActionHttpEndpointHeaders, Schema.SchemaError> => {
+  const idempotencyKey = headers['idempotency-key'];
+  const traceId = headers['x-trace-id'];
+  if (idempotencyKey === undefined) {
+    return Effect.succeed({ idempotencyKey, traceId });
+  }
+  return Schema.decodeUnknownEffect(ActionIdempotencyKeySchema)(idempotencyKey).pipe(
+    Effect.map((decodedKey) => ({ idempotencyKey: decodedKey, traceId })),
+  );
+};
 
 export interface ActionHttpRequestHeaders {
   readonly authorization: Redacted.Redacted<string | undefined>;

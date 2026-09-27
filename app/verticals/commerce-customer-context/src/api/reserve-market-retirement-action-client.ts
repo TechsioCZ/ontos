@@ -38,6 +38,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: ReserveMarketRetirementActionApi,
       credential,
       defaultApiPrefix: '/commerce-customer-context-api',
+      idempotencyKey: options.idempotencyKey,
       requestCorrelation,
     },
     options,
@@ -53,22 +54,13 @@ export const executeReserveMarketRetirementWithAuthorization = (
         Effect.flatMap((client) =>
           Match.value(encoded).pipe(
             Match.when({ operation: 'COMMIT' }, (commitPayload) =>
-              client.reserveMarketRetirementAction.execute({
-                headers: { 'idempotency-key': options.idempotencyKey },
-                payload: commitPayload,
-              }),
+              client.reserveMarketRetirementAction.execute({ payload: commitPayload }),
             ),
             Match.when({ operation: 'RELEASE' }, (releasePayload) =>
-              client.reserveMarketRetirementAction.execute({
-                headers: { 'idempotency-key': options.idempotencyKey },
-                payload: releasePayload,
-              }),
+              client.reserveMarketRetirementAction.execute({ payload: releasePayload }),
             ),
             Match.when({ operation: 'RESERVE' }, (reservePayload) =>
-              client.reserveMarketRetirementAction.execute({
-                headers: { 'idempotency-key': options.idempotencyKey },
-                payload: reservePayload,
-              }),
+              client.reserveMarketRetirementAction.execute({ payload: reservePayload }),
             ),
             Match.exhaustive,
           ),

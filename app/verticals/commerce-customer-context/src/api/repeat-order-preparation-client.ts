@@ -40,7 +40,7 @@ export const executeRepeatOrderPreparationWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RepeatOrderPreparationAuthorizedInvocation
 ) =>
   repeatOrderPreparationClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.repeatOrderPreparation.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.repeatOrderPreparation.execute({ payload })),
   );
 
 export const executeRepeatOrderPreparation = (

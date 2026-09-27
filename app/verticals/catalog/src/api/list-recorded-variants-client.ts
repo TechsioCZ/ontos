@@ -40,7 +40,7 @@ export const executeListRecordedVariantsWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ListRecordedVariantsAuthorizedInvocation
 ) =>
   listRecordedVariantsClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.listRecordedVariants.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.listRecordedVariants.execute({ payload })),
   );
 
 export const executeListRecordedVariants = (

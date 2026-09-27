@@ -8,10 +8,6 @@ import { RetireVariantPayloadSchema, RetireVariantResultSchema } from '../action
 
 export { RetireVariantPayloadSchema } from '../actions/retire-variant.ts';
 
-const RetireVariantActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RetireVariantActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RetireVariantActionInvalidProblem',
   400,
@@ -134,7 +130,6 @@ export const RetireVariantActionApi = HttpApi.make('RetireVariantActionApi').add
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/retire-variant', {
         error: actionErrors,
-        headers: RetireVariantActionHeadersSchema,
         payload: Schema.toEncoded(RetireVariantPayloadSchema),
         success: RetireVariantResultSchema,
       }),

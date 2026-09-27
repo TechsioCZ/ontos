@@ -40,9 +40,7 @@ export const executeMarketBootstrapResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: MarketBootstrapResolutionAuthorizedInvocation
 ) =>
   marketBootstrapResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.marketBootstrapResolution.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.marketBootstrapResolution.execute({ payload })),
   );
 
 export const executeMarketBootstrapResolution = (

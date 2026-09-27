@@ -11,10 +11,6 @@ import {
 
 export { CreateAttributeDefinitionPayloadSchema } from '../actions/create-attribute-definition.ts';
 
-const CreateAttributeDefinitionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreateAttributeDefinitionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateAttributeDefinitionActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const CreateAttributeDefinitionActionApi = HttpApi.make('CreateAttributeD
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/create-attribute-definition', {
         error: actionErrors,
-        headers: CreateAttributeDefinitionActionHeadersSchema,
         payload: Schema.toEncoded(CreateAttributeDefinitionPayloadSchema),
         success: CreateAttributeDefinitionResultSchema,
       }),

@@ -40,9 +40,7 @@ export const executeSetProductUnitTargetDivisibilityRecoveryWithAuthorization = 
   ...[credential, requestCorrelation, options = {}]: SetProductUnitTargetDivisibilityRecoveryAuthorizedInvocation
 ) =>
   setProductUnitTargetDivisibilityRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.setProductUnitTargetDivisibilityRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.setProductUnitTargetDivisibilityRecovery.execute({ payload })),
   );
 
 export const executeSetProductUnitTargetDivisibilityRecovery = (

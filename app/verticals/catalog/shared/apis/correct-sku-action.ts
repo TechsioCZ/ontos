@@ -8,10 +8,6 @@ import { CorrectSkuPayloadSchema, CorrectSkuResultSchema } from '../actions/corr
 
 export { CorrectSkuPayloadSchema } from '../actions/correct-sku.ts';
 
-const CorrectSkuActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CorrectSkuActionInvalidProblemSchema = makeProblemDetailsSchema('CorrectSkuActionInvalidProblem', 400);
 export const CorrectSkuActionAuthenticationProblemSchema = makeProblemDetailsSchema(
   'CorrectSkuActionAuthenticationProblem',
@@ -122,7 +118,6 @@ export const CorrectSkuActionApi = HttpApi.make('CorrectSkuActionApi').add(
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/correct-sku', {
         error: actionErrors,
-        headers: CorrectSkuActionHeadersSchema,
         payload: Schema.toEncoded(CorrectSkuPayloadSchema),
         success: CorrectSkuResultSchema,
       }),

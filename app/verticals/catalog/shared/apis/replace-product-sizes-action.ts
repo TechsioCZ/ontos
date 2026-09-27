@@ -8,10 +8,6 @@ import { ReplaceProductSizesPayloadSchema, ReplaceProductSizesResultSchema } fro
 
 export { ReplaceProductSizesPayloadSchema } from '../actions/replace-product-sizes.ts';
 
-const ReplaceProductSizesActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReplaceProductSizesActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReplaceProductSizesActionInvalidProblem',
   400,
@@ -134,7 +130,6 @@ export const ReplaceProductSizesActionApi = HttpApi.make('ReplaceProductSizesAct
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/replace-product-sizes', {
         error: actionErrors,
-        headers: ReplaceProductSizesActionHeadersSchema,
         payload: Schema.toEncoded(ReplaceProductSizesPayloadSchema),
         success: ReplaceProductSizesResultSchema,
       }),

@@ -11,10 +11,6 @@ import {
 
 export { GrantCounterpartyCommerceAccessPayloadSchema } from '../actions/grant-counterparty-commerce-access.ts';
 
-const GrantCounterpartyCommerceAccessActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const GrantCounterpartyCommerceAccessActionInvalidProblemSchema = makeProblemDetailsSchema(
   'GrantCounterpartyCommerceAccessActionInvalidProblem',
   400,
@@ -178,7 +174,6 @@ export const grantCounterpartyCommerceAccessActionGroupDefinition = HttpApiGroup
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/grant-counterparty-commerce-access', {
       error: actionErrors,
-      headers: GrantCounterpartyCommerceAccessActionHeadersSchema,
       payload: Schema.toEncoded(GrantCounterpartyCommerceAccessPayloadSchema),
       success: GrantCounterpartyCommerceAccessResultSchema,
     }),

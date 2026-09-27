@@ -8,10 +8,6 @@ import { RenameBrandPayloadSchema, RenameBrandResultSchema } from '../actions/re
 
 export { RenameBrandPayloadSchema } from '../actions/rename-brand.ts';
 
-const RenameBrandActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RenameBrandActionInvalidProblemSchema = makeProblemDetailsSchema('RenameBrandActionInvalidProblem', 400);
 export const RenameBrandActionAuthenticationProblemSchema = makeProblemDetailsSchema(
   'RenameBrandActionAuthenticationProblem',
@@ -121,7 +117,6 @@ export const RenameBrandActionApi = HttpApi.make('RenameBrandActionApi').add(
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/rename-brand', {
         error: actionErrors,
-        headers: RenameBrandActionHeadersSchema,
         payload: Schema.toEncoded(RenameBrandPayloadSchema),
         success: RenameBrandResultSchema,
       }),

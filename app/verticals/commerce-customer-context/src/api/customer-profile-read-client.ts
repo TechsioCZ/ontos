@@ -40,7 +40,7 @@ export const executeCustomerProfileReadWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerProfileReadAuthorizedInvocation
 ) =>
   customerProfileReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.customerProfileRead.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.customerProfileRead.execute({ payload })),
   );
 
 export const executeCustomerProfileRead = (

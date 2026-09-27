@@ -40,7 +40,7 @@ export const executeSetCompositionHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SetCompositionHistoryAuthorizedInvocation
 ) =>
   setCompositionHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.setCompositionHistory.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.setCompositionHistory.execute({ payload })),
   );
 
 export const executeSetCompositionHistory = (

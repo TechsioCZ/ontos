@@ -40,9 +40,7 @@ export const executeActivateLocalOverrideRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ActivateLocalOverrideRecoveryAuthorizedInvocation
 ) =>
   activateLocalOverrideRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.activateLocalOverrideRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.activateLocalOverrideRecovery.execute({ payload })),
   );
 
 export const executeActivateLocalOverrideRecovery = (

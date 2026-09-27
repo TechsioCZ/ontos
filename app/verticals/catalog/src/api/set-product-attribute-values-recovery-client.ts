@@ -40,9 +40,7 @@ export const executeSetProductAttributeValuesRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SetProductAttributeValuesRecoveryAuthorizedInvocation
 ) =>
   setProductAttributeValuesRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.setProductAttributeValuesRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.setProductAttributeValuesRecovery.execute({ payload })),
   );
 
 export const executeSetProductAttributeValuesRecovery = (

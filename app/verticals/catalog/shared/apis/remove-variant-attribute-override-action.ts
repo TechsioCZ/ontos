@@ -11,10 +11,6 @@ import {
 
 export { RemoveVariantAttributeOverridePayloadSchema } from '../actions/remove-variant-attribute-override.ts';
 
-const RemoveVariantAttributeOverrideActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RemoveVariantAttributeOverrideActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveVariantAttributeOverrideActionInvalidProblem',
   400,
@@ -138,7 +134,6 @@ export const RemoveVariantAttributeOverrideActionApi = HttpApi.make('RemoveVaria
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/remove-variant-attribute-override', {
         error: actionErrors,
-        headers: RemoveVariantAttributeOverrideActionHeadersSchema,
         payload: Schema.toEncoded(RemoveVariantAttributeOverridePayloadSchema),
         success: RemoveVariantAttributeOverrideResultSchema,
       }),

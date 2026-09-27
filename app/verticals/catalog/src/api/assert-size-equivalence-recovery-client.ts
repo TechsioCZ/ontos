@@ -40,9 +40,7 @@ export const executeAssertSizeEquivalenceRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: AssertSizeEquivalenceRecoveryAuthorizedInvocation
 ) =>
   assertSizeEquivalenceRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.assertSizeEquivalenceRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.assertSizeEquivalenceRecovery.execute({ payload })),
   );
 
 export const executeAssertSizeEquivalenceRecovery = (

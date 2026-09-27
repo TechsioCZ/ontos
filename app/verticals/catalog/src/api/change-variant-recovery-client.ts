@@ -40,7 +40,7 @@ export const executeChangeVariantRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ChangeVariantRecoveryAuthorizedInvocation
 ) =>
   changeVariantRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.changeVariantRecovery.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.changeVariantRecovery.execute({ payload })),
   );
 
 export const executeChangeVariantRecovery = (

@@ -40,9 +40,7 @@ export const executeDecideProductTypeUnnecessaryRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: DecideProductTypeUnnecessaryRecoveryAuthorizedInvocation
 ) =>
   decideProductTypeUnnecessaryRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.decideProductTypeUnnecessaryRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.decideProductTypeUnnecessaryRecovery.execute({ payload })),
   );
 
 export const executeDecideProductTypeUnnecessaryRecovery = (

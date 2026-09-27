@@ -8,10 +8,6 @@ import { MarkGtinUnresolvedPayloadSchema, MarkGtinUnresolvedResultSchema } from 
 
 export { MarkGtinUnresolvedPayloadSchema } from '../actions/mark-gtin-unresolved.ts';
 
-const MarkGtinUnresolvedActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const MarkGtinUnresolvedActionInvalidProblemSchema = makeProblemDetailsSchema(
   'MarkGtinUnresolvedActionInvalidProblem',
   400,
@@ -134,7 +130,6 @@ export const MarkGtinUnresolvedActionApi = HttpApi.make('MarkGtinUnresolvedActio
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/mark-gtin-unresolved', {
         error: actionErrors,
-        headers: MarkGtinUnresolvedActionHeadersSchema,
         payload: Schema.toEncoded(MarkGtinUnresolvedPayloadSchema),
         success: MarkGtinUnresolvedResultSchema,
       }),

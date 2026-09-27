@@ -40,7 +40,7 @@ export const executePurchaseLimitPolicyReadWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PurchaseLimitPolicyReadAuthorizedInvocation
 ) =>
   purchaseLimitPolicyReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.purchaseLimitPolicyRead.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.purchaseLimitPolicyRead.execute({ payload })),
   );
 
 export const executePurchaseLimitPolicyRead = (

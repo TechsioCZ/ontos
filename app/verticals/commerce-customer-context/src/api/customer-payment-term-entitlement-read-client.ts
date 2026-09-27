@@ -40,14 +40,7 @@ export const executeCustomerPaymentTermEntitlementReadWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerPaymentTermEntitlementReadAuthorizedInvocation
 ) =>
   customerPaymentTermEntitlementReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.customerPaymentTermEntitlementRead.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.customerPaymentTermEntitlementRead.execute({ payload })),
   );
 
 export const executeCustomerPaymentTermEntitlementRead = (

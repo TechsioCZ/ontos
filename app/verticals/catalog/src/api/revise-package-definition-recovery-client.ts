@@ -40,9 +40,7 @@ export const executeRevisePackageDefinitionRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RevisePackageDefinitionRecoveryAuthorizedInvocation
 ) =>
   revisePackageDefinitionRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.revisePackageDefinitionRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.revisePackageDefinitionRecovery.execute({ payload })),
   );
 
 export const executeRevisePackageDefinitionRecovery = (

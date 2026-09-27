@@ -40,7 +40,7 @@ export const executeResolveCommerceMarketWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ResolveCommerceMarketAuthorizedInvocation
 ) =>
   resolveCommerceMarketClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.resolveCommerceMarket.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.resolveCommerceMarket.execute({ payload })),
   );
 
 export const executeResolveCommerceMarket = (

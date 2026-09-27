@@ -8,10 +8,6 @@ import { ReactivateBrandPayloadSchema, ReactivateBrandResultSchema } from '../ac
 
 export { ReactivateBrandPayloadSchema } from '../actions/reactivate-brand.ts';
 
-const ReactivateBrandActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReactivateBrandActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReactivateBrandActionInvalidProblem',
   400,
@@ -127,7 +123,6 @@ export const ReactivateBrandActionApi = HttpApi.make('ReactivateBrandActionApi')
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/reactivate-brand', {
         error: actionErrors,
-        headers: ReactivateBrandActionHeadersSchema,
         payload: Schema.toEncoded(ReactivateBrandPayloadSchema),
         success: ReactivateBrandResultSchema,
       }),

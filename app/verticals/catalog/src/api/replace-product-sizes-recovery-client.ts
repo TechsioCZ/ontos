@@ -40,9 +40,7 @@ export const executeReplaceProductSizesRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ReplaceProductSizesRecoveryAuthorizedInvocation
 ) =>
   replaceProductSizesRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.replaceProductSizesRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.replaceProductSizesRecovery.execute({ payload })),
   );
 
 export const executeReplaceProductSizesRecovery = (

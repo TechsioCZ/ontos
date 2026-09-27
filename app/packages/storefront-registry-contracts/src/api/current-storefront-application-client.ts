@@ -42,9 +42,7 @@ export const executeCurrentStorefrontApplicationWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CurrentStorefrontApplicationAuthorizedInvocation
 ) =>
   currentStorefrontApplicationClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.currentStorefrontApplication.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.currentStorefrontApplication.execute({ payload })),
   );
 
 export const executeCurrentStorefrontApplication = (

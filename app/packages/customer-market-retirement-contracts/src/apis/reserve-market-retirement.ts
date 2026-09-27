@@ -153,10 +153,6 @@ export const ReserveMarketRetirementInternalProblemSchema = makeProblemDetailsSc
   500,
 );
 
-const ReserveMarketRetirementHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReserveMarketRetirementApi = HttpApi.make('ReserveMarketRetirementApi').add(
   HttpApiGroup.make('reserveMarketRetirement').add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/reserve-market-retirement', {
@@ -173,10 +169,7 @@ export const ReserveMarketRetirementApi = HttpApi.make('ReserveMarketRetirementA
         ReserveMarketRetirementCommitIndeterminateProblemSchema,
         ReserveMarketRetirementInternalProblemSchema,
       ],
-      headers: ReserveMarketRetirementHeadersSchema,
-      params: {},
       payload: Schema.toEncoded(ReserveMarketRetirementPayloadSchema),
-      query: {},
       success: ReserveMarketRetirementResultSchema,
     }),
   ),

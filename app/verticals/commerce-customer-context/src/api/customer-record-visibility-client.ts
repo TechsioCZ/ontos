@@ -40,9 +40,7 @@ export const executeCustomerRecordVisibilityWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerRecordVisibilityAuthorizedInvocation
 ) =>
   customerRecordVisibilityClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.customerRecordVisibility.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.customerRecordVisibility.execute({ payload })),
   );
 
 export const executeCustomerRecordVisibility = (

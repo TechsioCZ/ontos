@@ -11,10 +11,6 @@ import {
 
 export { RetirePackageDefinitionPayloadSchema } from '../actions/retire-package-definition.ts';
 
-const RetirePackageDefinitionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RetirePackageDefinitionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RetirePackageDefinitionActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const RetirePackageDefinitionActionApi = HttpApi.make('RetirePackageDefin
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/retire-package-definition', {
         error: actionErrors,
-        headers: RetirePackageDefinitionActionHeadersSchema,
         payload: Schema.toEncoded(RetirePackageDefinitionPayloadSchema),
         success: RetirePackageDefinitionResultSchema,
       }),

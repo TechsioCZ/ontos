@@ -11,10 +11,6 @@ import {
 
 export { RevokeRetailPortalProfileBindingPayloadSchema } from '../actions/revoke-retail-portal-profile-binding.ts';
 
-const RevokeRetailPortalProfileBindingActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RevokeRetailPortalProfileBindingActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RevokeRetailPortalProfileBindingActionInvalidProblem',
   400,
@@ -162,7 +158,6 @@ export const revokeRetailPortalProfileBindingActionGroupDefinition = HttpApiGrou
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/revoke-retail-portal-profile-binding', {
       error: actionErrors,
-      headers: RevokeRetailPortalProfileBindingActionHeadersSchema,
       payload: Schema.toEncoded(RevokeRetailPortalProfileBindingPayloadSchema),
       success: RevokeRetailPortalProfileBindingResultSchema,
     }),

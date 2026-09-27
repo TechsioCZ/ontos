@@ -11,10 +11,6 @@ import {
 
 export { RetireControlledAttributeValuePayloadSchema } from '../actions/retire-controlled-attribute-value.ts';
 
-const RetireControlledAttributeValueActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RetireControlledAttributeValueActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RetireControlledAttributeValueActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const RetireControlledAttributeValueActionApi = HttpApi.make('RetireContr
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/retire-controlled-attribute-value', {
         error: actionErrors,
-        headers: RetireControlledAttributeValueActionHeadersSchema,
         payload: Schema.toEncoded(RetireControlledAttributeValuePayloadSchema),
         success: RetireControlledAttributeValueResultSchema,
       }),

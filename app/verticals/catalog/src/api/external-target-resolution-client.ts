@@ -40,9 +40,7 @@ export const executeExternalTargetResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ExternalTargetResolutionAuthorizedInvocation
 ) =>
   externalTargetResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.externalTargetResolution.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.externalTargetResolution.execute({ payload })),
   );
 
 export const executeExternalTargetResolution = (

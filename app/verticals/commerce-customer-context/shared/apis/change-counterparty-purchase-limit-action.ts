@@ -11,10 +11,6 @@ import {
 
 export { ChangeCounterpartyPurchaseLimitPayloadSchema } from '../actions/change-counterparty-purchase-limit.ts';
 
-const ChangeCounterpartyPurchaseLimitActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ChangeCounterpartyPurchaseLimitActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ChangeCounterpartyPurchaseLimitActionInvalidProblem',
   400,
@@ -153,7 +149,6 @@ export const changeCounterpartyPurchaseLimitActionGroupDefinition = HttpApiGroup
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/change-counterparty-purchase-limit', {
       error: actionErrors,
-      headers: ChangeCounterpartyPurchaseLimitActionHeadersSchema,
       payload: Schema.toEncoded(ChangeCounterpartyPurchaseLimitPayloadSchema),
       success: ChangeCounterpartyPurchaseLimitResultSchema,
     }),

@@ -11,10 +11,6 @@ import {
 
 export { DecidePurchaseApprovalRequestPayloadSchema } from '../actions/decide-purchase-approval-request.ts';
 
-const DecidePurchaseApprovalRequestActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const DecidePurchaseApprovalRequestActionInvalidProblemSchema = makeProblemDetailsSchema(
   'DecidePurchaseApprovalRequestActionInvalidProblem',
   400,
@@ -174,7 +170,6 @@ export const decidePurchaseApprovalRequestActionGroupDefinition = HttpApiGroup.m
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/decide-purchase-approval-request', {
       error: actionErrors,
-      headers: DecidePurchaseApprovalRequestActionHeadersSchema,
       payload: Schema.toEncoded(DecidePurchaseApprovalRequestPayloadSchema),
       success: DecidePurchaseApprovalRequestResultSchema,
     }),

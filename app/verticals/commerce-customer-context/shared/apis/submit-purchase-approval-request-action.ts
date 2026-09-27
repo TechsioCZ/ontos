@@ -11,10 +11,6 @@ import {
 
 export { SubmitPurchaseApprovalRequestPayloadSchema } from '../actions/submit-purchase-approval-request.ts';
 
-const SubmitPurchaseApprovalRequestActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const SubmitPurchaseApprovalRequestActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SubmitPurchaseApprovalRequestActionInvalidProblem',
   400,
@@ -174,7 +170,6 @@ export const submitPurchaseApprovalRequestActionGroupDefinition = HttpApiGroup.m
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/submit-purchase-approval-request', {
       error: actionErrors,
-      headers: SubmitPurchaseApprovalRequestActionHeadersSchema,
       payload: Schema.toEncoded(SubmitPurchaseApprovalRequestPayloadSchema),
       success: SubmitPurchaseApprovalRequestResultSchema,
     }),

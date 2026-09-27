@@ -11,10 +11,6 @@ import {
 
 export { BootstrapCounterpartyAccessAdministratorPayloadSchema } from '../actions/bootstrap-counterparty-access-administrator.ts';
 
-const BootstrapCounterpartyAccessAdministratorActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const BootstrapCounterpartyAccessAdministratorActionInvalidProblemSchema = makeProblemDetailsSchema(
   'BootstrapCounterpartyAccessAdministratorActionInvalidProblem',
   400,
@@ -178,7 +174,6 @@ export const bootstrapCounterpartyAccessAdministratorActionGroupDefinition = Htt
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/bootstrap-counterparty-access-administrator', {
       error: actionErrors,
-      headers: BootstrapCounterpartyAccessAdministratorActionHeadersSchema,
       payload: Schema.toEncoded(BootstrapCounterpartyAccessAdministratorPayloadSchema),
       success: BootstrapCounterpartyAccessAdministratorResultSchema,
     }),

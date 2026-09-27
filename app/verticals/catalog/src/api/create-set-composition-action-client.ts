@@ -34,7 +34,13 @@ interface MakeClientOptions {
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
-    { api: CreateSetCompositionActionApi, credential, defaultApiPrefix: '/catalog-api', requestCorrelation },
+    {
+      api: CreateSetCompositionActionApi,
+      credential,
+      defaultApiPrefix: '/catalog-api',
+      idempotencyKey: options.idempotencyKey,
+      requestCorrelation,
+    },
     options,
   );
 
@@ -45,12 +51,7 @@ export const executeCreateSetCompositionWithAuthorization = (
   Schema.encodeUnknownEffect(CreateSetCompositionPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.createSetCompositionAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.createSetCompositionAction.execute({ payload: encoded })),
       ),
     ),
   );

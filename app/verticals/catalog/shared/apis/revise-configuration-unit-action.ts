@@ -11,10 +11,6 @@ import {
 
 export { ReviseConfigurationUnitPayloadSchema } from '../actions/revise-configuration-unit.ts';
 
-const ReviseConfigurationUnitActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReviseConfigurationUnitActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReviseConfigurationUnitActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const ReviseConfigurationUnitActionApi = HttpApi.make('ReviseConfiguratio
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/revise-configuration-unit', {
         error: actionErrors,
-        headers: ReviseConfigurationUnitActionHeadersSchema,
         payload: Schema.toEncoded(ReviseConfigurationUnitPayloadSchema),
         success: ReviseConfigurationUnitResultSchema,
       }),

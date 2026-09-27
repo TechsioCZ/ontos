@@ -40,7 +40,7 @@ export const executeGuestAttributionStatusWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: GuestAttributionStatusAuthorizedInvocation
 ) =>
   guestAttributionStatusClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.guestAttributionStatus.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.guestAttributionStatus.execute({ payload })),
   );
 
 export const executeGuestAttributionStatus = (

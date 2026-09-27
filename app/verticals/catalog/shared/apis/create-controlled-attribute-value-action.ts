@@ -11,10 +11,6 @@ import {
 
 export { CreateControlledAttributeValuePayloadSchema } from '../actions/create-controlled-attribute-value.ts';
 
-const CreateControlledAttributeValueActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreateControlledAttributeValueActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateControlledAttributeValueActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const CreateControlledAttributeValueActionApi = HttpApi.make('CreateContr
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/create-controlled-attribute-value', {
         error: actionErrors,
-        headers: CreateControlledAttributeValueActionHeadersSchema,
         payload: Schema.toEncoded(CreateControlledAttributeValuePayloadSchema),
         success: CreateControlledAttributeValueResultSchema,
       }),

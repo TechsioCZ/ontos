@@ -40,9 +40,7 @@ export const executeGuestPaymentTermsResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: GuestPaymentTermsResolutionAuthorizedInvocation
 ) =>
   guestPaymentTermsResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.guestPaymentTermsResolution.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.guestPaymentTermsResolution.execute({ payload })),
   );
 
 export const executeGuestPaymentTermsResolution = (

@@ -41,14 +41,7 @@ export const executePaymentTermAffectedUseAssessmentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PaymentTermAffectedUseAssessmentAuthorizedInvocation
 ) =>
   paymentTermAffectedUseAssessmentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.paymentTermAffectedUseAssessment.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.paymentTermAffectedUseAssessment.execute({ payload })),
   );
 
 export const executePaymentTermAffectedUseAssessment = (

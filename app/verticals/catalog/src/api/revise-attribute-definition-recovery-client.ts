@@ -40,9 +40,7 @@ export const executeReviseAttributeDefinitionRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ReviseAttributeDefinitionRecoveryAuthorizedInvocation
 ) =>
   reviseAttributeDefinitionRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.reviseAttributeDefinitionRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.reviseAttributeDefinitionRecovery.execute({ payload })),
   );
 
 export const executeReviseAttributeDefinitionRecovery = (

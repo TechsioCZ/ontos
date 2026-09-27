@@ -11,10 +11,6 @@ import {
 
 export { SetProductAttributeValuesPayloadSchema } from '../actions/set-product-attribute-values.ts';
 
-const SetProductAttributeValuesActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const SetProductAttributeValuesActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetProductAttributeValuesActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const SetProductAttributeValuesActionApi = HttpApi.make('SetProductAttrib
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/set-product-attribute-values', {
         error: actionErrors,
-        headers: SetProductAttributeValuesActionHeadersSchema,
         payload: Schema.toEncoded(SetProductAttributeValuesPayloadSchema),
         success: SetProductAttributeValuesResultSchema,
       }),

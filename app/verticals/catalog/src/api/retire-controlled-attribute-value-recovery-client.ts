@@ -40,9 +40,7 @@ export const executeRetireControlledAttributeValueRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetireControlledAttributeValueRecoveryAuthorizedInvocation
 ) =>
   retireControlledAttributeValueRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.retireControlledAttributeValueRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.retireControlledAttributeValueRecovery.execute({ payload })),
   );
 
 export const executeRetireControlledAttributeValueRecovery = (

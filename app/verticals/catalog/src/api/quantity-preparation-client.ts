@@ -40,7 +40,7 @@ export const executeQuantityPreparationWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: QuantityPreparationAuthorizedInvocation
 ) =>
   quantityPreparationClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.quantityPreparation.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.quantityPreparation.execute({ payload })),
   );
 
 export const executeQuantityPreparation = (

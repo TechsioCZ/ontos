@@ -40,9 +40,7 @@ export const executeEffectiveAttributeValuesCurrentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: EffectiveAttributeValuesCurrentAuthorizedInvocation
 ) =>
   effectiveAttributeValuesCurrentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.effectiveAttributeValuesCurrent.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.effectiveAttributeValuesCurrent.execute({ payload })),
   );
 
 export const executeEffectiveAttributeValuesCurrent = (

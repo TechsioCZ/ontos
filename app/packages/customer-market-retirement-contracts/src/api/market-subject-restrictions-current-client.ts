@@ -41,9 +41,7 @@ export const executeMarketSubjectRestrictionsCurrentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: MarketSubjectRestrictionsCurrentAuthorizedInvocation
 ) =>
   marketSubjectRestrictionsCurrentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.marketSubjectRestrictionsCurrent.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.marketSubjectRestrictionsCurrent.execute({ payload })),
   );
 
 export const executeMarketSubjectRestrictionsCurrent = (

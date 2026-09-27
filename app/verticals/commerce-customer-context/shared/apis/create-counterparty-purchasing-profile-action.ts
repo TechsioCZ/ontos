@@ -11,10 +11,6 @@ import {
 
 export { CreateCounterpartyPurchasingProfilePayloadSchema } from '../actions/create-counterparty-purchasing-profile.ts';
 
-const CreateCounterpartyPurchasingProfileActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreateCounterpartyPurchasingProfileActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateCounterpartyPurchasingProfileActionInvalidProblem',
   400,
@@ -162,7 +158,6 @@ export const createCounterpartyPurchasingProfileActionGroupDefinition = HttpApiG
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/create-counterparty-purchasing-profile', {
       error: actionErrors,
-      headers: CreateCounterpartyPurchasingProfileActionHeadersSchema,
       payload: Schema.toEncoded(CreateCounterpartyPurchasingProfilePayloadSchema),
       success: CreateCounterpartyPurchasingProfileResultSchema,
     }),

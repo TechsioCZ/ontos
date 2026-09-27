@@ -37,7 +37,7 @@ export const executeCustomerArchiveWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CustomerArchiveAuthorizedInvocation
 ) =>
   customerArchiveClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.customerArchive.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.customerArchive.execute({ payload })),
   );
 
 export const executeCustomerArchive = (

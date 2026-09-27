@@ -40,7 +40,7 @@ export const executeCorrectGtinRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CorrectGtinRecoveryAuthorizedInvocation
 ) =>
   correctGtinRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.correctGtinRecovery.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.correctGtinRecovery.execute({ payload })),
   );
 
 export const executeCorrectGtinRecovery = (

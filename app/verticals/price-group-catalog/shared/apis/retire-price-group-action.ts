@@ -9,10 +9,6 @@ import { PriceGroupActionCommittedRetryReceiptSchema } from '../domain/action-co
 
 export { RetirePriceGroupPayloadSchema } from '../actions/retire-price-group.ts';
 
-const RetirePriceGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RetirePriceGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RetirePriceGroupActionInvalidProblem',
   400,
@@ -143,7 +139,6 @@ export const retirePriceGroupActionGroupDefinition = HttpApiGroup.make('retirePr
   .add(
     HttpApiEndpoint.post('execute', '/price-group-catalog/actions/retire-price-group', {
       error: actionErrors,
-      headers: RetirePriceGroupActionHeadersSchema,
       payload: Schema.toEncoded(RetirePriceGroupPayloadSchema),
       success: Schema.Union([RetirePriceGroupResultSchema, PriceGroupActionCommittedRetryReceiptSchema]),
     }),

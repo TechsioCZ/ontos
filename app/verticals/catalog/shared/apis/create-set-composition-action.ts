@@ -11,10 +11,6 @@ import {
 
 export { CreateSetCompositionPayloadSchema } from '../actions/create-set-composition.ts';
 
-const CreateSetCompositionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreateSetCompositionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateSetCompositionActionInvalidProblem',
   400,
@@ -132,7 +128,6 @@ export const CreateSetCompositionActionApi = HttpApi.make('CreateSetCompositionA
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/create-set-composition', {
         error: actionErrors,
-        headers: CreateSetCompositionActionHeadersSchema,
         payload: Schema.toEncoded(CreateSetCompositionPayloadSchema),
         success: CreateSetCompositionResultSchema,
       }),

@@ -40,9 +40,7 @@ export const executeRenameControlledAttributeValueRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RenameControlledAttributeValueRecoveryAuthorizedInvocation
 ) =>
   renameControlledAttributeValueRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.renameControlledAttributeValueRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.renameControlledAttributeValueRecovery.execute({ payload })),
   );
 
 export const executeRenameControlledAttributeValueRecovery = (

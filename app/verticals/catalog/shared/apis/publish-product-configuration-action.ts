@@ -11,10 +11,6 @@ import {
 
 export { PublishProductConfigurationPayloadSchema } from '../actions/publish-product-configuration.ts';
 
-const PublishProductConfigurationActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const PublishProductConfigurationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'PublishProductConfigurationActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const PublishProductConfigurationActionApi = HttpApi.make('PublishProduct
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/publish-product-configuration', {
         error: actionErrors,
-        headers: PublishProductConfigurationActionHeadersSchema,
         payload: Schema.toEncoded(PublishProductConfigurationPayloadSchema),
         success: PublishProductConfigurationResultSchema,
       }),

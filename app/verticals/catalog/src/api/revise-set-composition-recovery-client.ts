@@ -40,9 +40,7 @@ export const executeReviseSetCompositionRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ReviseSetCompositionRecoveryAuthorizedInvocation
 ) =>
   reviseSetCompositionRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.reviseSetCompositionRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.reviseSetCompositionRecovery.execute({ payload })),
   );
 
 export const executeReviseSetCompositionRecovery = (

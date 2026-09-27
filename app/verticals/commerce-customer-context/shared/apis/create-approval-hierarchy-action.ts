@@ -11,10 +11,6 @@ import {
 
 export { CreateApprovalHierarchyPayloadSchema } from '../actions/create-approval-hierarchy.ts';
 
-const CreateApprovalHierarchyActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreateApprovalHierarchyActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateApprovalHierarchyActionInvalidProblem',
   400,
@@ -172,7 +168,6 @@ export const createApprovalHierarchyActionGroupDefinition = HttpApiGroup.make('c
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/create-approval-hierarchy', {
       error: actionErrors,
-      headers: CreateApprovalHierarchyActionHeadersSchema,
       payload: Schema.toEncoded(CreateApprovalHierarchyPayloadSchema),
       success: CreateApprovalHierarchyResultSchema,
     }),

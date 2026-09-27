@@ -40,7 +40,7 @@ export const executeProductBrandCurrentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ProductBrandCurrentAuthorizedInvocation
 ) =>
   productBrandCurrentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.productBrandCurrent.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.productBrandCurrent.execute({ payload })),
   );
 
 export const executeProductBrandCurrent = (

@@ -11,10 +11,6 @@ import {
 
 export { SetProductUnitTargetDivisibilityPayloadSchema } from '../actions/set-product-unit-target-divisibility.ts';
 
-const SetProductUnitTargetDivisibilityActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const SetProductUnitTargetDivisibilityActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetProductUnitTargetDivisibilityActionInvalidProblem',
   400,
@@ -130,7 +126,6 @@ export const SetProductUnitTargetDivisibilityActionApi = HttpApi.make('SetProduc
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/set-product-unit-target-divisibility', {
         error: actionErrors,
-        headers: SetProductUnitTargetDivisibilityActionHeadersSchema,
         payload: Schema.toEncoded(SetProductUnitTargetDivisibilityPayloadSchema),
         success: SetProductUnitTargetDivisibilityResultSchema,
       }),

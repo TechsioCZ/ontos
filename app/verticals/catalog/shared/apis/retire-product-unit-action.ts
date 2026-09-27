@@ -8,10 +8,6 @@ import { RetireProductUnitPayloadSchema, RetireProductUnitResultSchema } from '.
 
 export { RetireProductUnitPayloadSchema } from '../actions/retire-product-unit.ts';
 
-const RetireProductUnitActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RetireProductUnitActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RetireProductUnitActionInvalidProblem',
   400,
@@ -127,7 +123,6 @@ export const RetireProductUnitActionApi = HttpApi.make('RetireProductUnitActionA
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/retire-product-unit', {
         error: actionErrors,
-        headers: RetireProductUnitActionHeadersSchema,
         payload: Schema.toEncoded(RetireProductUnitPayloadSchema),
         success: RetireProductUnitResultSchema,
       }),

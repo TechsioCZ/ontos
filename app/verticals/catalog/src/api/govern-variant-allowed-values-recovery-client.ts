@@ -40,9 +40,7 @@ export const executeGovernVariantAllowedValuesRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: GovernVariantAllowedValuesRecoveryAuthorizedInvocation
 ) =>
   governVariantAllowedValuesRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.governVariantAllowedValuesRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.governVariantAllowedValuesRecovery.execute({ payload })),
   );
 
 export const executeGovernVariantAllowedValuesRecovery = (

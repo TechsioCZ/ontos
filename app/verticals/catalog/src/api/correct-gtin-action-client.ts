@@ -31,7 +31,13 @@ interface MakeClientOptions {
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
-    { api: CorrectGtinActionApi, credential, defaultApiPrefix: '/catalog-api', requestCorrelation },
+    {
+      api: CorrectGtinActionApi,
+      credential,
+      defaultApiPrefix: '/catalog-api',
+      idempotencyKey: options.idempotencyKey,
+      requestCorrelation,
+    },
     options,
   );
 
@@ -42,12 +48,7 @@ export const executeCorrectGtinWithAuthorization = (
   Schema.encodeUnknownEffect(CorrectGtinPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.correctGtinAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.correctGtinAction.execute({ payload: encoded })),
       ),
     ),
   );

@@ -40,9 +40,7 @@ export const executeRemoveCatalogMediaRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RemoveCatalogMediaRecoveryAuthorizedInvocation
 ) =>
   removeCatalogMediaRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.removeCatalogMediaRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.removeCatalogMediaRecovery.execute({ payload })),
   );
 
 export const executeRemoveCatalogMediaRecovery = (

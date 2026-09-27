@@ -40,9 +40,7 @@ export const executeCreateProductRelationshipRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CreateProductRelationshipRecoveryAuthorizedInvocation
 ) =>
   productRelationshipRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.createProductRelationshipRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.createProductRelationshipRecovery.execute({ payload })),
   );
 
 export const executeCreateProductRelationshipRecovery = (

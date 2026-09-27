@@ -37,7 +37,7 @@ export const executeMarketHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: MarketHistoryAuthorizedInvocation
 ) =>
   marketHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.marketHistory.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.marketHistory.execute({ payload })),
   );
 
 export const executeMarketHistory = (

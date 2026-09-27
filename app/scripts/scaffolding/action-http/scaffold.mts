@@ -355,12 +355,6 @@ import {
 
 export { ${type}PayloadSchema } from '../actions/${action}.ts';
 
-const ${type}ActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(
-    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  ),
-});
-
 export const ${type}ActionInvalidProblemSchema = makeProblemDetailsSchema('${type}ActionInvalidProblem', 400);
 export const ${type}ActionAuthenticationProblemSchema = makeProblemDetailsSchema('${type}ActionAuthenticationProblem', 401);
 export const ${type}ActionForbiddenProblemSchema = makeProblemDetailsSchema('${type}ActionForbiddenProblem', 403, { code: ${literalList(codes.forbidden)} });
@@ -431,7 +425,6 @@ export const ${group}GroupDefinition = HttpApiGroup.make('${group}')
   .add(
     HttpApiEndpoint.post('execute', '/${vertical.appId}/actions/${action}', {
       error: actionErrors,
-      headers: ${type}ActionHeadersSchema,
       payload: Schema.toEncoded(${type}PayloadSchema),
       success: ${type}ResultSchema,
     }),
@@ -658,6 +651,7 @@ const renderActionHttpServer = (vertical: OntosVerticalMetadata, action: string)
   return `${HEADER}
 // @ontos-action-http-owner ${vertical.moduleId}
 // @ontos-action-http-slug ${action}
+import { decodeActionEndpointHeaders } from '@app/core-runtime/http/action-runner';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { HttpServerRequest } from 'effect/unstable/http';
 import { Redacted, Schema } from 'effect';
@@ -678,17 +672,18 @@ const runActionHttp = bindActionHttpRunner({
 const execute = Effect.fn('${type}ActionServer.execute')(
   function* execute${type}(
     payload: typeof ${value}Action.descriptor.payloadSchema.Encoded,
-    idempotencyKey: string | undefined,
     request: HttpServerRequest.HttpServerRequest,
   ) {
   const correlationId = request.headers['x-correlation-id'];
   if (correlationId !== undefined && correlationId.length > 200) {
     return yield* Effect.fail(${value}ActionProblem.invalid());
   }
+  const endpointHeaders = yield* decodeActionEndpointHeaders(request.headers)
+    .pipe(Effect.mapError(${value}ActionProblem.invalid));
   const decoded = yield* Schema.decodeEffect(${value}Action.descriptor.payloadSchema)(payload)
     .pipe(Effect.mapError(${value}ActionProblem.invalid));
   return yield* runActionHttp({
-    endpointHeaders: { idempotencyKey, traceId: request.headers['x-trace-id'] },
+    endpointHeaders,
     internalProblem: ${value}ActionProblem.internal,
     invalidCorrelationProblem: ${value}ActionProblem.invalid,
     mapError: map${type}ActionProblem,
@@ -705,9 +700,7 @@ const execute = Effect.fn('${type}ActionServer.execute')(
 export const ${value}ActionApiLive = HttpApiBuilder.group(
   ${toCamelCase(vertical.slug)}Api,
   '${value}Action',
-  (handlers) => handlers.handle('execute', ({ headers, payload, request }) =>
-    execute(payload, headers['idempotency-key'], request),
-  ),
+  (handlers) => handlers.handle('execute', ({ payload, request }) => execute(payload, request)),
 ).pipe(Layer.provide(${value}ActionSchemaErrorLive));
 `;
 };
@@ -723,20 +716,14 @@ export const renderActionHttpClient = (
   const payloadDiscriminator = payloadSchema === undefined ? undefined : collectPayloadDiscriminator(payloadSchema.ast);
   const executeRequest =
     payloadDiscriminator === undefined
-      ? `client.${value}Action.execute({
-      headers: { 'idempotency-key': options.idempotencyKey },
-      payload: encoded,
-    })`
+      ? `client.${value}Action.execute({ payload: encoded })`
       : `Match.value(encoded).pipe(
 ${payloadDiscriminator.values
   .toSorted((left, right) => left.localeCompare(right))
   .map((discriminatorValue) => {
     const payloadBinding = `${toCamelCase(discriminatorValue.toLowerCase())}Payload`;
     return `      Match.when({ ${payloadDiscriminator.key}: '${discriminatorValue}' }, (${payloadBinding}) =>
-        client.${value}Action.execute({
-          headers: { 'idempotency-key': options.idempotencyKey },
-          payload: ${payloadBinding},
-        }),
+        client.${value}Action.execute({ payload: ${payloadBinding} }),
       ),`;
   })
   .join('\n')}
@@ -770,7 +757,7 @@ interface MakeClientOptions {
 }
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
-  makeGovernedEffectBffClient({ api: ${type}ActionApi, credential, defaultApiPrefix: '/${vertical.appId}-api', requestCorrelation }, options);
+  makeGovernedEffectBffClient({ api: ${type}ActionApi, credential, defaultApiPrefix: '/${vertical.appId}-api', idempotencyKey: options.idempotencyKey, requestCorrelation }, options);
 
 export const execute${type}WithAuthorization = (
   payload: ${type}Payload,

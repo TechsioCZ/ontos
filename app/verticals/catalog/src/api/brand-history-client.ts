@@ -37,7 +37,7 @@ export const executeBrandHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: BrandHistoryAuthorizedInvocation
 ) =>
   brandHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.brandHistory.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.brandHistory.execute({ payload })),
   );
 
 export const executeBrandHistory = (

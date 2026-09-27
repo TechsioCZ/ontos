@@ -11,10 +11,6 @@ import {
 
 export { AddProductCategoryAssignmentPayloadSchema } from '../actions/add-product-category-assignment.ts';
 
-const AddProductCategoryAssignmentActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const AddProductCategoryAssignmentActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AddProductCategoryAssignmentActionInvalidProblem',
   400,
@@ -140,7 +136,6 @@ export const AddProductCategoryAssignmentActionApi = HttpApi.make('AddProductCat
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/add-product-category-assignment', {
         error: actionErrors,
-        headers: AddProductCategoryAssignmentActionHeadersSchema,
         payload: Schema.toEncoded(AddProductCategoryAssignmentPayloadSchema),
         success: AddProductCategoryAssignmentResultSchema,
       }),

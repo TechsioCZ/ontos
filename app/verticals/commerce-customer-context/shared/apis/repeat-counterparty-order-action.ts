@@ -11,10 +11,6 @@ import {
 
 export { RepeatCounterpartyOrderPayloadSchema } from '../actions/repeat-counterparty-order.ts';
 
-const RepeatCounterpartyOrderActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RepeatCounterpartyOrderActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RepeatCounterpartyOrderActionInvalidProblem',
   400,
@@ -145,7 +141,6 @@ export const repeatCounterpartyOrderActionGroupDefinition = HttpApiGroup.make('r
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/repeat-counterparty-order', {
       error: actionErrors,
-      headers: RepeatCounterpartyOrderActionHeadersSchema,
       payload: Schema.toEncoded(RepeatCounterpartyOrderPayloadSchema),
       success: RepeatCounterpartyOrderResultSchema,
     }),

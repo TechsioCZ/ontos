@@ -40,7 +40,7 @@ export const executeSavedAddressListWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SavedAddressListAuthorizedInvocation
 ) =>
   savedAddressListClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.savedAddressList.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.savedAddressList.execute({ payload })),
   );
 
 export const executeSavedAddressList = (

@@ -11,10 +11,6 @@ import {
 
 export { RenameAttributeDefinitionPayloadSchema } from '../actions/rename-attribute-definition.ts';
 
-const RenameAttributeDefinitionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RenameAttributeDefinitionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RenameAttributeDefinitionActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const RenameAttributeDefinitionActionApi = HttpApi.make('RenameAttributeD
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/rename-attribute-definition', {
         error: actionErrors,
-        headers: RenameAttributeDefinitionActionHeadersSchema,
         payload: Schema.toEncoded(RenameAttributeDefinitionPayloadSchema),
         success: RenameAttributeDefinitionResultSchema,
       }),

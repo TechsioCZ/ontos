@@ -11,10 +11,6 @@ import {
 
 export { StartPortalEnrollmentPayloadSchema } from '../actions/start-portal-enrollment.ts';
 
-const StartPortalEnrollmentActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const StartPortalEnrollmentActionInvalidProblemSchema = makeProblemDetailsSchema(
   'StartPortalEnrollmentActionInvalidProblem',
   400,
@@ -151,7 +147,6 @@ export const startPortalEnrollmentActionGroupDefinition = HttpApiGroup.make('sta
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/start-portal-enrollment', {
       error: actionErrors,
-      headers: StartPortalEnrollmentActionHeadersSchema,
       payload: Schema.toEncoded(StartPortalEnrollmentPayloadSchema),
       success: StartPortalEnrollmentResultSchema,
     }),

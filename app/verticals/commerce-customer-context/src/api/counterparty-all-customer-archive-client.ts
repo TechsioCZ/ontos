@@ -40,14 +40,7 @@ export const executeCounterpartyAllCustomerArchiveWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CounterpartyAllCustomerArchiveAuthorizedInvocation
 ) =>
   counterpartyAllCustomerArchiveClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.counterpartyAllCustomerArchive.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.counterpartyAllCustomerArchive.execute({ payload })),
   );
 
 export const executeCounterpartyAllCustomerArchive = (

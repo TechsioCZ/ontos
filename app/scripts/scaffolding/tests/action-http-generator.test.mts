@@ -113,6 +113,7 @@ it('renders exact secondary reason-code mappings without collapsing HTTP semanti
   const contract = renderActionHttpContract(vertical, 'submit-fulfillment-request', errors);
   const problems = renderActionHttpProblems(vertical, 'submit-fulfillment-request', errors);
 
+  expect(contract).not.toMatch(/headers:|HeadersSchema/u);
   expect(contract).toContain("SubmitFulfillmentRequestActionConflictProblem', 409");
   expect(contract).toContain("SubmitFulfillmentRequestActionRateLimitedProblem', 429");
   expect(contract).toContain("SubmitFulfillmentRequestActionIneligibleProblem', 422");
@@ -125,7 +126,9 @@ it('renders required idempotency and governed assertion acquisition in the Actio
   const client = renderActionHttpClient(vertical, 'change-rate', true);
   expect(client).toContain('readonly idempotencyKey: string;');
   expect(client).toContain('operationGateway.invoke(');
-  expect(client).toContain("headers: { 'idempotency-key': options.idempotencyKey }");
+  expect(client).toContain('idempotencyKey: options.idempotencyKey,');
+  expect(client).toContain('client.changeRateAction.execute({ payload: encoded })');
+  expect(client).not.toContain('headers:');
   expect(client).toContain("defaultApiPrefix: '/pricing-policy-api'");
 });
 

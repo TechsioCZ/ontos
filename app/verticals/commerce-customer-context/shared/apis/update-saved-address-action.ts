@@ -8,10 +8,6 @@ import { UpdateSavedAddressPayloadSchema, UpdateSavedAddressResultSchema } from 
 
 export { UpdateSavedAddressPayloadSchema } from '../actions/update-saved-address.ts';
 
-const UpdateSavedAddressActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const UpdateSavedAddressActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpdateSavedAddressActionInvalidProblem',
   400,
@@ -152,7 +148,6 @@ export const updateSavedAddressActionGroupDefinition = HttpApiGroup.make('update
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/update-saved-address', {
       error: actionErrors,
-      headers: UpdateSavedAddressActionHeadersSchema,
       payload: Schema.toEncoded(UpdateSavedAddressPayloadSchema),
       success: UpdateSavedAddressResultSchema,
     }),

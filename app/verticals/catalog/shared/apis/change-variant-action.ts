@@ -8,10 +8,6 @@ import { ChangeVariantPayloadSchema, ChangeVariantResultSchema } from '../action
 
 export { ChangeVariantPayloadSchema } from '../actions/change-variant.ts';
 
-const ChangeVariantActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ChangeVariantActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ChangeVariantActionInvalidProblem',
   400,
@@ -134,7 +130,6 @@ export const ChangeVariantActionApi = HttpApi.make('ChangeVariantActionApi').add
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/change-variant', {
         error: actionErrors,
-        headers: ChangeVariantActionHeadersSchema,
         payload: Schema.toEncoded(ChangeVariantPayloadSchema),
         success: ChangeVariantResultSchema,
       }),

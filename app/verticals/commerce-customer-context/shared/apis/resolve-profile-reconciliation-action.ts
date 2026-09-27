@@ -11,10 +11,6 @@ import {
 
 export { ResolveProfileReconciliationPayloadSchema } from '../actions/resolve-profile-reconciliation.ts';
 
-const ResolveProfileReconciliationActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ResolveProfileReconciliationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ResolveProfileReconciliationActionInvalidProblem',
   400,
@@ -155,7 +151,6 @@ export const resolveProfileReconciliationActionGroupDefinition = HttpApiGroup.ma
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/resolve-profile-reconciliation', {
       error: actionErrors,
-      headers: ResolveProfileReconciliationActionHeadersSchema,
       payload: Schema.toEncoded(ResolveProfileReconciliationPayloadSchema),
       success: ResolveProfileReconciliationResultSchema,
     }),

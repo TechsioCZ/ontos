@@ -11,10 +11,6 @@ import {
 
 export { RetireProductCategoryPayloadSchema } from '../actions/retire-product-category.ts';
 
-const RetireProductCategoryActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RetireProductCategoryActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RetireProductCategoryActionInvalidProblem',
   400,
@@ -140,7 +136,6 @@ export const RetireProductCategoryActionApi = HttpApi.make('RetireProductCategor
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/retire-product-category', {
         error: actionErrors,
-        headers: RetireProductCategoryActionHeadersSchema,
         payload: Schema.toEncoded(RetireProductCategoryPayloadSchema),
         success: RetireProductCategoryResultSchema,
       }),

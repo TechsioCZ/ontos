@@ -156,16 +156,12 @@ export type UpdatePartyRelationshipPayload = typeof UpdatePartyRelationshipPaylo
 export { UpdatePartyPayloadSchema, UpdatePartyResultSchema } from './actions/update-party.ts';
 export type UpdatePartyPayload = typeof UpdatePartyPayloadSchema.Type;
 
-// Absence reaches the explicit 428 mapping; every typed command client requires a key.
-export const PartyCommandHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
 export const PartyCommandInvalidRequestProblemSchema = makeProblemDetailsSchema(
   'PartyCommandInvalidRequestProblem',
   400,
 );
 
-/** Converts framework payload/header decoding failures into the declared RFC 9457 shape. */
+/** Converts framework payload decoding failures into the declared RFC 9457 shape. */
 export class PartyCommandSchemaErrorMiddleware extends HttpApiMiddleware.Service<PartyCommandSchemaErrorMiddleware>()(
   'party-registry/PartyCommandSchemaErrorMiddleware',
   { error: PartyCommandInvalidRequestProblemSchema },
@@ -315,7 +311,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('addContactPoint', '/party-registry/actions/add-contact-point', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: Schema.toEncoded(AddContactPointPayloadSchema),
         success: AddContactPointResultSchema,
       }),
@@ -323,7 +318,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('addPartyOfficialIdentifier', '/party-registry/actions/add-party-official-identifier', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: Schema.toEncoded(AddPartyOfficialIdentifierPayloadSchema),
         success: AddPartyOfficialIdentifierResultSchema,
       }),
@@ -331,7 +325,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('archiveParty', '/party-registry/actions/archive-party', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: ArchivePartyPayloadSchema,
         success: ArchivePartyResultSchema,
       }),
@@ -339,7 +332,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('confirmDuplicateParties', '/party-registry/actions/confirm-duplicate-parties', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: ConfirmDuplicatePartiesPayloadSchema,
         success: ConfirmDuplicatePartiesResultSchema,
       }),
@@ -347,7 +339,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('correctPartyFact', '/party-registry/actions/correct-party-fact', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: CorrectPartyFactPayloadSchema,
         success: CorrectPartyFactResultSchema,
       }),
@@ -355,7 +346,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('counterpartyCreate', '/party-registry/actions/counterparty-create', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: CounterpartyCreatePayloadSchema,
         success: CounterpartyCreateResultSchema,
       }),
@@ -363,7 +353,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('counterpartyRoleAdd', '/party-registry/actions/counterparty-role-add', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: CounterpartyRoleAddPayloadSchema,
         success: CounterpartyRoleAddResultSchema,
       }),
@@ -371,7 +360,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('counterpartyRoleEnd', '/party-registry/actions/counterparty-role-end', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: CounterpartyRoleEndPayloadSchema,
         success: CounterpartyRoleEndResultSchema,
       }),
@@ -379,7 +367,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('createPartyRelationship', '/party-registry/actions/create-party-relationship', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: CreatePartyRelationshipPayloadSchema,
         success: CreatePartyRelationshipResultSchema,
       }),
@@ -387,7 +374,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('createParty', '/party-registry/actions/create-party', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: CreatePartyPayloadJsonSchema,
         success: CreatePartyResultSchema,
       }),
@@ -395,7 +381,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('dismissDuplicateCandidate', '/party-registry/actions/dismiss-duplicate-candidate', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: DismissDuplicateCandidatePayloadSchema,
         success: DismissDuplicateCandidateResultSchema,
       }),
@@ -403,7 +388,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('endContactPoint', '/party-registry/actions/end-contact-point', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: EndContactPointPayloadSchema,
         success: EndContactPointResultSchema,
       }),
@@ -411,7 +395,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('endPartyOfficialIdentifier', '/party-registry/actions/end-party-official-identifier', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: EndPartyOfficialIdentifierPayloadSchema,
         success: EndPartyOfficialIdentifierResultSchema,
       }),
@@ -419,7 +402,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('endPartyRelationship', '/party-registry/actions/end-party-relationship', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: EndPartyRelationshipPayloadSchema,
         success: EndPartyRelationshipResultSchema,
       }),
@@ -430,7 +412,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
         '/party-registry/actions/mark-duplicate-candidate-needs-evidence',
         {
           error: commandErrors,
-          headers: PartyCommandHeadersSchema,
           payload: MarkDuplicateCandidateNeedsEvidencePayloadSchema,
           success: MarkDuplicateCandidateNeedsEvidenceResultSchema,
         },
@@ -439,7 +420,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('matchParty', '/party-registry/actions/match-party', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: MatchPartyPayloadSchema,
         success: MatchPartyResultSchema,
       }),
@@ -447,7 +427,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('requestSearchRebuild', '/party-registry/actions/request-search-rebuild', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: RequestSearchRebuildPayloadSchema,
         success: RequestSearchRebuildResultSchema,
       }),
@@ -458,7 +437,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
         '/party-registry/actions/resolve-duplicate-candidate-create',
         {
           error: commandErrors,
-          headers: PartyCommandHeadersSchema,
           payload: ResolveDuplicateCandidateCreatePayloadSchema,
           success: ResolveDuplicateCandidateCreateResultSchema,
         },
@@ -470,7 +448,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
         '/party-registry/actions/resolve-duplicate-candidate-match',
         {
           error: commandErrors,
-          headers: PartyCommandHeadersSchema,
           payload: ResolveDuplicateCandidateMatchPayloadSchema,
           success: ResolveDuplicateCandidateMatchResultSchema,
         },
@@ -479,7 +456,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('unarchiveParty', '/party-registry/actions/unarchive-party', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: UnarchivePartyPayloadSchema,
         success: UnarchivePartyResultSchema,
       }),
@@ -487,7 +463,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('updateContactPoint', '/party-registry/actions/update-contact-point', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: UpdateContactPointPayloadSchema,
         success: UpdateContactPointResultSchema,
       }),
@@ -498,7 +473,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
         '/party-registry/actions/update-party-official-identifier',
         {
           error: commandErrors,
-          headers: PartyCommandHeadersSchema,
           payload: UpdatePartyOfficialIdentifierPayloadSchema,
           success: UpdatePartyOfficialIdentifierResultSchema,
         },
@@ -507,7 +481,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('updatePartyRelationship', '/party-registry/actions/update-party-relationship', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: UpdatePartyRelationshipPayloadSchema,
         success: UpdatePartyRelationshipResultSchema,
       }),
@@ -515,7 +488,6 @@ export const partyRegistryCommandsApi = HttpApi.make('PartyRegistryCommandsApi')
     .add(
       HttpApiEndpoint.post('updateParty', '/party-registry/actions/update-party', {
         error: commandErrors,
-        headers: PartyCommandHeadersSchema,
         payload: Schema.toEncoded(UpdatePartyPayloadSchema),
         success: UpdatePartyResultSchema,
       }),

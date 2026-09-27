@@ -11,10 +11,6 @@ import {
 
 export { AssertSizeEquivalencePayloadSchema } from '../actions/assert-size-equivalence.ts';
 
-const AssertSizeEquivalenceActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const AssertSizeEquivalenceActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssertSizeEquivalenceActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const AssertSizeEquivalenceActionApi = HttpApi.make('AssertSizeEquivalenc
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/assert-size-equivalence', {
         error: actionErrors,
-        headers: AssertSizeEquivalenceActionHeadersSchema,
         payload: Schema.toEncoded(AssertSizeEquivalencePayloadSchema),
         success: AssertSizeEquivalenceResultSchema,
       }),

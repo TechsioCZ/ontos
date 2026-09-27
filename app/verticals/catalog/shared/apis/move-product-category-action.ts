@@ -8,10 +8,6 @@ import { MoveProductCategoryPayloadSchema, MoveProductCategoryResultSchema } fro
 
 export { MoveProductCategoryPayloadSchema } from '../actions/move-product-category.ts';
 
-const MoveProductCategoryActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const MoveProductCategoryActionInvalidProblemSchema = makeProblemDetailsSchema(
   'MoveProductCategoryActionInvalidProblem',
   400,
@@ -137,7 +133,6 @@ export const MoveProductCategoryActionApi = HttpApi.make('MoveProductCategoryAct
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/move-product-category', {
         error: actionErrors,
-        headers: MoveProductCategoryActionHeadersSchema,
         payload: Schema.toEncoded(MoveProductCategoryPayloadSchema),
         success: MoveProductCategoryResultSchema,
       }),

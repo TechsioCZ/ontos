@@ -40,9 +40,7 @@ export const executeReorderCatalogMediaRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ReorderCatalogMediaRecoveryAuthorizedInvocation
 ) =>
   reorderCatalogMediaRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.reorderCatalogMediaRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.reorderCatalogMediaRecovery.execute({ payload })),
   );
 
 export const executeReorderCatalogMediaRecovery = (

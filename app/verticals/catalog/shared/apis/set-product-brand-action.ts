@@ -8,10 +8,6 @@ import { SetProductBrandPayloadSchema, SetProductBrandResultSchema } from '../ac
 
 export { SetProductBrandPayloadSchema } from '../actions/set-product-brand.ts';
 
-const SetProductBrandActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const SetProductBrandActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetProductBrandActionInvalidProblem',
   400,
@@ -127,7 +123,6 @@ export const SetProductBrandActionApi = HttpApi.make('SetProductBrandActionApi')
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/set-product-brand', {
         error: actionErrors,
-        headers: SetProductBrandActionHeadersSchema,
         payload: Schema.toEncoded(SetProductBrandPayloadSchema),
         success: SetProductBrandResultSchema,
       }),

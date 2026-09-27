@@ -8,10 +8,6 @@ import { RemoveCustomerGroupPayloadSchema, RemoveCustomerGroupResultSchema } fro
 
 export { RemoveCustomerGroupPayloadSchema } from '../actions/remove-customer-group.ts';
 
-const RemoveCustomerGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RemoveCustomerGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveCustomerGroupActionInvalidProblem',
   400,
@@ -146,7 +142,6 @@ export const removeCustomerGroupActionGroupDefinition = HttpApiGroup.make('remov
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/remove-customer-group', {
       error: actionErrors,
-      headers: RemoveCustomerGroupActionHeadersSchema,
       payload: Schema.toEncoded(RemoveCustomerGroupPayloadSchema),
       success: RemoveCustomerGroupResultSchema,
     }),

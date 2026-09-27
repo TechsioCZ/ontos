@@ -8,10 +8,6 @@ import { RetireBrandPayloadSchema, RetireBrandResultSchema } from '../actions/re
 
 export { RetireBrandPayloadSchema } from '../actions/retire-brand.ts';
 
-const RetireBrandActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RetireBrandActionInvalidProblemSchema = makeProblemDetailsSchema('RetireBrandActionInvalidProblem', 400);
 export const RetireBrandActionAuthenticationProblemSchema = makeProblemDetailsSchema(
   'RetireBrandActionAuthenticationProblem',
@@ -121,7 +117,6 @@ export const RetireBrandActionApi = HttpApi.make('RetireBrandActionApi').add(
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/retire-brand', {
         error: actionErrors,
-        headers: RetireBrandActionHeadersSchema,
         payload: Schema.toEncoded(RetireBrandPayloadSchema),
         success: RetireBrandResultSchema,
       }),

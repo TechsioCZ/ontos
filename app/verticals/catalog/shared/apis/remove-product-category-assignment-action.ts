@@ -11,10 +11,6 @@ import {
 
 export { RemoveProductCategoryAssignmentPayloadSchema } from '../actions/remove-product-category-assignment.ts';
 
-const RemoveProductCategoryAssignmentActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RemoveProductCategoryAssignmentActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveProductCategoryAssignmentActionInvalidProblem',
   400,
@@ -140,7 +136,6 @@ export const RemoveProductCategoryAssignmentActionApi = HttpApi.make('RemoveProd
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/remove-product-category-assignment', {
         error: actionErrors,
-        headers: RemoveProductCategoryAssignmentActionHeadersSchema,
         payload: Schema.toEncoded(RemoveProductCategoryAssignmentPayloadSchema),
         success: RemoveProductCategoryAssignmentResultSchema,
       }),

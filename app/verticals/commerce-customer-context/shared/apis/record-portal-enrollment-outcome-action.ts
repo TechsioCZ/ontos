@@ -11,10 +11,6 @@ import {
 
 export { RecordPortalEnrollmentOutcomePayloadSchema } from '../actions/record-portal-enrollment-outcome.ts';
 
-const RecordPortalEnrollmentOutcomeActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RecordPortalEnrollmentOutcomeActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RecordPortalEnrollmentOutcomeActionInvalidProblem',
   400,
@@ -153,7 +149,6 @@ export const recordPortalEnrollmentOutcomeActionGroupDefinition = HttpApiGroup.m
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/record-portal-enrollment-outcome', {
       error: actionErrors,
-      headers: RecordPortalEnrollmentOutcomeActionHeadersSchema,
       payload: Schema.toEncoded(RecordPortalEnrollmentOutcomePayloadSchema),
       success: RecordPortalEnrollmentOutcomeResultSchema,
     }),

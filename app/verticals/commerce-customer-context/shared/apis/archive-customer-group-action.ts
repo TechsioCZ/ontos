@@ -11,10 +11,6 @@ import {
 
 export { ArchiveCustomerGroupPayloadSchema } from '../actions/archive-customer-group.ts';
 
-const ArchiveCustomerGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ArchiveCustomerGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ArchiveCustomerGroupActionInvalidProblem',
   400,
@@ -150,7 +146,6 @@ export const archiveCustomerGroupActionGroupDefinition = HttpApiGroup.make('arch
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/archive-customer-group', {
       error: actionErrors,
-      headers: ArchiveCustomerGroupActionHeadersSchema,
       payload: Schema.toEncoded(ArchiveCustomerGroupPayloadSchema),
       success: ArchiveCustomerGroupResultSchema,
     }),

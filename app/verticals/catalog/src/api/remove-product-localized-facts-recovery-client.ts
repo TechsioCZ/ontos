@@ -40,9 +40,7 @@ export const executeRemoveProductLocalizedFactsRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RemoveProductLocalizedFactsRecoveryAuthorizedInvocation
 ) =>
   removeProductLocalizedFactsRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.removeProductLocalizedFactsRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.removeProductLocalizedFactsRecovery.execute({ payload })),
   );
 
 export const executeRemoveProductLocalizedFactsRecovery = (

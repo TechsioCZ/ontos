@@ -40,9 +40,7 @@ export const executeMarkGtinUnresolvedRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: MarkGtinUnresolvedRecoveryAuthorizedInvocation
 ) =>
   markGtinUnresolvedRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.markGtinUnresolvedRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.markGtinUnresolvedRecovery.execute({ payload })),
   );
 
 export const executeMarkGtinUnresolvedRecovery = (

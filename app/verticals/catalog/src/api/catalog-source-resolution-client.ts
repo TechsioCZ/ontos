@@ -40,7 +40,7 @@ export const executeCatalogSourceResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CatalogSourceResolutionAuthorizedInvocation
 ) =>
   catalogSourceResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.catalogSourceResolution.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.catalogSourceResolution.execute({ payload })),
   );
 
 export const executeCatalogSourceResolution = (

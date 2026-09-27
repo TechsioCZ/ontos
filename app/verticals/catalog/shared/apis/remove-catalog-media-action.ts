@@ -8,10 +8,6 @@ import { RemoveCatalogMediaPayloadSchema, RemoveCatalogMediaResultSchema } from 
 
 export { RemoveCatalogMediaPayloadSchema } from '../actions/remove-catalog-media.ts';
 
-const RemoveCatalogMediaActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RemoveCatalogMediaActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveCatalogMediaActionInvalidProblem',
   400,
@@ -133,7 +129,6 @@ export const RemoveCatalogMediaActionApi = HttpApi.make('RemoveCatalogMediaActio
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/remove-catalog-media', {
         error: actionErrors,
-        headers: RemoveCatalogMediaActionHeadersSchema,
         payload: Schema.toEncoded(RemoveCatalogMediaPayloadSchema),
         success: RemoveCatalogMediaResultSchema,
       }),

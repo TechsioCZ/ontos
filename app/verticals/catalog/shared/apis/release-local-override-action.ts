@@ -11,10 +11,6 @@ import {
 
 export { ReleaseLocalOverridePayloadSchema } from '../actions/release-local-override.ts';
 
-const ReleaseLocalOverrideActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReleaseLocalOverrideActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReleaseLocalOverrideActionInvalidProblem',
   400,
@@ -130,7 +126,6 @@ export const ReleaseLocalOverrideActionApi = HttpApi.make('ReleaseLocalOverrideA
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/release-local-override', {
         error: actionErrors,
-        headers: ReleaseLocalOverrideActionHeadersSchema,
         payload: Schema.toEncoded(ReleaseLocalOverridePayloadSchema),
         success: ReleaseLocalOverrideResultSchema,
       }),

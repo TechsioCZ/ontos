@@ -40,7 +40,7 @@ export const executeSavedAddressDefaultsWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SavedAddressDefaultsAuthorizedInvocation
 ) =>
   savedAddressDefaultsClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.savedAddressDefaults.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.savedAddressDefaults.execute({ payload })),
   );
 
 export const executeSavedAddressDefaults = (

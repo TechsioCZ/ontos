@@ -11,10 +11,6 @@ import {
 
 export { SuspendCustomerProfilePayloadSchema } from '../actions/suspend-customer-profile.ts';
 
-const SuspendCustomerProfileActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const SuspendCustomerProfileActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SuspendCustomerProfileActionInvalidProblem',
   400,
@@ -152,7 +148,6 @@ export const suspendCustomerProfileActionGroupDefinition = HttpApiGroup.make('su
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/suspend-customer-profile', {
       error: actionErrors,
-      headers: SuspendCustomerProfileActionHeadersSchema,
       payload: Schema.toEncoded(SuspendCustomerProfilePayloadSchema),
       success: ProfileLifecycleResultSchema,
     }),

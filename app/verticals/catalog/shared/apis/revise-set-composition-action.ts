@@ -11,10 +11,6 @@ import {
 
 export { ReviseSetCompositionPayloadSchema } from '../actions/revise-set-composition.ts';
 
-const ReviseSetCompositionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReviseSetCompositionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReviseSetCompositionActionInvalidProblem',
   400,
@@ -132,7 +128,6 @@ export const ReviseSetCompositionActionApi = HttpApi.make('ReviseSetCompositionA
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/revise-set-composition', {
         error: actionErrors,
-        headers: ReviseSetCompositionActionHeadersSchema,
         payload: Schema.toEncoded(ReviseSetCompositionPayloadSchema),
         success: ReviseSetCompositionResultSchema,
       }),

@@ -34,7 +34,13 @@ interface MakeClientOptions {
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
-    { api: MoveProductCategoryActionApi, credential, defaultApiPrefix: '/catalog-api', requestCorrelation },
+    {
+      api: MoveProductCategoryActionApi,
+      credential,
+      defaultApiPrefix: '/catalog-api',
+      idempotencyKey: options.idempotencyKey,
+      requestCorrelation,
+    },
     options,
   );
 
@@ -45,12 +51,7 @@ export const executeMoveProductCategoryWithAuthorization = (
   Schema.encodeUnknownEffect(MoveProductCategoryPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.moveProductCategoryAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.moveProductCategoryAction.execute({ payload: encoded })),
       ),
     ),
   );

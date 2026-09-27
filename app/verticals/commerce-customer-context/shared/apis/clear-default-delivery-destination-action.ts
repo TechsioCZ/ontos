@@ -11,10 +11,6 @@ import {
 
 export { ClearDefaultDeliveryDestinationPayloadSchema } from '../actions/clear-default-delivery-destination.ts';
 
-const ClearDefaultDeliveryDestinationActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ClearDefaultDeliveryDestinationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ClearDefaultDeliveryDestinationActionInvalidProblem',
   400,
@@ -157,7 +153,6 @@ export const clearDefaultDeliveryDestinationActionGroupDefinition = HttpApiGroup
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/clear-default-delivery-destination', {
       error: actionErrors,
-      headers: ClearDefaultDeliveryDestinationActionHeadersSchema,
       payload: Schema.toEncoded(ClearDefaultDeliveryDestinationPayloadSchema),
       success: ClearDefaultDeliveryDestinationResultSchema,
     }),

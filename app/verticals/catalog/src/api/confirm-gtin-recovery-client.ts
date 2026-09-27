@@ -40,7 +40,7 @@ export const executeConfirmGtinRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ConfirmGtinRecoveryAuthorizedInvocation
 ) =>
   confirmGtinRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.confirmGtinRecovery.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.confirmGtinRecovery.execute({ payload })),
   );
 
 export const executeConfirmGtinRecovery = (

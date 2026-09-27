@@ -40,9 +40,7 @@ export const executeSetVariantAttributeOverrideRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SetVariantAttributeOverrideRecoveryAuthorizedInvocation
 ) =>
   setVariantAttributeOverrideRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.setVariantAttributeOverrideRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.setVariantAttributeOverrideRecovery.execute({ payload })),
   );
 
 export const executeSetVariantAttributeOverrideRecovery = (

@@ -41,7 +41,7 @@ export const executePriceGroupDefinitionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PriceGroupDefinitionAuthorizedInvocation
 ) =>
   priceGroupDefinitionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.priceGroupDefinition.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.priceGroupDefinition.execute({ payload })),
   );
 
 export const executePriceGroupDefinition = (

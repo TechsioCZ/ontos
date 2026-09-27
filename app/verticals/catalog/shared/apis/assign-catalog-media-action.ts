@@ -8,10 +8,6 @@ import { AssignCatalogMediaPayloadSchema, AssignCatalogMediaResultSchema } from 
 
 export { AssignCatalogMediaPayloadSchema } from '../actions/assign-catalog-media.ts';
 
-const AssignCatalogMediaActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const AssignCatalogMediaActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssignCatalogMediaActionInvalidProblem',
   400,
@@ -133,7 +129,6 @@ export const AssignCatalogMediaActionApi = HttpApi.make('AssignCatalogMediaActio
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/assign-catalog-media', {
         error: actionErrors,
-        headers: AssignCatalogMediaActionHeadersSchema,
         payload: Schema.toEncoded(AssignCatalogMediaPayloadSchema),
         success: AssignCatalogMediaResultSchema,
       }),

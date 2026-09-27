@@ -41,14 +41,7 @@ export const executePartyMatchDecisionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PartyMatchDecisionAuthorizedInvocation
 ) =>
   partyMatchDecisionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.partyMatchDecision.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.partyMatchDecision.execute({ payload })),
   );
 
 export const executePartyMatchDecision = (

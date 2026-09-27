@@ -25,6 +25,8 @@ export interface PartyRegistryHttpClientOptions {
 export interface PartyRegistryHttpRequestContextValue {
   readonly baseUrl: string | URL;
   readonly credential?: Redacted.Redacted<string>;
+  /** Action transport header; the endpoint contracts declare no header codec. */
+  readonly idempotencyKey?: string;
   readonly operationContext?: OperationContext;
   readonly requestCorrelationHeader?: 'x-correlation-id';
   readonly requestCorrelation?: string;
@@ -74,6 +76,7 @@ const effectBffClientOptions = (context: PartyRegistryHttpRequestContextValue): 
           authorization: Redacted.value(context.credential),
           [requestCorrelationHeader]: context.requestCorrelation,
           'x-trace-id': context.requestTrace,
+          'idempotency-key': context.idempotencyKey,
         };
   const requestContext: EffectBffRequestContext = {};
   if (context.requestLocale !== undefined) {

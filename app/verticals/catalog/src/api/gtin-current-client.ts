@@ -37,7 +37,7 @@ export const executeGtinCurrentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: GtinCurrentAuthorizedInvocation
 ) =>
   gtinCurrentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.gtinCurrent.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.gtinCurrent.execute({ payload })),
   );
 
 export const executeGtinCurrent = (

@@ -8,10 +8,6 @@ import { UpdateCustomerGroupPayloadSchema, UpdateCustomerGroupResultSchema } fro
 
 export { UpdateCustomerGroupPayloadSchema } from '../actions/update-customer-group.ts';
 
-const UpdateCustomerGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const UpdateCustomerGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'UpdateCustomerGroupActionInvalidProblem',
   400,
@@ -149,7 +145,6 @@ export const updateCustomerGroupActionGroupDefinition = HttpApiGroup.make('updat
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/update-customer-group', {
       error: actionErrors,
-      headers: UpdateCustomerGroupActionHeadersSchema,
       payload: Schema.toEncoded(UpdateCustomerGroupPayloadSchema),
       success: UpdateCustomerGroupResultSchema,
     }),

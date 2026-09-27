@@ -8,10 +8,6 @@ import { RepeatRetailOrderPayloadSchema, RepeatRetailOrderResultSchema } from '.
 
 export { RepeatRetailOrderPayloadSchema } from '../actions/repeat-retail-order.ts';
 
-const RepeatRetailOrderActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RepeatRetailOrderActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RepeatRetailOrderActionInvalidProblem',
   400,
@@ -142,7 +138,6 @@ export const repeatRetailOrderActionGroupDefinition = HttpApiGroup.make('repeatR
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/repeat-retail-order', {
       error: actionErrors,
-      headers: RepeatRetailOrderActionHeadersSchema,
       payload: Schema.toEncoded(RepeatRetailOrderPayloadSchema),
       success: RepeatRetailOrderResultSchema,
     }),

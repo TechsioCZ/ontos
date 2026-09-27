@@ -11,10 +11,6 @@ import {
 
 export { RemoveVariantLocalizedFactsPayloadSchema } from '../actions/remove-variant-localized-facts.ts';
 
-const RemoveVariantLocalizedFactsActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RemoveVariantLocalizedFactsActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveVariantLocalizedFactsActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const RemoveVariantLocalizedFactsActionApi = HttpApi.make('RemoveVariantL
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/remove-variant-localized-facts', {
         error: actionErrors,
-        headers: RemoveVariantLocalizedFactsActionHeadersSchema,
         payload: Schema.toEncoded(RemoveVariantLocalizedFactsPayloadSchema),
         success: RemoveVariantLocalizedFactsResultSchema,
       }),

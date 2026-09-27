@@ -41,14 +41,7 @@ export const executePersonEngagementProfileWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PersonEngagementProfileAuthorizedInvocation
 ) =>
   personEngagementProfileClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.personEngagementProfile.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.personEngagementProfile.execute({ payload })),
   );
 
 export const executePersonEngagementProfile = (

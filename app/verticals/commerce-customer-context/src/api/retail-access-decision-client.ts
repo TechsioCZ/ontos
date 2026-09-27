@@ -40,7 +40,7 @@ export const executeRetailAccessDecisionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetailAccessDecisionAuthorizedInvocation
 ) =>
   retailAccessDecisionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.retailAccessDecision.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.retailAccessDecision.execute({ payload })),
   );
 
 export const executeRetailAccessDecision = (

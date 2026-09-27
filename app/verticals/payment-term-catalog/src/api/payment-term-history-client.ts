@@ -40,7 +40,7 @@ export const executePaymentTermHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PaymentTermHistoryAuthorizedInvocation
 ) =>
   paymentTermHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.paymentTermHistory.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.paymentTermHistory.execute({ payload })),
   );
 
 export const executePaymentTermHistory = (

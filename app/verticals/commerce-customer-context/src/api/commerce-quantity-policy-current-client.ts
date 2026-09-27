@@ -40,9 +40,7 @@ export const executeCommerceQuantityPolicyCurrentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CommerceQuantityPolicyCurrentAuthorizedInvocation
 ) =>
   commerceQuantityPolicyCurrentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.commerceQuantityPolicyCurrent.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.commerceQuantityPolicyCurrent.execute({ payload })),
   );
 
 export const executeCommerceQuantityPolicyCurrent = (

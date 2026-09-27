@@ -11,10 +11,6 @@ import {
 
 export { CreateConfigurationUnitPayloadSchema } from '../actions/create-configuration-unit.ts';
 
-const CreateConfigurationUnitActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreateConfigurationUnitActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateConfigurationUnitActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const CreateConfigurationUnitActionApi = HttpApi.make('CreateConfiguratio
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/create-configuration-unit', {
         error: actionErrors,
-        headers: CreateConfigurationUnitActionHeadersSchema,
         payload: Schema.toEncoded(CreateConfigurationUnitPayloadSchema),
         success: CreateConfigurationUnitResultSchema,
       }),

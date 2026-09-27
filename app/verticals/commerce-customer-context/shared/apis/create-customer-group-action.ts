@@ -8,10 +8,6 @@ import { CreateCustomerGroupPayloadSchema, CreateCustomerGroupResultSchema } fro
 
 export { CreateCustomerGroupPayloadSchema } from '../actions/create-customer-group.ts';
 
-const CreateCustomerGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreateCustomerGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateCustomerGroupActionInvalidProblem',
   400,
@@ -147,7 +143,6 @@ export const createCustomerGroupActionGroupDefinition = HttpApiGroup.make('creat
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/create-customer-group', {
       error: actionErrors,
-      headers: CreateCustomerGroupActionHeadersSchema,
       payload: Schema.toEncoded(CreateCustomerGroupPayloadSchema),
       success: CreateCustomerGroupResultSchema,
     }),

@@ -1503,16 +1503,15 @@ it.live(
         expect(searchClient).toMatch(/api: InventoryItemsSearchApi,/u);
         expect(reportClient).toMatch(/api: StockLevelsReportApi,/u);
         expect(moduleApiContract).toMatch(
-          /headers: \{\},\s+params: \{\},\s+payload: ResourceDetailRequestSchema,\s+query: \{\}/u,
+          /\],\s+payload: ResourceDetailRequestSchema,\s+success: ResourceDetailResponseSchema,/u,
         );
+        expect(moduleApiContract).not.toMatch(/(?:headers|params|query): \{\}/u);
         expect(moduleApiContract).toContain(
           'export type ResourceDetailRequest = typeof ResourceDetailRequestSchema.Type;',
         );
         expect(moduleApiContract).toContain('export const ResourceDetailResponseSchema = Schema.Struct(');
         expect(moduleApiContract).not.toMatch(/export type ResourceDetailResponse\b/u);
-        expect(moduleApiClient).toMatch(
-          /client\.resourceDetail\.execute\(\{\s+headers: \{\},\s+params: \{\},\s+payload,\s+query: \{\},?\s+\}\)/u,
-        );
+        expect(moduleApiClient).toContain('client.resourceDetail.execute({ payload })');
         expect(moduleApiContract).toMatch(/HttpApiGroup\.make\('resourceDetail'\)/u);
         expect(secondModuleApiContract).toMatch(/HttpApiGroup\.make\('resourceHistory'\)/u);
         expect(secondModuleApiClient).toMatch(/client\.resourceHistory\.execute\(/u);

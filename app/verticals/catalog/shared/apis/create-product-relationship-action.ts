@@ -11,10 +11,6 @@ import {
 
 export { CreateProductRelationshipPayloadSchema } from '../actions/create-product-relationship.ts';
 
-const CreateProductRelationshipActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreateProductRelationshipActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateProductRelationshipActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const CreateProductRelationshipActionApi = HttpApi.make('CreateProductRel
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/create-product-relationship', {
         error: actionErrors,
-        headers: CreateProductRelationshipActionHeadersSchema,
         payload: Schema.toEncoded(CreateProductRelationshipPayloadSchema),
         success: CreateProductRelationshipResultSchema,
       }),

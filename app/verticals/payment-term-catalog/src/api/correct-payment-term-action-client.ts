@@ -38,6 +38,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
       api: CorrectPaymentTermActionApi,
       credential,
       defaultApiPrefix: '/payment-term-catalog-api',
+      idempotencyKey: options.idempotencyKey,
       requestCorrelation,
     },
     options,
@@ -50,12 +51,7 @@ export const executeCorrectPaymentTermWithAuthorization = (
   Schema.encodeUnknownEffect(CorrectPaymentTermPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.correctPaymentTermAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.correctPaymentTermAction.execute({ payload: encoded })),
       ),
     ),
   );

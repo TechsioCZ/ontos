@@ -11,10 +11,6 @@ import {
 
 export { RemoveProductAttributeValuesPayloadSchema } from '../actions/remove-product-attribute-values.ts';
 
-const RemoveProductAttributeValuesActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RemoveProductAttributeValuesActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveProductAttributeValuesActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const RemoveProductAttributeValuesActionApi = HttpApi.make('RemoveProduct
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/remove-product-attribute-values', {
         error: actionErrors,
-        headers: RemoveProductAttributeValuesActionHeadersSchema,
         payload: Schema.toEncoded(RemoveProductAttributeValuesPayloadSchema),
         success: RemoveProductAttributeValuesResultSchema,
       }),

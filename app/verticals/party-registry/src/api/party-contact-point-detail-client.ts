@@ -41,14 +41,7 @@ export const executePartyContactPointDetailWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PartyContactPointDetailAuthorizedInvocation
 ) =>
   partyContactPointDetailClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.partyContactPointDetail.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.partyContactPointDetail.execute({ payload })),
   );
 
 export const executePartyContactPointDetail = (

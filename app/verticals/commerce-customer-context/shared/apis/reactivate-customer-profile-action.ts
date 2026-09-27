@@ -11,10 +11,6 @@ import {
 
 export { ReactivateCustomerProfilePayloadSchema } from '../actions/reactivate-customer-profile.ts';
 
-const ReactivateCustomerProfileActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReactivateCustomerProfileActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReactivateCustomerProfileActionInvalidProblem',
   400,
@@ -152,7 +148,6 @@ export const reactivateCustomerProfileActionGroupDefinition = HttpApiGroup.make(
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/reactivate-customer-profile', {
       error: actionErrors,
-      headers: ReactivateCustomerProfileActionHeadersSchema,
       payload: Schema.toEncoded(ReactivateCustomerProfilePayloadSchema),
       success: ReactivateCustomerProfileResultSchema,
     }),

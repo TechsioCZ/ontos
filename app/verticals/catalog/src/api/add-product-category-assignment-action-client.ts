@@ -37,7 +37,13 @@ interface MakeClientOptions {
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
-    { api: AddProductCategoryAssignmentActionApi, credential, defaultApiPrefix: '/catalog-api', requestCorrelation },
+    {
+      api: AddProductCategoryAssignmentActionApi,
+      credential,
+      defaultApiPrefix: '/catalog-api',
+      idempotencyKey: options.idempotencyKey,
+      requestCorrelation,
+    },
     options,
   );
 
@@ -48,12 +54,7 @@ export const executeAddProductCategoryAssignmentWithAuthorization = (
   Schema.encodeUnknownEffect(AddProductCategoryAssignmentPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.addProductCategoryAssignmentAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.addProductCategoryAssignmentAction.execute({ payload: encoded })),
       ),
     ),
   );

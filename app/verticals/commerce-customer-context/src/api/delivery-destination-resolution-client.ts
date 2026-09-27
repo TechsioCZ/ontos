@@ -40,9 +40,7 @@ export const executeDeliveryDestinationResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: DeliveryDestinationResolutionAuthorizedInvocation
 ) =>
   deliveryDestinationResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.deliveryDestinationResolution.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.deliveryDestinationResolution.execute({ payload })),
   );
 
 export const executeDeliveryDestinationResolution = (

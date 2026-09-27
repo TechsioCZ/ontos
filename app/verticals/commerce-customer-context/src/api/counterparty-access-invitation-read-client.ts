@@ -40,14 +40,7 @@ export const executeCounterpartyAccessInvitationReadWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CounterpartyAccessInvitationReadAuthorizedInvocation
 ) =>
   counterpartyAccessInvitationReadClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.counterpartyAccessInvitationRead.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.counterpartyAccessInvitationRead.execute({ payload })),
   );
 
 export const executeCounterpartyAccessInvitationRead = (

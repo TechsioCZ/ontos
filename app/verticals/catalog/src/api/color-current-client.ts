@@ -37,7 +37,7 @@ export const executeColorCurrentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ColorCurrentAuthorizedInvocation
 ) =>
   colorCurrentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.colorCurrent.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.colorCurrent.execute({ payload })),
   );
 
 export const executeColorCurrent = (

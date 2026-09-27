@@ -40,7 +40,7 @@ export const executeRetailOrderHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetailOrderHistoryAuthorizedInvocation
 ) =>
   retailOrderHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.retailOrderHistory.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.retailOrderHistory.execute({ payload })),
   );
 
 export const executeRetailOrderHistory = (

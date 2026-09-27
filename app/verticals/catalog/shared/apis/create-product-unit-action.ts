@@ -8,10 +8,6 @@ import { CreateProductUnitPayloadSchema, CreateProductUnitResultSchema } from '.
 
 export { CreateProductUnitPayloadSchema } from '../actions/create-product-unit.ts';
 
-const CreateProductUnitActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreateProductUnitActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreateProductUnitActionInvalidProblem',
   400,
@@ -127,7 +123,6 @@ export const CreateProductUnitActionApi = HttpApi.make('CreateProductUnitActionA
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/create-product-unit', {
         error: actionErrors,
-        headers: CreateProductUnitActionHeadersSchema,
         payload: Schema.toEncoded(CreateProductUnitPayloadSchema),
         success: CreateProductUnitResultSchema,
       }),

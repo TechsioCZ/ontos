@@ -8,10 +8,6 @@ import { CorrectGtinPayloadSchema, CorrectGtinResultSchema } from '../actions/co
 
 export { CorrectGtinPayloadSchema } from '../actions/correct-gtin.ts';
 
-const CorrectGtinActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CorrectGtinActionInvalidProblemSchema = makeProblemDetailsSchema('CorrectGtinActionInvalidProblem', 400);
 export const CorrectGtinActionAuthenticationProblemSchema = makeProblemDetailsSchema(
   'CorrectGtinActionAuthenticationProblem',
@@ -128,7 +124,6 @@ export const CorrectGtinActionApi = HttpApi.make('CorrectGtinActionApi').add(
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/correct-gtin', {
         error: actionErrors,
-        headers: CorrectGtinActionHeadersSchema,
         payload: Schema.toEncoded(CorrectGtinPayloadSchema),
         success: CorrectGtinResultSchema,
       }),

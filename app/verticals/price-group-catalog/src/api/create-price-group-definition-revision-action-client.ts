@@ -40,6 +40,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
     api: CreatePriceGroupDefinitionRevisionActionApi,
     credential,
     defaultApiPrefix: '/price-group-catalog-api',
+    idempotencyKey: options.idempotencyKey,
     requestCorrelation,
   };
   const requestTrace = options[traceIdOption];
@@ -56,12 +57,7 @@ export const executeCreatePriceGroupDefinitionRevisionWithAuthorization = (
   Schema.encodeUnknownEffect(CreatePriceGroupDefinitionRevisionPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.createPriceGroupDefinitionRevisionAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.createPriceGroupDefinitionRevisionAction.execute({ payload: encoded })),
       ),
     ),
   );

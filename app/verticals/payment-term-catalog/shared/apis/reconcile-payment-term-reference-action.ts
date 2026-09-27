@@ -11,10 +11,6 @@ import {
 
 export { ReconcilePaymentTermReferencePayloadSchema } from '../actions/reconcile-payment-term-reference.ts';
 
-const ReconcilePaymentTermReferenceActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReconcilePaymentTermReferenceActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReconcilePaymentTermReferenceActionInvalidProblem',
   400,
@@ -138,7 +134,6 @@ export const ReconcilePaymentTermReferenceActionApi = HttpApi.make('ReconcilePay
     .add(
       HttpApiEndpoint.post('execute', '/payment-term-catalog/actions/reconcile-payment-term-reference', {
         error: actionErrors,
-        headers: ReconcilePaymentTermReferenceActionHeadersSchema,
         payload: Schema.toEncoded(ReconcilePaymentTermReferencePayloadSchema),
         success: ReconcilePaymentTermReferenceResultSchema,
       }),

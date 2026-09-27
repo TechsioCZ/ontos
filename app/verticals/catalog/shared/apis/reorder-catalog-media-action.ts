@@ -8,10 +8,6 @@ import { ReorderCatalogMediaPayloadSchema, ReorderCatalogMediaResultSchema } fro
 
 export { ReorderCatalogMediaPayloadSchema } from '../actions/reorder-catalog-media.ts';
 
-const ReorderCatalogMediaActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReorderCatalogMediaActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReorderCatalogMediaActionInvalidProblem',
   400,
@@ -133,7 +129,6 @@ export const ReorderCatalogMediaActionApi = HttpApi.make('ReorderCatalogMediaAct
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/reorder-catalog-media', {
         error: actionErrors,
-        headers: ReorderCatalogMediaActionHeadersSchema,
         payload: Schema.toEncoded(ReorderCatalogMediaPayloadSchema),
         success: ReorderCatalogMediaResultSchema,
       }),

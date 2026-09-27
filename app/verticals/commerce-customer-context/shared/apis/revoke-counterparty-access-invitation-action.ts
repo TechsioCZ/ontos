@@ -11,10 +11,6 @@ import {
 
 export { RevokeCounterpartyAccessInvitationPayloadSchema } from '../actions/revoke-counterparty-access-invitation.ts';
 
-const RevokeCounterpartyAccessInvitationActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RevokeCounterpartyAccessInvitationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RevokeCounterpartyAccessInvitationActionInvalidProblem',
   400,
@@ -180,7 +176,6 @@ export const revokeCounterpartyAccessInvitationActionGroupDefinition = HttpApiGr
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/revoke-counterparty-access-invitation', {
       error: actionErrors,
-      headers: RevokeCounterpartyAccessInvitationActionHeadersSchema,
       payload: Schema.toEncoded(RevokeCounterpartyAccessInvitationPayloadSchema),
       success: RevokeCounterpartyAccessInvitationResultSchema,
     }),

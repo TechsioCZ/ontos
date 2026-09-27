@@ -40,7 +40,7 @@ export const executeCorrectSkuRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CorrectSkuRecoveryAuthorizedInvocation
 ) =>
   correctSkuRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.correctSkuRecovery.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.correctSkuRecovery.execute({ payload })),
   );
 
 export const executeCorrectSkuRecovery = (

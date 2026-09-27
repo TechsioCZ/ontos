@@ -31,7 +31,13 @@ interface MakeClientOptions {
 
 const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptions) =>
   makeGovernedEffectBffClient(
-    { api: RetireBrandActionApi, credential, defaultApiPrefix: '/catalog-api', requestCorrelation },
+    {
+      api: RetireBrandActionApi,
+      credential,
+      defaultApiPrefix: '/catalog-api',
+      idempotencyKey: options.idempotencyKey,
+      requestCorrelation,
+    },
     options,
   );
 
@@ -42,12 +48,7 @@ export const executeRetireBrandWithAuthorization = (
   Schema.encodeUnknownEffect(RetireBrandPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.retireBrandAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.retireBrandAction.execute({ payload: encoded })),
       ),
     ),
   );

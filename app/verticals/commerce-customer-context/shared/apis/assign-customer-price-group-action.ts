@@ -11,10 +11,6 @@ import {
 
 export { AssignCustomerPriceGroupPayloadSchema } from '../actions/assign-customer-price-group.ts';
 
-const AssignCustomerPriceGroupActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const AssignCustomerPriceGroupActionInvalidProblemSchema = makeProblemDetailsSchema(
   'AssignCustomerPriceGroupActionInvalidProblem',
   400,
@@ -165,7 +161,6 @@ export const assignCustomerPriceGroupActionGroupDefinition = HttpApiGroup.make('
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/assign-customer-price-group', {
       error: actionErrors,
-      headers: AssignCustomerPriceGroupActionHeadersSchema,
       payload: Schema.toEncoded(AssignCustomerPriceGroupPayloadSchema),
       success: AssignCustomerPriceGroupResultSchema,
     }),

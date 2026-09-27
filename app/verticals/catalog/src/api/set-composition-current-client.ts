@@ -40,7 +40,7 @@ export const executeSetCompositionCurrentWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SetCompositionCurrentAuthorizedInvocation
 ) =>
   setCompositionCurrentClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.setCompositionCurrent.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.setCompositionCurrent.execute({ payload })),
   );
 
 export const executeSetCompositionCurrent = (

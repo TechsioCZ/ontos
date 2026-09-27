@@ -40,7 +40,7 @@ export const executeRetireVariantRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetireVariantRecoveryAuthorizedInvocation
 ) =>
   retireVariantRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.retireVariantRecovery.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.retireVariantRecovery.execute({ payload })),
   );
 
 export const executeRetireVariantRecovery = (

@@ -11,10 +11,6 @@ import {
 
 export { SetDefaultBillingAddressPayloadSchema } from '../actions/set-default-billing-address.ts';
 
-const SetDefaultBillingAddressActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const SetDefaultBillingAddressActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetDefaultBillingAddressActionInvalidProblem',
   400,
@@ -155,7 +151,6 @@ export const setDefaultBillingAddressActionGroupDefinition = HttpApiGroup.make('
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/set-default-billing-address', {
       error: actionErrors,
-      headers: SetDefaultBillingAddressActionHeadersSchema,
       payload: Schema.toEncoded(SetDefaultBillingAddressPayloadSchema),
       success: SetDefaultBillingAddressResultSchema,
     }),

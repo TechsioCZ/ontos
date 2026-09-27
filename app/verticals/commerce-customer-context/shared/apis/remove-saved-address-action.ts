@@ -8,10 +8,6 @@ import { RemoveSavedAddressPayloadSchema, RemoveSavedAddressResultSchema } from 
 
 export { RemoveSavedAddressPayloadSchema } from '../actions/remove-saved-address.ts';
 
-const RemoveSavedAddressActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RemoveSavedAddressActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveSavedAddressActionInvalidProblem',
   400,
@@ -152,7 +148,6 @@ export const removeSavedAddressActionGroupDefinition = HttpApiGroup.make('remove
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/remove-saved-address', {
       error: actionErrors,
-      headers: RemoveSavedAddressActionHeadersSchema,
       payload: Schema.toEncoded(RemoveSavedAddressPayloadSchema),
       success: RemoveSavedAddressResultSchema,
     }),

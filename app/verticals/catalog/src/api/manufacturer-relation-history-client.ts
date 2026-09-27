@@ -40,9 +40,7 @@ export const executeManufacturerRelationHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ManufacturerRelationHistoryAuthorizedInvocation
 ) =>
   manufacturerRelationHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.manufacturerRelationHistory.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.manufacturerRelationHistory.execute({ payload })),
   );
 
 export const executeManufacturerRelationHistory = (

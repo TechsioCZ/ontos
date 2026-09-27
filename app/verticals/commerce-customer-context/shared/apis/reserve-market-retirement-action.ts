@@ -11,10 +11,6 @@ import {
 
 export { ReserveMarketRetirementPayloadSchema } from '../actions/reserve-market-retirement.ts';
 
-const ReserveMarketRetirementActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReserveMarketRetirementActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReserveMarketRetirementActionInvalidProblem',
   400,
@@ -153,7 +149,6 @@ export const reserveMarketRetirementActionGroupDefinition = HttpApiGroup.make('r
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/reserve-market-retirement', {
       error: actionErrors,
-      headers: ReserveMarketRetirementActionHeadersSchema,
       payload: Schema.toEncoded(ReserveMarketRetirementPayloadSchema),
       success: ReserveMarketRetirementResultSchema,
     }),

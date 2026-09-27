@@ -37,7 +37,7 @@ export const executeGtinHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: GtinHistoryAuthorizedInvocation
 ) =>
   gtinHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.gtinHistory.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.gtinHistory.execute({ payload })),
   );
 
 export const executeGtinHistory = (

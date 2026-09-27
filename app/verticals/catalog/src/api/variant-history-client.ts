@@ -37,7 +37,7 @@ export const executeVariantHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: VariantHistoryAuthorizedInvocation
 ) =>
   variantHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.variantHistory.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.variantHistory.execute({ payload })),
   );
 
 export const executeVariantHistory = (

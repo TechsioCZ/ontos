@@ -11,10 +11,6 @@ import {
 
 export { EnsureRetailCustomerProfilePayloadSchema } from '../actions/ensure-retail-customer-profile.ts';
 
-const EnsureRetailCustomerProfileActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const EnsureRetailCustomerProfileActionInvalidProblemSchema = makeProblemDetailsSchema(
   'EnsureRetailCustomerProfileActionInvalidProblem',
   400,
@@ -157,7 +153,6 @@ export const ensureRetailCustomerProfileActionGroupDefinition = HttpApiGroup.mak
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/ensure-retail-customer-profile', {
       error: actionErrors,
-      headers: EnsureRetailCustomerProfileActionHeadersSchema,
       payload: Schema.toEncoded(EnsureRetailCustomerProfilePayloadSchema),
       success: EnsureRetailCustomerProfileResultSchema,
     }),

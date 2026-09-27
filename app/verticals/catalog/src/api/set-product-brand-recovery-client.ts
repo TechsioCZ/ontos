@@ -40,7 +40,7 @@ export const executeSetProductBrandRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: SetProductBrandRecoveryAuthorizedInvocation
 ) =>
   setProductBrandRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.setProductBrandRecovery.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.setProductBrandRecovery.execute({ payload })),
   );
 
 export const executeSetProductBrandRecovery = (

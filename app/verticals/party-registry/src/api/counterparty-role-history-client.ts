@@ -41,14 +41,7 @@ export const executeCounterpartyRoleHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CounterpartyRoleHistoryAuthorizedInvocation
 ) =>
   counterpartyRoleHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.counterpartyRoleHistory.execute({
-        headers: {},
-        params: {},
-        payload,
-        query: {},
-      }),
-    ),
+    Effect.flatMap((client) => client.counterpartyRoleHistory.execute({ payload })),
   );
 
 export const executeCounterpartyRoleHistory = (

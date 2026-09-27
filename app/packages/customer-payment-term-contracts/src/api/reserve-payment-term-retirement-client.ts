@@ -32,19 +32,11 @@ export const executeReservePaymentTermRetirementWithAuthorization = (
           api: ReservePaymentTermRetirementApi,
           credential: Redacted.make(credential),
           defaultApiPrefix: '/commerce-customer-context-api',
+          idempotencyKey: options.idempotencyKey,
           requestCorrelation,
         },
         options,
-      ).pipe(
-        Effect.flatMap((client) =>
-          client.reservePaymentTermRetirement.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            params: {},
-            payload: encoded,
-            query: {},
-          }),
-        ),
-      ),
+      ).pipe(Effect.flatMap((client) => client.reservePaymentTermRetirement.execute({ payload: encoded }))),
     ),
   );
 

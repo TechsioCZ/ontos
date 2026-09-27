@@ -1,4 +1,5 @@
 import { Effect, Redacted, Schema } from 'effect';
+import { Headers } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
 
 import { defineAction } from '../../src/actions/definition.ts';
@@ -7,7 +8,11 @@ import type { ActionCoreError } from '../../src/actions/errors.ts';
 import { TrustedPrincipalContextSchema } from '../../src/actions/principal-context.ts';
 import { ActionRuntime } from '../../src/actions/runtime.ts';
 import type { ActionRuntimeService } from '../../src/actions/runtime.ts';
-import { bindGovernedActionHttp, runGovernedActionHttp } from '../../src/http/http-instrumentation-seam.ts';
+import {
+  bindGovernedActionHttp,
+  decodeActionEndpointHeaders,
+  runGovernedActionHttp,
+} from '../../src/http/http-instrumentation-seam.ts';
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 
 const principal = Schema.decodeSync(TrustedPrincipalContextSchema)({
@@ -292,5 +297,29 @@ it.effect('maps an already committed Action normally when recovery is not opted 
 
     expect(yield* Effect.flip(effect)).toBe(mappedProblem);
     expect(mappedFailure).toBe(committed);
+  }),
+);
+
+it.effect('decodes only the Action transport headers among open browser headers', () =>
+  Effect.gen(function* decodeEndpointHeaders() {
+    const browserHeaders = Headers.fromInput({
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'user-agent': 'Mozilla/5.0',
+    });
+    const absent = yield* decodeActionEndpointHeaders(browserHeaders);
+    expect(absent.idempotencyKey).toBeUndefined();
+    expect(absent.traceId).toBeUndefined();
+    expect(
+      yield* decodeActionEndpointHeaders(
+        Headers.setAll(browserHeaders, { 'idempotency-key': 'key-1', 'x-trace-id': 'trace-1' }),
+      ),
+    ).toEqual({ idempotencyKey: 'key-1', traceId: 'trace-1' });
+    for (const rejected of ['', 'k'.repeat(201)]) {
+      const failure = yield* Effect.flip(
+        decodeActionEndpointHeaders(Headers.set(browserHeaders, 'idempotency-key', rejected)),
+      );
+      expect(Schema.isSchemaError(failure)).toBe(true);
+    }
   }),
 );

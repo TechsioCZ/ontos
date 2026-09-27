@@ -11,10 +11,6 @@ import {
 
 export { RenameProductCategoryPayloadSchema } from '../actions/rename-product-category.ts';
 
-const RenameProductCategoryActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RenameProductCategoryActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RenameProductCategoryActionInvalidProblem',
   400,
@@ -140,7 +136,6 @@ export const RenameProductCategoryActionApi = HttpApi.make('RenameProductCategor
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/rename-product-category', {
         error: actionErrors,
-        headers: RenameProductCategoryActionHeadersSchema,
         payload: Schema.toEncoded(RenameProductCategoryPayloadSchema),
         success: RenameProductCategoryResultSchema,
       }),

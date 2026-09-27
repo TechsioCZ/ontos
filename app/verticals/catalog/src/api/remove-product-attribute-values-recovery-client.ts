@@ -40,9 +40,7 @@ export const executeRemoveProductAttributeValuesRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RemoveProductAttributeValuesRecoveryAuthorizedInvocation
 ) =>
   removeProductAttributeValuesRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.removeProductAttributeValuesRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.removeProductAttributeValuesRecovery.execute({ payload })),
   );
 
 export const executeRemoveProductAttributeValuesRecovery = (

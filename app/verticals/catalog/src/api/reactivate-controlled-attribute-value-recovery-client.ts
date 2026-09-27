@@ -40,9 +40,7 @@ export const executeReactivateControlledAttributeValueRecoveryWithAuthorization 
   ...[credential, requestCorrelation, options = {}]: ReactivateControlledAttributeValueRecoveryAuthorizedInvocation
 ) =>
   reactivateControlledAttributeValueRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.reactivateControlledAttributeValueRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.reactivateControlledAttributeValueRecovery.execute({ payload })),
   );
 
 export const executeReactivateControlledAttributeValueRecovery = (

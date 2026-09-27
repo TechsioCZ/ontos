@@ -8,10 +8,6 @@ import { RetireGtinPayloadSchema, RetireGtinResultSchema } from '../actions/reti
 
 export { RetireGtinPayloadSchema } from '../actions/retire-gtin.ts';
 
-const RetireGtinActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RetireGtinActionInvalidProblemSchema = makeProblemDetailsSchema('RetireGtinActionInvalidProblem', 400);
 export const RetireGtinActionAuthenticationProblemSchema = makeProblemDetailsSchema(
   'RetireGtinActionAuthenticationProblem',
@@ -122,7 +118,6 @@ export const RetireGtinActionApi = HttpApi.make('RetireGtinActionApi').add(
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/retire-gtin', {
         error: actionErrors,
-        headers: RetireGtinActionHeadersSchema,
         payload: Schema.toEncoded(RetireGtinPayloadSchema),
         success: RetireGtinResultSchema,
       }),

@@ -11,10 +11,6 @@ import {
 
 export { CreatePurchaseProposalRevisionPayloadSchema } from '../actions/create-purchase-proposal-revision.ts';
 
-const CreatePurchaseProposalRevisionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const CreatePurchaseProposalRevisionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'CreatePurchaseProposalRevisionActionInvalidProblem',
   400,
@@ -174,7 +170,6 @@ export const createPurchaseProposalRevisionActionGroupDefinition = HttpApiGroup.
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/create-purchase-proposal-revision', {
       error: actionErrors,
-      headers: CreatePurchaseProposalRevisionActionHeadersSchema,
       payload: Schema.toEncoded(CreatePurchaseProposalRevisionPayloadSchema),
       success: CreatePurchaseProposalRevisionResultSchema,
     }),

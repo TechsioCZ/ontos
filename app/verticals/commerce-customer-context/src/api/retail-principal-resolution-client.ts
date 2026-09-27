@@ -40,9 +40,7 @@ export const executeRetailPrincipalResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetailPrincipalResolutionAuthorizedInvocation
 ) =>
   retailPrincipalResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.retailPrincipalResolution.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.retailPrincipalResolution.execute({ payload })),
   );
 
 export const executeRetailPrincipalResolution = (

@@ -1007,45 +1007,17 @@ const hasInvocationClosure = (tokens: readonly GovernedClientToken[], start: num
     ),
   );
 
-const generatedInvocationPayloads = (
-  kind: GovernedClientExpectation['invocationKind'],
-): readonly (readonly ExpectedToken[])[] =>
-  kind === MODULE_API_INVOCATION_KIND
-    ? ([false, true] as const).map(
-        (hasTrailingComma) =>
-          [
-            [SyntaxKind.OpenBraceToken],
-            [SyntaxKind.Identifier, 'headers'],
-            [SyntaxKind.ColonToken],
-            [SyntaxKind.OpenBraceToken],
-            [SyntaxKind.CloseBraceToken],
-            [SyntaxKind.CommaToken],
-            [SyntaxKind.Identifier, 'params'],
-            [SyntaxKind.ColonToken],
-            [SyntaxKind.OpenBraceToken],
-            [SyntaxKind.CloseBraceToken],
-            [SyntaxKind.CommaToken],
-            [SyntaxKind.Identifier, 'payload'],
-            [SyntaxKind.CommaToken],
-            [SyntaxKind.Identifier, 'query'],
-            [SyntaxKind.ColonToken],
-            [SyntaxKind.OpenBraceToken],
-            [SyntaxKind.CloseBraceToken],
-            ...(hasTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
-            [SyntaxKind.CloseBraceToken],
-            [SyntaxKind.CloseParenToken],
-          ] satisfies readonly ExpectedToken[],
-      )
-    : ([false, true] as const).map(
-        (hasTrailingComma) =>
-          [
-            [SyntaxKind.OpenBraceToken],
-            [SyntaxKind.Identifier, 'payload'],
-            ...(hasTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
-            [SyntaxKind.CloseBraceToken],
-            [SyntaxKind.CloseParenToken],
-          ] satisfies readonly ExpectedToken[],
-      );
+/** Every governed client sends only its payload; contracts declare no empty header/path/query codecs. */
+const generatedInvocationPayloads: readonly (readonly ExpectedToken[])[] = ([false, true] as const).map(
+  (hasTrailingComma) =>
+    [
+      [SyntaxKind.OpenBraceToken],
+      [SyntaxKind.Identifier, 'payload'],
+      ...(hasTrailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+      [SyntaxKind.CloseBraceToken],
+      [SyntaxKind.CloseParenToken],
+    ] satisfies readonly ExpectedToken[],
+);
 
 const clientHelperShadowsImports = (
   tokens: readonly GovernedClientToken[],
@@ -1103,7 +1075,6 @@ const exportedOperationsUseClientHelperAndGateway = (
   if (authorizedArrow === undefined || operationArrow === undefined) {
     return false;
   }
-  const invocationPayloads = generatedInvocationPayloads(expectation.invocationKind);
   const authorizedInvocation = [
     [SyntaxKind.Identifier, helper.name],
     [SyntaxKind.OpenParenToken],
@@ -1137,7 +1108,7 @@ const exportedOperationsUseClientHelperAndGateway = (
     [SyntaxKind.OpenParenToken],
   ] satisfies readonly ExpectedToken[];
   const authorizedInvocationEnd = authorizedArrow + 1 + authorizedInvocation.length;
-  const authorizedInvocationTail = matchingSequenceEnd(tokens, authorizedInvocationEnd, invocationPayloads);
+  const authorizedInvocationTail = matchingSequenceEnd(tokens, authorizedInvocationEnd, generatedInvocationPayloads);
   const authorizedUsesHelper =
     matchesSequence(tokens, authorizedArrow + 1, authorizedInvocation) &&
     hasInvocationClosure(tokens, authorizedInvocationTail);

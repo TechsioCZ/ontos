@@ -11,10 +11,6 @@ import {
 
 export { SetProductLocalizedFactsPayloadSchema } from '../actions/set-product-localized-facts.ts';
 
-const SetProductLocalizedFactsActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const SetProductLocalizedFactsActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetProductLocalizedFactsActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const SetProductLocalizedFactsActionApi = HttpApi.make('SetProductLocaliz
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/set-product-localized-facts', {
         error: actionErrors,
-        headers: SetProductLocalizedFactsActionHeadersSchema,
         payload: Schema.toEncoded(SetProductLocalizedFactsPayloadSchema),
         success: SetProductLocalizedFactsResultSchema,
       }),

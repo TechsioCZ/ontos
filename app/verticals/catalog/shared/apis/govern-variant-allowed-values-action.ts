@@ -11,10 +11,6 @@ import {
 
 export { GovernVariantAllowedValuesPayloadSchema } from '../actions/govern-variant-allowed-values.ts';
 
-const GovernVariantAllowedValuesActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const GovernVariantAllowedValuesActionInvalidProblemSchema = makeProblemDetailsSchema(
   'GovernVariantAllowedValuesActionInvalidProblem',
   400,
@@ -137,7 +133,6 @@ export const GovernVariantAllowedValuesActionApi = HttpApi.make('GovernVariantAl
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/govern-variant-allowed-values', {
         error: actionErrors,
-        headers: GovernVariantAllowedValuesActionHeadersSchema,
         payload: Schema.toEncoded(GovernVariantAllowedValuesPayloadSchema),
         success: GovernVariantAllowedValuesResultSchema,
       }),

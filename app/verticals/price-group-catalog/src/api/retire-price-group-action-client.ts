@@ -37,6 +37,7 @@ const makeClient = ({ credential, options, requestCorrelation }: MakeClientOptio
     api: RetirePriceGroupActionApi,
     credential,
     defaultApiPrefix: '/price-group-catalog-api',
+    idempotencyKey: options.idempotencyKey,
     requestCorrelation,
   };
   const requestTrace = options[traceIdOption];
@@ -53,12 +54,7 @@ export const executeRetirePriceGroupWithAuthorization = (
   Schema.encodeUnknownEffect(RetirePriceGroupPayloadSchema)(payload).pipe(
     Effect.flatMap((encoded) =>
       makeClient({ credential: Redacted.make(credential), options, requestCorrelation }).pipe(
-        Effect.flatMap((client) =>
-          client.retirePriceGroupAction.execute({
-            headers: { 'idempotency-key': options.idempotencyKey },
-            payload: encoded,
-          }),
-        ),
+        Effect.flatMap((client) => client.retirePriceGroupAction.execute({ payload: encoded })),
       ),
     ),
   );

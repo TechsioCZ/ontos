@@ -11,10 +11,6 @@ import {
 
 export { ActivatePackageDefinitionPayloadSchema } from '../actions/activate-package-definition.ts';
 
-const ActivatePackageDefinitionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ActivatePackageDefinitionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ActivatePackageDefinitionActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const ActivatePackageDefinitionActionApi = HttpApi.make('ActivatePackageD
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/activate-package-definition', {
         error: actionErrors,
-        headers: ActivatePackageDefinitionActionHeadersSchema,
         payload: Schema.toEncoded(ActivatePackageDefinitionPayloadSchema),
         success: ActivatePackageDefinitionResultSchema,
       }),

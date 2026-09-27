@@ -8,10 +8,6 @@ import { ReactivateVariantPayloadSchema, ReactivateVariantResultSchema } from '.
 
 export { ReactivateVariantPayloadSchema } from '../actions/reactivate-variant.ts';
 
-const ReactivateVariantActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReactivateVariantActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReactivateVariantActionInvalidProblem',
   400,
@@ -134,7 +130,6 @@ export const ReactivateVariantActionApi = HttpApi.make('ReactivateVariantActionA
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/reactivate-variant', {
         error: actionErrors,
-        headers: ReactivateVariantActionHeadersSchema,
         payload: Schema.toEncoded(ReactivateVariantPayloadSchema),
         success: ReactivateVariantResultSchema,
       }),

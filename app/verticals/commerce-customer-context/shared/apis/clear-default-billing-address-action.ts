@@ -11,10 +11,6 @@ import {
 
 export { ClearDefaultBillingAddressPayloadSchema } from '../actions/clear-default-billing-address.ts';
 
-const ClearDefaultBillingAddressActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ClearDefaultBillingAddressActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ClearDefaultBillingAddressActionInvalidProblem',
   400,
@@ -155,7 +151,6 @@ export const clearDefaultBillingAddressActionGroupDefinition = HttpApiGroup.make
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/clear-default-billing-address', {
       error: actionErrors,
-      headers: ClearDefaultBillingAddressActionHeadersSchema,
       payload: Schema.toEncoded(ClearDefaultBillingAddressPayloadSchema),
       success: ClearDefaultBillingAddressResultSchema,
     }),

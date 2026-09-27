@@ -11,10 +11,6 @@ import {
 
 export { GovernProductAttributeApplicabilityPayloadSchema } from '../actions/govern-product-attribute-applicability.ts';
 
-const GovernProductAttributeApplicabilityActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const GovernProductAttributeApplicabilityActionInvalidProblemSchema = makeProblemDetailsSchema(
   'GovernProductAttributeApplicabilityActionInvalidProblem',
   400,
@@ -138,7 +134,6 @@ export const GovernProductAttributeApplicabilityActionApi = HttpApi.make(
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/govern-product-attribute-applicability', {
         error: actionErrors,
-        headers: GovernProductAttributeApplicabilityActionHeadersSchema,
         payload: Schema.toEncoded(GovernProductAttributeApplicabilityPayloadSchema),
         success: GovernProductAttributeApplicabilityResultSchema,
       }),

@@ -11,10 +11,6 @@ import {
 
 export { ResendCounterpartyAccessInvitationPayloadSchema } from '../actions/resend-counterparty-access-invitation.ts';
 
-const ResendCounterpartyAccessInvitationActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ResendCounterpartyAccessInvitationActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ResendCounterpartyAccessInvitationActionInvalidProblem',
   400,
@@ -180,7 +176,6 @@ export const resendCounterpartyAccessInvitationActionGroupDefinition = HttpApiGr
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/resend-counterparty-access-invitation', {
       error: actionErrors,
-      headers: ResendCounterpartyAccessInvitationActionHeadersSchema,
       payload: Schema.toEncoded(ResendCounterpartyAccessInvitationPayloadSchema),
       success: ResendCounterpartyAccessInvitationResultSchema,
     }),

@@ -40,9 +40,7 @@ export const executeRemoveVariantLocalizedFactsRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RemoveVariantLocalizedFactsRecoveryAuthorizedInvocation
 ) =>
   removeVariantLocalizedFactsRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.removeVariantLocalizedFactsRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.removeVariantLocalizedFactsRecovery.execute({ payload })),
   );
 
 export const executeRemoveVariantLocalizedFactsRecovery = (

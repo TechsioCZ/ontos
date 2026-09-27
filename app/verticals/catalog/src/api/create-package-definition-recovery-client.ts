@@ -40,9 +40,7 @@ export const executeCreatePackageDefinitionRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CreatePackageDefinitionRecoveryAuthorizedInvocation
 ) =>
   packageDefinitionRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.createPackageDefinitionRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.createPackageDefinitionRecovery.execute({ payload })),
   );
 
 export const executeCreatePackageDefinitionRecovery = (

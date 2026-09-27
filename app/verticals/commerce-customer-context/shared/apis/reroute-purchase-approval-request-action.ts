@@ -11,10 +11,6 @@ import {
 
 export { ReroutePurchaseApprovalRequestPayloadSchema } from '../actions/reroute-purchase-approval-request.ts';
 
-const ReroutePurchaseApprovalRequestActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReroutePurchaseApprovalRequestActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReroutePurchaseApprovalRequestActionInvalidProblem',
   400,
@@ -174,7 +170,6 @@ export const reroutePurchaseApprovalRequestActionGroupDefinition = HttpApiGroup.
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/reroute-purchase-approval-request', {
       error: actionErrors,
-      headers: ReroutePurchaseApprovalRequestActionHeadersSchema,
       payload: Schema.toEncoded(ReroutePurchaseApprovalRequestPayloadSchema),
       success: ReroutePurchaseApprovalRequestResultSchema,
     }),

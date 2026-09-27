@@ -41,9 +41,7 @@ export const executeValidatePriceGroupCompatibilityWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ValidatePriceGroupCompatibilityAuthorizedInvocation
 ) =>
   validatePriceGroupCompatibilityClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.validatePriceGroupCompatibility.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.validatePriceGroupCompatibility.execute({ payload })),
   );
 
 export const executeValidatePriceGroupCompatibility = (

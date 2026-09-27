@@ -8,10 +8,6 @@ import { ChangeLocalOverridePayloadSchema, ChangeLocalOverrideResultSchema } fro
 
 export { ChangeLocalOverridePayloadSchema } from '../actions/change-local-override.ts';
 
-const ChangeLocalOverrideActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ChangeLocalOverrideActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ChangeLocalOverrideActionInvalidProblem',
   400,
@@ -127,7 +123,6 @@ export const ChangeLocalOverrideActionApi = HttpApi.make('ChangeLocalOverrideAct
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/change-local-override', {
         error: actionErrors,
-        headers: ChangeLocalOverrideActionHeadersSchema,
         payload: Schema.toEncoded(ChangeLocalOverridePayloadSchema),
         success: ChangeLocalOverrideResultSchema,
       }),

@@ -11,10 +11,6 @@ import {
 
 export { ReservePaymentTermRetirementPayloadSchema } from '../actions/reserve-payment-term-retirement.ts';
 
-const ReservePaymentTermRetirementActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReservePaymentTermRetirementActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReservePaymentTermRetirementActionInvalidProblem',
   400,
@@ -150,7 +146,6 @@ export const reservePaymentTermRetirementActionGroupDefinition = HttpApiGroup.ma
   .add(
     HttpApiEndpoint.post('execute', '/commerce-customer-context/actions/reserve-payment-term-retirement', {
       error: actionErrors,
-      headers: ReservePaymentTermRetirementActionHeadersSchema,
       payload: Schema.toEncoded(ReservePaymentTermRetirementPayloadSchema),
       success: ReservePaymentTermRetirementResultSchema,
     }),

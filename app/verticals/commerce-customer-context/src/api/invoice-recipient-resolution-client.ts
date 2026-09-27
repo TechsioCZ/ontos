@@ -40,9 +40,7 @@ export const executeInvoiceRecipientResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: InvoiceRecipientResolutionAuthorizedInvocation
 ) =>
   invoiceRecipientResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.invoiceRecipientResolution.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.invoiceRecipientResolution.execute({ payload })),
   );
 
 export const executeInvoiceRecipientResolution = (

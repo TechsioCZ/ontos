@@ -40,7 +40,7 @@ export const executeRetireGtinRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: RetireGtinRecoveryAuthorizedInvocation
 ) =>
   retireGtinRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.retireGtinRecovery.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.retireGtinRecovery.execute({ payload })),
   );
 
 export const executeRetireGtinRecovery = (

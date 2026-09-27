@@ -40,9 +40,7 @@ export const executeImportSourceAssertionRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ImportSourceAssertionRecoveryAuthorizedInvocation
 ) =>
   importSourceAssertionRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.importSourceAssertionRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.importSourceAssertionRecovery.execute({ payload })),
   );
 
 export const executeImportSourceAssertionRecovery = (

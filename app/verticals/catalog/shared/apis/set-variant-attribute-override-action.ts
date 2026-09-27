@@ -11,10 +11,6 @@ import {
 
 export { SetVariantAttributeOverridePayloadSchema } from '../actions/set-variant-attribute-override.ts';
 
-const SetVariantAttributeOverrideActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const SetVariantAttributeOverrideActionInvalidProblemSchema = makeProblemDetailsSchema(
   'SetVariantAttributeOverrideActionInvalidProblem',
   400,
@@ -138,7 +134,6 @@ export const SetVariantAttributeOverrideActionApi = HttpApi.make('SetVariantAttr
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/set-variant-attribute-override', {
         error: actionErrors,
-        headers: SetVariantAttributeOverrideActionHeadersSchema,
         payload: Schema.toEncoded(SetVariantAttributeOverridePayloadSchema),
         success: SetVariantAttributeOverrideResultSchema,
       }),

@@ -1760,3 +1760,86 @@ it.live(
       expect(harness.snapshot().invocations.length).toBe(1);
     }),
 );
+
+const browserHeaders = {
+  accept: 'application/json, text/plain, */*',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  'accept-language': 'cs-CZ,cs;q=0.9,en;q=0.8',
+  'cache-control': 'no-cache',
+  cookie: 'ontos-session=opaque',
+  origin: 'https://party.ontos.test',
+  referer: 'https://party.ontos.test/parties',
+  'sec-ch-ua': '"Chromium";v="141", "Not?A_Brand";v="8"',
+  'sec-fetch-dest': 'empty',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-origin',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)',
+  'x-trace-id': 'closed-payload-trace',
+} as const;
+
+it.live('full browser headers reach the Read and the Action; only the Idempotency-Key is decoded', () =>
+  Effect.gen(function* acceptBrowserHeaders() {
+    const assertion = yield* makeAssertion();
+    const harness = yield* makeActionTestHarness({
+      actionPermission: 'allowed',
+      tenantPermission: 'allowed',
+    });
+    const decision: typeof PartyMatchDecisionRecordSchema.Type = {
+      caseRef: null,
+      committedCreateOutcome: 'CREATED',
+      decidedAt: '2026-09-01T00:00:00.000Z',
+      decisionRef: { ...partyRef, resourceType: 'party.registry.party-match-decision' },
+      evidenceEvaluation: null,
+      evidenceExplanation: [{ reason: 'Verified creation evidence', ruleKey: RuleKeySchema.make('creation-evidence') }],
+      matchRuleVersion: 'closed-payload-rule-v1',
+      operation: 'CREATE',
+      outcome: 'CREATED',
+      partyRef,
+    };
+    let reads = 0;
+    const readRuntime: ReadRuntimeService = {
+      runRead: (input) =>
+        Effect.suspend(() => {
+          reads += 1;
+          return Schema.decodeEffect(input.registration.descriptor.resultSchema)(decision).pipe(
+            Effect.mapError(
+              () => new ReadResultValidationError({ code: 'read_result_invalid', reason: 'Invalid decision fixture' }),
+            ),
+          );
+        }),
+    };
+    const app = yield* mountApp(harness, assertion.environment, readRuntime);
+    const actionInvocationId = randomUUID();
+
+    const read = yield* handle(app, decisionRequest(actionInvocationId, assertion.token, browserHeaders));
+    expect(read.status).toBe(200);
+    expect(yield* Effect.promise(() => read.json())).toEqual(decision);
+    expect(reads).toBe(1);
+
+    const oversizedKey = yield* handle(
+      app,
+      commandRequest('request-search-rebuild', {}, assertion.token, {
+        ...browserHeaders,
+        'idempotency-key': 'k'.repeat(201),
+      }),
+    );
+    expect(oversizedKey.status).toBe(400);
+    yield* Schema.decodeUnknownEffect(PartyCommandInvalidRequestProblemSchema)(
+      yield* Effect.promise(() => oversizedKey.json()),
+    );
+    expect(harness.snapshot().invocations.length).toBe(0);
+    const action = yield* handle(
+      app,
+      commandRequest('request-search-rebuild', {}, assertion.token, {
+        ...browserHeaders,
+        'idempotency-key': 'closed-action-browser-headers',
+      }),
+    );
+    expect(action.status).toBe(200);
+    expect(harness.snapshot().committed[0]?.transport).toEqual({
+      correlationId: 'party-command-test',
+      idempotencyKey: 'closed-action-browser-headers',
+      traceId: 'closed-payload-trace',
+    });
+  }),
+);

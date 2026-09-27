@@ -1,4 +1,4 @@
-import { makeEffectBffClient } from '@app/shared-contracts/client-runtime';
+import { makeEffectBffClient, makeGovernedEffectBffClient } from '@app/shared-contracts/client-runtime';
 import {
   Effect,
   HttpApi,
@@ -7,7 +7,7 @@ import {
   HttpApiSchema,
   Schema,
 } from '@modern-js/bff-effect/effect-client';
-import { Predicate, Struct } from 'effect';
+import { Predicate, Redacted, Struct } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/unstable/http';
 
@@ -257,3 +257,36 @@ for (const [failureKind, transport, expectedTag] of [
     }),
   );
 }
+
+it.effect('governed clients send the Idempotency-Key as a transport header only when supplied', () =>
+  Effect.gen(function* sendIdempotencyKeyTransportHeader() {
+    const requests: Request[] = [];
+    const fakeFetch: typeof fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json({ value: 'governed' }));
+    };
+    const read = (idempotencyKey?: string) =>
+      makeGovernedEffectBffClient(
+        {
+          api: RepresentativeApi,
+          credential: Redacted.make('Bearer governed'),
+          defaultApiPrefix: 'https://owner.example/representative-api',
+          idempotencyKey,
+          requestCorrelation: 'governed-correlation',
+        },
+        {},
+      ).pipe(
+        Effect.flatMap((client) => client.representative.read({})),
+        Effect.provideService(FetchHttpClient.Fetch, fakeFetch),
+      );
+
+    yield* read('governed-key');
+    yield* read();
+
+    expect(requests.map(({ headers }) => headers.get('idempotency-key'))).toEqual(['governed-key', null]);
+    expect(requests.map(({ headers }) => headers.get('x-correlation-id'))).toEqual([
+      'governed-correlation',
+      'governed-correlation',
+    ]);
+  }),
+);

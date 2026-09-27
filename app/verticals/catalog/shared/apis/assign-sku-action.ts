@@ -8,10 +8,6 @@ import { AssignSkuPayloadSchema, AssignSkuResultSchema } from '../actions/assign
 
 export { AssignSkuPayloadSchema } from '../actions/assign-sku.ts';
 
-const AssignSkuActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const AssignSkuActionInvalidProblemSchema = makeProblemDetailsSchema('AssignSkuActionInvalidProblem', 400);
 export const AssignSkuActionAuthenticationProblemSchema = makeProblemDetailsSchema(
   'AssignSkuActionAuthenticationProblem',
@@ -118,7 +114,6 @@ export const AssignSkuActionApi = HttpApi.make('AssignSkuActionApi').add(
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/assign-sku', {
         error: actionErrors,
-        headers: AssignSkuActionHeadersSchema,
         payload: Schema.toEncoded(AssignSkuPayloadSchema),
         success: AssignSkuResultSchema,
       }),

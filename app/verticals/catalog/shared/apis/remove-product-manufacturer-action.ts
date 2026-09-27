@@ -11,10 +11,6 @@ import {
 
 export { RemoveProductManufacturerPayloadSchema } from '../actions/remove-product-manufacturer.ts';
 
-const RemoveProductManufacturerActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RemoveProductManufacturerActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RemoveProductManufacturerActionInvalidProblem',
   400,
@@ -134,7 +130,6 @@ export const RemoveProductManufacturerActionApi = HttpApi.make('RemoveProductMan
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/remove-product-manufacturer', {
         error: actionErrors,
-        headers: RemoveProductManufacturerActionHeadersSchema,
         payload: Schema.toEncoded(RemoveProductManufacturerPayloadSchema),
         success: RemoveProductManufacturerResultSchema,
       }),

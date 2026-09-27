@@ -40,9 +40,7 @@ export const executeAssignCatalogMediaRecoveryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: AssignCatalogMediaRecoveryAuthorizedInvocation
 ) =>
   assignCatalogMediaRecoveryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.assignCatalogMediaRecovery.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.assignCatalogMediaRecovery.execute({ payload })),
   );
 
 export const executeAssignCatalogMediaRecovery = (

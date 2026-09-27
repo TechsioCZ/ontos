@@ -11,10 +11,6 @@ import {
 
 export { ReviseAttributeDefinitionPayloadSchema } from '../actions/revise-attribute-definition.ts';
 
-const ReviseAttributeDefinitionActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const ReviseAttributeDefinitionActionInvalidProblemSchema = makeProblemDetailsSchema(
   'ReviseAttributeDefinitionActionInvalidProblem',
   400,
@@ -132,7 +128,6 @@ export const ReviseAttributeDefinitionActionApi = HttpApi.make('ReviseAttributeD
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/revise-attribute-definition', {
         error: actionErrors,
-        headers: ReviseAttributeDefinitionActionHeadersSchema,
         payload: Schema.toEncoded(ReviseAttributeDefinitionPayloadSchema),
         success: ReviseAttributeDefinitionResultSchema,
       }),

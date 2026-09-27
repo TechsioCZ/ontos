@@ -11,10 +11,6 @@ import {
 
 export { RetireConfigurationUnitPayloadSchema } from '../actions/retire-configuration-unit.ts';
 
-const RetireConfigurationUnitActionHeadersSchema = Schema.Struct({
-  'idempotency-key': Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-});
-
 export const RetireConfigurationUnitActionInvalidProblemSchema = makeProblemDetailsSchema(
   'RetireConfigurationUnitActionInvalidProblem',
   400,
@@ -136,7 +132,6 @@ export const RetireConfigurationUnitActionApi = HttpApi.make('RetireConfiguratio
     .add(
       HttpApiEndpoint.post('execute', '/catalog/actions/retire-configuration-unit', {
         error: actionErrors,
-        headers: RetireConfigurationUnitActionHeadersSchema,
         payload: Schema.toEncoded(RetireConfigurationUnitPayloadSchema),
         success: RetireConfigurationUnitResultSchema,
       }),

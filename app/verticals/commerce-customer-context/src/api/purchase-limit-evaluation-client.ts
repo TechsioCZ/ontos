@@ -40,7 +40,7 @@ export const executePurchaseLimitEvaluationWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: PurchaseLimitEvaluationAuthorizedInvocation
 ) =>
   purchaseLimitEvaluationClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.purchaseLimitEvaluation.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.purchaseLimitEvaluation.execute({ payload })),
   );
 
 export const executePurchaseLimitEvaluation = (

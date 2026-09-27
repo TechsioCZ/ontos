@@ -40,9 +40,7 @@ export const executeCommerceQuantityResolutionWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: CommerceQuantityResolutionAuthorizedInvocation
 ) =>
   commerceQuantityResolutionClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) =>
-      client.commerceQuantityResolution.execute({ headers: {}, params: {}, payload, query: {} }),
-    ),
+    Effect.flatMap((client) => client.commerceQuantityResolution.execute({ payload })),
   );
 
 export const executeCommerceQuantityResolution = (

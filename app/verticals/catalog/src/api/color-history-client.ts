@@ -37,7 +37,7 @@ export const executeColorHistoryWithAuthorization = (
   ...[credential, requestCorrelation, options = {}]: ColorHistoryAuthorizedInvocation
 ) =>
   colorHistoryClient(Redacted.make(credential), requestCorrelation, options).pipe(
-    Effect.flatMap((client) => client.colorHistory.execute({ headers: {}, params: {}, payload, query: {} })),
+    Effect.flatMap((client) => client.colorHistory.execute({ payload })),
   );
 
 export const executeColorHistory = (
