@@ -270,7 +270,7 @@ export interface ActionRepositoryService {
   readonly finalizePolicyDenial: (
     executor: CoreDatabaseExecutor,
     input: FinalizeActionPolicyDenialInput,
-  ) => Effect.Effect<void, ActionInvocationPersistenceError>;
+  ) => Effect.Effect<Option.Option<ActionRecordedRejection>, ActionInvocationPersistenceError>;
   readonly flushSuccess: (
     transaction: CoreTransaction,
     input: FlushActionSuccessInput,
@@ -286,7 +286,10 @@ export interface ActionRepositoryService {
   readonly rejectPermissionDenied: (
     executor: CoreDatabaseExecutor,
     input: RejectPermissionDeniedInput,
-  ) => Effect.Effect<void, ActionInvocationPersistenceError | ActionInvocationStateError | ActionTransactionError>;
+  ) => Effect.Effect<
+    Option.Option<ActionRecordedRejection>,
+    ActionInvocationPersistenceError | ActionInvocationStateError | ActionTransactionError
+  >;
   readonly resolveInvocation: (
     executor: CoreDatabaseExecutor,
     input: ResolveActionInvocationInput,
@@ -495,6 +498,22 @@ export const makeActionRepository = (): ActionRepositoryService => {
     return Option.none();
   });
 
+  // A denial finalizer that finds the invocation already rejected reports the rejection that won,
+  // so a concurrent loser returns the durable outcome rather than its own decision.
+  const earlierRejection = (transaction: CoreTransaction, invocationId: string) =>
+    loadRecordedRejection(transaction, invocationId).pipe(
+      Effect.flatMap((rejection) =>
+        Option.isSome(rejection)
+          ? Effect.succeed(rejection)
+          : Effect.fail(
+              persistenceFailure(
+                'The rejected Action invocation has no recorded rejection',
+                new RepositoryInvariantError({ reason: 'The action.rejected Audit Event is missing' }),
+              ),
+            ),
+      ),
+    );
+
   const resolveInvocation: ActionRepositoryService['resolveInvocation'] = (executor, input) =>
     executor
       .select(invocationSelection)
@@ -584,7 +603,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
         }
 
         if (invocation.status === 'rejected' && invocation.completedAt !== null) {
-          return yield* Effect.void;
+          return yield* earlierRejection(transaction, input.actionInvocationId);
         }
         if (invocation.status !== 'received' || invocation.completedAt !== null) {
           return yield* new ActionInvocationStateError({
@@ -619,17 +638,16 @@ export const makeActionRepository = (): ActionRepositoryService => {
         yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
           Effect.mapError((cause) => transactionFailure(failureReason, cause)),
         );
-        return yield* Effect.void;
+        return Option.none<ActionRecordedRejection>();
       },
     );
 
-    yield* executor.transaction(transactionBody).pipe(
+    return yield* executor.transaction(transactionBody).pipe(
       Effect.catchTag('SqlError', (failure) => Effect.fail(transactionFailure(failureReason, failure))),
       Effect.catchDefect((defect) =>
         isSqlError(defect) ? Effect.fail(transactionFailure(failureReason, defect)) : Effect.die(defect),
       ),
     );
-    return yield* Effect.void;
   });
 
   const finalizePolicyDenial: ActionRepositoryService['finalizePolicyDenial'] = Effect.fn(
@@ -656,7 +674,7 @@ export const makeActionRepository = (): ActionRepositoryService => {
         );
       }
       if (invocation.status === 'rejected' && invocation.completedAt !== null) {
-        return yield* Effect.void;
+        return yield* earlierRejection(transaction, input.actionInvocationId);
       }
       if (invocation.status !== 'received' || invocation.completedAt !== null) {
         return yield* persistenceFailure(
@@ -702,16 +720,15 @@ export const makeActionRepository = (): ActionRepositoryService => {
       yield* markInvocationRejected(transaction, input.actionInvocationId).pipe(
         Effect.mapError((cause) => persistenceFailure(failureReason, cause)),
       );
-      return yield* Effect.void;
+      return Option.none<ActionRecordedRejection>();
     });
 
-    yield* executor.transaction(transactionBody).pipe(
+    return yield* executor.transaction(transactionBody).pipe(
       Effect.catchTag('SqlError', (failure) => Effect.fail(persistenceFailure(failureReason, failure))),
       Effect.catchDefect((defect) =>
         isSqlError(defect) ? Effect.fail(persistenceFailure(failureReason, defect)) : Effect.die(defect),
       ),
     );
-    return yield* Effect.void;
   });
 
   const flushSuccess: ActionRepositoryService['flushSuccess'] = Effect.fn('makeActionRepository.flushSuccess')(

@@ -1223,7 +1223,11 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
         .pipe(
           Effect.tapErrorTag('ActionInvocationPersistenceError', logPermissionInvocationFailure),
           Effect.tapErrorTag('ActionTransactionError', logPermissionTransactionFailure),
-          Effect.flatMap(() => Effect.fail(permissionDeniedFailure())),
+          Effect.flatMap((earlierRejection) =>
+            Effect.fail(
+              Option.isSome(earlierRejection) ? recordedRejectionFailure(earlierRejection) : permissionDeniedFailure(),
+            ),
+          ),
         );
 
     const prepareAuthorizationPreflight = Effect.fn('ActionRuntime.prepareAuthorizationPreflight')(
@@ -1337,7 +1341,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           Schema.is(PolicyDenied)(failureReason.error)
         ) {
           const denial = failureReason.error;
-          yield* repository
+          const earlierRejection = yield* repository
             .finalizePolicyDenial(
               database.executor,
               withOptionalProperty(
@@ -1366,6 +1370,14 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
                 }),
               ),
             );
+          if (
+            Option.isSome(earlierRejection) &&
+            !(
+              earlierRejection.value.stage === 'policy' && earlierRejection.value.policyReasonCode === denial.reasonCode
+            )
+          ) {
+            return yield* recordedRejectionFailure(earlierRejection);
+          }
           return yield* new ActionPolicyDenied({
             code: 'action_policy_denied',
             policyReasonCode: denial.reasonCode,

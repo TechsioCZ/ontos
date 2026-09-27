@@ -14,11 +14,13 @@ import {
   ActionInvocationStateError,
   ActionPermissionCheckError,
   ActionPermissionDenied,
+  ActionPolicyDenied,
   ActionTransactionError,
 } from '../../src/actions/errors.ts';
 import { defineGlobalPolicy, defineMicroverticalPolicy, denyPolicy } from '../../src/actions/policy.ts';
 import type {
   ActionInvocationRecord,
+  ActionRecordedRejection,
   ActionRepositoryService,
   FinalizeActionPolicyDenialInput,
   FlushActionSuccessInput,
@@ -129,6 +131,8 @@ interface HarnessOptions {
   readonly permissionDecision?: ActionPermissionDecision;
   readonly permissionFailure?: boolean;
   readonly policyFinalizationFailure?: boolean;
+  /** Simulates a concurrent request whose rejection committed before this one finalizes. */
+  readonly recordedByConcurrentRequest?: ActionRecordedRejection;
   readonly rejectionFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
   readonly resourcePermissionDecision?: PermissionDecision;
@@ -194,7 +198,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         completedAt: completionTime(),
         status: 'rejected',
       };
-      return Effect.void;
+      return Effect.succeed(Option.fromNullishOr(options.recordedByConcurrentRequest));
     },
     flushSuccess: (_transaction, input) => {
       flushed.push(input);
@@ -230,7 +234,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
         completedAt: completionTime(),
         status: 'rejected',
       };
-      return Effect.void;
+      return Effect.succeed(Option.fromNullishOr(options.recordedByConcurrentRequest));
     },
     resolveInvocation: () =>
       options.resolutionUnavailable === true
@@ -3402,6 +3406,71 @@ it.effect(
     expect(harness.permissionChecks).toHaveLength(1);
     expect(harness.rejections).toHaveLength(1);
     expect(harness.counts().transactionCount).toBe(0);
+  }),
+);
+
+it.effect(
+  'returns the rejection a concurrent request recorded first instead of its own denial',
+  Effect.fn(function* testConcurrentRejectionWinner() {
+    const harness = yield* makeHarness({
+      permissionDecision: 'denied',
+      recordedByConcurrentRequest: { policyReasonCode: 'concurrent_policy', stage: 'policy' },
+    });
+    const error = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport('concurrent-winner'),
+      }),
+    );
+
+    expect(Schema.is(ActionPolicyDenied)(error) && error.policyReasonCode).toBe('concurrent_policy');
+  }),
+);
+
+it.effect(
+  'returns a concurrent permission denial instead of its own later Policy denial',
+  Effect.fn(function* testConcurrentPermissionWinner() {
+    const policy = defineGlobalPolicy<unknown>({
+      evaluate: () => Effect.fail(denyPolicy('blocked', 'This action is blocked')),
+      policyKey: 'global.blocked.v1',
+    });
+    const action = defineAction(
+      {
+        accessEvidencePolicy: { captureMode: 'metadata_only', policyKey: 'counter.read.v1' },
+        actionKey: 'shell.counter.concurrent-permission-winner',
+        auditProfile: 'standard',
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineSystemModuleEntrypoint({
+          access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+          entrypointKey: 'shell.counter.concurrent-permission-winner',
+          moduleKey: 'core.shell',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'optional',
+        owningModuleKey: 'core.shell',
+        payloadSchema: Schema.Void,
+        policies: [policy],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () => Effect.void,
+    );
+    const harness = yield* makeHarness({ recordedByConcurrentRequest: { stage: 'authz' } });
+    const error = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: undefined,
+        principal,
+        registration: action,
+        transport: transport('concurrent-permission-winner'),
+      }),
+    );
+
+    expect(Schema.is(ActionPermissionDenied)(error)).toBe(true);
   }),
 );
 

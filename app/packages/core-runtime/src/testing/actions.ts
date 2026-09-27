@@ -16,6 +16,7 @@ import {
 import type { DomainEventContractMap } from '../actions/events.ts';
 import type {
   ActionInvocationRecord,
+  ActionRecordedRejection,
   ActionRepositoryService,
   FinalizeActionPolicyDenialInput,
   FlushActionSuccessInput,
@@ -200,6 +201,7 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
             completedAt: completionTime(),
             status: 'rejected',
           });
+          return Option.none<ActionRecordedRejection>();
         }),
       ),
     );
