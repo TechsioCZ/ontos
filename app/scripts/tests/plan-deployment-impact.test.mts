@@ -595,34 +595,20 @@ it.live('ignores workspace directories without a package manifest', () =>
   }),
 );
 
-it.live('reads every workspace glob across comments and blank lines', () =>
+it.live('reads every workspace glob of an indentationless YAML list with comments', () =>
   Effect.gen(function* testEffectCommentedWorkspace() {
     yield* withFixture((root) =>
       Effect.gen(function* testEffectCommentedWorkspaceBody() {
         yield* Effect.tryPromise(() =>
           writeFile(
             path.join(root, WORKSPACE_MANIFEST_PATH),
-            "packages:\n  - 'apps/*'\n\n  # verticals and shared packages\n  - verticals/* # providers\n# top-level note\n  - packages/*\ncatalogs: {}\n",
+            "packages:\n- 'apps/*'\n\n# verticals and shared packages\n- verticals/* # providers\n- packages/*\ncatalogs: {}\n",
             'utf-8',
           ),
         );
         yield* writeWorkspaceProject(root, UNDECLARED_PACKAGE);
         const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
         expect(failure).toContain('workspace project "packages/foo" is not declared in topology');
-      }),
-    );
-  }),
-);
-
-it.live('rejects workspace package entries the planner cannot parse', () =>
-  Effect.gen(function* testEffectFlowWorkspace() {
-    yield* withFixture((root) =>
-      Effect.gen(function* testEffectFlowWorkspaceBody() {
-        yield* Effect.tryPromise(() =>
-          writeFile(path.join(root, WORKSPACE_MANIFEST_PATH), 'packages:\n  - [apps/*, packages/*]\n', 'utf-8'),
-        );
-        const failure = yield* planningFailure(planDeploymentImpact({ rootDirectory: root }));
-        expect(failure).toContain('pnpm-workspace.yaml packages entry "- [apps/*, packages/*]" is unsupported');
       }),
     );
   }),

@@ -150,7 +150,8 @@
     "oxlint": "1.81.0",
     "oxlint-plugin-react-doctor": "0.9.12",
     "oxlint-tsgolint": "7.0.2001",
-    "ultracite": "7.11.0"
+    "ultracite": "7.11.0",
+    "yaml": "2.9.1"
   },
   "engines": {
     "node": ">=26",

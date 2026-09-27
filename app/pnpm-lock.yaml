@@ -368,6 +368,9 @@ importers:
       ultracite:
         specifier: 7.11.0
         version: 7.11.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(oxfmt@0.66.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.9)
+      yaml:
+        specifier: 2.9.1
+        version: 2.9.1
 
   apps/shell-super-app:
     dependencies:

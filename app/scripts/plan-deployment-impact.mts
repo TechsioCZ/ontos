@@ -16,6 +16,7 @@ import {
 } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { parse as parseYaml } from 'yaml';
 
 import type { ProtectedEntrypointInventory } from './authorization/protected-entrypoint-inventory.mts';
 import type { AuthorizationRolloutContract } from './authorization/rollout-contract.mts';
@@ -653,33 +654,18 @@ const buildTopologyUnits = (
 
 const WORKSPACE_GLOB_PATTERN = /^(?<directory>[\w.-]+(?:\/[\w.-]+)*)\/\*$/u;
 
-const WORKSPACE_ENTRY_PATTERN = /^\s+-\s+(?<quote>['"]?)(?<glob>[^'"#\s]+)\k<quote>\s*(?:#.*)?$/u;
+const WorkspaceManifestSchema = Schema.Struct({ packages: Schema.NonEmptyArray(Schema.String) });
 
-const parseWorkspaceGlobs = (workspaceSource: string): readonly string[] => {
-  const lines = workspaceSource.split(/\r?\n/u);
-  const start = lines.findIndex((line) => /^packages:\s*(?:#.*)?$/u.test(line));
-  if (start === -1) {
-    return fail('pnpm-workspace.yaml must declare a block "packages:" list');
-  }
-  const following = lines.slice(start + 1);
-  const blockEnd = following.findIndex((line) => /^[^\s#]/u.test(line));
-  const globs: string[] = [];
-  for (const line of following.slice(0, blockEnd === -1 ? undefined : blockEnd)) {
-    if (!/^\s*(?:#.*)?$/u.test(line)) {
-      const glob = WORKSPACE_ENTRY_PATTERN.exec(line)?.groups?.glob;
-      if (glob === undefined) {
-        return fail(
-          `pnpm-workspace.yaml packages entry "${line.trim()}" is unsupported; list one glob per "- <glob>" line`,
-        );
-      }
-      globs.push(glob);
-    }
-  }
-  if (globs.length === 0) {
-    return fail('pnpm-workspace.yaml must declare a block "packages:" list');
-  }
-  return globs;
-};
+const parseWorkspaceGlobs = (workspaceSource: string) =>
+  Schema.decodeUnknownEffect(WorkspaceManifestSchema)(parseYaml(workspaceSource)).pipe(
+    Effect.map(({ packages }) => packages),
+    Effect.mapError(
+      () =>
+        new DeploymentImpactPlanningError({
+          message: 'Deployment impact planning failed: pnpm-workspace.yaml must declare a non-empty "packages" list',
+        }),
+    ),
+  );
 
 const listWorkspaceProjects = (rootDirectory: string, globs: readonly string[]) =>
   Effect.gen(function* listWorkspaceProjectsEffect() {
@@ -1043,7 +1029,9 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
     validateWorkspaceCompleteness(
       yield* listWorkspaceProjects(
         rootDirectory,
-        parseWorkspaceGlobs(yield* fileSystem.readFileString(pathService.join(rootDirectory, WORKSPACE_MANIFEST))),
+        yield* parseWorkspaceGlobs(
+          yield* fileSystem.readFileString(pathService.join(rootDirectory, WORKSPACE_MANIFEST)),
+        ),
       ),
       orderedUnits,
       topology.sharedPackages ?? [],
