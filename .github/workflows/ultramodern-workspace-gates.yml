@@ -47,8 +47,6 @@ jobs:
         include:
           - name: Effect Rule Implementation
             command: pnpm typecheck:lint-rules && pnpm test:lint-rules
-          - name: Lint
-            command: pnpm lint
           - name: Typecheck
             command: pnpm typecheck
           - name: OntOS API Boundary Rules
@@ -106,16 +104,37 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Keep package manifests, lockfiles, and hook configs out of the repository root
+        run: |
+          stray="$(
+            git ls-files -- ':(glob)**/package.json' ':(glob)**/package-lock.json' ':(glob)**/npm-shrinkwrap.json' \
+              ':(glob)**/pnpm-lock.yaml' ':(glob)**/pnpm-workspace.yaml' ':(glob)**/yarn.lock' ':(glob)**/bun.lock*' \
+              ':(exclude)app/**'
+            git ls-files -- ':(glob)**/lefthook.yml' ':(glob)**/lefthook.yaml' ':(glob)**/.lefthook.yml' \
+              ':(glob)**/.lefthook.yaml' ':(exclude,top)lefthook.yml'
+          )"
+          if [[ -n "$stray" ]]; then
+            echo "::error::The app workspace lives in app/ and its git hooks in the root lefthook.yml. Move or delete:"
+            echo "$stray"
+            exit 1
+          fi
+
       - name: Install the app workspace
         id: install
         uses: ./.github/actions/install-app
 
       # Each check is a step, not a job: they take seconds, so a job each paid the install many times over.
       # Every step runs after a successful install, so one run reports every failing check.
-      - name: Format
+      - name: Validate the root lefthook config
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: app
-        run: mise exec -- pnpm format:check
+        run: app/node_modules/.bin/lefthook validate
+
+      # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it.
+      - name: Format and Lint through the pre-commit hook on every file
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        run: |
+          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --all-files --no-auto-install'
+          git diff --exit-code
 
       - name: Skills
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
