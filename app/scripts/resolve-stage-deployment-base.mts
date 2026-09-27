@@ -7,9 +7,11 @@ import { FULL_PLAN_SEED_INSTRUCTION } from './plan-deployment-impact.mts';
 
 /**
  * Resolves the comparison base for a stage deployment: the commit of the newest
- * `stage` deployment whose latest status is `success`, excluding the current
- * workflow run. Failed and cancelled deployments are skipped, so their changes stay
- * inside the next diff until one of them reaches stage.
+ * `stage` deployment that reached `success`, excluding the current workflow run.
+ * The whole status history counts because GitHub marks earlier successful
+ * deployments `inactive` once a newer one succeeds. Failed and cancelled
+ * deployments never reach `success`, so their changes stay inside the next diff
+ * until one of them reaches stage.
  */
 
 export interface StageDeployment {
@@ -23,8 +25,8 @@ export interface StageDeploymentStatus {
 }
 
 export interface StageDeploymentSource<E, R> {
-  /** Latest status of a deployment, or none when it has no status yet. */
-  readonly latestStatus: (deploymentId: number) => Effect.Effect<Option.Option<StageDeploymentStatus>, E, R>;
+  /** Status history of a deployment, newest first. */
+  readonly statuses: (deploymentId: number) => Effect.Effect<readonly StageDeploymentStatus[], E, R>;
   /** Deployments of the environment, newest first; an empty page ends the walk. */
   readonly page: (page: number) => Effect.Effect<readonly StageDeployment[], E, R>;
 }
@@ -48,12 +50,9 @@ export const resolveStageDeploymentBase = <E, R>(
         });
       }
       for (const deployment of deployments) {
-        const status = yield* source.latestStatus(deployment.id);
-        if (
-          Option.isSome(status) &&
-          status.value.state === 'success' &&
-          !status.value.logUrl.includes(currentRunPath)
-        ) {
+        const statuses = yield* source.statuses(deployment.id);
+        const success = statuses.find((status) => status.state === 'success');
+        if (success !== undefined && !success.logUrl.includes(currentRunPath)) {
           return deployment.sha;
         }
       }
@@ -61,6 +60,7 @@ export const resolveStageDeploymentBase = <E, R>(
   });
 
 const DEPLOYMENTS_PAGE_SIZE = 100;
+const STATUSES_PAGE_SIZE = 100;
 
 const DeploymentsJsonSchema = Schema.fromJsonString(
   Schema.Array(Schema.Struct({ id: Schema.Number, sha: Schema.String })),
@@ -79,19 +79,15 @@ export const githubStageDeploymentSource = (
   repository: string,
   environment: string,
 ): StageDeploymentSource<unknown, ChildProcessSpawner.ChildProcessSpawner> => ({
-  latestStatus: (deploymentId) =>
-    githubApi(`repos/${repository}/deployments/${deploymentId}/statuses?per_page=1`).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(StatusesJsonSchema)),
-      Effect.map(([latest]) =>
-        Option.fromNullishOr(latest).pipe(
-          Option.map((status) => ({ logUrl: status.log_url ?? '', state: status.state })),
-        ),
-      ),
-    ),
   page: (page) =>
     githubApi(
       `repos/${repository}/deployments?environment=${encodeURIComponent(environment)}&per_page=${DEPLOYMENTS_PAGE_SIZE}&page=${page}`,
     ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(DeploymentsJsonSchema))),
+  statuses: (deploymentId) =>
+    githubApi(`repos/${repository}/deployments/${deploymentId}/statuses?per_page=${STATUSES_PAGE_SIZE}`).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(StatusesJsonSchema)),
+      Effect.map((statuses) => statuses.map((status) => ({ logUrl: status.log_url ?? '', state: status.state }))),
+    ),
 });
 
 const resolveStageDeploymentBaseCommand = Command.make(

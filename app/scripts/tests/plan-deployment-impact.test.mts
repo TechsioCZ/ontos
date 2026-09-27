@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Cause, Effect, Exit, Option } from 'effect';
+import { Cause, Effect, Exit } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
@@ -681,18 +681,20 @@ it.live('rejects a comparison base that is not an ancestor of the head', () =>
 );
 
 const deploymentSource = (
-  deployments: readonly { readonly runId: string; readonly sha: string; readonly state: string }[],
+  deployments: readonly { readonly runId: string; readonly sha: string; readonly states: readonly string[] }[],
 ): StageDeploymentSource<never, never> => ({
-  latestStatus: (deploymentId) =>
-    Effect.succeed(
-      Option.fromNullishOr(deployments[deploymentId]).pipe(
-        Option.map((deployment) => ({
-          logUrl: `https://github.com/TechsioCZ/ontos/actions/runs/${deployment.runId}/job/1`,
-          state: deployment.state,
-        })),
-      ),
-    ),
   page: (page) => Effect.succeed(page === 1 ? deployments.map((deployment, id) => ({ id, sha: deployment.sha })) : []),
+  statuses: (deploymentId) => {
+    const deployment = deployments[deploymentId];
+    return Effect.succeed(
+      deployment === undefined
+        ? []
+        : deployment.states.map((state) => ({
+            logUrl: `https://github.com/TechsioCZ/ontos/actions/runs/${deployment.runId}/job/1`,
+            state,
+          })),
+    );
+  },
 });
 
 it.live('diffs from the last successful stage deployment so failed and cancelled ranges are redeployed', () =>
@@ -721,10 +723,10 @@ it.live('diffs from the last successful stage deployment so failed and cancelled
 
         const base = yield* resolveStageDeploymentBase(
           deploymentSource([
-            { runId: '4', sha: headD, state: 'in_progress' },
-            { runId: '3', sha: cancelledC, state: 'inactive' },
-            { runId: '2', sha: failedB, state: 'failure' },
-            { runId: '1', sha: deployedA, state: 'success' },
+            { runId: '4', sha: headD, states: ['in_progress'] },
+            { runId: '3', sha: cancelledC, states: ['inactive', 'in_progress'] },
+            { runId: '2', sha: failedB, states: ['failure', 'in_progress'] },
+            { runId: '1', sha: deployedA, states: ['success', 'in_progress'] },
           ]),
           { currentRunId: '4', environment: 'stage' },
         );
@@ -739,12 +741,12 @@ it.live('diffs from the last successful stage deployment so failed and cancelled
   }),
 );
 
-it.live('skips a successful deployment of the current run', () =>
+it.live('skips a successful deployment of the current run and keeps the base GitHub marked inactive', () =>
   Effect.gen(function* testEffectCurrentRun() {
     const base = yield* resolveStageDeploymentBase(
       deploymentSource([
-        { runId: '9', sha: 'rerun-of-current', state: 'success' },
-        { runId: '8', sha: 'previous', state: 'success' },
+        { runId: '9', sha: 'rerun-of-current', states: ['success', 'in_progress'] },
+        { runId: '8', sha: 'previous', states: ['inactive', 'success', 'in_progress'] },
       ]),
       { currentRunId: '9', environment: 'stage' },
     );
@@ -757,8 +759,8 @@ it.live('names the missing seed when no successful stage deployment exists', () 
     const failure = yield* planningFailure(
       resolveStageDeploymentBase(
         deploymentSource([
-          { runId: '2', sha: 'current', state: 'in_progress' },
-          { runId: '1', sha: 'failed', state: 'failure' },
+          { runId: '2', sha: 'current', states: ['in_progress'] },
+          { runId: '1', sha: 'failed', states: ['failure', 'in_progress'] },
         ]),
         { currentRunId: '2', environment: 'stage' },
       ),
