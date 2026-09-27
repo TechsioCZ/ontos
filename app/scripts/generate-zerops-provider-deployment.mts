@@ -30,7 +30,16 @@ interface ProviderVertical {
   readonly path: string;
 }
 
-const renderProvider = (vertical: ProviderVertical, priceGroupCatalogBaseUrl: string | undefined) =>
+export interface ZeropsToolchain {
+  readonly node: string;
+  readonly pnpm: string;
+}
+
+const renderProvider = (
+  vertical: ProviderVertical,
+  priceGroupCatalogBaseUrl: string | undefined,
+  toolchain: ZeropsToolchain,
+) =>
   Effect.gen(function* renderProviderEffect() {
     const { id, package: packageName, path: packageDir } = vertical;
     if (
@@ -59,22 +68,23 @@ const renderProvider = (vertical: ProviderVertical, priceGroupCatalogBaseUrl: st
       id === 'commerce-customer-context' && priceGroupCatalogBaseUrl !== undefined
         ? `\n        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: '${priceGroupCatalogBaseUrl}'`
         : '';
+    const nodeBin = `$HOME/.local/node-${toolchain.node}/bin`;
     return `  - setup: '${id}'
     build:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh ${toolchain.node} ${toolchain.pnpm}
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '${packageName}' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app '${id}' --package '${packageName}' --package-dir '${packageDir}'
+        - cd app && PATH="${nodeBin}:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="${nodeBin}:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="${nodeBin}:$PATH" pnpm --filter '${packageName}' run build
+        - cd app && PATH="${nodeBin}:$PATH" pnpm run zerops:materialize --app '${id}' --package '${packageName}' --package-dir '${packageDir}'
         - cp 'app/topology/reference-topology.json' '${runtime}/topology.json'
         - cp 'app/topology/local-overlays/development.json' '${runtime}/local-overlay.json'
+        - mkdir '${runtime}/node' && cp -a "$HOME/.local/node-${toolchain.node}/bin" "$HOME/.local/node-${toolchain.node}/lib" '${runtime}/node/'
       deployFiles:
         - '${runtime}'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -85,8 +95,6 @@ const renderProvider = (vertical: ProviderVertical, priceGroupCatalogBaseUrl: st
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: ${port}
           protocol: tcp
@@ -105,12 +113,13 @@ const renderProvider = (vertical: ProviderVertical, priceGroupCatalogBaseUrl: st
         httpGet:
           port: ${port}
           path: '${readiness}'
-      start: sh -c '${runtimeConfigurationPreflight}cd ${runtime} && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'`;
+      start: sh -c '${runtimeConfigurationPreflight}cd ${runtime} && PATH="$PWD/node/bin:$PATH" exec npm run serve'`;
   });
 
 export const generateZeropsProviderDeployment = (
   source: string,
   topology: { readonly verticals: readonly ProviderVertical[] },
+  toolchain: ZeropsToolchain,
 ) =>
   Effect.gen(function* generateProviderEffect() {
     if (topology.verticals.length === 0) {
@@ -138,7 +147,7 @@ export const generateZeropsProviderDeployment = (
         ? undefined
         : `http://price-group-catalog:${new URL(priceGroupCatalog.moduleFederation.manifestUrl).port}/price-group-catalog-api`;
     const providers = yield* Effect.all(
-      topology.verticals.map((vertical) => renderProvider(vertical, priceGroupCatalogBaseUrl)),
+      topology.verticals.map((vertical) => renderProvider(vertical, priceGroupCatalogBaseUrl, toolchain)),
     );
     const rendered = `${begin}\n${providers.join('\n\n')}\n${end}`;
     const start = source.indexOf(begin);
@@ -157,6 +166,26 @@ export const generateZeropsProviderDeployment = (
     return `${source.slice(0, first)}${rendered}\n\n${source.slice(shell)}`;
   });
 
+const version = /^[0-9]+\.[0-9]+\.[0-9]+$/u;
+const PackageManifestSchema = Schema.fromJsonString(Schema.Struct({ packageManager: Schema.String }));
+
+/** Reads the Node pin from `.mise.toml` and the pnpm pin from `package.json#packageManager`. */
+export const readZeropsToolchain = (miseToml: string, packageJson: string) =>
+  Effect.gen(function* readToolchain() {
+    const node = /^node = "(?<node>[^"]+)"$/mu.exec(miseToml)?.groups?.node;
+    if (node === undefined || !version.test(node)) {
+      return yield* invalid('.mise.toml must pin node = "<major>.<minor>.<patch>" under [tools]');
+    }
+    const { packageManager } = yield* Schema.decodeUnknownEffect(PackageManifestSchema)(packageJson).pipe(
+      Effect.mapError(() => invalid('package.json must declare packageManager')),
+    );
+    const pnpm = /^pnpm@(?<pnpm>[^+]+)/u.exec(packageManager)?.groups?.pnpm;
+    if (pnpm === undefined || !version.test(pnpm)) {
+      return yield* invalid('package.json#packageManager must pin pnpm@<major>.<minor>.<patch>');
+    }
+    return { node, pnpm };
+  });
+
 const runtime = ManagedRuntime.make(NodeServices.layer);
 const runCommand = ({ write }: { readonly write: boolean }) =>
   Effect.gen(function* runProviderGenerator() {
@@ -167,7 +196,11 @@ const runCommand = ({ write }: { readonly write: boolean }) =>
     const source = yield* fs.readFileString(sourcePath);
     const topologySource = yield* fs.readFileString(path.join(root, 'topology/reference-topology.json'));
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
-    const generated = yield* generateZeropsProviderDeployment(source, topology);
+    const toolchain = yield* readZeropsToolchain(
+      yield* fs.readFileString(path.join(root, '.mise.toml')),
+      yield* fs.readFileString(path.join(root, 'package.json')),
+    );
+    const generated = yield* generateZeropsProviderDeployment(source, topology, toolchain);
     if (write) {
       yield* fs.writeFileString(sourcePath, generated);
     } else if (generated !== source) {

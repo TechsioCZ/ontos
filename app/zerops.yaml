@@ -12,12 +12,14 @@ zerops:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - mkdir -p 'app/.zerops/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/node/'
       deployFiles:
         - 'app/.mise.toml'
+        - 'app/.zerops/node'
         - 'app/apps/shell-super-app'
         - 'app/node_modules'
         - 'app/package.json'
@@ -40,8 +42,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 8080
           protocol: tcp
@@ -64,7 +64,7 @@ zerops:
         httpGet:
           port: 8080
           path: '/ready'
-      start: sh -c 'cd app && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec node scripts/run-zerops-migrator.mjs'
+      start: sh -c 'cd app && PATH="$PWD/.zerops/node/bin:$PATH" exec node scripts/run-zerops-migrator.mjs'
 
   - setup: 'spicedb'
     build:
@@ -106,17 +106,17 @@ zerops:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/party-registry' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry'
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/party-registry' run build
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/party-registry/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/party-registry/local-overlay.json'
+        - mkdir 'app/.zerops/runtime/party-registry/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/party-registry/node/'
       deployFiles:
         - 'app/.zerops/runtime/party-registry'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -127,8 +127,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 4102
           protocol: tcp
@@ -147,24 +145,24 @@ zerops:
         httpGet:
           port: 4102
           path: '/party-registry-api/party-registry/readiness'
-      start: sh -c 'cd app/.zerops/runtime/party-registry && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+      start: sh -c 'cd app/.zerops/runtime/party-registry && PATH="$PWD/node/bin:$PATH" exec npm run serve'
 
   - setup: 'commerce-customer-context'
     build:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/commerce-customer-context' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context'
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/commerce-customer-context' run build
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/commerce-customer-context/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/commerce-customer-context/local-overlay.json'
+        - mkdir 'app/.zerops/runtime/commerce-customer-context/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/commerce-customer-context/node/'
       deployFiles:
         - 'app/.zerops/runtime/commerce-customer-context'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -175,8 +173,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 4101
           protocol: tcp
@@ -196,24 +192,24 @@ zerops:
         httpGet:
           port: 4101
           path: '/commerce-customer-context-api/commerce-customer-context/readiness'
-      start: sh -c 'test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON" || { echo "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON is required" >&2; exit 1; }; cd app/.zerops/runtime/commerce-customer-context && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+      start: sh -c 'test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON" || { echo "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON is required" >&2; exit 1; }; cd app/.zerops/runtime/commerce-customer-context && PATH="$PWD/node/bin:$PATH" exec npm run serve'
 
   - setup: 'payment-term-catalog'
     build:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/payment-term-catalog' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'payment-term-catalog' --package '@app/payment-term-catalog' --package-dir 'verticals/payment-term-catalog'
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/payment-term-catalog' run build
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'payment-term-catalog' --package '@app/payment-term-catalog' --package-dir 'verticals/payment-term-catalog'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/payment-term-catalog/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/payment-term-catalog/local-overlay.json'
+        - mkdir 'app/.zerops/runtime/payment-term-catalog/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/payment-term-catalog/node/'
       deployFiles:
         - 'app/.zerops/runtime/payment-term-catalog'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -224,8 +220,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 4103
           protocol: tcp
@@ -244,24 +238,24 @@ zerops:
         httpGet:
           port: 4103
           path: '/payment-term-catalog-api/payment-term-catalog/readiness'
-      start: sh -c 'cd app/.zerops/runtime/payment-term-catalog && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+      start: sh -c 'cd app/.zerops/runtime/payment-term-catalog && PATH="$PWD/node/bin:$PATH" exec npm run serve'
 
   - setup: 'commerce-market-catalog'
     build:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/commerce-market-catalog' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'commerce-market-catalog' --package '@app/commerce-market-catalog' --package-dir 'verticals/commerce-market-catalog'
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/commerce-market-catalog' run build
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-market-catalog' --package '@app/commerce-market-catalog' --package-dir 'verticals/commerce-market-catalog'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/commerce-market-catalog/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/commerce-market-catalog/local-overlay.json'
+        - mkdir 'app/.zerops/runtime/commerce-market-catalog/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/commerce-market-catalog/node/'
       deployFiles:
         - 'app/.zerops/runtime/commerce-market-catalog'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -272,8 +266,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 4104
           protocol: tcp
@@ -292,24 +284,24 @@ zerops:
         httpGet:
           port: 4104
           path: '/commerce-market-catalog-api/commerce-market-catalog/readiness'
-      start: sh -c 'cd app/.zerops/runtime/commerce-market-catalog && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+      start: sh -c 'cd app/.zerops/runtime/commerce-market-catalog && PATH="$PWD/node/bin:$PATH" exec npm run serve'
 
   - setup: 'catalog'
     build:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/catalog' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'catalog' --package '@app/catalog' --package-dir 'verticals/catalog'
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/catalog' run build
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'catalog' --package '@app/catalog' --package-dir 'verticals/catalog'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/catalog/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/catalog/local-overlay.json'
+        - mkdir 'app/.zerops/runtime/catalog/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/catalog/node/'
       deployFiles:
         - 'app/.zerops/runtime/catalog'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -320,8 +312,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 4105
           protocol: tcp
@@ -340,24 +330,24 @@ zerops:
         httpGet:
           port: 4105
           path: '/catalog-api/catalog/readiness'
-      start: sh -c 'cd app/.zerops/runtime/catalog && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+      start: sh -c 'cd app/.zerops/runtime/catalog && PATH="$PWD/node/bin:$PATH" exec npm run serve'
 
   - setup: 'pricing'
     build:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/pricing' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'pricing' --package '@app/pricing' --package-dir 'verticals/pricing'
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/pricing' run build
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'pricing' --package '@app/pricing' --package-dir 'verticals/pricing'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/pricing/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/pricing/local-overlay.json'
+        - mkdir 'app/.zerops/runtime/pricing/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/pricing/node/'
       deployFiles:
         - 'app/.zerops/runtime/pricing'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -368,8 +358,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 4106
           protocol: tcp
@@ -388,24 +376,24 @@ zerops:
         httpGet:
           port: 4106
           path: '/pricing-api/pricing/readiness'
-      start: sh -c 'cd app/.zerops/runtime/pricing && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+      start: sh -c 'cd app/.zerops/runtime/pricing && PATH="$PWD/node/bin:$PATH" exec npm run serve'
 
   - setup: 'storefront-registry'
     build:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/storefront-registry' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'storefront-registry' --package '@app/storefront-registry' --package-dir 'verticals/storefront-registry'
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/storefront-registry' run build
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'storefront-registry' --package '@app/storefront-registry' --package-dir 'verticals/storefront-registry'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/storefront-registry/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/storefront-registry/local-overlay.json'
+        - mkdir 'app/.zerops/runtime/storefront-registry/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/storefront-registry/node/'
       deployFiles:
         - 'app/.zerops/runtime/storefront-registry'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -416,8 +404,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 4107
           protocol: tcp
@@ -436,24 +422,24 @@ zerops:
         httpGet:
           port: 4107
           path: '/storefront-registry-api/storefront-registry/readiness'
-      start: sh -c 'cd app/.zerops/runtime/storefront-registry && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+      start: sh -c 'cd app/.zerops/runtime/storefront-registry && PATH="$PWD/node/bin:$PATH" exec npm run serve'
 
   - setup: 'price-group-catalog'
     build:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/price-group-catalog' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog'
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/price-group-catalog' run build
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/price-group-catalog/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/price-group-catalog/local-overlay.json'
+        - mkdir 'app/.zerops/runtime/price-group-catalog/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/price-group-catalog/node/'
       deployFiles:
         - 'app/.zerops/runtime/price-group-catalog'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -464,8 +450,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 4108
           protocol: tcp
@@ -484,7 +468,7 @@ zerops:
         httpGet:
           port: 4108
           path: '/price-group-catalog-api/price-group-catalog/readiness'
-      start: sh -c 'cd app/.zerops/runtime/price-group-catalog && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+      start: sh -c 'cd app/.zerops/runtime/price-group-catalog && PATH="$PWD/node/bin:$PATH" exec npm run serve'
   # </generated-vertical-provider-deployments>
 
   - setup: 'shellsuperapp'
@@ -494,17 +478,17 @@ zerops:
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && NODE_OPTIONS=--max-old-space-size=4096 PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false --filter '@app/shell-super-app' run build
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'shell-super-app' --package '@app/shell-super-app' --package-dir 'apps/shell-super-app'
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && NODE_OPTIONS=--max-old-space-size=4096 ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --filter '@app/shell-super-app' run build
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'shell-super-app' --package '@app/shell-super-app' --package-dir 'apps/shell-super-app'
         - cp 'app/topology/reference-topology.json' 'app/.zerops/runtime/shell-super-app/topology.json'
         - cp 'app/topology/local-overlays/development.json' 'app/.zerops/runtime/shell-super-app/local-overlay.json'
+        - mkdir 'app/.zerops/runtime/shell-super-app/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/shell-super-app/node/'
       deployFiles:
         - 'app/.zerops/runtime/shell-super-app'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -515,8 +499,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 3020
           protocol: tcp
@@ -535,7 +517,7 @@ zerops:
         httpGet:
           port: 3020
           path: '/'
-      start: sh -c 'cd app/.zerops/runtime/shell-super-app && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+      start: sh -c 'cd app/.zerops/runtime/shell-super-app && PATH="$PWD/node/bin:$PATH" exec npm run serve'
 
   # <generated-outbox-worker-deployments>
   - setup: 'party-registry-worker'
@@ -543,14 +525,14 @@ zerops:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry' --worker
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'party-registry' --package '@app/party-registry' --package-dir 'verticals/party-registry' --worker
+        - mkdir 'app/.zerops/runtime/party-registry-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/party-registry-worker/node/'
       deployFiles:
         - 'app/.zerops/runtime/party-registry-worker'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -561,8 +543,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 4102
           protocol: tcp
@@ -581,21 +561,21 @@ zerops:
         httpGet:
           port: 4102
           path: '/ready'
-      start: sh -c 'cd app/.zerops/runtime/party-registry-worker && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+      start: sh -c 'cd app/.zerops/runtime/party-registry-worker && PATH="$PWD/node/bin:$PATH" exec npm run serve'
 
   - setup: 'commerce-customer-context-worker'
     build:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context' --worker
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'commerce-customer-context' --package '@app/commerce-customer-context' --package-dir 'verticals/commerce-customer-context' --worker
+        - mkdir 'app/.zerops/runtime/commerce-customer-context-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/commerce-customer-context-worker/node/'
       deployFiles:
         - 'app/.zerops/runtime/commerce-customer-context-worker'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -606,8 +586,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 4101
           protocol: tcp
@@ -627,21 +605,21 @@ zerops:
         httpGet:
           port: 4101
           path: '/ready'
-      start: sh -c 'test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON" || { echo "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON is required" >&2; exit 1; }; cd app/.zerops/runtime/commerce-customer-context-worker && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+      start: sh -c 'test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON" || { echo "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON is required" >&2; exit 1; }; cd app/.zerops/runtime/commerce-customer-context-worker && PATH="$PWD/node/bin:$PATH" exec npm run serve'
 
   - setup: 'price-group-catalog-worker'
     build:
       base: 'alpine@3.23'
       prepareCommands:
         - sudo apk add --no-cache curl libstdc++
-        - sh /build/source/app/scripts/install-zerops-node.sh --with-pnpm 12.4.2
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
       buildCommands:
-        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/reset-workspace-dependencies.mjs
-        - cd app && PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile --force --config.enable-global-virtual-store=false --virtual-store-dir=node_modules/.pnpm
-        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PNPM_CONFIG_ENABLE_GLOBAL_VIRTUAL_STORE=false PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm --config.enable-global-virtual-store=false run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog' --worker
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'price-group-catalog' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog' --worker
+        - mkdir 'app/.zerops/runtime/price-group-catalog-worker/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/price-group-catalog-worker/node/'
       deployFiles:
         - 'app/.zerops/runtime/price-group-catalog-worker'
-        - 'app/scripts/install-zerops-node.sh'
     deploy:
       temporaryShutdown: false
       readinessCheck:
@@ -652,8 +630,6 @@ zerops:
         retryPeriod: 10s
     run:
       base: 'nodejs@24'
-      initCommands:
-        - ZEROPS_NODE_ROOT=/var/www sh app/scripts/install-zerops-node.sh
       ports:
         - port: 4108
           protocol: tcp
@@ -672,5 +648,5 @@ zerops:
         httpGet:
           port: 4108
           path: '/ready'
-      start: sh -c 'cd app/.zerops/runtime/price-group-catalog-worker && PATH="/var/www/.local/node-26.7.0/bin:$PATH" exec npm run serve'
+      start: sh -c 'cd app/.zerops/runtime/price-group-catalog-worker && PATH="$PWD/node/bin:$PATH" exec npm run serve'
   # </generated-outbox-worker-deployments>

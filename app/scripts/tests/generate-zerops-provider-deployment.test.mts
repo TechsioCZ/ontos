@@ -4,9 +4,17 @@ import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { generateZeropsProviderDeployment } from '../generate-zerops-provider-deployment.mts';
+import { generateZeropsProviderDeployment, readZeropsToolchain } from '../generate-zerops-provider-deployment.mts';
 
 const root = path.resolve(import.meta.dirname, '../..');
+const toolchain = { node: '26.7.0', pnpm: '12.4.2' };
+const ledgerSource = "zerops:\n  - setup: 'ledger'\n\n  - setup: 'shellsuperapp'\n";
+const ledger = {
+  id: 'ledger',
+  moduleFederation: { manifestUrl: 'http://localhost:4140/mf-manifest.json' },
+  package: '@app/ledger',
+  path: 'verticals/ledger',
+};
 
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({
@@ -27,7 +35,11 @@ it.effect('reproduces the checked-in provider setups from topology and preserves
     const source = yield* fs.readFileString(path.join(root, 'zerops.yaml'));
     const topologySource = yield* fs.readFileString(path.join(root, 'topology/reference-topology.json'));
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
-    expect(yield* generateZeropsProviderDeployment(source, topology)).toBe(source);
+    const checkedInToolchain = yield* readZeropsToolchain(
+      yield* fs.readFileString(path.join(root, '.mise.toml')),
+      yield* fs.readFileString(path.join(root, 'package.json')),
+    );
+    expect(yield* generateZeropsProviderDeployment(source, topology, checkedInToolchain)).toBe(source);
     for (const vertical of topology.verticals) {
       expect(source).toContain(`  - setup: '${vertical.id}'\n`);
       expect(source).toContain(
@@ -41,21 +53,21 @@ it.effect('reproduces the checked-in provider setups from topology and preserves
 
 it.effect('rejects duplicate provider identity and port instead of emitting ambiguous YAML', () =>
   Effect.gen(function* invalidDuplicates() {
-    const vertical = {
-      id: 'ledger',
-      moduleFederation: { manifestUrl: 'http://localhost:4140/mf-manifest.json' },
-      package: '@app/ledger',
-      path: 'verticals/ledger',
-    };
-    const source = "zerops:\n  - setup: 'ledger'\n\n  - setup: 'shellsuperapp'\n";
+    const vertical = ledger;
+    const source = ledgerSource;
     expect(
-      (yield* Effect.flip(generateZeropsProviderDeployment(source, { verticals: [vertical, vertical] }))).reason,
+      (yield* Effect.flip(generateZeropsProviderDeployment(source, { verticals: [vertical, vertical] }, toolchain)))
+        .reason,
     ).toBe('Duplicate topology provider: ledger');
     expect(
       (yield* Effect.flip(
-        generateZeropsProviderDeployment(source, {
-          verticals: [vertical, { ...vertical, id: 'invoice', package: '@app/invoice', path: 'verticals/invoice' }],
-        }),
+        generateZeropsProviderDeployment(
+          source,
+          {
+            verticals: [vertical, { ...vertical, id: 'invoice', package: '@app/invoice', path: 'verticals/invoice' }],
+          },
+          toolchain,
+        ),
       )).reason,
     ).toBe('Duplicate topology provider port: 4140');
   }),
@@ -63,27 +75,26 @@ it.effect('rejects duplicate provider identity and port instead of emitting ambi
 
 it.effect('rejects malformed identity, source boundaries, and provider drift', () =>
   Effect.gen(function* invalidProvider() {
-    const vertical = {
-      id: 'ledger',
-      moduleFederation: { manifestUrl: 'http://localhost:4140/mf-manifest.json' },
-      package: '@app/ledger',
-      path: 'verticals/ledger',
-    };
-    const source = "zerops:\n  - setup: 'ledger'\n\n  - setup: 'shellsuperapp'\n";
+    const vertical = ledger;
+    const source = ledgerSource;
     expect(
       (yield* Effect.flip(
-        generateZeropsProviderDeployment(source, { verticals: [{ ...vertical, path: 'verticals/other' }] }),
+        generateZeropsProviderDeployment(source, { verticals: [{ ...vertical, path: 'verticals/other' }] }, toolchain),
       )).reason,
     ).toBe('Invalid topology provider identity: ledger');
-    expect((yield* Effect.flip(generateZeropsProviderDeployment('zerops:\n', { verticals: [vertical] }))).reason).toBe(
-      'Missing legacy provider section or Shell boundary',
-    );
-    const generated = yield* generateZeropsProviderDeployment(source, { verticals: [vertical] });
-    expect(yield* generateZeropsProviderDeployment(generated, { verticals: [vertical] })).toBe(generated);
     expect(
-      yield* generateZeropsProviderDeployment(generated.replace("PORT: '4140'", "PORT: '4141'"), {
-        verticals: [vertical],
-      }),
+      (yield* Effect.flip(generateZeropsProviderDeployment('zerops:\n', { verticals: [vertical] }, toolchain))).reason,
+    ).toBe('Missing legacy provider section or Shell boundary');
+    const generated = yield* generateZeropsProviderDeployment(source, { verticals: [vertical] }, toolchain);
+    expect(yield* generateZeropsProviderDeployment(generated, { verticals: [vertical] }, toolchain)).toBe(generated);
+    expect(
+      yield* generateZeropsProviderDeployment(
+        generated.replace("PORT: '4140'", "PORT: '4141'"),
+        {
+          verticals: [vertical],
+        },
+        toolchain,
+      ),
     ).toBe(generated);
   }),
 );
@@ -103,9 +114,13 @@ it.effect('requires the publisher-owned composition snapshot only for Customer C
       path: 'verticals/party-registry',
     };
     const source = "zerops:\n  - setup: 'commerce-customer-context'\n\n  - setup: 'shellsuperapp'\n";
-    const generated = yield* generateZeropsProviderDeployment(source, {
-      verticals: [customerContext, partyRegistry],
-    });
+    const generated = yield* generateZeropsProviderDeployment(
+      source,
+      {
+        verticals: [customerContext, partyRegistry],
+      },
+      toolchain,
+    );
     const customerContextStart = generated.indexOf("  - setup: 'commerce-customer-context'");
     const partyRegistryStart = generated.indexOf("  - setup: 'party-registry'");
     const customerContextBlock = generated.slice(customerContextStart, partyRegistryStart);
@@ -117,5 +132,30 @@ it.effect('requires the publisher-owned composition snapshot only for Customer C
     expect(customerContextBlock).toContain('test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON"');
     expect(customerContextBlock).not.toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON:');
     expect(partyRegistryBlock).not.toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON');
+  }),
+);
+
+it.effect('pins the build toolchain from .mise.toml and packageManager and ships Node with the runtime', () =>
+  Effect.gen(function* toolchainPins() {
+    const vertical = ledger;
+    const pinned = yield* readZeropsToolchain(
+      '[tools]\nnode = "27.1.0"\n',
+      JSON.stringify({ packageManager: 'pnpm@12.5.0+sha512.abc' }),
+    );
+    expect(pinned).toEqual({ node: '27.1.0', pnpm: '12.5.0' });
+    const generated = yield* generateZeropsProviderDeployment(ledgerSource, { verticals: [vertical] }, pinned);
+    expect(generated).toContain('install-zerops-node.sh 27.1.0 12.5.0');
+    expect(generated).toContain(
+      `cp -a "$HOME/.local/node-27.1.0/bin" "$HOME/.local/node-27.1.0/lib" 'app/.zerops/runtime/ledger/node/'`,
+    );
+    expect(generated).toContain('PATH="$PWD/node/bin:$PATH" exec npm run serve');
+    expect(generated).not.toContain('initCommands');
+    expect(generated).not.toMatch(/virtual-store|VIRTUAL_STORE|--force/u);
+    expect(
+      (yield* Effect.flip(readZeropsToolchain('[tools]\nnode = "lts"\n', '{"packageManager":"pnpm@12.5.0"}'))).reason,
+    ).toBe('.mise.toml must pin node = "<major>.<minor>.<patch>" under [tools]');
+    expect(
+      (yield* Effect.flip(readZeropsToolchain('node = "27.1.0"\n', '{"packageManager":"npm@11.0.0"}'))).reason,
+    ).toBe('package.json#packageManager must pin pnpm@<major>.<minor>.<patch>');
   }),
 );

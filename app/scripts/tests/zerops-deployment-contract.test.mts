@@ -88,3 +88,25 @@ it('starts a dedicated Price Group worker that drains durable pending projection
   expect(worker).toContain(`path: '/ready'`);
   expect(worker).toContain(`exec npm run serve`);
 });
+
+it('builds every Node service with the pinned toolchain and ships Node instead of downloading it at start', () => {
+  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+  const node = /^node = "(?<node>[^"]+)"$/mu.exec(readFileSync(new URL('../../.mise.toml', import.meta.url), 'utf-8'))
+    ?.groups?.node;
+  const pnpm = /"packageManager": "pnpm@(?<pnpm>[^"+]+)"/u.exec(
+    readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'),
+  )?.groups?.pnpm;
+  const nodeServices = zeropsYaml
+    .split(/(?=^ {2}- setup:)/mu)
+    .filter((block) => block.includes('install-zerops-node.sh'));
+
+  expect(nodeServices.length).toBeGreaterThan(10);
+  for (const block of nodeServices) {
+    expect(block).toContain(`install-zerops-node.sh ${node} ${pnpm}\n`);
+    expect(block).toContain(`cp -a "$HOME/.local/node-${node}/bin" "$HOME/.local/node-${node}/lib" `);
+    expect(block).toContain('node scripts/verify-zerops-workspace-install.mts');
+    expect(block).toMatch(/start: sh -c '.*PATH="\$PWD\/[^"]*node\/bin:\$PATH" exec /u);
+    expect(block).not.toContain('initCommands');
+    expect(block).not.toMatch(/virtual-store|VIRTUAL_STORE|--force|reset-workspace-dependencies/u);
+  }
+});

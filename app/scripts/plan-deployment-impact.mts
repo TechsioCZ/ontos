@@ -833,6 +833,7 @@ const CONSERVATIVE_FULL_DEPLOY_PATHS = new Set([
   'pnpm-lock.yaml',
   WORKSPACE_MANIFEST,
   'scripts/install-zerops-node.sh',
+  'scripts/verify-zerops-workspace-install.mts',
   'scripts/generate-outbox-worker-deployment.mjs',
   'scripts/materialize-outbox-worker.mjs',
   'scripts/materialize-zerops-runtime.mjs',

@@ -371,6 +371,7 @@ for (const changedPath of [
   'scripts/materialize-zerops-runtime.mjs',
   'scripts/outbox-worker-delivery.mjs',
   'scripts/install-zerops-node.sh',
+  'scripts/verify-zerops-workspace-install.mts',
   'zerops.yaml',
   TOPOLOGY_PATH,
 ]) {
