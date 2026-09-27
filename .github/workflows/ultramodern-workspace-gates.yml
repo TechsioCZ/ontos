@@ -316,6 +316,17 @@ jobs:
     name: Cloudflare Workerd Artifact Proof
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      GIT_CEILING_DIRECTORIES: ${{ github.workspace }}
+      MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
+      ULTRAMODERN_PUBLIC_URL_CATALOG: https://catalog.invalid
+      ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
+      ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG: https://commerce-market-catalog.invalid
+      ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
+      ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
+      ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
+      ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
+      ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
@@ -333,18 +344,19 @@ jobs:
 
       - name: Build and prove Cloudflare/workerd artifacts
         working-directory: app
-        env:
-          GIT_CEILING_DIRECTORIES: ${{ github.workspace }}
-          MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
-          ULTRAMODERN_PUBLIC_URL_CATALOG: https://catalog.invalid
-          ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
-          ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG: https://commerce-market-catalog.invalid
-          ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
-          ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
-          ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
-          ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
-          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm cloudflare:build
+
+      # Commerce imports only Catalog's quantity-preparation client on its merits. This build
+      # proves the whole Catalog client barrel (the root HttpApi chain) also compiles for workerd
+      # with the default stack, now that React Compiler stays off server graphs. It stops after
+      # `modern build`: the edited checkout cannot produce a release envelope, and the proof
+      # step above already covers deployment of the real sources.
+      - name: Build Commerce for Cloudflare against the full Catalog client barrel
+        working-directory: app/verticals/commerce-customer-context
+        run: |
+          sed -i "s#'@app/catalog/api/quantity-preparation-client'#'@app/catalog/api/client'#" src/integrations/catalog-quantity.ts
+          grep -q "from '@app/catalog/api/client'" src/integrations/catalog-quantity.ts
+          mise exec -- pnpm exec cross-env MODERNJS_DEPLOY=cloudflare modern build
 
   deploy-stage:
     name: Deploy stage to Zerops after merge to main

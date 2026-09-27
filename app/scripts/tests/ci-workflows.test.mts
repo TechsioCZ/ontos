@@ -38,3 +38,22 @@ it('skips the gate workflows for pushes and pull requests that change only repos
     }
   }
 });
+
+const StepSchema = Schema.Struct({ name: Schema.String, run: Schema.optionalKey(Schema.String) });
+const GateJobsSchema = Schema.Struct({
+  jobs: Schema.Struct({ 'cloudflare-runtime': Schema.Struct({ steps: Schema.Array(StepSchema) }) }),
+});
+
+it('builds Commerce for Cloudflare against the full Catalog client barrel', () => {
+  const workflow = Schema.decodeUnknownSync(GateJobsSchema)(
+    parse(
+      readFileSync(new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url), 'utf-8'),
+    ),
+  );
+  const guard = workflow.jobs['cloudflare-runtime'].steps.find(
+    (step) => step.run?.includes("from '@app/catalog/api/client'") === true,
+  );
+  expect(guard?.run).toContain('src/integrations/catalog-quantity.ts');
+  expect(guard?.run).toContain('MODERNJS_DEPLOY=cloudflare modern build');
+  expect(guard?.run).not.toMatch(/RUST_MIN_STACK|ulimit/u);
+});
