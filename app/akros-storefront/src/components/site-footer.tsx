@@ -11,22 +11,27 @@ export function SiteFooter() {
     <Footer className="akros-footer" direction="vertical" layout="row" sectionFlow="col" size="sm">
       <div className="akros-footer__inner" id="footer">
         <Footer.Container className="akros-footer__top">
-          <Footer.Section>
-            <Footer.Title>{cs.footer.contacts}</Footer.Title>
-            <Footer.Text>737 591 849</Footer.Text>
-            <Footer.Link href="mailto:akros@akros.cz">akros@akros.cz</Footer.Link>
-            <Footer.Text>Praha · Ostrava · Chomutov–Údlice</Footer.Text>
+          <Footer.Section className="akros-footer__section">
+            <Footer.Title className="leading-tight">{cs.footer.contacts}</Footer.Title>
+            <Footer.Text className="leading-tight">737 591 849</Footer.Text>
+            <Footer.Link className="leading-tight" href="mailto:akros@akros.cz">
+              akros@akros.cz
+            </Footer.Link>
+            <Footer.Text className="leading-tight">Praha · Ostrava · Chomutov–Údlice</Footer.Text>
           </Footer.Section>
-          <Footer.Section>
-            <Footer.Title>{cs.header.terms}</Footer.Title>
-            <Footer.Link as={NextLink} href="/obchodni-podminky">
+          <Footer.Section className="akros-footer__section">
+            <Footer.Title className="leading-tight">{cs.header.terms}</Footer.Title>
+            <Footer.Link as={NextLink} className="leading-tight" href="/obchodni-podminky">
               {cs.footer.withdrawal}
             </Footer.Link>
-            <Footer.Link as={NextLink} href="/doprava-a-platba">
+            <Footer.Link as={NextLink} className="leading-tight" href="/doprava-a-platba">
               {cs.footer.shipping}
             </Footer.Link>
-            <Footer.Link as={NextLink} href="/gdpr">
+            <Footer.Link as={NextLink} className="leading-tight" href="/gdpr">
               {cs.footer.privacy}
+            </Footer.Link>
+            <Footer.Link as={NextLink} className="leading-tight" href="/obchodni-podminky">
+              {cs.header.terms}
             </Footer.Link>
           </Footer.Section>
           <div className="akros-footer__banner">
@@ -39,17 +44,18 @@ export function SiteFooter() {
             />
           </div>
         </Footer.Container>
-        <Footer.Divider />
-        <Footer.Bottom className="akros-footer__bottom">
-          <Footer.Text>{cs.footer.copyright}</Footer.Text>
+        <Footer.Bottom className="akros-footer__bottom border-footer-border">
+          <Footer.Text className="leading-tight">{cs.footer.copyright}</Footer.Text>
           <div className="akros-footer__bottom-links">
-            <Footer.Link as={NextLink} href="/kategorie/akroscz-vyroba">
+            <Footer.Link as={NextLink} className="leading-tight" href="/kategorie/akroscz-vyroba">
               {cs.header.production}
             </Footer.Link>
-            <Footer.Link as={NextLink} href="/kontakty">
+            <Footer.Link as={NextLink} className="leading-tight" href="/kontakty">
               {cs.footer.productionContacts}
             </Footer.Link>
-            <Footer.Link href="#">{cs.footer.author}</Footer.Link>
+            <Footer.Link className="leading-tight" href="#">
+              {cs.footer.author}
+            </Footer.Link>
           </div>
         </Footer.Bottom>
       </div>

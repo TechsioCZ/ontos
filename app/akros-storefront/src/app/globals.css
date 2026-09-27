@@ -1,6 +1,7 @@
 @import "@techsio/ui-kit/tokens-with-tailwind";
 @import "@techsio/ui-kit/tokens/figma/akros/variables";
 @import "../tokens/_akros-typography.css";
+@import "../tokens/components/organisms/_akros-footer.css";
 @import "../styles/content-pages.css";
 @import "../styles/account-checkout.css";
 @source "../../node_modules/@techsio/ui-kit/dist";
@@ -12,6 +13,11 @@
   --akros-sidebar-width: 280px;
   --akros-radius-lg: 16px;
   --akros-radius-md: 8px;
+  --akros-footer-banner-aspect-ratio: 609 / 170;
+  --akros-footer-banner-width: 609px;
+  --akros-footer-copy-width: 119px;
+  --akros-footer-top-min-height: 249px;
+  --akros-footer-bottom-min-height: 51px;
 }
 
 * {
@@ -675,13 +681,21 @@ body {
 
 .akros-footer__top {
   display: grid;
-  grid-template-columns: 280px minmax(220px, 1fr) minmax(360px, 2fr);
+  min-height: var(--akros-footer-top-min-height);
+  grid-template-columns:
+    var(--akros-sidebar-width) minmax(0, 1fr)
+    var(--akros-footer-banner-width);
   gap: 32px;
+}
+
+.akros-footer__section > :not(h3) {
+  max-width: var(--akros-footer-copy-width);
 }
 
 .akros-footer__banner {
   position: relative;
-  min-height: 170px;
+  aspect-ratio: var(--akros-footer-banner-aspect-ratio);
+  align-self: start;
   overflow: hidden;
   border-radius: var(--akros-radius-lg);
 }
@@ -692,6 +706,7 @@ body {
 
 .akros-footer__bottom {
   display: flex;
+  min-height: var(--akros-footer-bottom-min-height);
   align-items: center;
   justify-content: space-between;
   gap: 24px;
@@ -701,6 +716,10 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: 24px;
+}
+
+.akros-footer__bottom-links > a {
+  width: var(--akros-footer-copy-width);
 }
 
 @media (max-width: 1100px) {
@@ -748,6 +767,7 @@ body {
   }
 
   .akros-footer__top {
+    min-height: auto;
     grid-template-columns: 1fr 1fr;
   }
 
@@ -925,8 +945,21 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .akros-footer__banner {
-    min-height: 120px;
+  .akros-footer__section > a,
+  .akros-footer__bottom-links > a {
+    display: flex;
+    min-height: 44px;
+    align-items: center;
+  }
+
+  .akros-footer__bottom-links {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .akros-footer__bottom-links > a {
+    width: auto;
   }
 }
 

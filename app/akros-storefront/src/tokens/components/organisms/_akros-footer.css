@@ -1,0 +1,14 @@
+:root {
+  --border-footer-width: var(--border-sm);
+  --color-footer-bg: var(--color-base);
+  --color-footer-bottom-bg: var(--color-transparent);
+  --color-footer-container-bg: var(--color-transparent);
+  --color-footer-section-bg: var(--color-transparent);
+  --container-footer-max: var(--width-full);
+  --padding-footer-bottom: var(--dimension-16);
+  --padding-footer-bottom-sm: var(--dimension-0);
+  --padding-footer-sm: var(--dimension-0);
+  --spacing-footer-section-sm: var(--dimension-12);
+  --text-footer-sm: var(--text-sm);
+  --text-footer-title-sm: var(--text-sm);
+}
