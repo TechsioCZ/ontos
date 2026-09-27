@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Cause, Effect, Exit } from 'effect';
+import { Cause, Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
@@ -13,7 +13,7 @@ import {
   validateAuthorizationPromotionGate,
 } from '../plan-deployment-impact.mts';
 import type { AuthorizationPromotionGateInput, PlanDeploymentImpactOptions } from '../plan-deployment-impact.mts';
-import { resolveStageDeploymentBase } from '../resolve-stage-deployment-base.mts';
+import { resolveStageDeploymentBase, StatusPagesJsonSchema } from '../resolve-stage-deployment-base.mts';
 import type { StageDeploymentSource } from '../resolve-stage-deployment-base.mts';
 
 const planningFailure = <A, E>(effect: Effect.Effect<A, E>) =>
@@ -682,7 +682,8 @@ it.live('rejects a comparison base that is not an ancestor of the head', () =>
 
 const deploymentSource = (
   deployments: readonly {
-    readonly logPath?: string;
+    /** `null` records a status without a log URL. */
+    readonly logPath?: string | null;
     readonly runId: string;
     readonly sha: string;
     readonly states: readonly string[];
@@ -695,7 +696,10 @@ const deploymentSource = (
       deployment === undefined
         ? []
         : deployment.states.map((state) => ({
-            logUrl: `https://github.com/TechsioCZ/ontos/actions/runs/${deployment.runId}${deployment.logPath ?? '/job/1'}`,
+            logUrl:
+              deployment.logPath === null
+                ? ''
+                : `https://github.com/TechsioCZ/ontos/actions/runs/${deployment.runId}${deployment.logPath ?? '/job/1'}`,
             state,
           })),
     );
@@ -756,6 +760,28 @@ it.live('skips a successful deployment of the current run and keeps the base Git
       { currentRunId: '9', environment: 'stage' },
     );
     expect(base).toBe('previous');
+  }),
+);
+
+it.live('never takes a success whose log URL names no workflow run as the base', () =>
+  Effect.gen(function* testEffectUnknownRun() {
+    const base = yield* resolveStageDeploymentBase(
+      deploymentSource([
+        { logPath: null, runId: '9', sha: 'unknown-run', states: ['success', 'in_progress'] },
+        { runId: '8', sha: 'previous', states: ['success', 'in_progress'] },
+      ]),
+      { currentRunId: '9', environment: 'stage' },
+    );
+    expect(base).toBe('previous');
+  }),
+);
+
+it.live('decodes deployment statuses whose log URL is null or omitted', () =>
+  Effect.gen(function* testEffectNullableLogUrl() {
+    const pages = yield* Schema.decodeUnknownEffect(StatusPagesJsonSchema)(
+      '[[{"log_url":null,"state":"success"},{"state":"in_progress"}]]',
+    );
+    expect(pages.flat().map((status) => status.state)).toEqual(['success', 'in_progress']);
   }),
 );
 

@@ -11,7 +11,8 @@ import { FULL_PLAN_SEED_INSTRUCTION } from './plan-deployment-impact.mts';
  * The whole status history counts because GitHub marks earlier successful
  * deployments `inactive` once a newer one succeeds. Failed and cancelled
  * deployments never reach `success`, so their changes stay inside the next diff
- * until one of them reaches stage.
+ * until one of them reaches stage. A success without a workflow run in its log
+ * URL cannot be proven foreign to the current run, so it never becomes the base.
  */
 
 export interface StageDeployment {
@@ -56,7 +57,8 @@ export const resolveStageDeploymentBase = <E, R>(
       for (const deployment of deployments) {
         const statuses = yield* source.statuses(deployment.id);
         const success = statuses.find((status) => status.state === 'success');
-        if (success !== undefined && runIdOf(success.logUrl) !== options.currentRunId) {
+        const runId = success === undefined ? undefined : runIdOf(success.logUrl);
+        if (runId !== undefined && runId !== options.currentRunId) {
           return deployment.sha;
         }
       }
@@ -70,8 +72,10 @@ const DeploymentsJsonSchema = Schema.fromJsonString(
   Schema.Array(Schema.Struct({ id: Schema.Number, sha: Schema.String })),
 );
 /** Every page of the status history, as `gh api --paginate --slurp` wraps them. */
-const StatusPagesJsonSchema = Schema.fromJsonString(
-  Schema.Array(Schema.Array(Schema.Struct({ log_url: Schema.optional(Schema.String), state: Schema.String }))),
+export const StatusPagesJsonSchema = Schema.fromJsonString(
+  Schema.Array(
+    Schema.Array(Schema.Struct({ log_url: Schema.OptionFromOptionalNullOr(Schema.String), state: Schema.String })),
+  ),
 );
 
 const githubApi = (args: readonly string[]) =>
@@ -95,7 +99,9 @@ export const githubStageDeploymentSource = (
       `repos/${repository}/deployments/${deploymentId}/statuses?per_page=${STATUSES_PAGE_SIZE}`,
     ]).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(StatusPagesJsonSchema)),
-      Effect.map((pages) => pages.flat().map((status) => ({ logUrl: status.log_url ?? '', state: status.state }))),
+      Effect.map((pages) =>
+        pages.flat().map((status) => ({ logUrl: Option.getOrUndefined(status.log_url) ?? '', state: status.state })),
+      ),
     ),
 });
 
