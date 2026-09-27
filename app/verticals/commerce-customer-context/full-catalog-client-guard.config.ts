@@ -2,7 +2,7 @@ import { defineConfig } from '@modern-js/app-tools';
 import type { AppToolsUserConfig } from '@modern-js/app-tools';
 import { Predicate } from 'effect';
 
-import commerceConfig from '../../modern.config.ts';
+import commerceConfig from './modern.config.ts';
 
 /**
  * Cloudflare gate case: Commerce built with the whole `@app/catalog/api/client` barrel, which pulls
@@ -15,7 +15,7 @@ const withFullCatalogClient = (config: AppToolsUserConfig): AppToolsUserConfig =
   ...config,
   source: {
     ...config.source,
-    preEntry: ['./tests/cloudflare/full-catalog-client.ts'],
+    preEntry: ['@app/catalog/api/client'],
   },
 });
 
