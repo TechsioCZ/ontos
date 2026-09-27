@@ -1,6 +1,7 @@
 @import "@techsio/ui-kit/tokens-with-tailwind";
 @import "@techsio/ui-kit/tokens/figma/akros/variables";
 @import "../tokens/_akros-typography.css";
+@import "../tokens/components/molecules/_akros-product-card.css";
 @import "../tokens/components/organisms/_akros-footer.css";
 @import "../styles/content-pages.css";
 @import "../styles/account-checkout.css";
@@ -18,6 +19,9 @@
   --akros-footer-copy-width: 119px;
   --akros-footer-top-min-height: 249px;
   --akros-footer-bottom-min-height: 51px;
+  --akros-featured-product-card-height: 410px;
+  --akros-featured-product-image-height: 240px;
+  --akros-featured-product-action-width: 106px;
 }
 
 * {
@@ -319,6 +323,7 @@ body {
 .akros-section h2 {
   margin: 0;
   font-size: clamp(28px, 3vw, 40px);
+  font-weight: var(--font-weight-bold);
   line-height: 1.15;
 }
 
@@ -335,6 +340,30 @@ body {
 
 .akros-product-card > img {
   width: 100%;
+}
+
+.akros-featured-product-card {
+  height: var(--akros-featured-product-card-height);
+  grid-template-rows: var(--akros-featured-product-image-height) auto auto 1fr;
+}
+
+.akros-featured-product-card__image-link {
+  min-height: 0;
+}
+
+.akros-featured-product-card__image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.akros-featured-product-card > :last-child {
+  align-self: start;
+}
+
+.akros-featured-product-card > :last-child > a {
+  width: var(--akros-featured-product-action-width);
+  justify-content: center;
 }
 
 .akros-category-heading {

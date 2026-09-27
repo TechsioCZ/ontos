@@ -1,10 +1,10 @@
 import Image from "next/image";
 
+import { FeaturedProductGrid } from "@/components/featured-product-grid";
 import { PrimaryLinkButton } from "@/components/primary-link-button";
-import { ProductGrid } from "@/components/product-grid";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { cs } from "@/i18n/cs";
-import { getFeaturedProducts } from "@/mock-storefront/catalog";
+import { getHomepageFeaturedProducts } from "@/mock-storefront/catalog";
 
 const benefits = [
   { src: "/akros/home/phone-support.png", alt: "Telefonická podpora AKROS" },
@@ -48,7 +48,7 @@ export default function HomePage() {
         <div className="akros-section__heading">
           <h2 id="featured-title">{cs.home.featuredTitle}</h2>
         </div>
-        <ProductGrid products={getFeaturedProducts()} />
+        <FeaturedProductGrid products={getHomepageFeaturedProducts()} />
       </section>
 
       <section className="akros-company-intro" aria-labelledby="company-title">

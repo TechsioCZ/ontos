@@ -1,6 +1,7 @@
 import type { CatalogFixture } from "../types";
 
 export const catalogFixture = {
+  homepageFeaturedProductIds: ["product-screw", "product-rope", "product-chain", "product-bar"],
   categories: [
     {
       id: "category-special",

@@ -65,6 +65,12 @@ export const getFeaturedProducts = (): CatalogProduct[] =>
         (right.featuredPosition ?? Number.MAX_SAFE_INTEGER),
     );
 
+export const getHomepageFeaturedProducts = (): CatalogProduct[] =>
+  catalogFixture.homepageFeaturedProductIds.flatMap((productId) => {
+    const product = catalogFixture.products.find((candidate) => candidate.id === productId);
+    return product ? [product] : [];
+  });
+
 export const getProductById = (id: string): CatalogProduct | undefined =>
   catalogFixture.products.find((product) => product.id === id);
 

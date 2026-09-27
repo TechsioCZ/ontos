@@ -26,6 +26,7 @@ export interface CatalogProduct {
 }
 
 export interface CatalogFixture {
+  homepageFeaturedProductIds: string[];
   categories: CatalogCategory[];
   products: CatalogProduct[];
 }
