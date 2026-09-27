@@ -3738,21 +3738,18 @@ it('proves generated Layer bindings and API aliases without accepting unused nei
 });
 
 it.live(
-  'accepts only the trusted final identity terminator in a governed API slot',
+  'accepts only the closed final tail in a governed API slot',
   Effect.fn(function* governanceScenario21() {
-    const identityTerminator = '.pipe(identity)';
+    const closedTail = ".annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })";
     const source = yield* Effect.promise(() =>
       readFile(path.join(workspaceRoot, 'verticals/party-registry/shared/api.ts'), 'utf-8'),
     );
+    expect(source).toContain(closedTail);
     expect(yield* microVerticalApiBaselineViolation(partyId, source)).toBe(undefined);
     const mutations = [
-      source.replace(
-        "import { Brand, identity } from 'effect';",
-        "import { Brand } from 'effect';\nimport { identity } from './counterfeit.ts';",
-      ),
-      source.replace(identityTerminator, '.pipe(unrelatedIdentity)'),
-      source.replace(identityTerminator, '.pipe(() => HttpApi.make("DiscardedApi"))'),
-      source.replace(identityTerminator, '.pipe(identity).addHttpApi(partyRegistryFoundationApi)'),
+      source.replace(closedTail, '.pipe(unrelatedIdentity)'),
+      source.replace(closedTail, '.pipe(() => HttpApi.make("DiscardedApi"))'),
+      source.replace(closedTail, '.annotate(HttpApi.ParseOptions)'),
     ];
     for (const mutated of mutations) {
       expect(mutated).not.toBe(source);

@@ -1,4 +1,3 @@
-import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
   MicroVerticalReadinessSchema,
@@ -41,7 +40,7 @@ export const commerceMarketCatalogApi = HttpApi.make('CommerceMarketCatalogApi')
   .addHttpApi(MarketHistoryApi)
   .addHttpApi(ResolveCommerceMarketApi)
   // </generated-governed-http-api-additions>
-  .pipe(identity);
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
 
 export const commerceMarketCatalogOperationContexts = {
   readiness: createMicroVerticalOperationContext({

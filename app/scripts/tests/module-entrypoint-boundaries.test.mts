@@ -383,7 +383,7 @@ it('governed servers bind the trusted handler, authentication, registration, and
       `export const api = HttpApi.make('InventoryApi')
 // <generated-governed-http-api-additions>
 // </generated-governed-http-api-additions>
-.pipe(identity);`,
+.annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });`,
     );
   expect(accepts(source)).toBe(true);
   expect(accepts(source.replace(MODULE_API_HEADER, ''))).toBe(false);
@@ -740,7 +740,7 @@ export const api = HttpApi.make('InventoryApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(StockListApi)
   // </generated-governed-http-api-additions>
-  ;
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
 `,
   );
   yield* write(

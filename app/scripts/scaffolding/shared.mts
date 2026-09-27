@@ -41,6 +41,11 @@ export const GOVERNED_HTTP_API_IMPORT_SLOT_START = '// <generated-governed-http-
 export const GOVERNED_HTTP_API_IMPORT_SLOT_END = '// </generated-governed-http-api-imports>';
 export const GOVERNED_HTTP_API_ADDITION_SLOT_START = '// <generated-governed-http-api-additions>';
 export const GOVERNED_HTTP_API_ADDITION_SLOT_END = '// </generated-governed-http-api-additions>';
+/**
+ * Canonical tail of a composed vertical HttpApi. It closes every request codec at the HTTP edge
+ * (an unknown payload key is a 400) and keeps each `.addHttpApi(...)` entry independently rerunnable.
+ */
+export const GOVERNED_HTTP_API_CLOSED_TAIL = ".annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })";
 export const GOVERNED_HTTP_HANDLER_IMPORT_SLOT_START = '// <generated-governed-http-handler-imports>';
 export const GOVERNED_HTTP_HANDLER_IMPORT_SLOT_END = '// </generated-governed-http-handler-imports>';
 export const GOVERNED_HTTP_HANDLER_LAYER_SLOT_START = '// <generated-governed-http-handler-layers>';
@@ -1643,8 +1648,7 @@ export const readGeneratedSlotEntries = (
 
 /**
  * Upgrades the legacy governed-API fluent chain whose formatter-owned semicolon became part of
- * the generated additions slot. The identity terminator is the module-contract generator's
- * canonical stable tail and keeps every `.addHttpApi(...)` entry independently rerunnable.
+ * the generated additions slot, terminating it with the canonical closed tail.
  */
 export const stabilizeGovernedHttpApiAdditionSlot = (content: string): string => {
   const end = content.indexOf(GOVERNED_HTTP_API_ADDITION_SLOT_END);
@@ -1655,7 +1659,7 @@ export const stabilizeGovernedHttpApiAdditionSlot = (content: string): string =>
   }
   const afterMarker = end + GOVERNED_HTTP_API_ADDITION_SLOT_END.length;
   const trailing = content.slice(afterMarker);
-  if (/^\s*\.pipe\((?:identity|governedHttpApiIdentity)\);/u.test(trailing)) {
+  if (trailing.trimStart().startsWith(`${GOVERNED_HTTP_API_CLOSED_TAIL};`)) {
     return content;
   }
 
@@ -1673,10 +1677,7 @@ export const stabilizeGovernedHttpApiAdditionSlot = (content: string): string =>
       `generated owner API chain lacks a stable terminator at ${GOVERNED_HTTP_API_ADDITION_SLOT_END}`,
     );
   }
-  const withTerminator = `${prefix}${GOVERNED_HTTP_API_ADDITION_SLOT_END}\n  .pipe(identity);${suffix}`;
-  return withTerminator.includes("import { identity } from 'effect';")
-    ? withTerminator
-    : `import { identity } from 'effect';\n${withTerminator}`;
+  return `${prefix}${GOVERNED_HTTP_API_ADDITION_SLOT_END}\n  ${GOVERNED_HTTP_API_CLOSED_TAIL};${suffix}`;
 };
 
 const renderGeneratedSlotEntries = (
