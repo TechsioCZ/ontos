@@ -69,14 +69,15 @@ const STATUSES_PAGE_SIZE = 100;
 const DeploymentsJsonSchema = Schema.fromJsonString(
   Schema.Array(Schema.Struct({ id: Schema.Number, sha: Schema.String })),
 );
-const StatusesJsonSchema = Schema.fromJsonString(
-  Schema.Array(Schema.Struct({ log_url: Schema.optional(Schema.String), state: Schema.String })),
+/** Every page of the status history, as `gh api --paginate --slurp` wraps them. */
+const StatusPagesJsonSchema = Schema.fromJsonString(
+  Schema.Array(Schema.Array(Schema.Struct({ log_url: Schema.optional(Schema.String), state: Schema.String }))),
 );
 
-const githubApi = (endpoint: string) =>
+const githubApi = (args: readonly string[]) =>
   Effect.gen(function* githubApiEffect() {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    return yield* spawner.string(ChildProcess.make('gh', ['api', endpoint]));
+    return yield* spawner.string(ChildProcess.make('gh', ['api', ...args]));
   });
 
 export const githubStageDeploymentSource = (
@@ -84,13 +85,17 @@ export const githubStageDeploymentSource = (
   environment: string,
 ): StageDeploymentSource<unknown, ChildProcessSpawner.ChildProcessSpawner> => ({
   page: (page) =>
-    githubApi(
+    githubApi([
       `repos/${repository}/deployments?environment=${encodeURIComponent(environment)}&per_page=${DEPLOYMENTS_PAGE_SIZE}&page=${page}`,
-    ).pipe(Effect.flatMap(Schema.decodeUnknownEffect(DeploymentsJsonSchema))),
+    ]).pipe(Effect.flatMap(Schema.decodeUnknownEffect(DeploymentsJsonSchema))),
   statuses: (deploymentId) =>
-    githubApi(`repos/${repository}/deployments/${deploymentId}/statuses?per_page=${STATUSES_PAGE_SIZE}`).pipe(
-      Effect.flatMap(Schema.decodeUnknownEffect(StatusesJsonSchema)),
-      Effect.map((statuses) => statuses.map((status) => ({ logUrl: status.log_url ?? '', state: status.state }))),
+    githubApi([
+      '--paginate',
+      '--slurp',
+      `repos/${repository}/deployments/${deploymentId}/statuses?per_page=${STATUSES_PAGE_SIZE}`,
+    ]).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(StatusPagesJsonSchema)),
+      Effect.map((pages) => pages.flat().map((status) => ({ logUrl: status.log_url ?? '', state: status.state }))),
     ),
 });
 
