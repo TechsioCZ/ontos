@@ -9,10 +9,18 @@
     "noEmit": false,
     "outDir": "../../node_modules/.cache/tsgo/declarations/packages__customer-market-retirement-contracts",
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__customer-market-retirement-contracts.tsbuildinfo",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", "tests"],
+  "include": [
+    "src",
+    "tests",
+    "*.ts"
+  ],
   "references": [
-    { "path": "../shared-contracts" }
+    {
+      "path": "../shared-contracts"
+    }
   ]
 }

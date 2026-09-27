@@ -15,8 +15,7 @@
     "./server/external-identity-client": "./src/external-identity-client.ts"
   },
   "scripts": {
-    "test:types": "ultramodern-create ultramodern typecheck --project tests/tsconfig.json && ultramodern-create ultramodern typecheck --project tests/client-runtime-types.tsconfig.json",
-    "test:unit": "rstest --project unit && pnpm test:types",
+    "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {

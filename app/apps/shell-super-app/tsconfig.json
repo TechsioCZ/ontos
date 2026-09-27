@@ -21,7 +21,10 @@
     "shared",
     "shared/ultramodern-build.json",
     "server",
-    "api"
+    "api",
+    "*.ts",
+    "scripts",
+    "tests"
   ],
   "references": [
     {

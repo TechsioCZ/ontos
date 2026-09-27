@@ -14,7 +14,10 @@
     ]
   },
   "include": [
-    "src"
+    "src",
+    "*.ts",
+    "tests",
+    "tooling"
   ],
   "references": [
     {

@@ -9,11 +9,21 @@
     "noEmit": false,
     "outDir": "../../node_modules/.cache/tsgo/declarations/packages__payment-term-catalog-contracts",
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__payment-term-catalog-contracts.tsbuildinfo",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", "tests"],
+  "include": [
+    "src",
+    "tests",
+    "*.ts"
+  ],
   "references": [
-    { "path": "../core-runtime" },
-    { "path": "../shared-contracts" }
+    {
+      "path": "../core-runtime"
+    },
+    {
+      "path": "../shared-contracts"
+    }
   ]
 }

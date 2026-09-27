@@ -20,9 +20,7 @@
     "api",
     "scripts",
     "tests",
-    "drizzle.config.ts",
-    "vertical.manifest.ts",
-    "vertical.registration.ts"
+    "*.ts"
   ],
   "references": [
     {

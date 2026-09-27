@@ -10,7 +10,13 @@
     "outDir": "../../node_modules/.cache/tsgo/declarations/packages__email-delivery",
     "skipLibCheck": true,
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__email-delivery.tsbuildinfo",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", "tests"]
+  "include": [
+    "src",
+    "tests",
+    "*.ts"
+  ]
 }

@@ -15,6 +15,6 @@
     "src",
     "scripts",
     "tests",
-    "drizzle.config.ts"
+    "*.ts"
   ]
 }

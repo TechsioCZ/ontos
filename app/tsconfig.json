@@ -51,6 +51,12 @@
     },
     {
       "path": "verticals/price-group-catalog"
+    },
+    {
+      "path": "scripts"
+    },
+    {
+      "path": "tools/oxlint/effect-native"
     }
   ]
 }

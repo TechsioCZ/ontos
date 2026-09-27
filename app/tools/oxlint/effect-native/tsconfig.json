@@ -4,11 +4,29 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "strict": true,
-    "noEmit": true,
+    "noEmit": false,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ],
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "outDir": "../../../node_modules/.cache/tsgo/declarations/tools__oxlint__effect-native",
+    "tsBuildInfoFile": "../../../node_modules/.cache/tsgo/tools__oxlint__effect-native.tsbuildinfo"
   },
-  "include": ["*.ts", "*.mts", "rules/**/*.ts", "shared/**/*.ts", "tests/*.mts", "tests/*.ts"],
-  "exclude": ["tests/fixtures"]
+  "include": [
+    "*.ts",
+    "*.mts",
+    "rules/**/*.ts",
+    "shared/**/*.ts",
+    "tests/*.mts",
+    "tests/*.ts"
+  ],
+  "exclude": [
+    "tests/fixtures"
+  ]
 }

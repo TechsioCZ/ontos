@@ -1,0 +1,28 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "declaration": true,
+    "declarationMap": false,
+    "emitDeclarationOnly": true,
+    "incremental": true,
+    "noEmit": false,
+    "outDir": "../node_modules/.cache/tsgo/declarations/scripts",
+    "tsBuildInfoFile": "../node_modules/.cache/tsgo/scripts.tsbuildinfo",
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.mts"
+  ],
+  "references": [
+    {
+      "path": "../packages/core-runtime"
+    },
+    {
+      "path": "../packages/shared-contracts"
+    }
+  ]
+}

@@ -10,9 +10,15 @@
     "outDir": "../../node_modules/.cache/tsgo/declarations/packages__gateway-principal-verifier",
     "skipLibCheck": true,
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__gateway-principal-verifier.tsbuildinfo",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", "tests"],
+  "include": [
+    "src",
+    "tests",
+    "*.ts"
+  ],
   "references": [
     {
       "path": "../core-runtime"

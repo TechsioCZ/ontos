@@ -18,8 +18,9 @@
     "shared/ultramodern-build.json",
     "server",
     "api",
-    "vertical.manifest.ts",
-    "vertical.registration.ts"
+    "*.ts",
+    "scripts",
+    "tests"
   ],
   "references": [
     {

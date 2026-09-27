@@ -9,11 +9,21 @@
     "noEmit": false,
     "outDir": "../../node_modules/.cache/tsgo/declarations/packages__customer-payment-term-contracts",
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__customer-payment-term-contracts.tsbuildinfo",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", "tests"],
+  "include": [
+    "src",
+    "tests",
+    "*.ts"
+  ],
   "references": [
-    { "path": "../payment-term-catalog-contracts" },
-    { "path": "../shared-contracts" }
+    {
+      "path": "../payment-term-catalog-contracts"
+    },
+    {
+      "path": "../shared-contracts"
+    }
   ]
 }

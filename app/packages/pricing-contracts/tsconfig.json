@@ -9,8 +9,18 @@
     "noEmit": false,
     "outDir": "../../node_modules/.cache/tsgo/declarations/packages__pricing-contracts",
     "tsBuildInfoFile": "../../node_modules/.cache/tsgo/packages__pricing-contracts.tsbuildinfo",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", "tests"],
-  "references": [{ "path": "../shared-contracts" }]
+  "include": [
+    "src",
+    "tests",
+    "*.ts"
+  ],
+  "references": [
+    {
+      "path": "../shared-contracts"
+    }
+  ]
 }
