@@ -1,4 +1,3 @@
-import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
   MicroVerticalReadinessSchema,
@@ -67,7 +66,7 @@ export const priceGroupCatalogApi = HttpApi.make('PriceGroupCatalogApi')
   .addHttpApi(RetirePriceGroupActionApi)
   .addHttpApi(ValidatePriceGroupCompatibilityApi)
   // </generated-governed-http-api-additions>
-  .pipe(identity);
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
 
 export const priceGroupCatalogOperationContexts = {
   readiness: createMicroVerticalOperationContext({

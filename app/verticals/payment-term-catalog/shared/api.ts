@@ -1,4 +1,3 @@
-import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
   MicroVerticalReadinessSchema,
@@ -48,7 +47,7 @@ export const paymentTermCatalogApi = HttpApi.make('PaymentTermCatalogApi')
   .addHttpApi(ReconcilePaymentTermReferenceActionApi)
   .addHttpApi(RetirePaymentTermActionApi)
   // </generated-governed-http-api-additions>
-  .pipe(identity);
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
 export const paymentTermCatalogOperationContexts = {
   readiness: createMicroVerticalOperationContext({
     method: 'GET',

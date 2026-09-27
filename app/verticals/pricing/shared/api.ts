@@ -1,4 +1,3 @@
-import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
   MicroVerticalReadinessSchema,
@@ -71,7 +70,7 @@ export const pricingApi = HttpApi.make('PricingApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(CurrentSupportedCurrenciesApi)
   // </generated-governed-http-api-additions>
-  .pipe(identity);
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
 
 export const pricingOperationContexts = {
   readiness: createMicroVerticalOperationContext({

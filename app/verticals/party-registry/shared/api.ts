@@ -6,7 +6,7 @@ import {
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
 /* eslint-disable oxc/no-barrel-file -- The published Effect API entrypoint composes and exports all governed owner contracts. expires: 2026-12-31. */
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { Brand, identity } from 'effect';
+import { Brand } from 'effect';
 
 // <generated-governed-http-api-imports>
 import { AresLookupApi } from './apis/ares-lookup.ts';
@@ -116,7 +116,7 @@ export const partyRegistryApi = HttpApi.make('PartyRegistryApi')
   .addHttpApi(PartyRelationshipDetailApi)
   .addHttpApi(PersonEngagementProfileApi)
   // </generated-governed-http-api-additions>
-  .pipe(identity);
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
 
 export const partyRegistryOperationContexts = {
   aresLookup: createMicroVerticalOperationContext({

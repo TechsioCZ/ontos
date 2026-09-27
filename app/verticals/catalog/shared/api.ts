@@ -5,7 +5,6 @@ import {
 } from '@modern-js/bff-effect/microvertical-api';
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { identity } from 'effect';
 
 // <generated-governed-http-api-imports>
 import { ActivateLocalOverrideActionApi } from './apis/activate-local-override-action.ts';
@@ -626,7 +625,7 @@ export const catalogApi: CatalogApi = HttpApi.make('CatalogApi')
   .addHttpApi(UpdateProductRecoveryApi)
   .addHttpApi(VariantHistoryApi)
   // </generated-governed-http-api-additions>
-  .pipe(identity);
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
 
 export const catalogOperationContexts = {
   readiness: createMicroVerticalOperationContext({

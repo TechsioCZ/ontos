@@ -1506,6 +1506,7 @@ it.live(
           /\],\s+payload: ResourceDetailRequestSchema,\s+success: ResourceDetailResponseSchema,/u,
         );
         expect(moduleApiContract).not.toMatch(/(?:headers|params|query): \{\}/u);
+        expect(composedApi).toContain("  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });");
         expect(moduleApiContract).toContain(
           'export type ResourceDetailRequest = typeof ResourceDetailRequestSchema.Type;',
         );

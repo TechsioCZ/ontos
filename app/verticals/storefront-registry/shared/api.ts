@@ -6,7 +6,6 @@ import {
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
 // oxlint-disable-next-line typescript/consistent-type-imports -- The framework baseline requires Schema in the exact value import.
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
-import { identity } from 'effect';
 // <generated-governed-http-api-imports>
 import { CurrentStorefrontApplicationApi } from './apis/current-storefront-application.ts';
 // </generated-governed-http-api-imports>
@@ -34,7 +33,7 @@ export const storefrontRegistryApi = HttpApi.make('StorefrontRegistryApi')
   // <generated-governed-http-api-additions>
   .addHttpApi(CurrentStorefrontApplicationApi)
   // </generated-governed-http-api-additions>
-  .pipe(identity);
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
 
 export const storefrontRegistryOperationContexts = {
   readiness: createMicroVerticalOperationContext({

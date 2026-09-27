@@ -5,6 +5,7 @@ import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
   GOVERNED_HTTP_API_ADDITION_SLOT_END,
+  GOVERNED_HTTP_API_CLOSED_TAIL,
   GOVERNED_HTTP_API_ADDITION_SLOT_START,
   GOVERNED_HTTP_API_IMPORT_SLOT_END,
   GOVERNED_HTTP_API_IMPORT_SLOT_START,
@@ -97,7 +98,6 @@ const MANIFEST_FILE_NAME = 'vertical.manifest.ts';
 const renderGovernedHttpApiRoot = (vertical: VerticalMetadata): string => `${MODULE_CONTRACT_GENERATOR_HEADER}
 // @ontos-deployment-app-id ${vertical.appId}
 import { HttpApi } from '@modern-js/bff-effect/effect-client';
-import { identity } from 'effect';
 
 ${GOVERNED_HTTP_API_IMPORT_SLOT_START}
 ${GOVERNED_HTTP_API_IMPORT_SLOT_END}
@@ -105,7 +105,7 @@ ${GOVERNED_HTTP_API_IMPORT_SLOT_END}
 export const governedHttpApi = HttpApi.make('${toCamelCase(vertical.slug)}GovernedApi')
   ${GOVERNED_HTTP_API_ADDITION_SLOT_START}
   ${GOVERNED_HTTP_API_ADDITION_SLOT_END}
-  .pipe(identity);
+  ${GOVERNED_HTTP_API_CLOSED_TAIL};
 `;
 
 const topLevelStatementEnd = (structure: string, start: number): number =>
@@ -137,12 +137,10 @@ const initializeGovernedHttpApiRoot = (source: string, vertical: VerticalMetadat
   return `${source.slice(0, declarationStart)}${GOVERNED_HTTP_API_IMPORT_SLOT_START}
 ${GOVERNED_HTTP_API_IMPORT_SLOT_END}
 
-import { identity as governedHttpApiIdentity } from 'effect';
-
 ${source.slice(declarationStart, statementEnd)}
   ${GOVERNED_HTTP_API_ADDITION_SLOT_START}
   ${GOVERNED_HTTP_API_ADDITION_SLOT_END}
-  .pipe(governedHttpApiIdentity)${source.slice(statementEnd, statementEnd + 1)}
+  ${GOVERNED_HTTP_API_CLOSED_TAIL}${source.slice(statementEnd, statementEnd + 1)}
 
 /** Canonical composition-root binding consumed by generated governed HTTP adapters. */
 export const governedHttpApi = ${apiValue};${source.slice(statementEnd + 1)}`;

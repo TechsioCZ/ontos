@@ -1,3 +1,4 @@
+import { readinessMarker } from '@app/shared-contracts/ultramodern-build';
 import {
   ContextAccessLive,
   CorePersistenceLive,
@@ -41,7 +42,7 @@ const commerceMarketCatalogReadinessLayer = HttpApiBuilder.group(commerceMarketC
         ssr: 'ready' as const,
         translations: 'ready' as const,
       },
-      marker: ultramodernApiMarker,
+      marker: readinessMarker(ultramodernApiMarker),
       status: 'ready' as const,
       versionSkew: 'none' as const,
     }).pipe(

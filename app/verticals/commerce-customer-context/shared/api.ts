@@ -1,4 +1,3 @@
-import { identity } from 'effect';
 import {
   MicroVerticalBuildMarkerSchema,
   MicroVerticalReadinessSchema,
@@ -262,7 +261,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(UpdateCustomerGroupActionApi)
   .addHttpApi(UpdateSavedAddressActionApi)
   // </generated-governed-http-api-additions>
-  .pipe(identity);
+  .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' });
 export const commerceCustomerContextOperationContexts = {
   readiness: createMicroVerticalOperationContext({
     method: 'GET',

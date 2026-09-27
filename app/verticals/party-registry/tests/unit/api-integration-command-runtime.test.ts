@@ -1777,6 +1777,63 @@ const browserHeaders = {
   'x-trace-id': 'closed-payload-trace',
 } as const;
 
+it.effect('the composed Party Registry API decodes request codecs closed', () =>
+  Effect.sync(() => {
+    expect(Context.getOrUndefined(partyRegistryApi.annotations, HttpApi.ParseOptions)).toEqual({
+      onExcessProperty: 'error',
+    });
+  }),
+);
+
+/** A valid Read or Action body carrying one key no endpoint declares. */
+type UnknownFieldProbe = (typeof archivePayload | { readonly actionInvocationId: string }) & {
+  readonly unknownField: true;
+};
+
+it.live('an unknown payload key is a 400 on the Read and the Action and never reaches a runtime', () =>
+  Effect.gen(function* rejectUnknownPayloadKeys() {
+    const assertion = yield* makeAssertion();
+    const harness = yield* makeActionTestHarness({ actionPermission: 'allowed', tenantPermission: 'allowed' });
+    let reads = 0;
+    const readRuntime: ReadRuntimeService = {
+      runRead: () =>
+        Effect.suspend(() => {
+          reads += 1;
+          return Effect.fail(new ReadHandlerNotFound({ code: 'read_handler_not_found', reason: 'Not reached' }));
+        }),
+    };
+    const app = yield* mountApp(harness, assertion.environment, readRuntime);
+    const request = (routePath: string, body: UnknownFieldProbe) =>
+      new Request(`https://party.ontos.test${routePath}`, {
+        body: JSON.stringify(body),
+        headers: {
+          ...browserHeaders,
+          authorization: `Bearer ${assertion.token}`,
+          'content-type': 'application/json',
+          'idempotency-key': `closed-${randomUUID()}`,
+          'x-correlation-id': 'closed-payload-test',
+        },
+        method: 'POST',
+      });
+
+    const read = yield* handle(
+      app,
+      request('/reads/party-match-decision', { actionInvocationId: randomUUID(), unknownField: true }),
+    );
+    expect(read.status).toBe(400);
+    expect(reads).toBe(0);
+    const action = yield* handle(
+      app,
+      request('/party-registry/actions/archive-party', { ...archivePayload, unknownField: true }),
+    );
+    expect(action.status).toBe(400);
+    yield* Schema.decodeUnknownEffect(PartyCommandInvalidRequestProblemSchema)(
+      yield* Effect.promise(() => action.json()),
+    );
+    expect(harness.snapshot().invocations.length).toBe(0);
+  }),
+);
+
 it.live('full browser headers reach the Read and the Action; only the Idempotency-Key is decoded', () =>
   Effect.gen(function* acceptBrowserHeaders() {
     const assertion = yield* makeAssertion();

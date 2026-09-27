@@ -11,7 +11,13 @@ import {
   hasGeneratedOperationGatewayContract,
   hasGeneratedOperationPrincipalContract,
 } from './generated-module-api-boundary.mts';
-import { toCamelCase, toPascalCase, isCodePosition, maskNonCode } from './scaffolding/shared.mts';
+import {
+  GOVERNED_HTTP_API_CLOSED_TAIL,
+  toCamelCase,
+  toPascalCase,
+  isCodePosition,
+  maskNonCode,
+} from './scaffolding/shared.mts';
 
 const GOVERNED_API_SLOT_END = '// </generated-governed-http-api-additions>';
 const GOVERNED_API_SLOT_START = '// <generated-governed-http-api-additions>';
@@ -30,7 +36,6 @@ const SEARCH_PROVIDER_KIND = 'search-provider';
 const GOVERNED_HANDLER_LAYER_SLOT_START = '// <generated-governed-http-handler-layers>';
 const GOVERNED_HANDLER_LAYER_SLOT_END = '// </generated-governed-http-handler-layers>';
 const HTTP_API_CONTRACT_MODULE = 'effect/unstable/httpapi';
-const GOVERNED_HTTP_API_IDENTITY_ALIAS = 'governedHttpApiIdentity';
 const PUBLIC_CONTRACT_SHIM_LINT =
   '/* eslint-disable oxc/no-barrel-file, sonarjs/no-wildcard-import -- This generated owner shim preserves one canonical public contract source without copying schemas; expires: 2027-03-31. */';
 
@@ -772,11 +777,9 @@ const governedSharedApiRoot = (source: string): SourceRange | undefined => {
   const trailing = maskComments(
     source.slice(slot.markerEnd + GOVERNED_API_SLOT_END.length, statementEnd).replace(/^;(?=\r?\n)/u, ''),
   ).trim();
-  const hasStableIdentityTail =
-    trailing === `.pipe(${GOVERNED_HTTP_API_IDENTITY_ALIAS})` &&
-    hasExactValueImport(source, `identity as ${GOVERNED_HTTP_API_IDENTITY_ALIAS}`, 'effect', true);
+  // The closed tail is mandatory: without it the composed API decodes request payloads open.
   return /^(?:\.addHttpApi\([A-Za-z][A-Za-z0-9]*\)\s*)*$/u.test(additions) &&
-    (trailing === '' || trailing === '.pipe(identity)' || hasStableIdentityTail)
+    trailing.replaceAll(/\s+/gu, ' ') === GOVERNED_HTTP_API_CLOSED_TAIL
     ? apiRoot
     : undefined;
 };
