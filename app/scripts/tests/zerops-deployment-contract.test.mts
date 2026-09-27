@@ -1,11 +1,40 @@
 import { readFileSync } from 'node:fs';
 
+import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { parse } from 'yaml';
 
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
 const commerceCustomerContextSetup = 'commerce-customer-context';
 const priceGroupCatalogSetup = 'price-group-catalog';
 const zeropsYamlPath = new URL('../../zerops.yaml', import.meta.url);
+const workflowPath = new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url);
+
+const ZeropsYamlSchema = Schema.Struct({
+  zerops: Schema.Array(Schema.Struct({ run: Schema.Struct({ base: Schema.String }), setup: Schema.String })),
+});
+const ZeropsImportSchema = Schema.Struct({
+  services: Schema.Array(
+    Schema.Struct({
+      enableSubdomainAccess: Schema.optional(Schema.Boolean),
+      hostname: Schema.String,
+      type: Schema.String,
+    }),
+  ),
+});
+const DeployWorkflowSchema = Schema.Struct({
+  jobs: Schema.Struct({
+    'deploy-stage': Schema.Struct({
+      steps: Schema.Array(
+        Schema.Struct({
+          'continue-on-error': Schema.optional(Schema.Boolean),
+          name: Schema.String,
+          run: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
+  }),
+});
 
 const serviceBlock = (zeropsYaml: string, setup: string): string => {
   const start = zeropsYaml.indexOf(`  - setup: '${setup}'`);
@@ -55,17 +84,14 @@ it('binds Commerce to the independently deployed Price Group Catalog API base', 
   const priceGroupCatalog = serviceBlock(zeropsYaml, priceGroupCatalogSetup);
 
   expect(commerce).toContain(
-    `ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://price-group-catalog:4108/price-group-catalog-api'`,
+    `ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'`,
   );
   expect(priceGroupCatalog).toContain(`VERTICAL_PRICE_GROUP_CATALOG_PORT: '4108'`);
   expect(priceGroupCatalog).toContain(`path: '/price-group-catalog-api/price-group-catalog/readiness'`);
 });
 
 it('declares Price Group Cloudflare proof variables and resolves every provider service id by topology name', () => {
-  const workflow = readFileSync(
-    new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url),
-    'utf-8',
-  );
+  const workflow = readFileSync(workflowPath, 'utf-8');
 
   expect(workflow).toContain('ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid');
   expect(workflow).toContain(`STAGE_VARIABLES_JSON: \${{ toJSON(vars) }}`);
@@ -123,5 +149,51 @@ it('ships every package the migrator runs drizzle-kit in', () => {
   expect(migratedPackages).toContain('verticals/catalog');
   for (const directory of new Set(migratedPackages)) {
     expect(migrator).toMatch(new RegExp(`^ +- 'app/(?:${directory}|${directory.split('/')[0]})'$`, 'mu'));
+  }
+});
+
+// Zerops caps hostnames at 25 characters, so stage runs this worker under an abbreviated name.
+const hostnameOf = (setup: string) =>
+  setup === 'commerce-customer-context-worker' ? 'commercecstmrcntxtworker' : setup.replaceAll('-', '');
+
+it('declares a public subdomain at service creation for every non-worker unit and never for a worker', () => {
+  const units = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(readFileSync(zeropsYamlPath, 'utf-8'))).zerops.filter(
+    ({ setup }) => setup !== 'migrator' && setup !== 'spicedb',
+  );
+  const { services } = Schema.decodeUnknownSync(ZeropsImportSchema)(
+    parse(readFileSync(new URL('../../zerops-import.yaml', import.meta.url), 'utf-8')),
+  );
+  expect(services).toHaveLength(units.length);
+  expect(
+    new Set(
+      services.map(
+        ({ enableSubdomainAccess = false, hostname, type }) => `${hostname} ${type} ${String(enableSubdomainAccess)}`,
+      ),
+    ),
+  ).toEqual(
+    new Set(units.map(({ run, setup }) => `${hostnameOf(setup)} ${run.base} ${String(!setup.endsWith('-worker'))}`)),
+  );
+  for (const service of services) {
+    expect(service.hostname).toMatch(/^[a-z0-9]{1,25}$/u);
+  }
+  // Services reach each other by Zerops hostname, which never contains a hyphen.
+  const hostnames = new Set(services.map(({ hostname }) => hostname));
+  for (const [, host] of readFileSync(zeropsYamlPath, 'utf-8').matchAll(/http:\/\/(?<host>[^/:']+):/gu)) {
+    expect(hostnames).toContain(host);
+  }
+});
+
+it('lets stage deploy failures fail the job, tolerating only best-effort log collection', () => {
+  const { steps } = Schema.decodeUnknownSync(DeployWorkflowSchema)(parse(readFileSync(workflowPath, 'utf-8'))).jobs[
+    'deploy-stage'
+  ];
+
+  for (const step of steps) {
+    const run = step.run ?? '';
+    expect(run).not.toContain('enable-subdomain');
+    expect(run.replaceAll(/zcli service log[^|]*\|\| true/gu, '')).not.toContain('|| true');
+    if (step['continue-on-error'] === true) {
+      expect(run).toMatch(/^zcli service log /u);
+    }
   }
 });

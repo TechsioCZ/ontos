@@ -145,7 +145,7 @@ export const generateZeropsProviderDeployment = (
     const priceGroupCatalogBaseUrl =
       priceGroupCatalog === undefined
         ? undefined
-        : `http://price-group-catalog:${new URL(priceGroupCatalog.moduleFederation.manifestUrl).port}/price-group-catalog-api`;
+        : `http://pricegroupcatalog:${new URL(priceGroupCatalog.moduleFederation.manifestUrl).port}/price-group-catalog-api`;
     const providers = yield* Effect.all(
       topology.verticals.map((vertical) => renderProvider(vertical, priceGroupCatalogBaseUrl, toolchain)),
     );

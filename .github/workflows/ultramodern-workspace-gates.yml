@@ -454,9 +454,9 @@ jobs:
           --limit 200
           --minimum-severity DEBUG
 
+      # zcli waits for the stop process and exits non-zero when it fails, so a migrator left running fails the deploy.
       - name: Stop migrator after any attempted migration
         if: always() && steps.migrator.outcome != 'skipped'
-        continue-on-error: true
         run: >-
           zcli service stop
           --project-id "$ZEROPS_PROJECT_ID"
@@ -492,6 +492,7 @@ jobs:
           PROVIDERS_JSON: ${{ steps.impact.outputs.providers }}
           # Provider units come from the topology, so their service ids are looked up by the variable
           # name the topology implies instead of a hand-kept list that silently misses new units.
+          # Public subdomains are declared once per service in app/zerops-import.yaml, not re-enabled per deploy.
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
         run: |
           while IFS= read -r unit; do
@@ -518,11 +519,6 @@ jobs:
               echo "Deployment failed for planned provider unit $unit" >&2
               exit 1
             fi
-            if [[ "$unit" != *-worker ]]; then
-              zcli service enable-subdomain \
-                --project-id "$ZEROPS_PROJECT_ID" \
-                --service-id "$service_id" || true
-            fi
           done < <(jq -r '.[]' <<<"$PROVIDERS_JSON")
 
       - name: Deploy Shell after affected providers
@@ -548,11 +544,3 @@ jobs:
           --service-id "$ZEROPS_SHELL_SERVICE_ID"
           --limit 200
           --minimum-severity DEBUG
-
-      - name: Enable Shell Zerops public subdomain
-        if: steps.impact.outputs.shell == 'true'
-        continue-on-error: true
-        run: >-
-          zcli service enable-subdomain
-          --project-id "$ZEROPS_PROJECT_ID"
-          --service-id "$ZEROPS_SHELL_SERVICE_ID"

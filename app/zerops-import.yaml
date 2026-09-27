@@ -1,0 +1,40 @@
+# Stage runtime services for every deployable unit in zerops.yaml, created with
+#   zcli project service-import zerops-import.yaml --project-id <stage project id>
+# Import only the entries whose hostname is missing from the project: Zerops rejects a duplicate hostname.
+# Every non-worker unit serves a public subdomain from creation, so deploys never re-enable one.
+# Hostnames are at most 25 lowercase letters or digits; CI finds each service by its
+# ZEROPS_<SETUP>_SERVICE_ID stage variable, not by hostname.
+services:
+  - hostname: shellsuperapp
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: partyregistry
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: commercecustomercontext
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: paymenttermcatalog
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: commercemarketcatalog
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: catalog
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: pricing
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: storefrontregistry
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: pricegroupcatalog
+    type: nodejs@24
+    enableSubdomainAccess: true
+  - hostname: partyregistryworker
+    type: nodejs@24
+  - hostname: commercecstmrcntxtworker
+    type: nodejs@24
+  - hostname: pricegroupcatalogworker
+    type: nodejs@24

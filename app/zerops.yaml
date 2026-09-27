@@ -181,7 +181,7 @@ zerops:
       envVariables:
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         NODE_ENV: production
-        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://price-group-catalog:4108/price-group-catalog-api'
+        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
         PORT: '4101'
         SPICEDB_ENDPOINT: 'spicedb:50051'
         SPICEDB_INSECURE: 'true'
@@ -593,7 +593,7 @@ zerops:
           httpSupport: true
       envVariables:
         NODE_ENV: production
-        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://price-group-catalog:4108/price-group-catalog-api'
+        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
         PORT: '4101'
         OUTBOX_WORKER_HEALTH_PORT: '4101'
         DATABASE_URL: ${commercecustomercontext_DATABASE_URL}

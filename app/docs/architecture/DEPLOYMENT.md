@@ -198,7 +198,7 @@ Use this sequence for a new or changed MicroVertical:
 3. **Build:** produce and verify immutable target-shaped artifacts.
 4. **Migrate:** expand PostgreSQL, refresh grants, verify schemas, then compatibly update SpiceDB and complete any required operator-controlled relationship provisioning before deploying a fail-closed consumer.
 5. **Deploy providers:** deploy affected MicroVerticals in dependency order, initially dark.
-6. **Expose providers:** verify readiness, module manifest, BFF, remote assets, and public endpoint; make endpoint provisioning idempotent by checking its final state.
+6. **Expose providers:** verify readiness, module manifest, BFF, remote assets, and public endpoint. Stage public subdomains are declared at service creation in `zerops-import.yaml`, never re-enabled per deploy.
 7. **Promote composition:** validate and explicitly promote one immutable candidate revision. A compatible MicroVertical update or installation does not redeploy Shell.
 8. **Smoke:** open a new browser document pinned to that revision and execute the authenticated distributed smoke suite.
 9. **Canary:** activate the selected module—and its explicit implementation once supported—plus affected Storefront Clients for one approved tenant/cohort.
