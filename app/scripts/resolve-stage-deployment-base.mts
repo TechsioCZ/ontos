@@ -25,10 +25,10 @@ export interface StageDeploymentStatus {
 }
 
 export interface StageDeploymentSource<E, R> {
-  /** Status history of a deployment, newest first. */
-  readonly statuses: (deploymentId: number) => Effect.Effect<readonly StageDeploymentStatus[], E, R>;
   /** Deployments of the environment, newest first; an empty page ends the walk. */
   readonly page: (page: number) => Effect.Effect<readonly StageDeployment[], E, R>;
+  /** Status history of a deployment, newest first. */
+  readonly statuses: (deploymentId: number) => Effect.Effect<readonly StageDeploymentStatus[], E, R>;
 }
 
 export class StageDeploymentBaseError extends Schema.TaggedError<StageDeploymentBaseError>()(
