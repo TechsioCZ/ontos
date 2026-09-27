@@ -54,14 +54,11 @@ jobs:
           rm -rf -- .codex/reports/quality-audit
           mkdir -p .codex/reports/quality-audit
 
-      - name: Setup mise
-        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
+      - name: Install the app workspace without lifecycle scripts
+        uses: ./.github/actions/install-app
         with:
-          working_directory: app
-          env: false
-
-      - name: Install dependencies without lifecycle scripts
-        run: mise exec -- pnpm install --frozen-lockfile --ignore-scripts
+          install-args: --ignore-scripts
+          mise-env: "false"
 
       - name: Verify audit runner and gate behavior
         run: mise exec -- pnpm quality:audit:test

@@ -93,17 +93,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "26.7.0"
-
-      - name: Setup mise
-        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
-
-      - name: Install dependencies from the frozen lockfile
-        working-directory: app
-        run: mise exec -- pnpm install --frozen-lockfile
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
 
       - name: Run ${{ matrix.name }}
         working-directory: app
@@ -147,17 +138,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
         with:
-          node-version: "26.7.0"
-
-      - name: Setup mise
-        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
-
-      - name: Install dependencies from the frozen lockfile
-        working-directory: app
-        run: mise exec -- pnpm install --frozen-lockfile
+          save-store: "true"
 
       - name: Start fresh PostgreSQL and SpiceDB services
         working-directory: app
@@ -240,17 +224,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "26.7.0"
-
-      - name: Setup mise
-        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
-
-      - name: Install dependencies from the frozen lockfile
-        working-directory: app
-        run: mise exec -- pnpm install --frozen-lockfile
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
 
       - name: Build Node deployment artifacts
         working-directory: app
@@ -285,17 +260,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "26.7.0"
-
-      - name: Setup mise
-        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
-
-      - name: Install dependencies from the frozen lockfile
-        working-directory: app
-        run: mise exec -- pnpm install --frozen-lockfile
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
 
       - name: Build and prove Cloudflare/workerd artifacts
         working-directory: app
@@ -348,17 +314,8 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: "26.7.0"
-
-      - name: Setup mise
-        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566 # v3.2.0
-
-      - name: Install deployment planner dependencies
-        working-directory: app
-        run: mise exec -- pnpm install --frozen-lockfile
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
 
       - name: Derive exact-build authorization inventory
         working-directory: app
@@ -403,7 +360,10 @@ jobs:
 
       - name: Install Zerops CLI
         if: steps.impact.outputs.any == 'true'
-        run: npm install --global @zerops/zcli@1.1.0
+        # mise owns Node, so its shims must learn the globally installed zcli binary.
+        run: |
+          npm install --global @zerops/zcli@1.1.0
+          mise reshim
 
       - name: Authenticate to Zerops
         if: steps.impact.outputs.any == 'true'
