@@ -59,7 +59,7 @@ zerops:
         NODE_ENV: production
         SPICEDB_ENDPOINT: 'spicedb:50051'
         # The migrator bootstraps the same datastore identity that the SpiceDB service consumes.
-        SPICEDB_DATABASE_URL: ${spicedb_SPICEDB_DATASTORE_CONN_URI}
+        SPICEDB_DATABASE_PASSWORD: ${spicedb_SPICEDB_DATABASE_PASSWORD}
         SPICEDB_INSECURE: 'true'
         SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
@@ -76,6 +76,7 @@ zerops:
       deployFiles:
         - 'app/packages/core-runtime/spicedb/stage-bootstrap.yaml'
         - 'app/scripts/run-zerops-spicedb.sh'
+        - 'app/scripts/spicedb-datastore-uri.sh'
     deploy:
       temporaryShutdown: true
       readinessCheck:
@@ -97,6 +98,9 @@ zerops:
           protocol: tcp
           httpSupport: true
       envVariables:
+        SPICEDB_DATABASE_HOST: ${db18_hostname}
+        SPICEDB_DATABASE_PORT: ${db18_port}
+        # SPICEDB_DATABASE_PASSWORD is this service's secret; the datastore URI is built from these parts.
         SPICEDB_DATASTORE_ENGINE: postgres
       healthCheck:
         httpGet:

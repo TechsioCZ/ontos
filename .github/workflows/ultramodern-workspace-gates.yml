@@ -235,7 +235,7 @@ jobs:
           COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
           MIGRATOR_PORT: "8080"
           NODE_ENV: production
-          SPICEDB_DATABASE_URL: postgresql://spicedb:spicedb@localhost:5433/spicedb
+          SPICEDB_DATABASE_PASSWORD: spicedb
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
           ULTRAMODERN_ZEROPS_SERVICE: migrator
         run: mise exec -- sh scripts/prove-zerops-migrator-artifact.sh "$RUNNER_TEMP/zerops-migrator-artifact"

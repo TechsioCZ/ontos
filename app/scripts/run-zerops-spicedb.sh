@@ -2,6 +2,11 @@
 
 set -eu
 
+# SpiceDB never receives an externally supplied URL string: the datastore URI is built from the
+# structured host, port and password this service is configured with.
+SPICEDB_DATASTORE_CONN_URI="$(sh "$(dirname "$0")/spicedb-datastore-uri.sh")"
+export SPICEDB_DATASTORE_CONN_URI
+
 docker run --rm --network=host \
   -e SPICEDB_DATASTORE_ENGINE \
   -e SPICEDB_DATASTORE_CONN_URI \

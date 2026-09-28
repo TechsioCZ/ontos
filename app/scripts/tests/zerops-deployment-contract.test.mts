@@ -63,11 +63,17 @@ it('binds generated PostgreSQL credentials into every database-using service', (
   }
 });
 
-it('binds the SpiceDB datastore URL into the migrator environment', () => {
+it('binds the SpiceDB datastore password, never a URL, into the migrator and SpiceDB services', () => {
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
   const migrator = serviceBlock(zeropsYaml, 'migrator');
+  const spicedb = serviceBlock(zeropsYaml, 'spicedb');
 
-  expect(migrator).toContain(`SPICEDB_DATABASE_URL: \${spicedb_SPICEDB_DATASTORE_CONN_URI}`);
+  expect(migrator).toContain(`SPICEDB_DATABASE_PASSWORD: \${spicedb_SPICEDB_DATABASE_PASSWORD}`);
+  expect(spicedb).toContain(`SPICEDB_DATABASE_HOST: \${db18_hostname}`);
+  expect(spicedb).toContain(`SPICEDB_DATABASE_PORT: \${db18_port}`);
+  expect(spicedb).toContain(`- 'app/scripts/spicedb-datastore-uri.sh'`);
+  expect(zeropsYaml).not.toContain('SPICEDB_DATASTORE_CONN_URI');
+  expect(zeropsYaml).not.toContain('SPICEDB_DATABASE_URL');
 });
 
 it('requires the inherited active composition snapshot for Customer Context without shadowing it', () => {

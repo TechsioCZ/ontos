@@ -21,7 +21,7 @@ const quoteLiteral = (value: string): string => `'${value.replaceAll("'", "''")}
 
 /**
  * The runtime URL is the single source of the provider runtime credential, exactly as
- * `DATABASE_URL` is for `ontos_runtime` and `SPICEDB_DATABASE_URL` is for `spicedb`.
+ * `DATABASE_URL` is for `ontos_runtime` and `SPICEDB_DATABASE_PASSWORD` is for `spicedb`.
  */
 const runtimePassword = (connectionString: Redacted.Redacted) =>
   Effect.try({
