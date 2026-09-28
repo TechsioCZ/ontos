@@ -88,6 +88,8 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   expect(deploy?.run).toContain('wrangler deployments status');
   expect(deploy?.run).toContain('wrangler rollback "$previous_version"');
   expect(deploy?.run).not.toMatch(/wrangler rollback[^\n]*\|\| true/u);
+  // A Worker this run created is removed again, so a failed first deploy leaves nothing public.
+  expect(deploy?.run).toContain('wrangler delete --name "$deployed_worker"');
   // The account token reaches only the steps that use it.
   const tokenSteps = edge.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined).map((step) => step.name);
   expect(tokenSteps).toEqual(['Require the Cloudflare deploy token', 'Deploy planned edge units in dependency order']);

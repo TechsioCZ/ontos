@@ -683,7 +683,7 @@ jobs:
         run: |
           while IFS=$'\t' read -r key value; do
             export "$key=$value"
-          done < <(jq -r 'to_entries[] | select(.key | test("^(MODERN_PUBLIC_|ULTRAMODERN_|VERTICAL_)")) | [.key, .value] | @tsv' <<<"$EDGE_VARIABLES_JSON")
+          done < <(jq -r 'to_entries[] | select(.key | test("^(MODERN_|ULTRAMODERN_|VERTICAL_)")) | [.key, .value] | @tsv' <<<"$EDGE_VARIABLES_JSON")
           active_version() {
             mise exec -- pnpm --filter "$1" exec wrangler deployments status --name "$2" --json \
               | jq -er '.versions | map(select(.percentage == 100)) | .[0].version_id'
@@ -707,15 +707,23 @@ jobs:
             fi
           done
           deployed=()
-          # Worker versions are immutable. Each Worker this run deployed is rolled back to the exact
-          # version that was active before, and the rollback counts only once that version is
-          # active again. Anything left on the candidate is reported and fails the job.
+          # Worker versions are immutable. Each Worker this run deployed returns to its snapshotted
+          # state: the exact version that was active before, or no Worker at all when this run
+          # created it. A rollback counts only once that state is observed again; anything left on
+          # the candidate is reported and fails the job.
           rollback() {
             local unrestored=()
             for deployment in "${deployed[@]}"; do
               IFS=$'\t' read -r deployed_package deployed_worker previous_version <<<"$deployment"
               if [[ -z "$previous_version" ]]; then
-                unrestored+=("$deployed_worker (first deployment, no previous version)")
+                status_log="$RUNNER_TEMP/rollback-status-$deployed_worker.log"
+                if mise exec -- pnpm --filter "$deployed_package" exec wrangler delete --name "$deployed_worker" --force \
+                  && ! active_version "$deployed_package" "$deployed_worker" >/dev/null 2>"$status_log" \
+                  && grep -q 'code: 10007' "$status_log"; then
+                  echo "Removed $deployed_worker, which this run created"
+                else
+                  unrestored+=("$deployed_worker (created by this run and not removed)")
+                fi
                 continue
               fi
               if mise exec -- pnpm --filter "$deployed_package" exec wrangler rollback "$previous_version" --name "$deployed_worker" --message "Rollback of $GITHUB_SHA after a failed edge deploy" --yes \
