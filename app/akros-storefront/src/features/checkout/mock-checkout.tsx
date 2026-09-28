@@ -12,7 +12,11 @@ import { RadioGroup } from "@techsio/ui-kit/molecules/radio-group";
 import { useCart } from "@/features/cart/cart-provider";
 import { formatPrice } from "@/lib/format";
 import { getCartSubtotal } from "@/mock-storefront/cart";
-import { getProductById } from "@/mock-storefront/catalog";
+import {
+  getProductById,
+  getProductUnitPrice,
+  getProductVariantById,
+} from "@/mock-storefront/catalog";
 import { mockDeliveryMethods, mockPaymentMethods } from "@/mock-storefront/fixtures/account";
 
 function ShippingInformationStep() {
@@ -157,9 +161,10 @@ export function MockCheckout() {
   const [paymentId, setPaymentId] = useState("card");
   const rows = cart.lines.flatMap((line) => {
     const product = getProductById(line.productId);
-    return product ? [{ line, product }] : [];
+    const variant = getProductVariantById(line.productId, line.variantId);
+    return product ? [{ line, product, variant }] : [];
   });
-  const subtotal = getCartSubtotal(cart, (productId) => getProductById(productId)?.priceMinor);
+  const subtotal = getCartSubtotal(cart, getProductUnitPrice);
   const delivery =
     mockDeliveryMethods.find((method) => method.id === deliveryId) ?? mockDeliveryMethods[0];
   const total = subtotal + delivery.priceMinor;
@@ -200,18 +205,23 @@ export function MockCheckout() {
         <aside className="akros-checkout-summary" aria-labelledby="checkout-summary-title">
           <h2 id="checkout-summary-title">Objednané položky</h2>
           <div className="akros-checkout-items">
-            {rows.map(({ line, product }) => (
-              <article key={product.id}>
-                <Image alt={product.imageAlt} height={48} src={product.imageSrc} width={48} />
-                <div>
-                  <strong>{product.name}</strong>
-                  <small>
-                    Množství: {line.quantity} {product.unit}
-                  </small>
-                </div>
-                <b>{formatPrice(product.priceMinor * line.quantity)}</b>
-              </article>
-            ))}
+            {rows.map(({ line, product, variant }) => {
+              const unitPrice = variant?.priceMinor ?? product.priceMinor;
+
+              return (
+                <article key={`${product.id}:${variant?.id ?? "base"}`}>
+                  <Image alt={product.imageAlt} height={48} src={product.imageSrc} width={48} />
+                  <div>
+                    <strong>{product.name}</strong>
+                    <small>
+                      {variant && <>{variant.label} · </>}
+                      Množství: {line.quantity} {product.unit}
+                    </small>
+                  </div>
+                  <b>{formatPrice(unitPrice * line.quantity)}</b>
+                </article>
+              );
+            })}
           </div>
           <dl>
             <div>

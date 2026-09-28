@@ -74,6 +74,18 @@ export const getHomepageFeaturedProducts = (): CatalogProduct[] =>
 export const getProductById = (id: string): CatalogProduct | undefined =>
   catalogFixture.products.find((product) => product.id === id);
 
+export const getProductVariantById = (productId: string, variantId?: string) =>
+  variantId
+    ? getProductById(productId)?.detail?.variants.find((variant) => variant.id === variantId)
+    : undefined;
+
+export const getProductUnitPrice = (productId: string, variantId?: string): number | undefined => {
+  const product = getProductById(productId);
+  if (!product) return undefined;
+
+  return getProductVariantById(productId, variantId)?.priceMinor ?? product.priceMinor;
+};
+
 export const getProductBySlug = (slug: string): CatalogProduct | undefined =>
   catalogFixture.products.find((product) => product.slug === slug);
 

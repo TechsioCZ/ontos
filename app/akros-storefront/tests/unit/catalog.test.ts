@@ -4,6 +4,8 @@ import {
   getCategoryBySlug,
   getFeaturedProducts,
   getHomepageFeaturedProducts,
+  getProductBySlug,
+  getProductVariantById,
   getProductsByCategory,
   searchProducts,
 } from "@/mock-storefront/catalog";
@@ -45,5 +47,17 @@ describe("mock catalog gateway", () => {
 
   it("resolves categories by their public slug", () => {
     expect(getCategoryBySlug("srouby")?.name).toBe("Šrouby");
+  });
+
+  it("resolves the mock purchasing variants configured for the DIN 933 product", () => {
+    const product = getProductBySlug("srouby-se-sestihrannou-hlavou-din-933-a2");
+    const variant = getProductVariantById("product-hex-bolt", "hex-bolt-m4x16");
+
+    expect(product?.detail?.variants).toHaveLength(5);
+    expect(variant).toMatchObject({
+      label: "M 4 × 16",
+      packageQuantity: 500,
+      priceMinor: 194,
+    });
   });
 });

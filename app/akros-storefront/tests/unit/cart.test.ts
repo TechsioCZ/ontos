@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  type CartAction,
   cartReducer,
   createEmptyCart,
   getCartItemCount,
@@ -22,6 +23,34 @@ describe("local demo cart", () => {
 
     expect(three.lines).toEqual([{ productId: "product-screw", quantity: 3 }]);
     expect(getCartItemCount(three)).toBe(3);
+  });
+
+  it("keeps separately selected product variants as distinct cart lines", () => {
+    const firstVariant = cartReducer(createEmptyCart(), {
+      type: "add",
+      productId: "product-hex-bolt",
+      variantId: "hex-bolt-m2x5",
+      quantity: 1,
+    } as CartAction);
+    const secondVariant = cartReducer(firstVariant, {
+      type: "add",
+      productId: "product-hex-bolt",
+      variantId: "hex-bolt-m2x8",
+      quantity: 1,
+    } as CartAction);
+
+    expect(secondVariant.lines).toEqual([
+      {
+        productId: "product-hex-bolt",
+        variantId: "hex-bolt-m2x5",
+        quantity: 1,
+      },
+      {
+        productId: "product-hex-bolt",
+        variantId: "hex-bolt-m2x8",
+        quantity: 1,
+      },
+    ]);
   });
 
   it("removes a line when its quantity is set to zero", () => {
@@ -63,5 +92,24 @@ describe("local demo cart", () => {
     ]);
 
     expect(getCartSubtotal(cart, (productId) => prices.get(productId))).toBe(13_050);
+  });
+
+  it("uses the selected variant price when calculating totals", () => {
+    const cart = {
+      version: 1 as const,
+      lines: [
+        {
+          productId: "product-hex-bolt",
+          variantId: "hex-bolt-m4x16",
+          quantity: 3,
+        },
+      ],
+    };
+
+    expect(
+      getCartSubtotal(cart, (_productId, variantId) =>
+        variantId === "hex-bolt-m4x16" ? 194 : undefined,
+      ),
+    ).toBe(582);
   });
 });

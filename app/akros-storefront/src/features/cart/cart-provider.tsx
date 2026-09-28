@@ -54,12 +54,23 @@ const parseStoredCart = (value: string | null): CartState => {
 
     return {
       version: 1,
-      lines: parsed.lines.filter(
-        (line): line is CartState["lines"][number] =>
-          typeof line?.productId === "string" &&
-          Number.isInteger(line.quantity) &&
-          line.quantity > 0,
-      ),
+      lines: parsed.lines.flatMap((line) => {
+        if (
+          typeof line?.productId !== "string" ||
+          !Number.isInteger(line.quantity) ||
+          line.quantity <= 0
+        ) {
+          return [];
+        }
+
+        return [
+          {
+            productId: line.productId,
+            ...(typeof line.variantId === "string" ? { variantId: line.variantId } : {}),
+            quantity: line.quantity,
+          },
+        ];
+      }),
     };
   } catch {
     return createEmptyCart();
