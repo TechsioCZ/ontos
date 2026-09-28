@@ -7,6 +7,7 @@ import { RetailCustomerProfileRefSchema } from '../resources/retail-customer-pro
 import {
   CommerceQuantityPolicyScopeSchema,
   CommerceQuantityRuleRevisionSchema,
+  CommerceQuantityRuleAudienceSchema,
   CommerceQuantityRuleValueSchema,
   CustomerCommercePolicyActionInvocationIdSchema,
   CustomerCommercePolicyActorPrincipalIdSchema,
@@ -112,7 +113,8 @@ const PaymentTermPolicyRevisionPayloadSchema = makeRevisionPayloadSchema({
 const CommerceQuantityRuleRevisionPayloadSchema = makeRevisionPayloadSchema({
   field: 'COMMERCE_QUANTITY_RULE',
   scope: CommerceQuantityPolicyScopeSchema,
-  value: CommerceQuantityRuleValueSchema,
+  // New writes must declare their audience; only persisted legacy revisions may omit it.
+  value: Schema.Struct({ ...CommerceQuantityRuleValueSchema.fields, audience: CommerceQuantityRuleAudienceSchema }),
 }).check(halfOpenPayloadPeriod);
 
 const makeAdministrationPayloadSchema = <Revision extends Schema.Top>(revision: Revision) =>
@@ -906,7 +908,7 @@ export const CurrentCommerceQuantityRuleCandidateSchema = makeCurrentPolicyCandi
   scope: CommerceQuantityPolicyScopeSchema,
   value: Schema.Struct({
     ...CommerceQuantityRuleValueSchema.fields,
-    audience: Schema.Literals(['SHARED', 'ASSIGNMENT_ONLY']),
+    audience: CommerceQuantityRuleAudienceSchema,
   }),
 });
 const CurrentCommerceQuantityRuleSetSchema = makeCurrentCandidateSetSchema(CurrentCommerceQuantityRuleCandidateSchema);

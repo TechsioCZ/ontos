@@ -299,9 +299,11 @@ export const QuantityEnvelopeSchema = Schema.Union([
 ]);
 export type QuantityEnvelope = typeof QuantityEnvelopeSchema.Type;
 
+export const CommerceQuantityRuleAudienceSchema = Schema.Literals(['SHARED', 'ASSIGNMENT_ONLY']);
+
 export const CommerceQuantityRuleValueSchema = Schema.Struct({
   // Missing only on legacy revisions; Current composition resolves it from retained assignment history.
-  audience: Schema.optionalKey(Schema.Literals(['SHARED', 'ASSIGNMENT_ONLY'])),
+  audience: Schema.optionalKey(CommerceQuantityRuleAudienceSchema),
   basis: CommerceQuantityPolicyBasisSchema,
   constraintMode: Schema.Literals(['REPLACEABLE_ENVELOPE', 'NON_RELAXABLE_CONSTRAINT']),
   envelope: QuantityEnvelopeSchema,

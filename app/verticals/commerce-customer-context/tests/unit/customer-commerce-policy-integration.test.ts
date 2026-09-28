@@ -473,7 +473,7 @@ const paymentTermPayload = Schema.decodeUnknownSync(PaymentTermPolicyAdministrat
   },
 });
 
-const quantityRulePayload = Schema.decodeUnknownSync(CommerceQuantityRuleAdministrationPayloadSchema)({
+const quantityRuleCreateInput = {
   _tag: 'CREATE_REVISION',
   expectedGeneration: 0,
   revision: {
@@ -486,6 +486,7 @@ const quantityRulePayload = Schema.decodeUnknownSync(CommerceQuantityRuleAdminis
     revisionId: quantityRuleRevisionId,
     scope: { channelId: 'web', kind: 'CHANNEL_SELLER', sellingLegalEntityId: legalEntityId },
     value: {
+      audience: 'SHARED',
       basis: {
         targetDivisibilityRevision: 1,
         targetRef: {
@@ -508,6 +509,22 @@ const quantityRulePayload = Schema.decodeUnknownSync(CommerceQuantityRuleAdminis
       selector: { kind: 'ALL' },
     },
   },
+};
+
+const quantityRulePayload = Schema.decodeUnknownSync(CommerceQuantityRuleAdministrationPayloadSchema)(
+  quantityRuleCreateInput,
+);
+
+it('requires an explicit audience on new Commerce Quantity Rule writes', () => {
+  const { audience, ...legacyValue } = quantityRuleCreateInput.revision.value;
+  expect(audience).toBe('SHARED');
+  const withoutAudience = {
+    ...quantityRuleCreateInput,
+    revision: { ...quantityRuleCreateInput.revision, value: legacyValue },
+  };
+  const decode = Schema.decodeUnknownResult(CommerceQuantityRuleAdministrationPayloadSchema);
+  expect(Result.isSuccess(decode(quantityRuleCreateInput))).toBe(true);
+  expect(Result.isFailure(decode(withoutAudience))).toBe(true);
 });
 
 const quantityAssignmentPayload = Schema.decodeUnknownSync(CommerceQuantityAssignmentPayloadSchema)({
