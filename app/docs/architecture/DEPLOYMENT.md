@@ -222,7 +222,10 @@ a failed edge deploy is replanned by the next run even when Zerops succeeded for
 revision.
 
 The `CLOUDFLARE_ACCOUNT_ID` repository variable enables the job. Without it the job is skipped and
-records nothing. With it, the `stage-edge` environment must hold the `CLOUDFLARE_API_TOKEN` secret.
+records nothing. With it, the `stage-edge` environment must hold the `CLOUDFLARE_API_TOKEN` secret
+and the edge configuration the Worker builds read: `ULTRAMODERN_PUBLIC_URL_*` for every Worker (the
+output verifier requires them), plus any `VERTICAL_*_WORKER_BINDING` / `_WORKER_NAME` overrides.
+The job sees only `stage-edge` and repository variables, never the Zerops `stage` environment.
 The first edge deploy has no previous edge deployment, so seed it with a full run:
 `gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`. Placement adds the Worker
 delivery; retiring a unit's Zerops service is a separate topology and `zerops.yaml` change.

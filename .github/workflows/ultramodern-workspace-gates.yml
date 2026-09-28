@@ -675,14 +675,15 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
-          # Public URLs and Worker binding names are stage variables the Cloudflare builds read.
-          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          # Worker public URLs and binding names are edge configuration: `stage-edge` environment
+          # (or repository) variables, exported to the Cloudflare builds that read them.
+          EDGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
           while IFS=$'\t' read -r key value; do
             export "$key=$value"
-          done < <(jq -r 'to_entries[] | select(.key | test("^(MODERN_PUBLIC_|ULTRAMODERN_|VERTICAL_)")) | [.key, .value] | @tsv' <<<"$STAGE_VARIABLES_JSON")
+          done < <(jq -r 'to_entries[] | select(.key | test("^(MODERN_PUBLIC_|ULTRAMODERN_|VERTICAL_)")) | [.key, .value] | @tsv' <<<"$EDGE_VARIABLES_JSON")
           deployed=()
           # Worker versions are immutable; rollback returns each Worker this run deployed to its
           # previous version. A Worker's first deployment has none, so it stays for inspection.
