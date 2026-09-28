@@ -684,22 +684,42 @@ jobs:
           while IFS=$'\t' read -r key value; do
             export "$key=$value"
           done < <(jq -r 'to_entries[] | select(.key | test("^(MODERN_PUBLIC_|ULTRAMODERN_|VERTICAL_)")) | [.key, .value] | @tsv' <<<"$EDGE_VARIABLES_JSON")
+          active_version() {
+            mise exec -- pnpm --filter "$1" exec wrangler deployments status --name "$2" --json \
+              | jq -er '.versions | map(select(.percentage == 100)) | .[0].version_id'
+          }
           deployed=()
-          # Worker versions are immutable; rollback returns each Worker this run deployed to its
-          # previous version. A Worker's first deployment has none, so it stays for inspection.
+          # Worker versions are immutable. Each Worker this run deployed is rolled back to the exact
+          # version that was active before, and the rollback counts only once that version is
+          # active again. Anything left on the candidate is reported and fails the job.
           rollback() {
+            local unrestored=()
             for deployment in "${deployed[@]}"; do
-              IFS=$'\t' read -r deployed_package deployed_worker <<<"$deployment"
-              mise exec -- pnpm --filter "$deployed_package" exec wrangler rollback --name "$deployed_worker" --message "Rollback of $GITHUB_SHA after a failed edge deploy" --yes || true
+              IFS=$'\t' read -r deployed_package deployed_worker previous_version <<<"$deployment"
+              if [[ -z "$previous_version" ]]; then
+                unrestored+=("$deployed_worker (no previous version was active)")
+                continue
+              fi
+              if mise exec -- pnpm --filter "$deployed_package" exec wrangler rollback "$previous_version" --name "$deployed_worker" --message "Rollback of $GITHUB_SHA after a failed edge deploy" --yes \
+                && [[ "$(active_version "$deployed_package" "$deployed_worker")" == "$previous_version" ]]; then
+                echo "Restored $deployed_worker to $previous_version"
+              else
+                unrestored+=("$deployed_worker (expected $previous_version)")
+              fi
+            done
+            for worker_state in "${unrestored[@]}"; do
+              echo "::error title=Edge Worker not restored::$worker_state is still serving $GITHUB_SHA"
             done
           }
           while IFS=$'\t' read -r package worker; do
+            # A Worker without an active deployment (its first deploy) has no version to return to.
+            previous_version="$(active_version "$package" "$worker" || true)"
+            deployed+=("$package"$'\t'"$worker"$'\t'"$previous_version")
             if ! mise exec -- pnpm --filter "$package" run cloudflare:deploy; then
               echo "Cloudflare deploy failed for planned edge unit $package ($worker)" >&2
               rollback
               exit 1
             fi
-            deployed+=("$package"$'\t'"$worker")
             if ! mise exec -- pnpm --filter "$package" run cloudflare:proof; then
               echo "Public-URL proof failed for edge unit $package ($worker); rolling back this run's Workers" >&2
               rollback

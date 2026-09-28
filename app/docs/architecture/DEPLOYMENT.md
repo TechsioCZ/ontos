@@ -217,7 +217,9 @@ placed, impacted units as `units.cloudflare` in dependency order (providers befo
 The `deploy-cloudflare` job runs after `deploy-stage` has migrated the database, in its own
 `stage-edge` environment. It resolves the last successful `stage-edge` deployment, plans the diff
 from there, and runs `cloudflare:deploy` and then `cloudflare:proof` per unit. A failed deploy or
-proof rolls this run's Workers back to their previous versions. Because the history is separate,
+proof rolls each Worker this run deployed back to the version recorded before its deploy and
+verifies that version is active again; any Worker left on the candidate is reported and fails the
+job. Because the history is separate,
 a failed edge deploy is replanned by the next run even when Zerops succeeded for the same
 revision.
 

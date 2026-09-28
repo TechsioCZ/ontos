@@ -84,7 +84,10 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   expect(deploy?.env?.CLOUDFLARE_UNITS_JSON).toBe(expression('steps.impact.outputs.cloudflare'));
   expect(deploy?.run).toContain('run cloudflare:deploy');
   expect(deploy?.run).toContain('run cloudflare:proof');
-  expect(deploy?.run).toContain('wrangler rollback');
+  // Rollback returns each Worker to the version recorded before its deploy and verifies it.
+  expect(deploy?.run).toContain('wrangler deployments status');
+  expect(deploy?.run).toContain('wrangler rollback "$previous_version"');
+  expect(deploy?.run).not.toMatch(/wrangler rollback[^\n]*\|\| true/u);
   // The account token reaches only the steps that use it.
   const tokenSteps = edge.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined).map((step) => step.name);
   expect(tokenSteps).toEqual(['Require the Cloudflare deploy token', 'Deploy planned edge units in dependency order']);
