@@ -323,6 +323,22 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
         revision: 2,
       });
 
+      const eligibilityAt = (effectiveAt: string) =>
+        scoped(runtime, (transaction) =>
+          transaction.execute(
+            sql`select * from commerce_market_catalog.read_market_eligibility_snapshot(
+          ${tenantId}::uuid, ${JSON.stringify({
+            channel: 'B2C',
+            effectiveAt,
+            sellingLegalEntityId: sellerId,
+            storefrontAppId: storefrontRef.appId,
+          })}::jsonb)`,
+            'objects',
+          ),
+        ).pipe(Effect.map(oneOutcome));
+      const previouslyEligible = yield* eligibilityAt('2031-06-01T00:00:00.000Z');
+      expect(previouslyEligible.facts).toHaveLength(1);
+
       const removed = oneOutcome(
         yield* scoped(runtime, (transaction) =>
           transaction.execute(
@@ -342,6 +358,34 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
         ),
       );
       expectOutcome(removed, 'removed', { changed: true, generation: 5, revision: 3 });
+
+      // Read the real persisted revisions through BOTH production read routines.
+      // A future start must not hide R1, while the removal boundary must hide R2 forever.
+      for (const [at, count] of [
+        ['2030-03-31T23:59:59.999Z', 0],
+        ['2030-04-01T00:00:00.000Z', 1],
+        ['2030-12-31T23:59:59.999Z', 1],
+        ['2031-01-01T00:00:00.000Z', 1],
+        ['2031-05-31T23:59:59.999Z', 1],
+        ['2031-06-01T00:00:00.000Z', 0],
+        ['2031-06-01T00:00:00.001Z', 0],
+        ['2031-12-31T00:00:00.000Z', 0],
+      ] as const) {
+        expect((yield* eligibilityAt(at)).facts).toHaveLength(count);
+        const current = oneOutcome(
+          yield* scoped(runtime, (transaction) =>
+            transaction.execute(
+              sql`select * from commerce_market_catalog.read_current_market_catalog(
+            ${tenantId}::uuid, ${sellerId}::uuid, ${JSON.stringify({ at })}::jsonb)`,
+              'objects',
+            ),
+          ),
+        );
+        expect(current.associations).toHaveLength(count);
+      }
+      const afterRemoval = yield* eligibilityAt('2031-06-01T00:00:00.000Z');
+      expect(afterRemoval.predicateRevision).not.toBe(previouslyEligible.predicateRevision);
+      expect(afterRemoval.generation).toBe(5);
 
       const transition = (
         lifecycle: 'ACTIVE' | 'RETIRED' | 'SUSPENDED',
