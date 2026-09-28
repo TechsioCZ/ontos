@@ -68,6 +68,7 @@ import type { CommercePortalAuthEnrollmentTransitionClaim } from './intent.ts';
 import { commercePortalAuthEnrollmentSessionSubject } from './session-subject.ts';
 import {
   answerEnrollmentFailure,
+  answerEnrollmentOwnerFailure,
   commercePortalAuthEnrollmentAuthenticationProblem,
   commercePortalAuthEnrollmentInvalidProblem,
   commercePortalAuthEnrollmentJourneyUnavailableProblem,
@@ -859,10 +860,12 @@ const startEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.start')(func
       Effect.catchTag('CommercePortalAuthAccountCreationRejected', (rejection) =>
         settleRejectedAccountCreation(store, claim, claimedState, rejection),
       ),
-      Effect.mapError((failure) =>
-        isAccountCreationUnavailable(failure)
-          ? commercePortalAuthEnrollmentUnavailableProblem()
-          : commercePortalAuthEnrollmentRejectedProblem(),
+      Effect.catch((error) =>
+        answerEnrollmentOwnerFailure(
+          isAccountCreationUnavailable(error),
+          error,
+          commercePortalAuthEnrollmentRejectedProblem,
+        ),
       ),
     );
 
@@ -914,10 +917,8 @@ const readEnrollment = Effect.fn('CommercePortalAuthEnrollmentHttp.read')(functi
   const attempt = yield* store
     .read({ portalEnrollmentAttemptId, tenantId })
     .pipe(
-      Effect.mapError((failure) =>
-        failure.retryable
-          ? commercePortalAuthEnrollmentUnavailableProblem()
-          : commercePortalAuthEnrollmentNotFoundProblem(),
+      Effect.catch((error) =>
+        answerEnrollmentOwnerFailure(error.retryable, error, commercePortalAuthEnrollmentNotFoundProblem),
       ),
     );
   if (!commercePortalAuthEnrollmentReadableBy(attempt, actorPrincipalId)) {

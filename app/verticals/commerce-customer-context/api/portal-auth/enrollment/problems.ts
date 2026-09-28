@@ -129,6 +129,19 @@ export const commercePortalAuthEnrollmentUnavailableProblem = () =>
     type: `${PROBLEM_TYPE_PREFIX}unavailable`,
   });
 
+/**
+ * An owner failure answers the retryable 503 when it is an outage, logged like every other failure
+ * behind that answer, and `otherwise` when it is a refusal the caller may learn about.
+ */
+export const answerEnrollmentOwnerFailure = <Failure, Other>(
+  unavailable: boolean,
+  failure: Failure,
+  otherwise: () => Other,
+): Effect.Effect<never, ReturnType<typeof commercePortalAuthEnrollmentUnavailableProblem> | Other> =>
+  unavailable
+    ? answerEnrollmentFailure(() => commercePortalAuthEnrollmentUnavailableProblem())(failure)
+    : Effect.fail(otherwise());
+
 export const commercePortalAuthEnrollmentSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   CommercePortalAuthEnrollmentSchemaErrorMiddleware,
   // The group's one invalid-request answer never names the offending field.

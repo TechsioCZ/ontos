@@ -72,6 +72,7 @@ import {
 import { commercePortalAuthEnrollmentSessionSubject } from './session-subject.ts';
 import {
   answerEnrollmentFailure,
+  answerEnrollmentOwnerFailure,
   commercePortalAuthEnrollmentAuthenticationProblem,
   commercePortalAuthEnrollmentBindingPendingProblem,
   commercePortalAuthEnrollmentInvalidProblem,
@@ -427,10 +428,8 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
   const attempt = yield* store
     .read({ portalEnrollmentAttemptId, tenantId })
     .pipe(
-      Effect.mapError((failure) =>
-        failure.retryable
-          ? commercePortalAuthEnrollmentUnavailableProblem()
-          : commercePortalAuthEnrollmentNotFoundProblem(),
+      Effect.catch((error) =>
+        answerEnrollmentOwnerFailure(error.retryable, error, commercePortalAuthEnrollmentNotFoundProblem),
       ),
     );
   const { accountSubject, invitationId, targetLegalEntityId } = attempt;
@@ -597,10 +596,8 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
     workerId: () => `commerce.customer-context.invitation-claim:${portalEnrollmentAttemptId}`,
   });
   const executed = yield* claimWithReconciliation(driver, store, transition).pipe(
-    Effect.mapError((failure) =>
-      failure.retryable
-        ? commercePortalAuthEnrollmentUnavailableProblem()
-        : commercePortalAuthEnrollmentRejectedProblem(),
+    Effect.catch((error) =>
+      answerEnrollmentOwnerFailure(error.retryable, error, commercePortalAuthEnrollmentRejectedProblem),
     ),
   );
   if (executed.kind === 'LEASE_HELD') {
