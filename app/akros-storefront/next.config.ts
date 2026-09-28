@@ -21,9 +21,9 @@ const nextConfig: NextConfig = {
       { source: "/srouby", destination: "/kategorie/srouby" },
       { source: "/matice", destination: "/kategorie/matice" },
       { source: "/podlozky", destination: "/kategorie/podlozky" },
-      { source: "/zavitove-tyce", destination: "/kategorie/zavitove-tyce" },
-      { source: "/kotevni-technika", destination: "/kategorie/kotevni-technika" },
-      { source: "/retezy-a-lana", destination: "/kategorie/nerezova-lana" },
+      { source: "/zavitove-tyce", destination: "/kategorie/zavitove-tyce-a-svorniky" },
+      { source: "/kotevni-technika", destination: "/kategorie/kotevni-technikalepidla" },
+      { source: "/retezy-a-lana", destination: "/kategorie/lanaretezypantyjachtdopln" },
       { source: "/sady-a-sortimenty", destination: "/kategorie/sady-a-sortimenty" },
       { source: "/naradi-a-prislusenstvi", destination: "/kategorie/naradi-a-prislusenstvi" },
       {

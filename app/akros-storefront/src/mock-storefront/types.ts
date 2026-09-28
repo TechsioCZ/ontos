@@ -19,11 +19,16 @@ export interface CatalogProductVariant {
   label: string;
   minimumQuantity: number;
   priceMinor: number;
+  originalPriceMinor?: number;
   stockCount: number;
   unit: string;
   priceTiers: CatalogPriceTier[];
   parameters: CatalogParameter[];
   imageSrc?: string;
+  isAction: boolean;
+  isRecommended: boolean;
+  isSale: boolean;
+  isNew: boolean;
 }
 
 export interface CatalogPriceTier {
@@ -53,6 +58,7 @@ export interface CatalogProduct {
   sku: string;
   description: string;
   priceMinor: number;
+  originalPriceMinor?: number;
   currency: "CZK";
   unit: string;
   minimumQuantity: number;
@@ -61,7 +67,17 @@ export interface CatalogProduct {
   imageAlt: string;
   secondaryImageSrc?: string;
   featuredPosition: number | null;
+  isAction: boolean;
+  isRecommended: boolean;
+  isSale: boolean;
+  isNew: boolean;
   detail: CatalogProductDetail;
+}
+
+export interface CatalogPromotionItem {
+  product: CatalogProduct;
+  variant?: CatalogProductVariant;
+  kind: "action" | "sale";
 }
 
 export type CatalogProductSummary = Omit<CatalogProduct, "detail" | "secondaryImageSrc"> & {

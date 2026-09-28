@@ -68,7 +68,7 @@ export default function NotFoundPage() {
             </LinkButton>
             <LinkButton
               as={NextLink}
-              href="/kategorie/zavitove-tyce"
+              href="/zavitove-tyce"
               size="sm"
               theme="outlined"
               variant="primary"

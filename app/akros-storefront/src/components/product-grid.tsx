@@ -8,6 +8,7 @@ import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
+import { getProductStockStatus } from "@/lib/product-stock";
 import type { CatalogProductSummary } from "@/mock-storefront/types";
 
 export function ProductGrid({
@@ -44,7 +45,7 @@ export function ProductGrid({
                 : "Cena na dotaz"}
             </ProductCard.Price>
           )}
-          <ProductCard.Stock status="in-stock">
+          <ProductCard.Stock status={getProductStockStatus(product)}>
             {cs.product.inStock}: {product.stockCount.toLocaleString("cs-CZ")} {product.unit}
           </ProductCard.Stock>
           <ProductCard.Actions>

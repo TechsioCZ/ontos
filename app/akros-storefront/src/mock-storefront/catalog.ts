@@ -3,6 +3,7 @@ import type {
   CatalogData,
   CatalogMetadata,
   CatalogProduct,
+  CatalogPromotionItem,
   CatalogProductSummary,
   CategoryData,
 } from "./types";
@@ -30,6 +31,7 @@ export const toProductSummary = (product: CatalogProduct): CatalogProductSummary
   sku: product.sku,
   description: product.description,
   priceMinor: product.priceMinor,
+  originalPriceMinor: product.originalPriceMinor,
   currency: product.currency,
   unit: product.unit,
   minimumQuantity: product.minimumQuantity,
@@ -37,6 +39,10 @@ export const toProductSummary = (product: CatalogProduct): CatalogProductSummary
   imageSrc: product.imageSrc,
   imageAlt: product.imageAlt,
   featuredPosition: product.featuredPosition,
+  isAction: product.isAction,
+  isRecommended: product.isRecommended,
+  isSale: product.isSale,
+  isNew: product.isNew,
   hasVariants: product.detail.variants.length > 0,
 });
 
@@ -132,6 +138,50 @@ export const getHomepageFeaturedProducts = (): CatalogProduct[] =>
   catalogData.homepageFeaturedProductIds.flatMap((productId) => {
     const product = productsById.get(productId);
     return product ? [product] : [];
+  });
+
+export const getActionProducts = (): CatalogProduct[] =>
+  getProducts().filter((product) => product.isAction);
+
+export const getRecommendedProducts = (): CatalogProduct[] =>
+  getProducts().filter((product) => product.isRecommended);
+
+export const getNewProducts = (): CatalogProduct[] =>
+  getProducts()
+    .filter((product) => product.isNew)
+    .sort(
+      (left, right) =>
+        (left.featuredPosition ?? Number.MAX_SAFE_INTEGER) -
+          (right.featuredPosition ?? Number.MAX_SAFE_INTEGER) ||
+        left.name.localeCompare(right.name, "cs"),
+    );
+
+export const getSaleProducts = (): CatalogProduct[] =>
+  getProducts().filter((product) => product.isSale);
+
+export const getPromotionItems = (): CatalogPromotionItem[] =>
+  getProducts().flatMap((product) => {
+    const promotedVariants = product.detail.variants.flatMap((variant) => {
+      if (!variant.isSale && !variant.isAction) return [];
+
+      return [
+        {
+          product,
+          variant,
+          kind: variant.isSale ? ("sale" as const) : ("action" as const),
+        },
+      ];
+    });
+
+    if (promotedVariants.length > 0) return promotedVariants;
+    if (product.detail.variants.length > 0 || (!product.isSale && !product.isAction)) return [];
+
+    return [
+      {
+        product,
+        kind: product.isSale ? ("sale" as const) : ("action" as const),
+      },
+    ];
   });
 
 export const getProductById = (id: string): CatalogProduct | undefined => productsById.get(id);

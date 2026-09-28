@@ -11,6 +11,7 @@ const outputRoot = resolve(storefrontRoot, "src", "mock-storefront", "generated"
 const categorySource = process.env.AKROS_CATEGORY_XML ?? resolve(sourceRoot, "category.xml");
 const productSource = process.env.AKROS_PRODUCT_ZIP ?? resolve(sourceRoot, "product.xml.zip");
 const akrosOrigin = "https://www.akros.cz";
+const unavailableProductImage = "/akros/products/image-unavailable.svg";
 
 const cleanText = (value = "") =>
   value
@@ -137,6 +138,10 @@ const directItemFields = new Map([
   ["shop/item/content/description", "description"],
   ["shop/item/content/short_description", "shortDescription"],
   ["shop/item/measure_unit", "unit"],
+  ["shop/item/preferences/action", "isAction"],
+  ["shop/item/preferences/recommend", "isRecommended"],
+  ["shop/item/preferences/sale", "isSale"],
+  ["shop/item/preferences/news", "isNew"],
 ]);
 parseXmlRows(new TextDecoder().decode(productXmlBytes), "item", {
   field(row, path, value) {
@@ -205,6 +210,12 @@ const parametersFor = (item) =>
     .filter((parameter) => parameter.label && parameter.value);
 
 const itemPrice = (item) => priceTiersFor(item)[0]?.priceMinor ?? 0;
+const originalPriceFor = (item) => {
+  const priceMinor = itemPrice(item);
+  const isPromoted = Number(item.isAction) > 0 || Number(item.isSale) > 0;
+
+  return isPromoted && priceMinor > 0 ? Math.round(priceMinor * 1.3) : undefined;
+};
 const itemImage = (item) => absoluteAssetUrl(item.images?.[0]);
 const itemName = (item) => cleanText(item.productName || item.title) || `Produkt ${item.id}`;
 
@@ -239,7 +250,7 @@ for (const [groupId, items] of groups) {
         : items;
   const purchasableItems = variantItems.length > 0 ? variantItems : [base];
   const lowestPrice = Math.min(...purchasableItems.map(itemPrice).filter((price) => price > 0));
-  const imageSrc = items.map(itemImage).find(Boolean) ?? "/akros/products/product-02.jpg";
+  const imageSrc = items.map(itemImage).find(Boolean) ?? unavailableProductImage;
   const description = cleanText(base.shortDescription || base.description);
   const categoryId = categoryIds.has(base.categoryId) ? base.categoryId : categories[0]?.id;
 
@@ -252,6 +263,7 @@ for (const [groupId, items] of groups) {
     sku: cleanText(base.sku),
     description,
     priceMinor: Number.isFinite(lowestPrice) ? lowestPrice : itemPrice(base),
+    originalPriceMinor: variantItems.length === 0 ? originalPriceFor(base) : undefined,
     currency: "CZK",
     unit: cleanText(base.unit) || "ks",
     minimumQuantity: Math.max(1, toInteger(base.minimumQuantity, 1)),
@@ -263,6 +275,10 @@ for (const [groupId, items] of groups) {
     imageAlt: itemName(base),
     secondaryImageSrc: items.map((item) => absoluteAssetUrl(item.images?.[1])).find(Boolean),
     featuredPosition: null,
+    isAction: items.some((item) => Number(item.isAction) > 0),
+    isRecommended: items.some((item) => Number(item.isRecommended) > 0),
+    isSale: items.some((item) => Number(item.isSale) > 0),
+    isNew: items.some((item) => Number(item.isNew) > 0),
     detail: {
       descriptionParagraphs: description ? [description] : [],
       parameters: parametersFor(base),
@@ -274,11 +290,16 @@ for (const [groupId, items] of groups) {
         label: cleanText(item.variantName || item.title || item.productName) || itemName(item),
         minimumQuantity: Math.max(1, toInteger(item.minimumQuantity, 1)),
         priceMinor: itemPrice(item),
+        originalPriceMinor: originalPriceFor(item),
         priceTiers: priceTiersFor(item),
         stockCount: Math.max(0, toInteger(item.stockCount)),
         unit: cleanText(item.unit) || cleanText(base.unit) || "ks",
         parameters: parametersFor(item),
         imageSrc: itemImage(item),
+        isAction: Number(item.isAction) > 0,
+        isRecommended: Number(item.isRecommended) > 0,
+        isSale: Number(item.isSale) > 0,
+        isNew: Number(item.isNew) > 0,
       })),
     },
   });
@@ -306,6 +327,24 @@ homepageFeaturedProductIds.forEach((id, position) => {
   const product = products.find((candidate) => candidate.id === id);
   if (product) product.featuredPosition = position + 1;
 });
+
+if (!products.some((product) => product.isNew)) {
+  const preferredNewProducts = homepageFeaturedProductIds.flatMap((id) => {
+    const product = products.find((candidate) => candidate.id === id);
+    return product ? [product] : [];
+  });
+  const fallbackNewProducts = [...preferredNewProducts, ...products]
+    .filter(
+      (product, index, candidates) =>
+        candidates.findIndex((candidate) => candidate.id === product.id) === index &&
+        product.name.trim().toLocaleUpperCase("cs-CZ") !== "AKCE" &&
+        product.priceMinor > 0 &&
+        product.imageSrc !== unavailableProductImage,
+    )
+    .slice(0, 30);
+
+  for (const product of fallbackNewProducts) product.isNew = true;
+}
 
 const metadata = {
   sourceCategoryCount: categories.length,

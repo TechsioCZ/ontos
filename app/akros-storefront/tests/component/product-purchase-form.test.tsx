@@ -18,6 +18,10 @@ const variants: CatalogProductVariant[] = [
     unit: "ks",
     priceTiers: [],
     parameters: [],
+    isAction: false,
+    isRecommended: false,
+    isSale: false,
+    isNew: false,
   },
   {
     id: "item-2",
@@ -30,6 +34,10 @@ const variants: CatalogProductVariant[] = [
     unit: "ks",
     priceTiers: [],
     parameters: [],
+    isAction: false,
+    isRecommended: false,
+    isSale: false,
+    isNew: false,
   },
 ];
 
@@ -48,6 +56,10 @@ const product: CatalogProduct = {
   imageSrc: "/bolt.png",
   imageAlt: "Bolt",
   featuredPosition: null,
+  isAction: false,
+  isRecommended: false,
+  isSale: false,
+  isNew: false,
   detail: { descriptionParagraphs: [], parameters: [], priceTiers: [], variants },
 };
 

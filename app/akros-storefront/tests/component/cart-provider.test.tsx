@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
+import { cs } from "@/i18n/cs";
 import type { CartItemSnapshot } from "@/mock-storefront/cart";
 
 const item: CartItemSnapshot = {
@@ -38,10 +39,25 @@ describe("CartProvider", () => {
       </CartProvider>,
     );
 
-    await user.click(screen.getByRole("button", { name: "Přidat do košíku" }));
-    await user.click(screen.getByRole("button", { name: "Přidat do košíku" }));
+    await user.click(screen.getByRole("button", { name: "Přidat do košíku: Screw" }));
+    await user.click(screen.getByRole("button", { name: "Přidat do košíku: Screw" }));
 
     expect(screen.getByLabelText("Počet položek v košíku").textContent).toBe("2");
+  });
+
+  it("adds the requested minimum order quantity", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <CartProvider storage={null}>
+        <CartCount />
+        <AddToCartButton item={item} quantity={10} />
+      </CartProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: `${cs.actions.addToCart}: Screw` }));
+
+    expect(screen.getByRole("status").textContent).toBe("10");
   });
 
   it("restores a persisted quantity only once in Strict Mode", async () => {

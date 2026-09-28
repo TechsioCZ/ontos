@@ -1,14 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  getActionProducts,
   getCategoryBySlug,
   getCategoryTrail,
   getFeaturedProducts,
   getHomepageFeaturedProducts,
   getCatalogStats,
+  getNewProducts,
+  getProducts,
   getProductBySlug,
   getProductVariantById,
   getProductsByCategory,
+  getPromotionItems,
+  getRecommendedProducts,
+  getSaleProducts,
   searchProducts,
 } from "@/mock-storefront/catalog";
 
@@ -53,6 +59,80 @@ describe("mock catalog gateway", () => {
     expect(homepageProducts.map((product) => product.id)).toEqual(
       getFeaturedProducts().map((product) => product.id),
     );
+  });
+
+  it("uses a neutral placeholder when the feed does not provide a product image", () => {
+    const productsWithoutSourceImage = getProducts().filter(
+      (product) => product.imageSrc === "/akros/products/image-unavailable.svg",
+    );
+
+    expect(productsWithoutSourceImage).toHaveLength(289);
+    expect(
+      getProducts().some((product) => product.imageSrc === "/akros/products/product-02.jpg"),
+    ).toBe(false);
+  });
+
+  it("exposes only promotion flags that are present in the source feed", () => {
+    const actionProducts = getActionProducts();
+    const recommendedProducts = getRecommendedProducts();
+    const saleProducts = getSaleProducts();
+
+    expect(actionProducts.length).toBeGreaterThan(0);
+    expect(actionProducts.every((product) => product.isAction)).toBe(true);
+    expect(recommendedProducts.length).toBeGreaterThan(0);
+    expect(recommendedProducts.every((product) => product.isRecommended)).toBe(true);
+    expect(saleProducts.length).toBeGreaterThan(0);
+    expect(saleProducts.every((product) => product.isSale)).toBe(true);
+  });
+
+  it("provides thirty deterministic fallback novelties when the feed has none", () => {
+    const newProducts = getNewProducts();
+
+    expect(newProducts).toHaveLength(30);
+    expect(newProducts.slice(0, 4).map((product) => product.id)).toEqual(
+      getHomepageFeaturedProducts().map((product) => product.id),
+    );
+    expect(
+      newProducts.every(
+        (product) =>
+          product.isNew &&
+          product.name.trim().toLocaleUpperCase("cs-CZ") !== "AKCE" &&
+          product.priceMinor > 0 &&
+          product.imageSrc !== "/akros/products/image-unavailable.svg",
+      ),
+    ).toBe(true);
+  });
+
+  it("exposes the exact promoted variants and their source prices", () => {
+    const promotedItems = getPromotionItems();
+    const saleItem = promotedItems.find(
+      ({ product, kind }) => product.id === "product-17994" && kind === "sale",
+    );
+
+    expect(saleItem).toMatchObject({
+      kind: "sale",
+      variant: {
+        id: "item-6066",
+        priceMinor: 8332,
+        originalPriceMinor: 10_832,
+        isSale: true,
+      },
+    });
+    expect(
+      promotedItems.every(({ product, variant, kind }) =>
+        kind === "sale"
+          ? (variant?.isSale ?? product.isSale)
+          : (variant?.isAction ?? product.isAction),
+      ),
+    ).toBe(true);
+    expect(
+      promotedItems.every(({ product, variant }) => {
+        const priceMinor = variant?.priceMinor ?? product.priceMinor;
+        const originalPriceMinor = variant?.originalPriceMinor ?? product.originalPriceMinor;
+
+        return originalPriceMinor === Math.round(priceMinor * 1.3);
+      }),
+    ).toBe(true);
   });
 
   it("finds products in a category including nested descendants", () => {
