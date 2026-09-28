@@ -1,6 +1,8 @@
 import { HttpApiMiddleware } from '@modern-js/bff-effect/effect-edge';
 import { Effect } from 'effect';
 
+import { failureLogSummary } from '../problems-support.ts';
+
 import {
   CommercePortalAuthEnrollmentAuthenticationProblemSchema,
   CommercePortalAuthEnrollmentConflictProblemSchema,
@@ -20,16 +22,16 @@ import {
  */
 
 /**
- * Answers with a published problem after logging the failing owner value it stands for. The problem
- * is exactly its schema, because the composed API encodes it closed; the failing value belongs to
- * the operator log, never to the response.
+ * Answers with a published problem after logging an allow-listed summary of the failing owner value
+ * it stands for. The problem is exactly its schema, because the composed API encodes it closed.
  */
 export const answerEnrollmentFailure =
   <Problem>(problem: () => Problem) =>
   <Failure>(failure: Failure) =>
-    Effect.logWarning('Commerce portal enrollment answered a failure with a published problem', failure).pipe(
-      Effect.andThen(Effect.fail(problem())),
-    );
+    Effect.logWarning(
+      'Commerce portal enrollment answered a failure with a published problem',
+      failureLogSummary(failure),
+    ).pipe(Effect.andThen(Effect.fail(problem())));
 
 const PROBLEM_TYPE_PREFIX = 'https://ontos.dev/problems/commerce-portal-auth-enrollment-';
 
@@ -140,7 +142,9 @@ export const answerEnrollmentOwnerFailure = <Failure, Other>(
 ): Effect.Effect<never, ReturnType<typeof commercePortalAuthEnrollmentUnavailableProblem> | Other> =>
   unavailable
     ? answerEnrollmentFailure(() => commercePortalAuthEnrollmentUnavailableProblem())(failure)
-    : Effect.fail(otherwise());
+    : Effect.logDebug('Commerce portal enrollment refused an owner outcome', failureLogSummary(failure)).pipe(
+        Effect.andThen(Effect.fail(otherwise())),
+      );
 
 export const commercePortalAuthEnrollmentSchemaErrorLive = HttpApiMiddleware.layerSchemaErrorTransform(
   CommercePortalAuthEnrollmentSchemaErrorMiddleware,

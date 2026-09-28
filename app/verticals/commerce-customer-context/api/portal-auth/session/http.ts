@@ -34,6 +34,7 @@ import {
   commercePortalAuthSubjectDigest,
   emitCommercePortalAuthAudit,
 } from '../../../src/portal-auth/audit/audit.ts';
+import { failureLogSummary } from '../problems-support.ts';
 import { consumeRateLimitBudget } from '../rate-limit-service.ts';
 import type { CommercePortalAuthRecoveryRateLimitRule } from '../rate-limit-service.ts';
 import { CommercePortalAuthInstance } from '../provider/auth.ts';
@@ -164,9 +165,10 @@ const unavailableProblem = () =>
 const answerUnavailable =
   () =>
   <Failure>(failure: Failure) =>
-    Effect.logWarning('Commerce portal session answered a failure with the unavailable problem', failure).pipe(
-      Effect.andThen(Effect.fail(unavailableProblem())),
-    );
+    Effect.logWarning(
+      'Commerce portal session answered a failure with the unavailable problem',
+      failureLogSummary(failure),
+    ).pipe(Effect.andThen(Effect.fail(unavailableProblem())));
 
 const untrustedOriginProblem = () => forbiddenProblem('origin_not_trusted');
 
