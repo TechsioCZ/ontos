@@ -461,7 +461,7 @@ const verifyProductTypeReadiness = Effect.fn('CatalogSelectionCurrentBasis.verif
     source: { readonly rulesRevision: number; readonly status: 'VERIFIED' } | { readonly status: 'UNTYPED' },
   ) {
     const readiness = yield* productTypeReadinessSourceForScope(transaction, scope)
-      .evaluate(selection.productRef, now)
+      .evaluate(selection.productRef, now, selection.variantRef)
       .pipe(Effect.orElseSucceed(() => null));
     if (readiness === null || readiness.status === 'INDETERMINATE') {
       return { reason: 'Current Product Type readiness cannot be proved', status: 'INDETERMINATE' as const };

@@ -324,3 +324,75 @@ describe('private Product Type readiness evaluation', () => {
     expect(result.status).toBe('INDETERMINATE');
   });
 });
+
+const siblingRef = { ...variantRef, resourceId: '77777777-7777-4777-8777-777777777777' };
+const exactSelectionSnapshot = {
+  productValues: [],
+  productValueSource: { complete: true as const, revisionTokens: [] },
+  source,
+  variantRefs: [variantRef, siblingRef],
+  variants: [
+    {
+      currentAttributeDefinitionIds: [definitionRef.resourceId],
+      currentValueSource: { complete: true as const, revisionTokens: ['selected:5'] },
+      effectiveValues: [
+        {
+          attributeDefinitionId: definitionRef.resourceId,
+          result: {
+            status: 'CURRENT' as const,
+            values: [{ kind: 'TEXT' as const, text: 'cotton' }],
+            variantRevision: 5,
+          },
+        },
+      ],
+      variantRef,
+    },
+    {
+      currentAttributeDefinitionIds: [],
+      currentValueSource: { complete: true as const, revisionTokens: [] },
+      effectiveValues: [
+        { attributeDefinitionId: definitionRef.resourceId, result: { status: 'CURRENT' as const, values: [] } },
+      ],
+      variantRef: siblingRef,
+    },
+  ],
+};
+
+describe('Exact Variant Product Type readiness', () => {
+  it('keeps complete selected facts usable while a sibling is incomplete', () => {
+    expect(evaluateCurrentProductTypeReadiness(exactSelectionSnapshot).status).toBe('INVALID');
+    expect(evaluateCurrentProductTypeReadiness(exactSelectionSnapshot, variantRef)).toMatchObject({
+      status: 'VERIFIED_TYPE_MINIMUM',
+      valueRevisions: [
+        { attributeDefinitionId: definitionRef.resourceId, variantId: variantRef.resourceId, variantRevision: 5 },
+      ],
+    });
+    expect(evaluateCurrentProductTypeReadiness(exactSelectionSnapshot, siblingRef).status).toBe('INVALID');
+  });
+
+  it('still rejects missing shared required Product facts for the exact Variant', () => {
+    const snapshot = {
+      ...exactSelectionSnapshot,
+      source: {
+        ...source,
+        rulesRevision: {
+          ...source.rulesRevision,
+          rules: [
+            ...source.rulesRevision.rules,
+            { attributeDefinitionRef: definitionRef, level: 'PRODUCT' as const, required: true },
+          ],
+        },
+      },
+    };
+    expect(evaluateCurrentProductTypeReadiness(snapshot, variantRef).status).toBe('INVALID');
+  });
+
+  it('rejects a target outside the owner-attested Tenant and Variant inventory', () => {
+    for (const target of [
+      { ...variantRef, tenantId: '99999999-9999-4999-8999-999999999999' },
+      { ...variantRef, resourceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+    ]) {
+      expect(evaluateCurrentProductTypeReadiness(exactSelectionSnapshot, target).status).toBe('INDETERMINATE');
+    }
+  });
+});

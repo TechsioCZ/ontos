@@ -140,6 +140,7 @@ interface ProductTypeReadinessService {
   readonly evaluate: (
     productRef: ProductRef,
     evaluatedAt: DateTime.Utc,
+    selectedVariantRef?: VariantRef,
   ) => Effect.Effect<ProductTypeReadinessEvaluation, ProductTypeReadinessSourceInvalid | CatalogPersistenceUnavailable>;
   readonly load: (
     productRef: ProductRef,
@@ -224,6 +225,7 @@ export const productTypeReadinessSourceForScope = (
   evaluate: Effect.fn('ProductTypeReadinessSource.evaluate')(function* evaluate(
     productRef: ProductRef,
     evaluatedAt: DateTime.Utc,
+    selectedVariantRef?: VariantRef,
   ) {
     const [source, reads] = yield* Effect.all(
       [
@@ -282,7 +284,11 @@ export const productTypeReadinessSourceForScope = (
         });
       }
     }
-    const variantRefs = currentVariants.map((row) => ({
+    const evaluationVariants =
+      source.status === 'VERIFIED' && selectedVariantRef !== undefined
+        ? currentVariants.filter((row) => row.variantId === selectedVariantRef.resourceId)
+        : currentVariants;
+    const variantRefs = evaluationVariants.map((row) => ({
       moduleId: catalogModuleId,
       resourceId: row.variantId,
       resourceType: 'commerce.catalog.variant' as const,
@@ -370,17 +376,20 @@ export const productTypeReadinessSourceForScope = (
       }
       confirmedUntypedDecisionRevision = decisionCheck.revision;
     }
-    return evaluateCurrentProductTypeReadiness({
-      confirmedUntypedDecisionRevision,
-      productValues,
-      productValueSource: {
-        complete: true,
-        revisionTokens: productEntries.map((entry) => entry.sourceRevisionToken).toSorted(),
+    return evaluateCurrentProductTypeReadiness(
+      {
+        confirmedUntypedDecisionRevision,
+        productValues,
+        productValueSource: {
+          complete: true,
+          revisionTokens: productEntries.map((entry) => entry.sourceRevisionToken).toSorted(),
+        },
+        source,
+        variantRefs,
+        variants,
       },
-      source,
-      variantRefs,
-      variants,
-    });
+      selectedVariantRef,
+    );
   }),
   load: Effect.fn('ProductTypeReadinessSource.load')(function* load(productRef: ProductRef, evaluatedAt: DateTime.Utc) {
     const { tenantId } = scope;
