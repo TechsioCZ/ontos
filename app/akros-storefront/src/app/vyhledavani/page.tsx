@@ -43,8 +43,10 @@ export default async function SearchPage({
             <ProductGrid products={visibleProducts.map(toProductSummary)} />
             <CatalogPagination
               currentPage={currentPage}
-              hrefForPage={(nextPage) => `/vyhledavani?q=${encodeURIComponent(q)}&page=${nextPage}`}
-              totalPages={totalPages}
+              itemCount={products.length}
+              pageSize={productsPerPage}
+              pathname="/vyhledavani"
+              searchParams={{ q }}
             />
           </>
         ) : (

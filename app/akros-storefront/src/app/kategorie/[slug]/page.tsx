@@ -79,8 +79,9 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
           <ProductGrid products={visibleProducts.map(toProductSummary)} />
           <CatalogPagination
             currentPage={currentPage}
-            hrefForPage={(page) => `/kategorie/${category.slug}?page=${page}`}
-            totalPages={totalPages}
+            itemCount={products.length}
+            pageSize={productsPerPage}
+            pathname={`/kategorie/${category.slug}`}
           />
         </section>
       ) : (

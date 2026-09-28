@@ -1,38 +1,47 @@
+"use client";
+
 import NextLink from "next/link";
-import { buttonVariants } from "@techsio/ui-kit/atoms/button";
+import { createPaginationGetPageUrl, Pagination } from "@techsio/ui-kit/molecules/pagination";
+
+import { cs } from "@/i18n/cs";
 
 export function CatalogPagination({
   currentPage,
-  totalPages,
-  hrefForPage,
+  itemCount,
+  pageSize,
+  pathname,
+  searchParams,
 }: {
   currentPage: number;
-  totalPages: number;
-  hrefForPage: (page: number) => string;
+  itemCount: number;
+  pageSize: number;
+  pathname: string;
+  searchParams?: Record<string, string>;
 }) {
+  const totalPages = Math.ceil(itemCount / pageSize);
   if (totalPages <= 1) return null;
 
+  const getPageUrl = createPaginationGetPageUrl({
+    pathname,
+    searchParams: searchParams && new URLSearchParams(searchParams),
+  });
+
   return (
-    <nav className="akros-pagination" aria-label="Stránkování produktů">
-      {currentPage > 1 && (
-        <NextLink
-          className={buttonVariants({ size: "sm", variant: "secondary" })}
-          href={hrefForPage(currentPage - 1)}
-        >
-          Předchozí
-        </NextLink>
-      )}
-      <span>
-        Strana {currentPage.toLocaleString("cs-CZ")} z {totalPages.toLocaleString("cs-CZ")}
-      </span>
-      {currentPage < totalPages && (
-        <NextLink
-          className={buttonVariants({ size: "sm", variant: "secondary" })}
-          href={hrefForPage(currentPage + 1)}
-        >
-          Další
-        </NextLink>
-      )}
-    </nav>
+    <Pagination
+      className="akros-pagination"
+      count={itemCount}
+      getPageUrl={getPageUrl}
+      linkAs={NextLink}
+      page={currentPage}
+      pageSize={pageSize}
+      size="sm"
+      translations={{
+        itemLabel: ({ page, totalPages: pages }) => cs.pagination.page(page, pages),
+        nextTriggerLabel: cs.pagination.next,
+        prevTriggerLabel: cs.pagination.previous,
+        rootLabel: cs.pagination.label,
+      }}
+      variant="filled"
+    />
   );
 }

@@ -34,6 +34,12 @@ export const cs = {
     results: "Výsledky hledání",
     noResults: "Pro zadaný výraz jsme nenašli žádné produkty.",
   },
+  pagination: {
+    label: "Stránkování produktů",
+    previous: "Předchozí stránka",
+    next: "Další stránka",
+    page: (page: number, totalPages: number) => `Strana ${page} z ${totalPages}`,
+  },
   catalog: {
     title: "Katalog",
     description: "Rychlý přístup k hlavním kategoriím a službám AKROS.",
