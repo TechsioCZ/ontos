@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { PgClient } from '@effect/sql-pg';
 import { Array as EffectArray, Console, Effect, Exit, Order, Redacted, Schema } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
@@ -64,25 +66,24 @@ const main = Effect.scoped(
     yield* client
       .withTransaction(
         Effect.gen(function* provisionRuntimeRole() {
-          // Idempotent, like the generic runtime and SpiceDB roles: a fresh deployment gets the role,
-          // a redeployment re-asserts its restrictions and the credential its runtime URL names.
-          const [existing] = yield* query<{ exists: boolean }>(
-            client,
-            'select exists(select 1 from pg_catalog.pg_roles where rolname = $1) as exists',
-            [configuration.runtime.user],
-          );
+          // A fresh deployment gets the role; a redeployment re-asserts its restrictions and the
+          // credential its runtime URL names. An existing role is inspected before any mutation, so a
+          // runtime URL that names a privileged role fails without rewriting that role.
+          const restrictedLoginRole = `select not rolsuper and not rolbypassrls and not rolcreatedb
+               and not rolcreaterole and rolcanlogin as safe from pg_catalog.pg_roles where rolname = $1`;
+          const [existing] = yield* query<{ safe: boolean }>(client, restrictedLoginRole, [configuration.runtime.user]);
+          if (existing !== undefined && !existing.safe) {
+            yield* failure('The configured provider runtime role exists but is not a restricted login role');
+          }
           yield* query(
             client,
-            `${existing?.exists ? 'alter' : 'create'} role ${role} login password ${password}
+            `${existing === undefined ? 'create' : 'alter'} role ${role} login password ${password}
                nosuperuser nocreatedb nocreaterole noinherit nobypassrls`,
           );
-          const [runtime] = yield* query<{ safe: boolean }>(
-            client,
-            `select not rolsuper and not rolbypassrls and not rolcreatedb and not rolcreaterole
-               and rolcanlogin as safe from pg_catalog.pg_roles where rolname = $1`,
-            [configuration.runtime.user],
-          );
-          if (runtime === undefined || !runtime.safe) {
+          const [provisioned] = yield* query<{ safe: boolean }>(client, restrictedLoginRole, [
+            configuration.runtime.user,
+          ]);
+          if (provisioned === undefined || !provisioned.safe) {
             yield* failure('The provider runtime role must be a restricted login role');
           }
           yield* query(
