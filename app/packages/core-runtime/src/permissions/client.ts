@@ -1,9 +1,9 @@
 import { v1 } from '@authzed/authzed-node';
+import { spiceDbTransport } from '#spicedb-transport';
 import { Data, Effect } from 'effect';
 import type { Scope } from 'effect';
 
 import type { SpiceDbConfigValue } from './config.ts';
-import { openSpiceDbGrpcRpc } from './spicedb-grpc-rpc.ts';
 
 export const SPICEDB_CHECK_TIMEOUT_MS = 2000;
 
@@ -42,7 +42,7 @@ export const createSpiceDbPermissionClient = (
   configuration: SpiceDbConfigValue,
   timeoutMilliseconds: number,
 ): SpiceDbPermissionClient => {
-  const rpc = openSpiceDbGrpcRpc(configuration, timeoutMilliseconds);
+  const rpc = spiceDbTransport.open(configuration, timeoutMilliseconds);
   return {
     checkBulkPermissions: (request) =>
       rpc.checkBulkPermissions(request).pipe(Effect.mapError(({ cause }) => spiceDbPermissionClientError(cause))),

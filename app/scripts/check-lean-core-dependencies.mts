@@ -138,6 +138,7 @@ const allowedCoreExternalSpecifiers = new Set([
   'drizzle-orm/effect-core',
   'drizzle-orm/effect-postgres',
   'drizzle-orm/pg-core',
+  'cloudflare:workers',
   'effect',
   'node:crypto',
   'pg',
@@ -160,10 +161,14 @@ const coreRelativeEscapeReason = (specifier: string, resolved: string): string =
     ? `Core runtime source imports Commerce/Storefront/Better Auth via relative specifier "${specifier}" (resolves to "${resolved}")`
     : `Core runtime source imports outside packages/core-runtime/src via relative specifier "${specifier}" (resolves to "${resolved}")`;
 
+const isInsideCoreSource = (resolved: string): boolean =>
+  resolved === coreSourceRoot || resolved.startsWith(`${coreSourceRoot}/`);
+
 const recordCoreSourceViolations = (
   record: (violation: LeanCoreDependencyViolation) => void,
   relative: string,
   source: string,
+  corePackageImports: ReadonlySet<string>,
 ): void => {
   if (!relative.startsWith(`${coreSourceRoot}/`)) {
     return;
@@ -171,9 +176,11 @@ const recordCoreSourceViolations = (
   for (const { index, specifier } of importsIn(relative, source)) {
     const isRelative = specifier.startsWith('.');
     const resolved = isRelative ? resolveRelativeSpecifier(relative, specifier) : undefined;
+    // A `#` specifier is Core's own package import; checkCorePackageJson admits only those whose
+    // every condition target stays inside Core source.
     const isExempt = isRelative
-      ? resolved === coreSourceRoot || (resolved?.startsWith(`${coreSourceRoot}/`) ?? false)
-      : isAllowedCoreExternalSpecifier(specifier);
+      ? resolved !== undefined && isInsideCoreSource(resolved)
+      : corePackageImports.has(specifier) || isAllowedCoreExternalSpecifier(specifier);
     if (isExempt) {
       continue;
     }
@@ -188,10 +195,15 @@ const recordCoreSourceViolations = (
   }
 };
 
+const PackageImportTargetSchema = Schema.Union([Schema.String, Schema.Record(Schema.String, Schema.String)]);
 const WorkspacePackageManifestSchema = Schema.Struct({
   dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  imports: Schema.optional(Schema.Record(Schema.String, PackageImportTargetSchema)),
 });
+
+const packageImportTargets = (target: typeof PackageImportTargetSchema.Type): readonly string[] =>
+  Predicate.isString(target) ? [target] : Object.values(target);
 const WorkspacePackageManifestFromJson = Schema.fromJsonString(WorkspacePackageManifestSchema);
 
 const allowedCorePackageDependencies = new Set([
@@ -209,15 +221,33 @@ const checkCorePackageJson = (
   root: string,
   path: Path.Path,
   record: (violation: LeanCoreDependencyViolation) => void,
-): Effect.Effect<void, PlatformError> =>
+): Effect.Effect<ReadonlySet<string>, PlatformError> =>
   Effect.gen(function* checkCorePackageJsonProgram() {
     const file = path.join(root, corePackageJsonRelative);
     const exists = yield* fileSystem.exists(file);
     if (!exists) {
-      return;
+      return new Set<string>();
     }
     const raw = yield* fileSystem.readFileString(file, 'utf-8');
     const parsed = yield* Schema.decodeUnknownEffect(WorkspacePackageManifestFromJson)(raw).pipe(Effect.orDie);
+    const corePackageImports = new Set<string>();
+    for (const [name, target] of Object.entries(parsed.imports ?? {})) {
+      const escaping = packageImportTargets(target).filter(
+        (targetPath) =>
+          !isInsideCoreSource(
+            posixPath.normalize(posixPath.join(posixPath.dirname(corePackageJsonRelative), targetPath)),
+          ),
+      );
+      if (escaping.length === 0) {
+        corePackageImports.add(name);
+        continue;
+      }
+      record({
+        file: corePackageJsonRelative,
+        line: 1,
+        reason: `Core runtime package.json maps package import "${name}" outside packages/core-runtime/src: "${escaping.join('", "')}"`,
+      });
+    }
     for (const [name] of Object.entries(parsed.dependencies ?? {})) {
       if (!allowedCorePackageDependencies.has(name)) {
         record({
@@ -238,6 +268,7 @@ const checkCorePackageJson = (
         });
       }
     }
+    return corePackageImports;
   });
 
 // --- Non-Commerce apps/verticals must not import Commerce private impl ---
@@ -421,7 +452,7 @@ export const checkLeanCoreDependencies = (
       violations.push(violation);
     };
 
-    const [files, commerceExports, nonCommerceOwnerRoots] = yield* Effect.all([
+    const [files, commerceExports, nonCommerceOwnerRoots, corePackageImports] = yield* Effect.all([
       collect(root),
       readCommerceExportsMap(fileSystem, root, path),
       discoverNonCommerceOwnerRoots(fileSystem, root, path),
@@ -436,7 +467,7 @@ export const checkLeanCoreDependencies = (
 
     for (const [file, source] of sourcePairs) {
       const relative = path.relative(root, file).split(path.sep).join('/');
-      recordCoreSourceViolations(record, relative, source);
+      recordCoreSourceViolations(record, relative, source, corePackageImports);
       recordNonCommerceImportViolations(record, relative, source, commerceExports, nonCommerceOwnerRoots);
     }
 

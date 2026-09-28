@@ -239,7 +239,10 @@
           "tests/**/*.{test,spec}.{ts,tsx,mts}"
         ]
       },
-      "lefthook": false
+      "lefthook": false,
+      "ignoreDependencies": [
+        "cloudflare"
+      ]
     }
   }
 }

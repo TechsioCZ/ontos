@@ -54,12 +54,21 @@ it.live(
         // Core: allowed external specifiers pass.
         'packages/core-runtime/package.json': JSON.stringify({
           dependencies: { effect: '^4.0.0', pg: '^8.0.0' },
+          imports: {
+            '#escaping': { default: '../shared/escape.ts', workerd: './src/escape.workerd.ts' },
+            '#runtime-transport': { default: './src/transport.node.ts', workerd: './src/transport.workerd.ts' },
+          },
         }),
         'packages/core-runtime/src/auth/allowed-unstable.ts': "import { Foo } from 'effect/unstable/bar';\n",
         'packages/core-runtime/src/auth/allowed.ts': "import { Effect } from 'effect';\nimport { Pool } from 'pg';\n",
+        // Core: a package import mapped inside Core source and the workerd platform module pass.
+        'packages/core-runtime/src/auth/allowed-package-import.ts':
+          "import { transport } from '#runtime-transport';\nimport { env } from 'cloudflare:workers';\n",
         // Core: violates by importing Commerce vocabulary directly.
         'packages/core-runtime/src/auth/commerce-leak.ts':
           "import { CommercePortalAuth } from '@app/commerce-customer-context';\n",
+        // Core: violates through a package import whose mapping escapes Core source.
+        'packages/core-runtime/src/auth/escaping-package-import.ts': "import { escape } from '#escaping';\n",
         'packages/core-runtime/src/auth/relative.ts': "import { helper } from './allowed.ts';\n",
         // Core: violates by importing Commerce private implementation via a relative specifier that
         // resolves outside packages/core-runtime/src (regression for a gate that only checked bare specifiers).
@@ -105,7 +114,9 @@ it.live(
         'apps/shell-super-app/api/auth/external-identity/unauthorized-package-import.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "@app/commerce-customer-context/portal-auth/verification/client" (only published shared/ contracts and documented composition seams are allowed)',
         'apps/shell-super-app/api/auth/external-identity/unauthorized-package-import.ts:2: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "@app/commerce-customer-context/api/client" (only published shared/ contracts and documented composition seams are allowed)',
         'apps/shell-super-app/api/auth/external-identity/unauthorized-private-import.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "../../../../verticals/commerce-customer-context/src/enrollment/journeys/index.ts" (only published shared/ contracts and documented composition seams are allowed)',
+        'packages/core-runtime/package.json:1: Core runtime package.json maps package import "#escaping" outside packages/core-runtime/src: "../shared/escape.ts"',
         'packages/core-runtime/src/auth/commerce-leak.ts:1: Core runtime source imports Commerce/Storefront/Better Auth package "@app/commerce-customer-context"',
+        'packages/core-runtime/src/auth/escaping-package-import.ts:1: Core runtime source imports a dependency outside the pinned external specifier set: "#escaping"',
         'packages/core-runtime/src/auth/relative-commerce-leak.ts:1: Core runtime source imports Commerce/Storefront/Better Auth via relative specifier "../../../../verticals/commerce-customer-context/src/enrollment/journeys/index.ts" (resolves to "verticals/commerce-customer-context/src/enrollment/journeys/index.ts")',
         'packages/core-runtime/src/auth/unpinned.ts:1: Core runtime source imports a dependency outside the pinned external specifier set: "zod"',
         'verticals/party-registry/api/uses-commerce-api.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "../../commerce-customer-context/api/owner-transition.ts" (only published shared/ contracts and documented composition seams are allowed)',

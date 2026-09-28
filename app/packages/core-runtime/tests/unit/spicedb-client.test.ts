@@ -3,6 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import { spiceDbClientSecurity } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { SpiceDbConfigError } from '../../src/permissions/config-error.ts';
+import { allowsInsecureSpiceDbTransport } from '../../src/permissions/config.ts';
 
 it('uses authenticated plaintext credentials for an explicitly insecure transport', () => {
   expect(
@@ -18,6 +19,19 @@ it('uses authenticated plaintext credentials for an explicitly insecure transpor
       insecureLocal: true,
     }),
   ).toBe(v1.ClientSecurity.INSECURE_PLAINTEXT_CREDENTIALS);
+});
+
+it('allows plaintext only to the stage-private SpiceDB gRPC and HTTP gateway ports', () => {
+  for (const endpoint of ['spicedb:50051', 'spicedb:8443']) {
+    expect(allowsInsecureSpiceDbTransport({ deploymentEnvironment: 'stage', endpoint, insecureLocal: true })).toBe(
+      true,
+    );
+  }
+  for (const endpoint of ['spicedb:9999', 'spicedb', 'spicedb.example:8443']) {
+    expect(allowsInsecureSpiceDbTransport({ deploymentEnvironment: 'stage', endpoint, insecureLocal: true })).toBe(
+      false,
+    );
+  }
 });
 
 it('uses TLS credentials for a secure transport', () => {

@@ -370,6 +370,7 @@ const InventoryLocaleSchema = Schema.Struct({
 
 const CorePackageExportsSchema = Schema.Struct({
   exports: Schema.Record(Schema.String, Schema.String),
+  imports: Schema.Record(Schema.String, Schema.Struct({ default: Schema.String })),
   name: Schema.String,
 });
 
@@ -5930,12 +5931,17 @@ it.live(
         const corePackage = yield* decodeCorePackageExports(
           yield* Effect.promise(() => readFile(path.join(coreRuntimeDirectory, 'package.json'), 'utf-8')),
         );
-        const coreRuntimePaths = Object.fromEntries(
-          Object.entries(corePackage.exports).map(([subpath, target]) => [
-            path.posix.join(corePackage.name, subpath),
-            [path.join(coreRuntimeDirectory, target)],
-          ]),
-        );
+        const coreRuntimeExportPaths: (readonly [string, readonly string[]])[] = Object.entries(
+          corePackage.exports,
+        ).map(([subpath, target]) => [
+          path.posix.join(corePackage.name, subpath),
+          [path.join(coreRuntimeDirectory, target)],
+        ]);
+        // Core's own `#` package imports resolve to their Node (`default`) target, as in the workspace.
+        const coreRuntimeImportPaths: (readonly [string, readonly string[]])[] = Object.entries(
+          corePackage.imports,
+        ).map(([specifier, target]) => [specifier, [path.join(coreRuntimeDirectory, target.default)]]);
+        const coreRuntimePaths = Object.fromEntries([...coreRuntimeExportPaths, ...coreRuntimeImportPaths]);
         const fixtureTsconfig = path.join(fixture.root, 'tsconfig.generated.json');
         yield* Effect.promise(() =>
           writeFile(

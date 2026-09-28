@@ -26,6 +26,12 @@
     "./testing/actions": "./src/testing/actions.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts"
   },
+  "imports": {
+    "#spicedb-transport": {
+      "workerd": "./src/permissions/spicedb-transport.workerd.ts",
+      "default": "./src/permissions/spicedb-transport.node.ts"
+    }
+  },
   "scripts": {
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:check": "drizzle-kit check --config drizzle.config.ts",

@@ -1,10 +1,10 @@
 import { v1 } from '@authzed/authzed-node';
+import { spiceDbTransport } from '#spicedb-transport';
 import { Effect } from 'effect';
 import type { Scope } from 'effect';
 
 import { SPICEDB_CHECK_TIMEOUT_MS, acquireSpiceDbClientResource } from './client.ts';
 import type { SpiceDbConfigValue } from './config.ts';
-import { openSpiceDbGrpcRpc } from './spicedb-grpc-rpc.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
 
 export interface PermissionRelationshipMutationClient<Failure> {
@@ -20,7 +20,7 @@ export const createPermissionRelationshipMutationClient = <Failure>(
   timeoutMilliseconds: number,
   unavailable: (cause?: unknown) => Failure,
 ): PermissionRelationshipMutationClient<Failure> => {
-  const rpc = openSpiceDbGrpcRpc(configuration, timeoutMilliseconds);
+  const rpc = spiceDbTransport.open(configuration, timeoutMilliseconds);
   return {
     close: rpc.close,
     writeRelationships: (request) =>

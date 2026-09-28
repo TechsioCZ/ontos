@@ -22,6 +22,8 @@ import {
 import { transform } from 'effect/SchemaTransformation';
 
 const nodeBuiltinRequests = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]));
+// workerd platform modules: sockets for pg, and the module-scope Worker `env` for bindings.
+const cloudflarePlatformRequests: ReadonlySet<string> = new Set(['cloudflare:sockets', 'cloudflare:workers']);
 
 interface ExternalRequest {
   dependencyType?: string;
@@ -37,7 +39,7 @@ export const resolveCloudflareExternal = (
     return [];
   }
   const isNodeBuiltin = includeNodeBuiltins && nodeBuiltinRequests.has(request);
-  if (request !== 'cloudflare:sockets' && !isNodeBuiltin) {
+  if (!cloudflarePlatformRequests.has(request) && !isNodeBuiltin) {
     return [];
   }
   const specifier = isNodeBuiltin && !request.startsWith('node:') ? `node:${request}` : request;

@@ -100,7 +100,9 @@ const makeProductionDependenciesPlugin = ({ packages, path, workspaceRoot }) => 
         resolveDir: workspaceRoot,
       }),
     );
-    builder.onResolve({ filter: esbuildFilter(/^[^./]/u) }, (args) => {
+    // Package specifiers only: relative paths and `#` package imports (a package's own
+    // condition-mapped modules, such as Core's `#spicedb-transport`) resolve through esbuild.
+    builder.onResolve({ filter: esbuildFilter(/^[^./#]/u) }, (args) => {
       if (isBuiltin(args.path)) {
         return { external: true, path: args.path };
       }

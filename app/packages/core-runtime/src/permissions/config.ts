@@ -66,8 +66,12 @@ const isLocalhostEndpoint = (endpoint: string): boolean => {
   }
 };
 
+// The stage-private SpiceDB service: gRPC on 50051 for Node, the HTTP gateway on 8443 for workerd
+// (reached only through the Workers VPC binding and the tunnel).
+const STAGE_PRIVATE_SPICEDB_ENDPOINTS: ReadonlySet<string> = new Set(['spicedb:50051', 'spicedb:8443']);
+
 const isStagePrivateEndpoint = (endpoint: string, deploymentEnvironment?: string): boolean =>
-  deploymentEnvironment === 'stage' && endpoint === 'spicedb:50051';
+  deploymentEnvironment === 'stage' && STAGE_PRIVATE_SPICEDB_ENDPOINTS.has(endpoint);
 
 export const allowsInsecureSpiceDbTransport = (
   configuration: Pick<SpiceDbConfigValue, 'deploymentEnvironment' | 'endpoint' | 'insecureLocal'>,
