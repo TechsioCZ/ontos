@@ -433,6 +433,7 @@ const rootPackageFile = 'package.json';
 const coreRuntimePackageFile = 'packages/core-runtime/package.json';
 const coreRuntimePackageEntryExport = './src/index.ts';
 const coreRuntimeIndexFile = 'packages/core-runtime/src/index.ts';
+const coreRuntimeModuleEntrypointFile = 'packages/core-runtime/src/modules/module-entrypoint.ts';
 const coreActionCatalogFile = 'packages/core-runtime/src/modules/actions/catalog.ts';
 const shellSentinelFile = 'apps/shell-super-app/src/sentinel.ts';
 const shellVerticalClientsFile = 'apps/shell-super-app/src/api/vertical-clients.ts';
@@ -5888,11 +5889,7 @@ it.live(
               ['packages/core-runtime/src/permissions', 'packages/core-runtime/src/permissions', 'dir'],
               ['packages/core-runtime/src/auth', 'packages/core-runtime/src/auth', 'dir'],
               ['packages/core-runtime/src/authorization', 'packages/core-runtime/src/authorization', 'dir'],
-              [
-                'packages/core-runtime/src/modules/module-entrypoint.ts',
-                'packages/core-runtime/src/modules/module-entrypoint.ts',
-                'file',
-              ],
+              [coreRuntimeModuleEntrypointFile, coreRuntimeModuleEntrypointFile, 'file'],
             ] as const
           ).map(([source, target, kind]) =>
             Effect.promise(() => symlink(path.join(appRoot, source), path.join(fixture.root, target), kind)),
@@ -5952,6 +5949,7 @@ it.live(
                   '@app/core-runtime/http/principal-authentication': [
                     path.join(appRoot, 'packages/core-runtime/src/http/principal-authentication.ts'),
                   ],
+                  '@app/core-runtime/module-entrypoint': [path.join(appRoot, coreRuntimeModuleEntrypointFile)],
                   '@app/core-runtime/outbox/worker': [
                     path.join(appRoot, 'packages/core-runtime/src/outbox/worker-entrypoint.ts'),
                   ],
