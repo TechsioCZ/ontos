@@ -1,6 +1,7 @@
 @import "@techsio/ui-kit/tokens-with-tailwind";
 @import "@techsio/ui-kit/tokens/figma/akros/variables";
 @import "../tokens/_akros-typography.css";
+@import "../tokens/components/molecules/_akros-breadcrumb.css";
 @import "../tokens/components/molecules/_akros-product-card.css";
 @import "../tokens/components/molecules/_akros-vertical-navigation.css";
 @import "../tokens/components/organisms/_akros-footer.css";
@@ -208,6 +209,7 @@ body {
 .akros-main {
   display: grid;
   min-width: 0;
+  align-content: start;
   gap: var(--akros-section-gap);
 }
 

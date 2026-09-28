@@ -38,7 +38,7 @@ export const cs = {
     title: "Katalog",
     description: "Rychlý přístup k hlavním kategoriím a službám AKROS.",
     categoryDescription: "Vyberte podkategorii nebo pokračujte rovnou k produktům.",
-    emptyCategory: "V této ukázkové kategorii zatím nejsou žádné produkty.",
+    emptyCategory: "V této kategorii momentálně nejsou žádné produkty.",
     recommendations: "Mohlo by vás zajímat…",
   },
   home: {

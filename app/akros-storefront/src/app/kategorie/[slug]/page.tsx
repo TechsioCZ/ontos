@@ -37,6 +37,11 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
   if (!category) notFound();
 
   const childCategories = getChildCategories(category.id);
+  const hasVisualChildCategories =
+    childCategories.length > 0 &&
+    childCategories.every(
+      (childCategory) => Boolean(childCategory.imageSrc) && Boolean(childCategory.imageAlt),
+    );
   const products = getProductsByCategory(category.slug);
   const totalPages = Math.max(1, Math.ceil(products.length / productsPerPage));
   const currentPage = Math.min(
@@ -64,9 +69,9 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
       <section className="akros-section" aria-labelledby="category-title">
         <div className="akros-category-heading">
           <h1 id="category-title">{category.name}</h1>
-          <p>{category.description || cs.catalog.categoryDescription}</p>
+          {category.description && <p>{category.description}</p>}
         </div>
-        <CategoryGrid categories={childCategories} />
+        {hasVisualChildCategories && <CategoryGrid categories={childCategories} />}
       </section>
 
       {products.length > 0 ? (
