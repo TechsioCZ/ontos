@@ -55,11 +55,12 @@ export const resolveCustomerPriceGroupAt = Effect.fn('CustomerPriceGroup.resolve
     if (assignment === undefined) {
       return { _tag: 'NONE' } as const;
     }
+    // The assignment keeps its accepted evidence. Each consumption obtains fresh owner truth;
+    // only an expectation from this operation may be used as a Current concurrency fence.
     const outcome = yield* catalog.resolveCurrent(
       assignment.priceGroupRef,
       CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
       effectiveAt,
-      assignment.compatibility,
     );
 
     if (outcome._tag !== 'USABLE') {
