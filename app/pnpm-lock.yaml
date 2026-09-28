@@ -231,7 +231,6 @@ overrides:
 
 patchedDependencies:
   '@better-fetch/fetch@1.3.1': 9276628e25c79910215b343c608abe336b3636f093565a04953069224d890747
-  '@vercel/nft@0.29.2': c0ed4897b98e9055716031187bb8ea16739f6ae0843d35e4873f1a177472cac7
   drizzle-orm@1.0.0-rc.5-ab785fc: b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe
 
 importers:
@@ -302,9 +301,6 @@ importers:
       '@typescript/native-preview':
         specifier: 7.0.0-dev.20260707.2
         version: 7.0.0-dev.20260707.2
-      '@vercel/nft':
-        specifier: 0.29.2
-        version: 0.29.2(patch_hash=c0ed4897b98e9055716031187bb8ea16739f6ae0843d35e4873f1a177472cac7)(supports-color@10.2.2)
       effect:
         specifier: 4.0.0-rc.117
         version: 4.0.0-rc.117
@@ -14094,7 +14090,7 @@ snapshots:
 
   '@ungap/structured-clone@1.4.0': {}
 
-  '@vercel/nft@0.29.2(patch_hash=c0ed4897b98e9055716031187bb8ea16739f6ae0843d35e4873f1a177472cac7)(supports-color@10.2.2)':
+  '@vercel/nft@0.29.2(supports-color@10.2.2)':
     dependencies:
       '@mapbox/node-pre-gyp': 2.0.3(supports-color@10.2.2)
       '@rollup/pluginutils': 5.4.0
@@ -17030,7 +17026,7 @@ snapshots:
 
   ndepe@0.1.13(supports-color@10.2.2):
     dependencies:
-      '@vercel/nft': 0.29.2(patch_hash=c0ed4897b98e9055716031187bb8ea16739f6ae0843d35e4873f1a177472cac7)(supports-color@10.2.2)
+      '@vercel/nft': 0.29.2(supports-color@10.2.2)
       debug: 4.4.3(supports-color@10.2.2)
       fs-extra: 11.4.1
       mlly: 1.6.1
