@@ -100,7 +100,12 @@ pnpm --filter @app/core-runtime db:migrate
 pnpm --filter @app/shell-super-app db:migrate
 pnpm --filter @app/party-registry db:migrate
 pnpm --filter @app/payment-term-catalog db:migrate
+pnpm --filter @app/price-group-catalog db:migrate
 pnpm --filter @app/commerce-customer-context db:migrate
+pnpm --filter @app/commerce-market-catalog db:migrate
+pnpm --filter @app/catalog db:migrate
+pnpm --filter @app/pricing db:migrate
+pnpm --filter @app/storefront-registry db:migrate
 pnpm db:bootstrap-runtime-role
 pnpm db:portal-auth:migrate        # no-ops if the portal-auth database env is not configured
 ```
