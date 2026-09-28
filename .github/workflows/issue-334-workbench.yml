@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
+      BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
+      BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
+      BETTER_AUTH_URL: http://localhost:3020
       DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
       DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
       ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
@@ -43,6 +46,9 @@ jobs:
         run: docker compose up --detach --wait --wait-timeout 120
       - name: Apply the unchanged main database migrations
         working-directory: app
+        env:
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
         run: |
           mise exec -- pnpm db:migrate
           mise exec -- pnpm db:verify
