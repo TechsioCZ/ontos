@@ -918,6 +918,7 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   PACKAGE_MANIFEST,
   'pnpm-lock.yaml',
   'scripts/generate-ontos-module-contract.mts',
+  'scripts/generate-ontos-shell-runtime-contract.mts',
   'scripts/scaffolding-runtime.mts',
   'scripts/scaffolding/shared.mts',
   'tsconfig.base.json',
