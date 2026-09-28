@@ -1,11 +1,6 @@
 type SharedRuntimeVersions = Readonly<
   Record<
-    | '@modern-js/plugin-i18n/runtime'
-    | '@modern-js/runtime'
-    | '@tanstack/react-router'
-    | 'effect'
-    | 'react'
-    | 'react-dom',
+    '@modern-js/plugin-i18n/runtime' | '@modern-js/runtime' | '@tanstack/react-router' | 'react' | 'react-dom',
     string
   >
 >;
@@ -26,19 +21,6 @@ export const createSharedRuntimeConfig = (versions: SharedRuntimeVersions) => ({
   },
   '@tanstack/react-router': {
     requiredVersion: versions['@tanstack/react-router'],
-    singleton: true,
-    treeShaking: false,
-  },
-  // UltraModern shares every `@modern-js/bff-effect/*` subpath as a singleton, and those re-export
-  // Effect. Effect must then be one instance as well: a Schema built by the shared copy and decoded
-  // by a private copy fails its own checks.
-  effect: {
-    requiredVersion: versions.effect,
-    singleton: true,
-    treeShaking: false,
-  },
-  'effect/': {
-    requiredVersion: versions.effect,
     singleton: true,
     treeShaking: false,
   },

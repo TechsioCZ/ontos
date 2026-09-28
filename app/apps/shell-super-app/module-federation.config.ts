@@ -59,7 +59,6 @@ const packageVersion = (packageName: string): string =>
 const i18nVersion = packageVersion('@modern-js/plugin-i18n');
 const runtimeVersion = packageVersion('@modern-js/runtime');
 const reactVersion = packageVersion('react');
-const effectVersion = packageVersion('effect');
 const reactDomVersion = packageVersion('react-dom');
 
 const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0] = createModuleFederationConfig({
@@ -86,7 +85,6 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     '@modern-js/plugin-i18n/runtime': i18nVersion,
     '@modern-js/runtime': runtimeVersion,
     '@tanstack/react-router': dependencies['@tanstack/react-router'],
-    effect: effectVersion,
     react: reactVersion,
     'react-dom': reactDomVersion,
   }),

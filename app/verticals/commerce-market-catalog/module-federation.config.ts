@@ -18,7 +18,6 @@ const packageVersion = (specifier: string): string =>
 const pluginI18nVersion = packageVersion('@modern-js/plugin-i18n/package.json');
 const runtimeVersion = packageVersion('@modern-js/runtime/package.json');
 const reactVersion = packageVersion('react/package.json');
-const effectVersion = packageVersion('effect/package.json');
 const reactDomVersion = packageVersion('react-dom/package.json');
 
 const tsgoCompilerInstance = resolveEffectTsgoCompiler({ from: import.meta.url });
@@ -43,7 +42,6 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     '@modern-js/plugin-i18n/runtime': pluginI18nVersion,
     '@modern-js/runtime': runtimeVersion,
     '@tanstack/react-router': dependencies['@tanstack/react-router'],
-    effect: effectVersion,
     react: reactVersion,
     'react-dom': reactDomVersion,
   }),

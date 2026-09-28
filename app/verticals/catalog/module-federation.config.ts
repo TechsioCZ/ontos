@@ -14,7 +14,6 @@ const pluginI18nVersion = packageVersion('@modern-js/plugin-i18n/package.json');
 const pluginTanstackVersion = packageVersion('@modern-js/plugin-tanstack/package.json');
 const runtimeVersion = packageVersion('@modern-js/runtime/package.json');
 const reactVersion = packageVersion('react/package.json');
-const effectVersion = packageVersion('effect/package.json');
 const reactDomVersion = packageVersion('react-dom/package.json');
 
 const tsgoCompilerInstance = resolveEffectTsgoCompiler({ from: import.meta.url });
@@ -60,18 +59,6 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     },
     '@tanstack/react-router': {
       requiredVersion: dependencies['@tanstack/react-router'],
-      singleton: true,
-      treeShaking: false,
-    },
-    // UltraModern shares every `@modern-js/bff-effect/*` subpath, which re-export Effect, so Effect
-    // is one instance across the federation too.
-    effect: {
-      requiredVersion: effectVersion,
-      singleton: true,
-      treeShaking: false,
-    },
-    'effect/': {
-      requiredVersion: effectVersion,
       singleton: true,
       treeShaking: false,
     },
