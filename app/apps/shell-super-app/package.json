@@ -9,8 +9,8 @@
   },
   "scripts": {
     "dev": "modern dev",
-    "build": "modern build --deploy-target node && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node",
-    "cloudflare:build": "modern build --deploy-target cloudflare && ultramodern-create ultramodern public-surface --app shell-super-app --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
+    "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target dist && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node",
+    "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target cloudflare-dist && ultramodern-create ultramodern public-surface --app shell-super-app --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
     "cloudflare:deploy": "pnpm run cloudflare:build && ultramodern-create ultramodern cloudflare-output-verify --app shell-super-app --require-public-urls && wrangler deploy --config .output/wrangler.json",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app shell-super-app",

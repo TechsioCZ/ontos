@@ -61,8 +61,48 @@ const module = (moduleId: 'commerce.cart' | 'commerce.order') => ({
   sharedSingletons: [],
 });
 
+const serverOnlyModule = (moduleId: string, appId: string) => ({
+  allowedContributions: [],
+  contract: { sha256: 'c'.repeat(64), url: `https://${appId}.example.test/.well-known/ontos-module-manifest.json` },
+  dependencies: [],
+  deployment: { appId, buildMarker: `${appId}-build-1` },
+  federation: { execution: 'server' as const },
+  moduleId,
+  publicContract: { id: moduleId, sha256: 'c'.repeat(64), version: '2' },
+  requiredCoreCapabilities: [],
+  requiredShellAbi: { id: 'ontos.shell-contributions', version: '1' },
+  sharedSingletons: [],
+});
+
+const browserModule = (moduleId: string, appId: string, remoteName: string) => ({
+  ...serverOnlyModule(moduleId, appId),
+  federation: {
+    execution: 'browser' as const,
+    exposes: ['./Route'],
+    manifest: { sha256: 'd'.repeat(64), url: `https://${appId}.example.test/mf-manifest.json` },
+    remoteName,
+  },
+});
+
+/** Every module the stage topology deploys today, browser remotes and server-only modules alike. */
+const currentInventory = [
+  browserModule('commerce.catalog', 'catalog', 'verticalCatalog'),
+  serverOnlyModule('commerce.customer-context', 'commerce-customer-context'),
+  browserModule('commerce.market-catalog', 'commerce-market-catalog', 'verticalCommerceMarketCatalog'),
+  serverOnlyModule('commerce.pricing', 'pricing'),
+  serverOnlyModule('commerce.storefront-registry', 'storefront-registry'),
+  browserModule('party.registry', 'party-registry', 'verticalPartyRegistry'),
+  serverOnlyModule('payment.term-catalog', 'payment-term-catalog'),
+  serverOnlyModule('pricing.price-group-catalog', 'price-group-catalog'),
+];
+
+type CompositionModule =
+  | ReturnType<typeof module>
+  | ReturnType<typeof serverOnlyModule>
+  | ReturnType<typeof browserModule>;
+
 const snapshot = (
-  modules: readonly ReturnType<typeof module>[] = [],
+  modules: readonly CompositionModule[] = [],
   observedAt = '2026-09-22T09:59:00.000Z',
   validUntil = '2026-09-22T10:01:00.000Z',
 ): ActiveApplicationCompositionSnapshot =>
@@ -163,3 +203,29 @@ for (const testCase of [
     }),
   );
 }
+
+it.effect('proves Cart and Order absent over the complete installed inventory', () =>
+  Effect.gen(function* absentOverCompleteInventory() {
+    const authority = makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(
+      Effect.succeed(snapshot(currentInventory)),
+    );
+    const result = yield* authority.proveReferenceOwnerStates(request);
+
+    expect(result.sourceEvidence.map(({ sourceId }) => sourceId)).toEqual([
+      'application-composition:commerce.cart:UNIMPLEMENTED',
+      'application-composition:commerce.order:UNIMPLEMENTED',
+    ]);
+  }),
+);
+
+it.effect('fails closed when a server-only Market-reference owner joins the inventory', () =>
+  Effect.gen(function* installedServerOnlyOwner() {
+    const authority = makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(
+      Effect.succeed(snapshot([...currentInventory, serverOnlyModule('commerce.order', 'commerce-order')])),
+    );
+    const failure = yield* authority.proveReferenceOwnerStates(request).pipe(Effect.flip);
+
+    expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
+    expect(failure.reason).toContain('commerce.order');
+  }),
+);

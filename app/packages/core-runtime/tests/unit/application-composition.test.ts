@@ -159,7 +159,7 @@ it.effect(
 
     expect(composition).toEqual(input);
     expect(Object.isFrozen(composition)).toBe(true);
-    expect(Object.isFrozen(required(composition.modules[0]).federation.exposes)).toBe(true);
+    expect(Object.isFrozen(required(composition.modules[0]).federation)).toBe(true);
     expect(Object.isFrozen(input)).toBe(false);
     yield* assertInvalid(
       validateApplicationCompositionCandidate({ ...input, provider: 'zephyr' }, evidence()),
@@ -371,5 +371,114 @@ it.effect(
       mutate(input, observations);
       yield* assertInvalid(validateApplicationCompositionCandidate(input, observations), reason);
     }
+  }),
+);
+
+const serverOnlyModule = (input: Candidate) => {
+  const module = onlyModule(input);
+  return {
+    ...structuredClone(module),
+    allowedContributions: [],
+    contract: { sha256: sha256('e'), url: 'https://customer-context.example/.well-known/ontos-module-manifest.json' },
+    deployment: { appId: 'customer-context', buildMarker: 'customer-context-build-1' },
+    federation: { execution: 'server' as const },
+    moduleId: 'commerce.customer-context',
+    publicContract: { id: 'commerce.customer-context', sha256: sha256('e'), version: '2' },
+    sharedSingletons: [],
+  };
+};
+
+const serverOnlyEvidence = () => ({
+  contractUrl: 'https://customer-context.example/.well-known/ontos-module-manifest.json',
+  contributionKeys: [],
+  deployment: { appId: 'customer-context', buildMarker: 'customer-context-build-1' },
+  federationExposes: [],
+  moduleId: 'commerce.customer-context',
+  publicContract: { id: 'commerce.customer-context', sha256: sha256('e'), version: '2' },
+  sha256: sha256('e'),
+});
+
+it.effect(
+  'installs a server-only module without a browser remote as part of the complete inventory',
+  Effect.fn(function* serverOnlyInventory() {
+    const input = candidate();
+    const module = serverOnlyModule(input);
+    const withServerModule = { ...input, modules: [...input.modules, module] };
+    const observations = evidence();
+    const withServerEvidence = {
+      ...observations,
+      contracts: { ...observations.contracts, 'customer-context': serverOnlyEvidence() },
+    };
+
+    const composition = yield* validateApplicationCompositionCandidate(withServerModule, withServerEvidence);
+    expect(composition.modules.map(({ moduleId }) => moduleId)).toEqual(['contacts.core', 'commerce.customer-context']);
+    expect(canonicalizeApplicationComposition(composition)).toContain('"federation":{"execution":"server"}');
+
+    yield* assertInvalid(
+      validateApplicationCompositionCandidate(withServerModule, {
+        ...withServerEvidence,
+        contracts: {
+          ...withServerEvidence.contracts,
+          'customer-context': {
+            ...serverOnlyEvidence(),
+            federationExposes: ['./Widget'],
+            mfBoundaryId: 'customerContext',
+          },
+        },
+      }),
+      /observed deployment contract/u,
+    );
+    yield* assertInvalid(
+      validateApplicationCompositionCandidate(
+        {
+          ...input,
+          modules: [...input.modules, { ...module, sharedSingletons: [{ packageName: 'react', version: '19.2.0' }] }],
+        },
+        withServerEvidence,
+      ),
+      /observed deployment contract/u,
+    );
+    yield* assertInvalid(
+      validateApplicationCompositionCandidate(
+        { ...input, modules: [...input.modules, { ...module, federation: { execution: 'server', exposes: [] } }] },
+        withServerEvidence,
+      ),
+      /supported .* schema/u,
+    );
+  }),
+);
+
+it.effect(
+  'pins the complete observed expose surface while every declared component stays exposed',
+  Effect.fn(function* exposeSurface() {
+    const input = candidate();
+    const module = onlyModule(input);
+    if (module.federation.execution !== 'browser') {
+      return yield* Effect.die('fixture module must be a browser remote');
+    }
+    module.federation.exposes.push('./Route');
+    const observations = evidence();
+    federationManifest(observations).exposes.push('./Route');
+    expect((yield* validateApplicationCompositionCandidate(input, observations)).modules).toHaveLength(1);
+
+    const undeclaredBoundary = evidence();
+    federationManifest(undeclaredBoundary).exposes.push('./Route');
+    const { mfBoundaryId: _omitted, ...withoutBoundary } = undeclaredBoundary.contracts.contacts;
+    yield* assertInvalid(
+      validateApplicationCompositionCandidate(input, {
+        ...undeclaredBoundary,
+        contracts: { contacts: withoutBoundary },
+      }),
+      /observed deployment contract/u,
+    );
+
+    const componentOnly = evidence();
+    componentOnly.contracts.contacts.federationExposes.push('./Missing');
+    federationManifest(componentOnly).exposes.push('./Route');
+    yield* assertInvalid(
+      validateApplicationCompositionCandidate(input, componentOnly),
+      /observed deployment contract/u,
+    );
+    return yield* Effect.void;
   }),
 );

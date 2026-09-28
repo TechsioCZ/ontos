@@ -2,9 +2,10 @@
 # Zerops services and are never stored in this file.
 # Stage topology provisioned for partyregistry and partyregistryworker.
 # Full stage rollout requested after PostgreSQL 18 migration.
-# ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON is a publisher-maintained
-# Zerops project variable. Project variables are inherited automatically; the
-# Commerce Customer Context start preflight deliberately does not shadow it here.
+# ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON is a Zerops project variable
+# maintained by scripts/publish-active-application-composition.mts. Project variables
+# are inherited automatically; the Commerce Customer Context start preflights
+# deliberately do not shadow it here.
 
 zerops:
   - setup: 'migrator'

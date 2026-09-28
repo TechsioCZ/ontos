@@ -325,6 +325,12 @@ jobs:
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm node:proof
 
+      # The deployed publisher derives the snapshot from exactly these artifact kinds; this proves its output
+      # decodes with the consumers' ActiveApplicationCompositionSnapshotSchema before stage depends on it.
+      - name: Prove the active Application Composition publisher output decodes
+        working-directory: app
+        run: mise exec -- pnpm active-composition:publish prove-build
+
   cloudflare-runtime:
     name: Cloudflare Workerd Artifact Proof
     runs-on: ubuntu-latest
@@ -375,8 +381,12 @@ jobs:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: [workspace-gate, static-contracts, service-integration, node-runtime, cloudflare-runtime]
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     environment: stage
+    # Serializes with the scheduled composition refresh so no publication interleaves with a deploy.
+    concurrency:
+      group: zerops-stage
+      cancel-in-progress: false
     permissions:
       contents: read
       deployments: read
@@ -510,54 +520,72 @@ jobs:
           --limit 200
           --minimum-severity DEBUG
 
-      - name: Deploy affected provider MicroVerticals in plan order
+      - name: Resolve active Application Composition consumers
+        id: composition
+        if: steps.impact.outputs.any == 'true'
+        working-directory: app
+        run: mise exec -- pnpm --silent active-composition:publish consumers
+
+      - name: Deploy affected providers that do not consume the active composition
         if: steps.impact.outputs.providers != '[]'
         env:
+          CONSUMERS_JSON: ${{ steps.composition.outputs.consumers }}
           PROVIDERS_JSON: ${{ steps.impact.outputs.providers }}
-          # Provider units come from the topology, so their service ids are looked up by the variable
-          # name the topology implies instead of a hand-kept list that silently misses new units.
-          # Public subdomains are declared once per service in app/zerops-import.yaml, not re-enabled per deploy.
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
-          while IFS= read -r unit; do
-            environment_key="ZEROPS_$(printf '%s' "$unit" | tr '[:lower:]' '[:upper:]' | tr '-' '_')_SERVICE_ID"
-            service_id="$(jq -r --arg key "$environment_key" '.[$key] // empty' <<<"$STAGE_VARIABLES_JSON")"
-            if [[ -z "$service_id" ]]; then
-              echo "Missing stage service variable $environment_key for planned unit $unit" >&2
-              exit 1
-            fi
-            if ! zcli push \
-              --working-dir . \
-              --zerops-yaml-path app/zerops.yaml \
-              --workspace-state clean \
-              --deploy-git-folder \
-              --project-id "$ZEROPS_PROJECT_ID" \
-              --service-id "$service_id" \
-              --setup "$unit" \
-              --version-name "$GITHUB_SHA"; then
-              zcli service log \
-                --project-id "$ZEROPS_PROJECT_ID" \
-                --service-id "$service_id" \
-                --limit 200 \
-                --minimum-severity DEBUG || true
-              echo "Deployment failed for planned provider unit $unit" >&2
-              exit 1
-            fi
-          done < <(jq -r '.[]' <<<"$PROVIDERS_JSON")
+          UNITS_JSON="$(jq -c --argjson consumers "$CONSUMERS_JSON" '[.[] | select(IN($consumers[]) | not)]' <<<"$PROVIDERS_JSON")"
+          export UNITS_JSON
+          app/scripts/push-zerops-units.sh
 
       - name: Deploy Shell after affected providers
         if: steps.impact.outputs.shell == 'true'
         id: shell
-        run: >-
-          zcli push
-          --working-dir .
-          --zerops-yaml-path app/zerops.yaml
-          --workspace-state clean
-          --deploy-git-folder
-          --project-id "$ZEROPS_PROJECT_ID"
-          --service-id "$ZEROPS_SHELL_SERVICE_ID"
-          --setup shellsuperapp
-          --version-name "$GITHUB_SHA"
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          UNITS_JSON: '["shellsuperapp"]'
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: app/scripts/push-zerops-units.sh
+
+      # Consumers refuse to start without the snapshot. Publish the observed inventory without the consumers
+      # about to be deployed, so they start on a current snapshot, then observe them and publish it complete.
+      - name: Publish the active Application Composition before its consumers deploy
+        id: planned-consumers
+        if: steps.impact.outputs.any == 'true'
+        working-directory: app
+        env:
+          CONSUMERS_JSON: ${{ steps.composition.outputs.consumers }}
+          PROVIDERS_JSON: ${{ steps.impact.outputs.providers }}
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          planned="$(jq -c --argjson consumers "$CONSUMERS_JSON" '[.[] | select(IN($consumers[]))]' <<<"$PROVIDERS_JSON")"
+          echo "units=$planned" >> "$GITHUB_OUTPUT"
+          if [[ "$planned" == '[]' ]]; then
+            echo 'No composition consumer is planned; the complete publication follows.'
+            exit 0
+          fi
+          exclusions=()
+          while IFS= read -r unit; do
+            exclusions+=(--exclude-app "$unit")
+          done < <(jq -r '.[]' <<<"$planned")
+          mise exec -- pnpm active-composition:publish publish --environment stage "${exclusions[@]}"
+
+      - name: Deploy affected composition consumers
+        if: steps.planned-consumers.outputs.units != '' && steps.planned-consumers.outputs.units != '[]'
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          UNITS_JSON: ${{ steps.planned-consumers.outputs.units }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: app/scripts/push-zerops-units.sh
+
+      - name: Publish the complete active Application Composition and restart its consumers
+        if: steps.impact.outputs.any == 'true'
+        working-directory: app
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: mise exec -- pnpm active-composition:publish publish --environment stage --restart-consumers
 
       - name: Show bounded Shell logs after failure
         if: failure() && steps.shell.outcome == 'failure'

@@ -69,6 +69,7 @@
     "test:deployment-impact": "node scripts/generate-outbox-worker-deployment.mjs && node ./scripts/check-module-entrypoint-boundaries.mts && node ./scripts/plan-deployment-impact.mts --authorization-environment stage && rstest --project scripts scripts/tests/plan-deployment-impact scripts/tests/outbox-worker-delivery",
     "deployment-base:resolve": "node ./scripts/resolve-stage-deployment-base.mts",
     "deployment-impact:plan": "node ./scripts/plan-deployment-impact.mts",
+    "active-composition:publish": "node ./scripts/publish-active-application-composition.mts",
     "action:test:unit": "pnpm --filter @app/core-runtime action:test:unit",
     "action:test:integration": "pnpm --filter @app/core-runtime action:test:integration",
     "outbox:test": "pnpm --filter @app/core-runtime outbox:test:unit && pnpm --filter @app/core-runtime outbox:test:integration",

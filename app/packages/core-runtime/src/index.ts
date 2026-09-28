@@ -591,22 +591,29 @@ export {
 } from './modules/tenant-module-state-service.ts';
 export {
   ONTOS_APPLICATION_COMPOSITION_SCHEMA_VERSION,
+  ONTOS_SHELL_CONTRIBUTION_ABI,
+  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   ApplicationCompositionArtifactReferenceSchema,
+  ApplicationCompositionBrowserFederationSchema,
   ApplicationCompositionModuleSchema,
   ApplicationCompositionSchema,
+  ApplicationCompositionServerOnlyFederationSchema,
   ApplicationCompositionSingletonSchema,
   ApplicationCompositionValidationError,
+  OntosShellRuntimeContractSchema,
   ApplicationCompositionVersionedIdentitySchema,
   canonicalizeApplicationComposition,
   validateApplicationCompositionCandidate,
 } from './modules/application-composition.ts';
 export type {
   ApplicationComposition,
+  ApplicationCompositionBrowserFederation,
   ApplicationCompositionCandidateEvidence,
   ApplicationCompositionModule,
   ApplicationCompositionVersionedIdentity,
   ObservedApplicationCompositionContract,
   ObservedModuleFederationManifest,
+  OntosShellRuntimeContract,
 } from './modules/application-composition.ts';
 export {
   ActiveApplicationCompositionConfigLive,

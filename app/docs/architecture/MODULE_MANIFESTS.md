@@ -41,13 +41,15 @@ Required Core capabilities and the Shell contribution ABI are explicit versioned
 
 ## Application Composition contract
 
-The provider-neutral Effect Schema and pure candidate validator are defined by [ADR-0020](../../../docs/adr/0020-governed-application-composition.md). Publication, promotion, and live Shell loading are separate follow-up slices; this contract alone does not change runtime loading.
+The provider-neutral Effect Schema and pure candidate validator are defined by [ADR-0020](../../../docs/adr/0020-governed-application-composition.md). The stage deployment adapter publishes the observed active composition for server-side consumers; live Shell loading remains a follow-up slice, so this contract does not change runtime loading yet.
 
 The validator checks the revision's format; it does not assign or reserve revision identities. The publisher in [#374](https://github.com/TechsioCZ/ontos/issues/374) must bind each revision to immutable canonical bytes and reject conflicting publication before advancing the active pointer.
 
 A continuously delivered Application Composition owns a dependency-closed DAG of Foundational and Business Module Contract Identities and their permitted implementations. Core validates that graph without learning its business meaning. Installation, activation, and entrypoint execution preserve dependency closure: a module activates only when one selected implementation and every required dependency are installed, compatible, healthy, and active. Customer Configurations select only modules and explicit implementations permitted by the composition.
 
 Each composition entry carries exact deployment identity, immutable artifact URLs plus digests, public-contract identity, allowed Shell contributions, required Core capabilities, Shell ABI, and shared-singleton requirements. The composition rejects missing, duplicate, incompatible, or unobserved identities before promotion.
+
+The composition lists every deployed module, so a module absent from it is authoritatively not installed. A browser module pins its Module Federation manifest and complete expose surface, which must include every public component its deployment contract declares. An API-only MicroVertical is a server-only module (`federation.execution: 'server'`): it pins only its deployment contract, declares no public components, and requires no shared browser singletons. The Shell reports the Core-defined contribution ABI and its Core capabilities at `/.well-known/ontos-shell-runtime.json`; its strict shared singletons come from its own Module Federation manifest.
 
 Dependency enforcement never authorizes private imports, shared repositories, shared business transactions, or direct table access. Typed API, public event, and Outbox communication preserves the deployment seams. A dependency outage produces an explicit unavailable/degraded result for the affected entrypoint without rewriting persisted module states; unrelated modules remain operable.
 

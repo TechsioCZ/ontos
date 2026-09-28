@@ -40,3 +40,19 @@ export const createSharedRuntimeConfig = (versions: SharedRuntimeVersions) => ({
     treeShaking: false,
   },
 });
+
+/**
+ * Packages every Shell and browser remote shares as strict singletons. Application Composition pins
+ * exactly these versions, so the list derives from the one sharing policy above instead of a copy.
+ */
+export const governedSharedSingletonPackages: readonly string[] = Object.freeze(
+  Object.keys(
+    createSharedRuntimeConfig({
+      '@modern-js/plugin-i18n/runtime': '',
+      '@modern-js/runtime': '',
+      '@tanstack/react-router': '',
+      react: '',
+      'react-dom': '',
+    }),
+  ),
+);

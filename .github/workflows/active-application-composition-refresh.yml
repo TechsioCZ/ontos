@@ -1,0 +1,72 @@
+name: Active Application Composition Refresh
+
+# Consumers stop trusting the published snapshot at validUntil, so stage re-observes the live services and
+# re-publishes it well inside the validity window. The cadence and window live in
+# app/scripts/active-application-composition.mts (ACTIVE_APPLICATION_COMPOSITION_POLICY).
+on:
+  schedule:
+    - cron: "17 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  refresh-stage:
+    name: Re-observe and re-publish the stage Application Composition
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: stage
+    concurrency:
+      group: zerops-stage
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      deployments: read
+    env:
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Resolve the last successful stage deployment
+        id: base
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: mise exec -- pnpm deployment-base:resolve --environment stage
+
+      # The publisher and topology of the deployed revision describe what stage actually runs.
+      - name: Check out the deployed revision
+        env:
+          DEPLOYED_SHA: ${{ steps.base.outputs.base }}
+        run: git checkout --detach "$DEPLOYED_SHA"
+
+      - name: Install the deployed revision's app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Re-observe live services and re-publish the active Application Composition
+        working-directory: app
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: >-
+          mise exec -- pnpm active-composition:publish publish
+          --environment stage
+          --restart-consumers
+          --recover-consumers
