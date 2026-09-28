@@ -1,0 +1,43 @@
+:root {
+  --color-akros-catalog-path-level-0: var(--color-bg-primary-base);
+  --color-akros-catalog-path-level-1: color-mix(
+    in oklab,
+    var(--color-bg-primary-base) 70%,
+    var(--color-vertical-navigation-surface)
+  );
+  --color-akros-catalog-path-level-2: color-mix(
+    in oklab,
+    var(--color-bg-primary-base) 50%,
+    var(--color-vertical-navigation-surface)
+  );
+  --color-akros-catalog-path-level-3: color-mix(
+    in oklab,
+    var(--color-bg-primary-base) 30%,
+    var(--color-vertical-navigation-surface)
+  );
+  --color-akros-catalog-path-level-4: color-mix(
+    in oklab,
+    var(--color-bg-primary-base) 15%,
+    var(--color-vertical-navigation-surface)
+  );
+}
+
+[data-akros-catalog] [data-akros-depth="0"]:is([data-current-path], [data-current]) {
+  background-color: var(--color-akros-catalog-path-level-0);
+}
+
+[data-akros-catalog] [data-akros-depth="1"]:is([data-current-path], [data-current]) {
+  background-color: var(--color-akros-catalog-path-level-1);
+}
+
+[data-akros-catalog] [data-akros-depth="2"]:is([data-current-path], [data-current]) {
+  background-color: var(--color-akros-catalog-path-level-2);
+}
+
+[data-akros-catalog] [data-akros-depth="3"]:is([data-current-path], [data-current]) {
+  background-color: var(--color-akros-catalog-path-level-3);
+}
+
+[data-akros-catalog] [data-akros-depth="4"]:is([data-current-path], [data-current]) {
+  background-color: var(--color-akros-catalog-path-level-4);
+}

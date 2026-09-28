@@ -2,6 +2,7 @@
 @import "@techsio/ui-kit/tokens/figma/akros/variables";
 @import "../tokens/_akros-typography.css";
 @import "../tokens/components/molecules/_akros-product-card.css";
+@import "../tokens/components/molecules/_akros-vertical-navigation.css";
 @import "../tokens/components/organisms/_akros-footer.css";
 @import "../styles/content-pages.css";
 @import "../styles/account-checkout.css";

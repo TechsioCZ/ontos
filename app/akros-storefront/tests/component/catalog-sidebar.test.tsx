@@ -17,6 +17,13 @@ describe("CatalogSidebar", () => {
       .filter((button) => button.getAttribute("aria-expanded") === "true");
 
     expect(currentLink.getAttribute("aria-current")).toBe("page");
+    expect(currentLink.getAttribute("data-akros-depth")).toBe("4");
+    expect(
+      within(desktopNavigation)
+        .getByRole("link", { name: "Nerezový spojovací materiál" })
+        .closest('[data-part="row"]')
+        ?.getAttribute("data-akros-depth"),
+    ).toBe("0");
     expect(expandedBranches).toHaveLength(5);
   });
 });

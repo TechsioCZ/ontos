@@ -31,19 +31,22 @@ function CategoryNavigationItem({
   const href = `/kategorie/${category.slug}`;
   const isCurrent = currentCategoryId === category.id;
   const isOnCurrentPath = activeIds.has(category.id);
+  const visualDepth = Math.min(depth, 4);
 
   if (children.length === 0) {
     return (
       <VerticalNavigation.Item>
-        <VerticalNavigation.Link as={NextLink} current={isCurrent} href={href}>
+        <VerticalNavigation.Link
+          as={NextLink}
+          current={isCurrent}
+          data-akros-depth={visualDepth}
+          href={href}
+        >
           {category.name}
         </VerticalNavigation.Link>
       </VerticalNavigation.Item>
     );
   }
-
-  const nestedTone = depth === 0 ? "subtle" : "accent";
-  const nestedVariant = depth > 1 && depth % 2 === 0 ? "secondary" : "primary";
 
   return (
     <VerticalNavigation.Branch
@@ -51,7 +54,7 @@ function CategoryNavigationItem({
       defaultOpen={isOnCurrentPath}
       id={`${navigationId}-${category.id}`}
     >
-      <VerticalNavigation.Row>
+      <VerticalNavigation.Row data-akros-depth={visualDepth}>
         <VerticalNavigation.Link as={NextLink} current={isCurrent} href={href}>
           {category.name}
         </VerticalNavigation.Link>
@@ -59,7 +62,7 @@ function CategoryNavigationItem({
           <VerticalNavigation.BranchIndicator />
         </VerticalNavigation.BranchTrigger>
       </VerticalNavigation.Row>
-      <VerticalNavigation.BranchContent indent tone={nestedTone} variant={nestedVariant}>
+      <VerticalNavigation.BranchContent indent>
         <VerticalNavigation.List>
           {children.map((child) => (
             <CategoryNavigationItem
@@ -88,6 +91,7 @@ export function CatalogSidebar({ activeSlug }: { activeSlug?: string }) {
   const navigation = (navigationId: "catalog-desktop" | "catalog-mobile") => (
     <VerticalNavigation
       aria-label={cs.catalog.title}
+      data-akros-catalog=""
       key={`${navigationId}-${activeSlug ?? "catalog"}`}
       maxIndentDepth={3}
       size="sm"
