@@ -876,10 +876,23 @@ const isAuthorizationRolloutChange = (changedPath: string): boolean =>
   changedPath === 'scripts/report-fail-closed-authorization-impact.mts' ||
   changedPath === 'topology/authorization-rollout.json';
 
-const CONSERVATIVE_FULL_DEPLOY_PATHS = new Set([
+/**
+ * Root-level inputs outside every owned delivery unit whose change reaches every build: the
+ * workspace toolchain and lockfile, the Zerops materializers, and the root files unit builds
+ * consume (the shared Module Federation config, the base tsconfig, and the module-contract
+ * generator with its imports). A guard test derives the build-input closure from the units' build
+ * configs so this list cannot fall behind them.
+ */
+export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   '.mise.toml',
+  'module-federation.shared.ts',
+  'oxfmt.config.ts',
   PACKAGE_MANIFEST,
   'pnpm-lock.yaml',
+  'scripts/generate-ontos-module-contract.mts',
+  'scripts/scaffolding-runtime.mts',
+  'scripts/scaffolding/shared.mts',
+  'tsconfig.base.json',
   WORKSPACE_MANIFEST,
   'scripts/install-zerops-node.sh',
   'scripts/verify-zerops-workspace-install.mts',
