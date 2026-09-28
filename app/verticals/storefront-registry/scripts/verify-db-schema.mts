@@ -19,6 +19,8 @@ interface InfrastructureRow {
   readonly policy_count: number;
   readonly raw_runtime_privilege_count: number;
   readonly runtime_routine_count: number;
+  readonly runtime_schema_create: boolean;
+  readonly runtime_schema_usage: boolean;
   readonly unsafe_runtime_routine_count: number;
 }
 
@@ -98,6 +100,8 @@ const verification = Effect.gen(function* verifyStorefrontRegistryDatabase() {
   const infrastructure = yield* client
     .unsafe<InfrastructureRow>(
       `select
+           has_schema_privilege('ontos_runtime', $1, 'USAGE') as runtime_schema_usage,
+           has_schema_privilege('ontos_runtime', $1, 'CREATE') as runtime_schema_create,
            (select count(*)::integer
               from pg_catalog.pg_trigger as trigger_record
               join pg_catalog.pg_class as relation on relation.oid = trigger_record.tgrelid
@@ -172,6 +176,8 @@ const verification = Effect.gen(function* verifyStorefrontRegistryDatabase() {
     row.policy_count !== expectedPolicyCount ||
     row.raw_runtime_privilege_count !== 0 ||
     row.runtime_routine_count !== 3 ||
+    !row.runtime_schema_usage ||
+    row.runtime_schema_create ||
     row.unsafe_runtime_routine_count !== 0
   ) {
     return yield* new StorefrontRegistrySchemaVerificationError({
