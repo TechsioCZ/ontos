@@ -688,6 +688,24 @@ jobs:
             mise exec -- pnpm --filter "$1" exec wrangler deployments status --name "$2" --json \
               | jq -er '.versions | map(select(.percentage == 100)) | .[0].version_id'
           }
+          # Snapshot every planned Worker's active version before changing any of them. Only
+          # Cloudflare's "Worker not found" (API code 10007) means a first deployment without a
+          # rollback target; any other failure aborts before anything is deployed.
+          mapfile -t units < <(jq -r '.[] | [.packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
+          declare -A previous_versions=()
+          for unit in "${units[@]}"; do
+            IFS=$'\t' read -r package worker <<<"$unit"
+            status_log="$RUNNER_TEMP/deployments-status-$worker.log"
+            if previous_version="$(active_version "$package" "$worker" 2>"$status_log")"; then
+              previous_versions["$worker"]="$previous_version"
+            elif grep -q 'code: 10007' "$status_log"; then
+              previous_versions["$worker"]=''
+            else
+              cat "$status_log" >&2
+              echo "Could not read the active version of $worker; no Worker was changed." >&2
+              exit 1
+            fi
+          done
           deployed=()
           # Worker versions are immutable. Each Worker this run deployed is rolled back to the exact
           # version that was active before, and the rollback counts only once that version is
@@ -697,7 +715,7 @@ jobs:
             for deployment in "${deployed[@]}"; do
               IFS=$'\t' read -r deployed_package deployed_worker previous_version <<<"$deployment"
               if [[ -z "$previous_version" ]]; then
-                unrestored+=("$deployed_worker (no previous version was active)")
+                unrestored+=("$deployed_worker (first deployment, no previous version)")
                 continue
               fi
               if mise exec -- pnpm --filter "$deployed_package" exec wrangler rollback "$previous_version" --name "$deployed_worker" --message "Rollback of $GITHUB_SHA after a failed edge deploy" --yes \
@@ -711,10 +729,9 @@ jobs:
               echo "::error title=Edge Worker not restored::$worker_state is still serving $GITHUB_SHA"
             done
           }
-          while IFS=$'\t' read -r package worker; do
-            # A Worker without an active deployment (its first deploy) has no version to return to.
-            previous_version="$(active_version "$package" "$worker" || true)"
-            deployed+=("$package"$'\t'"$worker"$'\t'"$previous_version")
+          for unit in "${units[@]}"; do
+            IFS=$'\t' read -r package worker <<<"$unit"
+            deployed+=("$package"$'\t'"$worker"$'\t'"${previous_versions[$worker]}")
             if ! mise exec -- pnpm --filter "$package" run cloudflare:deploy; then
               echo "Cloudflare deploy failed for planned edge unit $package ($worker)" >&2
               rollback
@@ -725,4 +742,4 @@ jobs:
               rollback
               exit 1
             fi
-          done < <(jq -r '.[] | [.packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
+          done
