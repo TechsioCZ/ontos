@@ -116,6 +116,8 @@ export const PriceGroupDefinitionResponseSchema = Schema.Union([
     identity: PriceGroupIdentitySchema,
     observedAt: PriceGroupInstantSchema,
     scheduledRetirement: Schema.optionalKey(PriceGroupRetirementAcceptanceSchema),
+    // Exact revision/schedule as accepted; not a claim of Current or eventual usability.
+    // identity.lifecycle and scheduledRetirement independently describe the lifecycle.
     selection: Schema.Literal('HISTORICAL'),
   }).check(
     Schema.makeFilter((response) => {

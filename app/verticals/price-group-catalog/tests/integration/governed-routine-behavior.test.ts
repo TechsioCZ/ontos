@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { sql } from 'drizzle-orm';
@@ -439,7 +441,7 @@ it.live('executes the tenant-only Price Group lifecycle through the six governed
           new Date('2026-09-15T00:00:00.000Z'),
         ),
       );
-      expect(supersededRevision.definition.effectivePeriod.effectiveTo).toBe('2026-09-15T00:00:00.000Z');
+      expect(supersededRevision.definition).toEqual(created);
 
       const staleRevision = yield* Effect.flip(
         inScope((invoker) =>
@@ -588,7 +590,7 @@ it.live('executes the tenant-only Price Group lifecycle through the six governed
           effectiveFrom: new Date('2026-09-21T12:00:00.000Z'),
           effectiveTo: new Date('2026-09-22T00:00:00.000Z'),
           expectedCurrent: {
-            catalogRevision: competingGroup.acceptedCatalogRevision,
+            catalogRevision: unchangedAfterShortRevision.catalogRevision,
             definitionRevisionId: competingGroup.definitionRevisionId,
             definitionRevisionNumber: competingGroup.revisionNumber,
             meaningFingerprint: competingGroup.meaningFingerprint,
@@ -911,17 +913,35 @@ it.live('executes the tenant-only Price Group lifecycle through the six governed
         ],
         { concurrency: 'unbounded' },
       );
-      // The tenant lock runs the two routines in either order. The retirement always applies to the
-      // unchanged group. The revision ends at the retirement boundary, so it is only valid after the
-      // retirement: when it takes the lock first, the group is still ACTIVE and rejects the bounded
-      // schedule without recording the invocation, and the same revision succeeds once retired.
+      // Either the bounded revision is rejected before retirement, or its expectation is
+      // stale after retirement. Neither order may silently translate an old concurrency fence.
       expect(Result.isSuccess(raceRetirementResult)).toBe(true);
+      expect(Result.isFailure(raceRevisionResult)).toBe(true);
       if (Result.isFailure(raceRevisionResult)) {
-        expect(Schema.is(PriceGroupEffectivePeriodConflict)(raceRevisionResult.failure)).toBe(true);
+        expect(
+          Schema.is(PriceGroupEffectivePeriodConflict)(raceRevisionResult.failure) ||
+            Schema.is(PriceGroupExpectedCurrentConflict)(raceRevisionResult.failure),
+        ).toBe(true);
       }
-      const raceRevision = Result.isSuccess(raceRevisionResult)
-        ? raceRevisionResult.success
-        : yield* createRaceRevision;
+      const freshRace = yield* inScope((invoker) =>
+        priceGroupCatalogPersistenceFromRoutineInvoker(invoker, scope).readCurrentDefinition(
+          raceGroup.priceGroupRef,
+          raceRevisionInput.trustedEffectiveAt,
+        ),
+      );
+      const raceRevision = yield* inScope((invoker) =>
+        priceGroupCatalogPersistenceFromRoutineInvoker(invoker, scope).createDefinitionRevision({
+          ...raceRevisionInput,
+          actionInvocationId: randomUUID(),
+          expectedCurrent: {
+            catalogRevision: freshRace.catalogRevision,
+            definitionRevisionId: freshRace.definition.definitionRevisionId,
+            definitionRevisionNumber: freshRace.definition.revisionNumber,
+            meaningFingerprint: freshRace.definition.meaningFingerprint,
+            priceGroupRef: freshRace.definition.priceGroupRef,
+          },
+        }),
+      );
       expect(raceRevision.definitionRevisionId).toBe(raceRevisionId);
       const replayedRaceRetirement = yield* inScope((invoker) =>
         priceGroupCatalogPersistenceFromRoutineInvoker(invoker, scope).retirePriceGroup(raceRetirementInput),
@@ -936,7 +956,7 @@ it.live('executes the tenant-only Price Group lifecycle through the six governed
                  where tenant_id = ${tenantId}::uuid
                    and price_group_id = ${created.priceGroupRef.resourceId}::uuid
                    and definition_revision_id = ${created.definitionRevisionId}::uuid
-                   and schedule_catalog_revision = ${retirement.acceptedCatalogRevision}`,
+                   and schedule_catalog_revision = ${created.acceptedCatalogRevision}`,
           );
         }),
       );

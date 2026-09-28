@@ -141,11 +141,15 @@ const validateMigrationProfiles = Effect.fn('MigrateCustomerPriceGroupAction.val
 
 const resolveMigrationCatalogPriceGroup = Effect.fn(
   'MigrateCustomerPriceGroupAction.resolveMigrationCatalogPriceGroup',
-)(function* resolve(payload: MigrateCustomerPriceGroupPayload, context: MigrateCustomerPriceGroupContext) {
+)(function* resolve(
+  payload: MigrateCustomerPriceGroupPayload,
+  context: MigrateCustomerPriceGroupContext,
+  trustedOperationAt: string,
+) {
   const catalogOutcome = yield* context.services.catalog.resolveCurrent(
     payload.targetPriceGroupRef,
     CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
-    payload.effectiveFrom,
+    trustedOperationAt,
   );
   if (catalogOutcome._tag !== 'USABLE') {
     return yield* new CustomerPriceGroupCatalogRejected({
@@ -254,7 +258,7 @@ const handleMigrateCustomerPriceGroup = Effect.fn('MigrateCustomerPriceGroupActi
     if (profileConflicts.length > 0) {
       return { _tag: 'CONFLICTS', conflicts: profileConflicts } as const;
     }
-    const catalogOutcome = yield* resolveMigrationCatalogPriceGroup(payload, context);
+    const catalogOutcome = yield* resolveMigrationCatalogPriceGroup(payload, context, recordedAt);
 
     const stored = yield* context.services.store.migrate({
       actionInvocationId: context.actionInvocationId,

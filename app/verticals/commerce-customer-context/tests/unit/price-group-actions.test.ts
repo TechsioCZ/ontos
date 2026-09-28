@@ -372,7 +372,7 @@ describe('customer PriceGroup Actions', () => {
     }),
   );
 
-  it.effect('threads one validated scheduled instant through profile, catalog, and persistence', () =>
+  it.effect('keeps scheduling time separate from Current catalog verification time', () =>
     Effect.gen(function* threadsScheduledInstant() {
       const effectiveFrom = '2027-02-01T00:00:00.000Z';
       const recordedAt = '2027-01-01T00:00:00.000Z';
@@ -401,7 +401,7 @@ describe('customer PriceGroup Actions', () => {
                   _tag: 'USABLE',
                   compatibility: {
                     catalogRevision: 1,
-                    definitionEffectivePeriod: { effectiveFrom, effectiveTo: null },
+                    definitionEffectivePeriod: { effectiveFrom: recordedAt, effectiveTo: null },
                     definitionRevisionId: '55555555-5555-4555-8555-555555555555',
                     definitionRevisionNumber: 1,
                     meaningFingerprint: 'a'.repeat(64),
@@ -410,8 +410,8 @@ describe('customer PriceGroup Actions', () => {
                       contractId: 'commerce.customer-price-group-assignment.v1',
                       version: 1,
                     },
-                    trustedOperationAt: effectiveFrom,
-                    verifiedAt: effectiveFrom,
+                    trustedOperationAt: recordedAt,
+                    verifiedAt: recordedAt,
                   },
                   priceGroupRef,
                 });
@@ -457,7 +457,7 @@ describe('customer PriceGroup Actions', () => {
       );
       expect(observed).toEqual([
         `profile:${effectiveFrom}`,
-        `catalog:${effectiveFrom}`,
+        `catalog:${recordedAt}`,
         `store:${effectiveFrom}:${recordedAt}`,
       ]);
     }),

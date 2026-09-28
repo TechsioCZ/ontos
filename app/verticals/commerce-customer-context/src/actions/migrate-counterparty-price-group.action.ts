@@ -155,13 +155,13 @@ const resolveMigrateCounterpartyPriceGroupCatalog = Effect.fn(
   'MigrateCounterpartyPriceGroupAction.resolveMigrateCounterpartyPriceGroupCatalog',
 )(function* resolveMigrateCounterpartyPriceGroupCatalogEffect(
   priceGroupRef: MigrateCounterpartyPriceGroupPayload['targetPriceGroupRef'],
-  effectiveFrom: MigrateCounterpartyPriceGroupPayload['effectiveFrom'],
+  trustedOperationAt: string,
   catalog: PriceGroupCatalogPort,
 ) {
   const catalogOutcome = yield* catalog.resolveCurrent(
     priceGroupRef,
     CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT,
-    effectiveFrom,
+    trustedOperationAt,
   );
   if (catalogOutcome._tag !== 'USABLE') {
     return yield* new CustomerPriceGroupCatalogRejected({
@@ -303,7 +303,7 @@ export const handleMigrateCounterpartyPriceGroup = Effect.fn(
 
   const catalogOutcome = yield* resolveMigrateCounterpartyPriceGroupCatalog(
     payload.targetPriceGroupRef,
-    payload.effectiveFrom,
+    recordedAt,
     context.services.catalog,
   );
 
