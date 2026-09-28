@@ -22,7 +22,7 @@ export const cs = {
     claims: "Reklamace",
     contacts: "Kontakty",
     login: "Přihlášení",
-    stock: "SKLAD: 24 000 ks",
+    stock: "SKLADEM",
     quickSelect: "Rychlý výběr produktů",
     cart: "Košík",
     openNavigation: "Otevřít navigaci",

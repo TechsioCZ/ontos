@@ -5,6 +5,19 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
+import type { CartItemSnapshot } from "@/mock-storefront/cart";
+
+const item: CartItemSnapshot = {
+  productId: "product-screw",
+  slug: "screw",
+  name: "Screw",
+  sku: "SKU-1",
+  imageSrc: "/screw.png",
+  imageAlt: "Screw",
+  unit: "ks",
+  stockCount: 100,
+  priceMinor: 1290,
+};
 
 function CartCount() {
   const { itemCount } = useCart();
@@ -21,7 +34,7 @@ describe("CartProvider", () => {
     render(
       <CartProvider storage={null}>
         <CartCount />
-        <AddToCartButton productId="product-screw" />
+        <AddToCartButton item={item} />
       </CartProvider>,
     );
 
@@ -35,10 +48,10 @@ describe("CartProvider", () => {
     const storage = window.localStorage;
     storage.clear();
     storage.setItem(
-      "akros-demo-cart-v1",
+      "akros-demo-cart-v2",
       JSON.stringify({
-        version: 1,
-        lines: [{ productId: "product-screw", quantity: 2 }],
+        version: 2,
+        lines: [{ ...item, quantity: 2 }],
       }),
     );
 

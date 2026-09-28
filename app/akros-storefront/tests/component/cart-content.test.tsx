@@ -12,10 +12,23 @@ describe("CartContent", () => {
 
   it("lets a shopper remove a persisted product from the cart", async () => {
     window.localStorage.setItem(
-      "akros-demo-cart-v1",
+      "akros-demo-cart-v2",
       JSON.stringify({
-        version: 1,
-        lines: [{ productId: "product-screw", quantity: 2 }],
+        version: 2,
+        lines: [
+          {
+            productId: "product-screw",
+            slug: "test-product",
+            name: "Test product",
+            sku: "SKU-1",
+            imageSrc: "/akros/products/product-02.jpg",
+            imageAlt: "Test product",
+            unit: "ks",
+            stockCount: 20,
+            priceMinor: 100,
+            quantity: 2,
+          },
+        ],
       }),
     );
 
@@ -27,11 +40,9 @@ describe("CartContent", () => {
       </CartProvider>,
     );
 
-    expect(
-      await screen.findByText("Vrut univerzální se zápustnou hlavou s křížovou drážkou"),
-    ).not.toBeNull();
+    expect(await screen.findByText("Test product")).not.toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "Odebrat Vrut univerzální" }));
+    await user.click(screen.getByRole("button", { name: "Odebrat Test product" }));
 
     await waitFor(() => {
       expect(screen.getByText("Košík je zatím prázdný.")).not.toBeNull();

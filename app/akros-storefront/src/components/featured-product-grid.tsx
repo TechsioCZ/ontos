@@ -6,9 +6,9 @@ import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 
 import { PrimaryLinkButton } from "@/components/primary-link-button";
 import { cs } from "@/i18n/cs";
-import type { CatalogProduct } from "@/mock-storefront/types";
+import type { CatalogProductSummary } from "@/mock-storefront/types";
 
-export function FeaturedProductGrid({ products }: { products: CatalogProduct[] }) {
+export function FeaturedProductGrid({ products }: { products: CatalogProductSummary[] }) {
   return (
     <div className="akros-product-grid akros-featured-product-grid">
       {products.map((product) => (

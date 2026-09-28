@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { CatalogSidebar } from "@/components/catalog-sidebar";
 import { SiteFooter } from "@/components/site-footer";
 import { SiteHeader } from "@/components/site-header";
+import { getSidebarCategories } from "@/mock-storefront/catalog";
 
 export function StorefrontShell({
   activeCategorySlug,
@@ -15,7 +16,10 @@ export function StorefrontShell({
     <div className="akros-shell">
       <SiteHeader />
       <div className="akros-page-grid">
-        <CatalogSidebar activeSlug={activeCategorySlug} />
+        <CatalogSidebar
+          activeSlug={activeCategorySlug}
+          categories={getSidebarCategories(activeCategorySlug)}
+        />
         <main className="akros-main">{children}</main>
       </div>
       <SiteFooter />

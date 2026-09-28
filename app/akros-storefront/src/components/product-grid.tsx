@@ -8,13 +8,13 @@ import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
-import type { CatalogProduct } from "@/mock-storefront/types";
+import type { CatalogProductSummary } from "@/mock-storefront/types";
 
 export function ProductGrid({
   products,
   action = "purchase",
 }: {
-  products: CatalogProduct[];
+  products: CatalogProductSummary[];
   action?: "purchase" | "detail";
 }) {
   return (
@@ -39,14 +39,19 @@ export function ProductGrid({
           </ProductCard.Name>
           {action === "purchase" && (
             <ProductCard.Price>
-              {formatPrice(product.priceMinor, product.currency)}
+              {product.priceMinor > 0
+                ? formatPrice(product.priceMinor, product.currency)
+                : "Cena na dotaz"}
             </ProductCard.Price>
           )}
           <ProductCard.Stock status="in-stock">
             {cs.product.inStock}: {product.stockCount.toLocaleString("cs-CZ")} {product.unit}
           </ProductCard.Stock>
           <ProductCard.Actions>
-            {action === "detail" ? (
+            {action === "detail" ||
+            product.hasVariants ||
+            product.stockCount < product.minimumQuantity ||
+            product.priceMinor <= 0 ? (
               <LinkButton
                 as={NextLink}
                 href={`/produkt/${product.slug}`}
@@ -56,7 +61,19 @@ export function ProductGrid({
                 {cs.actions.viewDetail}
               </LinkButton>
             ) : (
-              <AddToCartButton productId={product.id} />
+              <AddToCartButton
+                item={{
+                  productId: product.id,
+                  slug: product.slug,
+                  name: product.name,
+                  sku: product.sku,
+                  imageSrc: product.imageSrc,
+                  imageAlt: product.imageAlt,
+                  unit: product.unit,
+                  stockCount: product.stockCount,
+                  priceMinor: product.priceMinor,
+                }}
+              />
             )}
           </ProductCard.Actions>
         </ProductCard>

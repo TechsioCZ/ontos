@@ -4,27 +4,44 @@ export interface CatalogCategory {
   slug: string;
   name: string;
   position: number;
+  heading?: string;
+  description?: string;
+  longDescription?: string;
   imageSrc?: string;
   imageAlt?: string;
 }
 
 export interface CatalogProductVariant {
   id: string;
+  sourceId: string;
+  sku: string;
   label: string;
-  packageQuantity: number;
+  minimumQuantity: number;
   priceMinor: number;
   stockCount: number;
+  unit: string;
+  priceTiers: CatalogPriceTier[];
+  parameters: CatalogParameter[];
+  imageSrc?: string;
+}
+
+export interface CatalogPriceTier {
+  minimumQuantity: number;
+  priceMinor: number;
+  priceExcludingVatMinor: number;
+}
+
+export interface CatalogParameter {
+  label: string;
+  value: string;
+  unit: string;
 }
 
 export interface CatalogProductDetail {
-  salesHeading: string;
-  salesCopy: string[];
-  quantityTiers: Array<{ label: string; priceMinor: number }>;
-  actions: string[];
   descriptionParagraphs: string[];
-  parameters: Array<{ label: string; value: string }>;
+  parameters: CatalogParameter[];
+  priceTiers: CatalogPriceTier[];
   variants: CatalogProductVariant[];
-  recommendationProductIds: string[];
 }
 
 export interface CatalogProduct {
@@ -37,16 +54,32 @@ export interface CatalogProduct {
   priceMinor: number;
   currency: "CZK";
   unit: string;
+  minimumQuantity: number;
   stockCount: number;
   imageSrc: string;
   imageAlt: string;
   secondaryImageSrc?: string;
   featuredPosition: number | null;
-  detail?: CatalogProductDetail;
+  detail: CatalogProductDetail;
 }
 
-export interface CatalogFixture {
+export type CatalogProductSummary = Omit<CatalogProduct, "detail" | "secondaryImageSrc"> & {
+  hasVariants: boolean;
+};
+
+export interface CatalogMetadata {
+  sourceCategoryCount: number;
+  sourceItemCount: number;
+  productGroupCount: number;
+}
+
+export interface CatalogData {
+  metadata: CatalogMetadata;
   homepageFeaturedProductIds: string[];
-  categories: CatalogCategory[];
   products: CatalogProduct[];
+}
+
+export interface CategoryData {
+  metadata: CatalogMetadata;
+  categories: CatalogCategory[];
 }

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 
 import { AccountShell } from "@/components/account-shell";
 import { ProductGrid } from "@/components/product-grid";
-import { getProducts } from "@/mock-storefront/catalog";
+import { getProducts, toProductSummary } from "@/mock-storefront/catalog";
 
 export const metadata: Metadata = { title: "Oblíbené produkty" };
 
@@ -17,7 +17,7 @@ export default function FavoritesPage() {
         <a href="#oblibene-produkty">Sdílet seznam</a>
       </header>
       <section className="akros-favorites-grid" id="oblibene-produkty">
-        <ProductGrid products={getProducts().slice(0, 6)} />
+        <ProductGrid products={getProducts().slice(0, 6).map(toProductSummary)} />
       </section>
     </AccountShell>
   );

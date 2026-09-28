@@ -1,115 +1,87 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  type CartAction,
+  type CartItemSnapshot,
   cartReducer,
   createEmptyCart,
   getCartItemCount,
   getCartSubtotal,
 } from "@/mock-storefront/cart";
 
+const screw: CartItemSnapshot = {
+  productId: "product-screw",
+  slug: "screw",
+  name: "Screw",
+  sku: "SKU-1",
+  imageSrc: "/screw.png",
+  imageAlt: "Screw",
+  unit: "ks",
+  stockCount: 100,
+  priceMinor: 1_290,
+};
+
+const variant = (id: string, priceMinor = 194): CartItemSnapshot => ({
+  ...screw,
+  productId: "product-hex-bolt",
+  variantId: id,
+  variantLabel: id,
+  priceMinor,
+});
+
 describe("local demo cart", () => {
   it("adds a new product and merges subsequent quantities", () => {
-    const once = cartReducer(createEmptyCart(), {
-      type: "add",
-      productId: "product-screw",
-      quantity: 1,
-    });
-    const three = cartReducer(once, {
-      type: "add",
-      productId: "product-screw",
-      quantity: 2,
-    });
+    const once = cartReducer(createEmptyCart(), { type: "add", item: screw, quantity: 1 });
+    const three = cartReducer(once, { type: "add", item: screw, quantity: 2 });
 
-    expect(three.lines).toEqual([{ productId: "product-screw", quantity: 3 }]);
+    expect(three.lines).toEqual([{ ...screw, quantity: 3 }]);
     expect(getCartItemCount(three)).toBe(3);
   });
 
   it("keeps separately selected product variants as distinct cart lines", () => {
     const firstVariant = cartReducer(createEmptyCart(), {
       type: "add",
-      productId: "product-hex-bolt",
-      variantId: "hex-bolt-m2x5",
+      item: variant("hex-bolt-m2x5"),
       quantity: 1,
-    } as CartAction);
+    });
     const secondVariant = cartReducer(firstVariant, {
       type: "add",
-      productId: "product-hex-bolt",
-      variantId: "hex-bolt-m2x8",
+      item: variant("hex-bolt-m2x8"),
       quantity: 1,
-    } as CartAction);
+    });
 
     expect(secondVariant.lines).toEqual([
-      {
-        productId: "product-hex-bolt",
-        variantId: "hex-bolt-m2x5",
-        quantity: 1,
-      },
-      {
-        productId: "product-hex-bolt",
-        variantId: "hex-bolt-m2x8",
-        quantity: 1,
-      },
+      { ...variant("hex-bolt-m2x5"), quantity: 1 },
+      { ...variant("hex-bolt-m2x8"), quantity: 1 },
     ]);
   });
 
   it("removes a line when its quantity is set to zero", () => {
-    const cart = {
-      version: 1 as const,
-      lines: [{ productId: "product-screw", quantity: 2 }],
-    };
+    const cart = { version: 2 as const, lines: [{ ...screw, quantity: 2 }] };
 
     expect(
       cartReducer(cart, {
         type: "set-quantity",
-        productId: "product-screw",
+        productId: screw.productId,
         quantity: 0,
       }).lines,
     ).toEqual([]);
   });
 
   it("clears all lines after completing the local checkout", () => {
-    const cart = {
-      version: 1 as const,
-      lines: [{ productId: "product-screw", quantity: 2 }],
-    };
+    const cart = { version: 2 as const, lines: [{ ...screw, quantity: 2 }] };
 
     expect(cartReducer(cart, { type: "clear" })).toEqual(createEmptyCart());
   });
 
-  it("calculates totals in minor currency units without floating point drift", () => {
+  it("calculates totals from the immutable item snapshots", () => {
     const cart = {
-      version: 1 as const,
+      version: 2 as const,
       lines: [
-        { productId: "product-screw", quantity: 3 },
-        { productId: "product-rope", quantity: 2 },
+        { ...screw, quantity: 3 },
+        { ...variant("rope", 4_590), quantity: 2 },
       ],
     };
 
-    const prices = new Map([
-      ["product-screw", 1290],
-      ["product-rope", 4590],
-    ]);
-
-    expect(getCartSubtotal(cart, (productId) => prices.get(productId))).toBe(13_050);
-  });
-
-  it("uses the selected variant price when calculating totals", () => {
-    const cart = {
-      version: 1 as const,
-      lines: [
-        {
-          productId: "product-hex-bolt",
-          variantId: "hex-bolt-m4x16",
-          quantity: 3,
-        },
-      ],
-    };
-
-    expect(
-      getCartSubtotal(cart, (_productId, variantId) =>
-        variantId === "hex-bolt-m4x16" ? 194 : undefined,
-      ),
-    ).toBe(582);
+    expect(getCartSubtotal(cart)).toBe(13_050);
   });
 });

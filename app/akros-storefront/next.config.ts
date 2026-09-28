@@ -2,6 +2,15 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   agentRules: false,
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "www.akros.cz",
+        pathname: "/data/**",
+      },
+    ],
+  },
   reactStrictMode: true,
   async rewrites() {
     return [
@@ -20,6 +29,10 @@ const nextConfig: NextConfig = {
       {
         source: "/srouby-se-sestihrannou-hlavou-din-933-a2",
         destination: "/produkt/srouby-se-sestihrannou-hlavou-din-933-a2",
+      },
+      {
+        source: "/produkt/vrut-univerzalni-se-zapustnou-hlavou",
+        destination: "/produkt/vruty-se-zapustnou-hlavou-s-krizovou-drazkou-din-7997-a2",
       },
       {
         source: "/matice-sestihranna-m8-din-934-a2",

@@ -4,12 +4,6 @@ import { VerticalNavigation } from "@techsio/ui-kit/molecules/vertical-navigatio
 import NextLink from "next/link";
 
 import { cs } from "@/i18n/cs";
-import {
-  getCategoryBySlug,
-  getCategoryTrail,
-  getChildCategories,
-  getTopCategories,
-} from "@/mock-storefront/catalog";
 import type { CatalogCategory } from "@/mock-storefront/types";
 
 interface CategoryNavigationItemProps {
@@ -18,6 +12,7 @@ interface CategoryNavigationItemProps {
   currentCategoryId?: string;
   depth?: number;
   navigationId: string;
+  categories: CatalogCategory[];
 }
 
 function CategoryNavigationItem({
@@ -26,8 +21,9 @@ function CategoryNavigationItem({
   currentCategoryId,
   depth = 0,
   navigationId,
+  categories,
 }: CategoryNavigationItemProps) {
-  const children = getChildCategories(category.id);
+  const children = categories.filter((candidate) => candidate.parentId === category.id);
   const href = `/kategorie/${category.slug}`;
   const isCurrent = currentCategoryId === category.id;
   const isOnCurrentPath = activeIds.has(category.id);
@@ -72,6 +68,7 @@ function CategoryNavigationItem({
               depth={depth + 1}
               key={child.id}
               navigationId={navigationId}
+              categories={categories}
             />
           ))}
         </VerticalNavigation.List>
@@ -80,13 +77,26 @@ function CategoryNavigationItem({
   );
 }
 
-export function CatalogSidebar({ activeSlug }: { activeSlug?: string }) {
-  const activeCategory = activeSlug ? getCategoryBySlug(activeSlug) : undefined;
-  const activeTrail = activeCategory ? getCategoryTrail(activeCategory) : [];
+export function CatalogSidebar({
+  activeSlug,
+  categories,
+}: {
+  activeSlug?: string;
+  categories: CatalogCategory[];
+}) {
+  const activeCategory = activeSlug
+    ? categories.find((category) => category.slug === activeSlug)
+    : undefined;
+  const activeTrail: CatalogCategory[] = [];
+  let trailCategory = activeCategory;
+  while (trailCategory) {
+    activeTrail.unshift(trailCategory);
+    trailCategory = trailCategory.parentId
+      ? categories.find((category) => category.id === trailCategory?.parentId)
+      : undefined;
+  }
   const activeIds = new Set(activeTrail.map((category) => category.id));
-  const topCategories = getTopCategories();
-  const groupLabel = topCategories.find((category) => category.id === "category-special");
-  const navigationCategories = topCategories.filter((category) => category.id !== groupLabel?.id);
+  const topCategories = categories.filter((category) => category.parentId === null);
 
   const navigation = (navigationId: "catalog-desktop" | "catalog-mobile") => (
     <VerticalNavigation
@@ -97,17 +107,15 @@ export function CatalogSidebar({ activeSlug }: { activeSlug?: string }) {
       size="sm"
     >
       <VerticalNavigation.Group tone="plain">
-        {groupLabel && (
-          <VerticalNavigation.GroupLabel>{groupLabel.name}</VerticalNavigation.GroupLabel>
-        )}
         <VerticalNavigation.List>
-          {navigationCategories.map((category) => (
+          {topCategories.map((category) => (
             <CategoryNavigationItem
               activeIds={activeIds}
               category={category}
               currentCategoryId={activeCategory?.id}
               key={category.id}
               navigationId={navigationId}
+              categories={categories}
             />
           ))}
         </VerticalNavigation.List>

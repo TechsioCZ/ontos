@@ -1,5 +1,44 @@
-import { catalogFixture } from "./fixtures/catalog";
-import type { CatalogCategory, CatalogProduct } from "./types";
+import type {
+  CatalogCategory,
+  CatalogData,
+  CatalogMetadata,
+  CatalogProduct,
+  CatalogProductSummary,
+  CategoryData,
+} from "./types";
+import rawCatalogData from "./generated/catalog.generated.json";
+import rawCategoryData from "./generated/categories.generated.json";
+
+const catalogData = rawCatalogData as CatalogData;
+const categoryData = rawCategoryData as CategoryData;
+const categoriesById = new Map(
+  categoryData.categories.map((category) => [category.id, category] as const),
+);
+const categoriesBySlug = new Map(
+  categoryData.categories.map((category) => [category.slug, category] as const),
+);
+const productsById = new Map(catalogData.products.map((product) => [product.id, product] as const));
+const productsBySlug = new Map(
+  catalogData.products.map((product) => [product.slug, product] as const),
+);
+
+export const toProductSummary = (product: CatalogProduct): CatalogProductSummary => ({
+  id: product.id,
+  slug: product.slug,
+  categoryId: product.categoryId,
+  name: product.name,
+  sku: product.sku,
+  description: product.description,
+  priceMinor: product.priceMinor,
+  currency: product.currency,
+  unit: product.unit,
+  minimumQuantity: product.minimumQuantity,
+  stockCount: product.stockCount,
+  imageSrc: product.imageSrc,
+  imageAlt: product.imageAlt,
+  featuredPosition: product.featuredPosition,
+  hasVariants: product.detail.variants.length > 0,
+});
 
 const normalizeSearchTerm = (value: string) =>
   value
@@ -14,7 +53,7 @@ const collectCategoryIds = (categoryId: string): Set<string> => {
 
   while (changed) {
     changed = false;
-    for (const category of catalogFixture.categories) {
+    for (const category of categoryData.categories) {
       if (category.parentId && ids.has(category.parentId) && !ids.has(category.id)) {
         ids.add(category.id);
         changed = true;
@@ -26,7 +65,9 @@ const collectCategoryIds = (categoryId: string): Set<string> => {
 };
 
 export const getCategories = (): CatalogCategory[] =>
-  [...catalogFixture.categories].sort((left, right) => left.position - right.position);
+  [...categoryData.categories].sort(
+    (left, right) => left.position - right.position || left.name.localeCompare(right.name, "cs"),
+  );
 
 export const getTopCategories = (): CatalogCategory[] =>
   getCategories().filter((category) => category.parentId === null);
@@ -34,18 +75,38 @@ export const getTopCategories = (): CatalogCategory[] =>
 export const getChildCategories = (parentId: string): CatalogCategory[] =>
   getCategories().filter((category) => category.parentId === parentId);
 
-export const getCategoryBySlug = (slug: string): CatalogCategory | undefined =>
-  catalogFixture.categories.find((category) => category.slug === slug);
+export const getSidebarCategories = (activeSlug?: string): CatalogCategory[] => {
+  const preferredRootIds = new Set(["26", "1223", "1369"]);
+  const preferredRoots = getTopCategories().filter((category) => preferredRootIds.has(category.id));
+  const topCategories = preferredRoots.length > 0 ? preferredRoots : getTopCategories();
+  const includedIds = new Set(topCategories.map((category) => category.id));
 
-export const getCategoryById = (id: string): CatalogCategory | undefined =>
-  catalogFixture.categories.find((category) => category.id === id);
+  for (const category of topCategories) {
+    for (const child of getChildCategories(category.id)) includedIds.add(child.id);
+  }
+
+  const activeCategory = activeSlug ? getCategoryBySlug(activeSlug) : undefined;
+  if (activeCategory) {
+    for (const category of getCategoryTrail(activeCategory)) {
+      includedIds.add(category.id);
+      for (const child of getChildCategories(category.id)) includedIds.add(child.id);
+    }
+  }
+
+  return getCategories().filter((category) => includedIds.has(category.id));
+};
+
+export const getCategoryBySlug = (slug: string): CatalogCategory | undefined =>
+  categoriesBySlug.get(slug);
+
+export const getCategoryById = (id: string): CatalogCategory | undefined => categoriesById.get(id);
 
 export const getCategoryTrail = (category: CatalogCategory): CatalogCategory[] => {
   const trail: CatalogCategory[] = [category];
   let parentId = category.parentId;
 
   while (parentId) {
-    const parent = catalogFixture.categories.find((candidate) => candidate.id === parentId);
+    const parent = categoriesById.get(parentId);
     if (!parent) break;
     trail.unshift(parent);
     parentId = parent.parentId;
@@ -54,7 +115,9 @@ export const getCategoryTrail = (category: CatalogCategory): CatalogCategory[] =
   return trail;
 };
 
-export const getProducts = (): CatalogProduct[] => [...catalogFixture.products];
+export const getCatalogStats = (): CatalogMetadata => ({ ...catalogData.metadata });
+
+export const getProducts = (): CatalogProduct[] => [...catalogData.products];
 
 export const getFeaturedProducts = (): CatalogProduct[] =>
   getProducts()
@@ -66,13 +129,12 @@ export const getFeaturedProducts = (): CatalogProduct[] =>
     );
 
 export const getHomepageFeaturedProducts = (): CatalogProduct[] =>
-  catalogFixture.homepageFeaturedProductIds.flatMap((productId) => {
-    const product = catalogFixture.products.find((candidate) => candidate.id === productId);
+  catalogData.homepageFeaturedProductIds.flatMap((productId) => {
+    const product = productsById.get(productId);
     return product ? [product] : [];
   });
 
-export const getProductById = (id: string): CatalogProduct | undefined =>
-  catalogFixture.products.find((product) => product.id === id);
+export const getProductById = (id: string): CatalogProduct | undefined => productsById.get(id);
 
 export const getProductVariantById = (productId: string, variantId?: string) =>
   variantId
@@ -87,7 +149,7 @@ export const getProductUnitPrice = (productId: string, variantId?: string): numb
 };
 
 export const getProductBySlug = (slug: string): CatalogProduct | undefined =>
-  catalogFixture.products.find((product) => product.slug === slug);
+  productsBySlug.get(slug);
 
 export const getProductsByCategory = (slug: string): CatalogProduct[] => {
   const category = getCategoryBySlug(slug);

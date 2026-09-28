@@ -289,6 +289,14 @@ body {
   gap: 24px;
 }
 
+.akros-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dimension-4);
+  margin-block-start: var(--akros-section-gap);
+}
+
 .akros-product-card {
   min-width: 0;
   background: var(--color-base);
@@ -575,12 +583,6 @@ body {
 
 .akros-variant-purchase__search {
   width: min(100%, 380px);
-}
-
-.akros-variant-purchase__consents {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 24px;
 }
 
 .akros-variant-purchase__table-wrap {
@@ -1048,8 +1050,7 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .akros-product-detail--variants .akros-product-detail__lead,
-  .akros-variant-purchase__consents {
+  .akros-product-detail--variants .akros-product-detail__lead {
     grid-template-columns: 1fr;
   }
 

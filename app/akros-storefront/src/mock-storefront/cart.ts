@@ -1,26 +1,38 @@
-export interface CartLine {
+export interface CartItemSnapshot {
   productId: string;
   variantId?: string;
+  slug: string;
+  name: string;
+  sku: string;
+  imageSrc: string;
+  imageAlt: string;
+  unit: string;
+  stockCount: number;
+  priceMinor: number;
+  variantLabel?: string;
+}
+
+export interface CartLine extends CartItemSnapshot {
   quantity: number;
 }
 
 export interface CartState {
-  version: 1;
+  version: 2;
   lines: CartLine[];
 }
 
 export type CartAction =
-  | { type: "add"; productId: string; variantId?: string; quantity: number }
+  | { type: "add"; item: CartItemSnapshot; quantity: number }
   | { type: "set-quantity"; productId: string; variantId?: string; quantity: number }
   | { type: "remove"; productId: string; variantId?: string }
   | { type: "clear" };
 
-export const createEmptyCart = (): CartState => ({ version: 1, lines: [] });
+export const createEmptyCart = (): CartState => ({ version: 2, lines: [] });
 
 const normalizeQuantity = (quantity: number) => Math.max(0, Math.trunc(quantity));
 
-const isSameLine = (line: CartLine, action: Extract<CartAction, { productId: string }>) =>
-  line.productId === action.productId && line.variantId === action.variantId;
+const isSameLine = (line: CartLine, productId: string, variantId?: string) =>
+  line.productId === productId && line.variantId === variantId;
 
 export const cartReducer = (state: CartState, action: CartAction): CartState => {
   if (action.type === "clear") return createEmptyCart();
@@ -28,11 +40,13 @@ export const cartReducer = (state: CartState, action: CartAction): CartState => 
   if (action.type === "remove") {
     return {
       ...state,
-      lines: state.lines.filter((line) => !isSameLine(line, action)),
+      lines: state.lines.filter((line) => !isSameLine(line, action.productId, action.variantId)),
     };
   }
 
-  const currentLine = state.lines.find((line) => isSameLine(line, action));
+  const productId = action.type === "add" ? action.item.productId : action.productId;
+  const variantId = action.type === "add" ? action.item.variantId : action.variantId;
+  const currentLine = state.lines.find((line) => isSameLine(line, productId, variantId));
   const nextQuantity = normalizeQuantity(
     action.type === "add" ? (currentLine?.quantity ?? 0) + action.quantity : action.quantity,
   );
@@ -40,18 +54,19 @@ export const cartReducer = (state: CartState, action: CartAction): CartState => 
   if (nextQuantity === 0) {
     return {
       ...state,
-      lines: state.lines.filter((line) => !isSameLine(line, action)),
+      lines: state.lines.filter((line) => !isSameLine(line, productId, variantId)),
     };
   }
 
   if (!currentLine) {
+    if (action.type !== "add") return state;
+
     return {
       ...state,
       lines: [
         ...state.lines,
         {
-          productId: action.productId,
-          ...(action.variantId ? { variantId: action.variantId } : {}),
+          ...action.item,
           quantity: nextQuantity,
         },
       ],
@@ -61,7 +76,7 @@ export const cartReducer = (state: CartState, action: CartAction): CartState => 
   return {
     ...state,
     lines: state.lines.map((line) =>
-      isSameLine(line, action) ? { ...line, quantity: nextQuantity } : line,
+      isSameLine(line, productId, variantId) ? { ...line, quantity: nextQuantity } : line,
     ),
   };
 };
@@ -69,11 +84,5 @@ export const cartReducer = (state: CartState, action: CartAction): CartState => 
 export const getCartItemCount = (cart: CartState): number =>
   cart.lines.reduce((total, line) => total + line.quantity, 0);
 
-export const getCartSubtotal = (
-  cart: CartState,
-  getPriceMinor: (productId: string, variantId?: string) => number | undefined,
-): number =>
-  cart.lines.reduce(
-    (total, line) => total + (getPriceMinor(line.productId, line.variantId) ?? 0) * line.quantity,
-    0,
-  );
+export const getCartSubtotal = (cart: CartState): number =>
+  cart.lines.reduce((total, line) => total + line.priceMinor * line.quantity, 0);

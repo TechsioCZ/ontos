@@ -12,11 +12,6 @@ import { RadioGroup } from "@techsio/ui-kit/molecules/radio-group";
 import { useCart } from "@/features/cart/cart-provider";
 import { formatPrice } from "@/lib/format";
 import { getCartSubtotal } from "@/mock-storefront/cart";
-import {
-  getProductById,
-  getProductUnitPrice,
-  getProductVariantById,
-} from "@/mock-storefront/catalog";
 import { mockDeliveryMethods, mockPaymentMethods } from "@/mock-storefront/fixtures/account";
 
 function ShippingInformationStep() {
@@ -159,12 +154,8 @@ export function MockCheckout() {
   const { cart, dispatch, ready } = useCart();
   const [deliveryId, setDeliveryId] = useState("ppl");
   const [paymentId, setPaymentId] = useState("card");
-  const rows = cart.lines.flatMap((line) => {
-    const product = getProductById(line.productId);
-    const variant = getProductVariantById(line.productId, line.variantId);
-    return product ? [{ line, product, variant }] : [];
-  });
-  const subtotal = getCartSubtotal(cart, getProductUnitPrice);
+  const rows = cart.lines;
+  const subtotal = getCartSubtotal(cart);
   const delivery =
     mockDeliveryMethods.find((method) => method.id === deliveryId) ?? mockDeliveryMethods[0];
   const total = subtotal + delivery.priceMinor;
@@ -205,20 +196,18 @@ export function MockCheckout() {
         <aside className="akros-checkout-summary" aria-labelledby="checkout-summary-title">
           <h2 id="checkout-summary-title">Objednané položky</h2>
           <div className="akros-checkout-items">
-            {rows.map(({ line, product, variant }) => {
-              const unitPrice = variant?.priceMinor ?? product.priceMinor;
-
+            {rows.map((line) => {
               return (
-                <article key={`${product.id}:${variant?.id ?? "base"}`}>
-                  <Image alt={product.imageAlt} height={48} src={product.imageSrc} width={48} />
+                <article key={`${line.productId}:${line.variantId ?? "base"}`}>
+                  <Image alt={line.imageAlt} height={48} src={line.imageSrc} width={48} />
                   <div>
-                    <strong>{product.name}</strong>
+                    <strong>{line.name}</strong>
                     <small>
-                      {variant && <>{variant.label} · </>}
-                      Množství: {line.quantity} {product.unit}
+                      {line.variantLabel && <>{line.variantLabel} · </>}
+                      Množství: {line.quantity} {line.unit}
                     </small>
                   </div>
-                  <b>{formatPrice(unitPrice * line.quantity)}</b>
+                  <b>{formatPrice(line.priceMinor * line.quantity)}</b>
                 </article>
               );
             })}

@@ -3,17 +3,16 @@
 import { useMemo, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
-import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { SearchForm } from "@techsio/ui-kit/molecules/search-form";
 import { Table } from "@techsio/ui-kit/organisms/table";
 
 import { useCart } from "@/features/cart/cart-provider";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
-import type { CatalogProductVariant } from "@/mock-storefront/types";
+import type { CatalogProduct, CatalogProductVariant } from "@/mock-storefront/types";
 
 interface ProductPurchaseFormProps {
-  productId: string;
+  product: CatalogProduct;
   variants?: CatalogProductVariant[];
 }
 
@@ -24,11 +23,11 @@ const normalizeSearchTerm = (value: string) =>
     .toLocaleLowerCase("cs-CZ")
     .trim();
 
-export function ProductPurchaseForm({ productId, variants }: ProductPurchaseFormProps) {
+export function ProductPurchaseForm({ product, variants }: ProductPurchaseFormProps) {
   const { dispatch } = useCart();
   const [searchTerm, setSearchTerm] = useState("");
   const [confirmation, setConfirmation] = useState("");
-  const [quantity, setQuantity] = useState(1);
+  const [quantity, setQuantity] = useState(product.minimumQuantity);
   const normalizedSearchTerm = normalizeSearchTerm(searchTerm);
   const visibleVariants = useMemo(
     () =>
@@ -41,7 +40,23 @@ export function ProductPurchaseForm({ productId, variants }: ProductPurchaseForm
   );
 
   const addVariant = (variant: CatalogProductVariant, quantity: number) => {
-    dispatch({ type: "add", productId, variantId: variant.id, quantity });
+    dispatch({
+      type: "add",
+      item: {
+        productId: product.id,
+        variantId: variant.id,
+        slug: product.slug,
+        name: product.name,
+        sku: variant.sku,
+        imageSrc: variant.imageSrc ?? product.imageSrc,
+        imageAlt: product.imageAlt,
+        unit: variant.unit,
+        stockCount: variant.stockCount,
+        priceMinor: variant.priceMinor,
+        variantLabel: variant.label,
+      },
+      quantity,
+    });
     setConfirmation(`${variant.label} bylo přidáno do košíku.`);
   };
 
@@ -50,9 +65,11 @@ export function ProductPurchaseForm({ productId, variants }: ProductPurchaseForm
       <div className="akros-purchase-form">
         <span className="akros-purchase-form__label">{cs.product.selectQuantity}</span>
         <NumericInput
-          id={`quantity-${productId}`}
-          min={1}
-          onChange={(value) => setQuantity(Math.max(1, Math.trunc(value || 1)))}
+          id={`quantity-${product.id}`}
+          min={product.minimumQuantity}
+          onChange={(value) =>
+            setQuantity(Math.max(product.minimumQuantity, Math.trunc(value || 1)))
+          }
           size="md"
           value={quantity}
         >
@@ -66,7 +83,24 @@ export function ProductPurchaseForm({ productId, variants }: ProductPurchaseForm
         </NumericInput>
         <Button
           block
-          onClick={() => dispatch({ type: "add", productId, quantity })}
+          disabled={product.stockCount < product.minimumQuantity || product.priceMinor <= 0}
+          onClick={() =>
+            dispatch({
+              type: "add",
+              item: {
+                productId: product.id,
+                slug: product.slug,
+                name: product.name,
+                sku: product.sku,
+                imageSrc: product.imageSrc,
+                imageAlt: product.imageAlt,
+                unit: product.unit,
+                stockCount: product.stockCount,
+                priceMinor: product.priceMinor,
+              },
+              quantity,
+            })
+          }
           size="md"
           variant="primary"
         >
@@ -91,55 +125,41 @@ export function ProductPurchaseForm({ productId, variants }: ProductPurchaseForm
         </SearchForm.Control>
       </SearchForm>
 
-      <div className="akros-variant-purchase__consents">
-        <FormCheckbox defaultChecked label="Souhlasím s obchodními podmínkami" size="sm" />
-        <FormCheckbox
-          helpText="Zaškrtnutím tohoto políčka souhlasíte s obchodními podmínkami"
-          label="Souhlasím s obchodními podmínkami"
-          size="sm"
-        />
-      </div>
-
       {visibleVariants.length > 0 ? (
         <div className="akros-variant-purchase__table-wrap">
           <Table aria-label="Varianty produktu" size="sm" variant="line">
             <Table.Header className="akros-visually-hidden">
               <Table.Row>
                 <Table.ColumnHeader>Rozměr</Table.ColumnHeader>
-                <Table.ColumnHeader>Balení</Table.ColumnHeader>
+                <Table.ColumnHeader>Minimum</Table.ColumnHeader>
                 <Table.ColumnHeader>Cena</Table.ColumnHeader>
+                <Table.ColumnHeader>Skladem</Table.ColumnHeader>
                 <Table.ColumnHeader>Nákup</Table.ColumnHeader>
-                <Table.ColumnHeader>Celé balení</Table.ColumnHeader>
               </Table.Row>
             </Table.Header>
             <Table.Body>
               {visibleVariants.map((variant) => (
                 <Table.Row key={variant.id}>
                   <Table.Cell data-label="Rozměr">{variant.label}</Table.Cell>
-                  <Table.Cell data-label="Balení">
-                    {variant.packageQuantity.toLocaleString("cs-CZ")} ks
+                  <Table.Cell data-label="Minimum">
+                    {variant.minimumQuantity.toLocaleString("cs-CZ")} {variant.unit}
                   </Table.Cell>
                   <Table.Cell data-label="Cena">{formatPrice(variant.priceMinor)}</Table.Cell>
+                  <Table.Cell data-label="Skladem">
+                    {variant.stockCount.toLocaleString("cs-CZ")} {variant.unit}
+                  </Table.Cell>
                   <Table.Cell data-label="Nákup">
                     <Button
                       aria-label={`Koupit ${variant.label}`}
-                      onClick={() => addVariant(variant, 1)}
+                      disabled={
+                        variant.stockCount < variant.minimumQuantity || variant.priceMinor <= 0
+                      }
+                      onClick={() => addVariant(variant, variant.minimumQuantity)}
                       size="sm"
                       theme="borderless"
                       variant="primary"
                     >
                       Koupit
-                    </Button>
-                  </Table.Cell>
-                  <Table.Cell data-label="Celé balení">
-                    <Button
-                      aria-label={`Koupit celé balení ${variant.label}`}
-                      onClick={() => addVariant(variant, variant.packageQuantity)}
-                      size="sm"
-                      theme="borderless"
-                      variant="primary"
-                    >
-                      Koupit celé balení ({variant.packageQuantity.toLocaleString("cs-CZ")} ks)
                     </Button>
                   </Table.Cell>
                 </Table.Row>

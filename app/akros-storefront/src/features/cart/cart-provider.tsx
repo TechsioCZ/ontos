@@ -18,7 +18,7 @@ import {
   getCartItemCount,
 } from "@/mock-storefront/cart";
 
-const storageKey = "akros-demo-cart-v1";
+const storageKey = "akros-demo-cart-v2";
 
 interface CartContextValue {
   cart: CartState;
@@ -50,13 +50,21 @@ const parseStoredCart = (value: string | null): CartState => {
 
   try {
     const parsed = JSON.parse(value) as Partial<CartState>;
-    if (parsed.version !== 1 || !Array.isArray(parsed.lines)) return createEmptyCart();
+    if (parsed.version !== 2 || !Array.isArray(parsed.lines)) return createEmptyCart();
 
     return {
-      version: 1,
+      version: 2,
       lines: parsed.lines.flatMap((line) => {
         if (
           typeof line?.productId !== "string" ||
+          typeof line.slug !== "string" ||
+          typeof line.name !== "string" ||
+          typeof line.sku !== "string" ||
+          typeof line.imageSrc !== "string" ||
+          typeof line.imageAlt !== "string" ||
+          typeof line.unit !== "string" ||
+          typeof line.priceMinor !== "number" ||
+          typeof line.stockCount !== "number" ||
           !Number.isInteger(line.quantity) ||
           line.quantity <= 0
         ) {
@@ -67,6 +75,15 @@ const parseStoredCart = (value: string | null): CartState => {
           {
             productId: line.productId,
             ...(typeof line.variantId === "string" ? { variantId: line.variantId } : {}),
+            slug: line.slug,
+            name: line.name,
+            sku: line.sku,
+            imageSrc: line.imageSrc,
+            imageAlt: line.imageAlt,
+            unit: line.unit,
+            priceMinor: line.priceMinor,
+            stockCount: line.stockCount,
+            ...(typeof line.variantLabel === "string" ? { variantLabel: line.variantLabel } : {}),
             quantity: line.quantity,
           },
         ];
