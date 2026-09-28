@@ -36,6 +36,30 @@ const connectAdmin = (connectionString: Redacted.Redacted) =>
     ),
   );
 
+// Governed-routine owners do not belong in the legacy all-table/default-privilege loop.
+const grantRoutineOwnerPrivileges = Effect.fn('BootstrapRuntimeRole.grantRoutineOwnerPrivileges')(
+  function* grantRoutineOwnerPrivilegesEffect(client: PgClient.PgClient) {
+    for (const schema of ['pricing', 'storefront_registry']) {
+      const [namespace] = yield* query<{ exists: boolean }>(
+        client,
+        'select exists(select 1 from pg_catalog.pg_namespace where nspname = $1) as exists',
+        [schema],
+      );
+      if (namespace?.exists) {
+        yield* query(client, `grant usage on schema ${quoteIdentifier(schema)} to ontos_runtime`);
+      }
+    }
+    const [pricingTable] = yield* query<{ exists: boolean }>(client, 'select to_regclass($1) is not null as exists', [
+      'pricing.currency_support_revisions',
+    ]);
+    if (pricingTable?.exists) {
+      // Pricing's SECURITY INVOKER routines need these exact DML rights under forced RLS.
+      // Storefront's SECURITY DEFINER routines require no raw table privileges.
+      yield* query(client, 'grant select, insert, update on pricing.currency_support_revisions to ontos_runtime');
+    }
+  },
+);
+
 const bootstrapRuntimeRole = (
   client: PgClient.PgClient,
   database: string,
@@ -83,6 +107,7 @@ const bootstrapRuntimeRole = (
         }),
       { concurrency: 1, discard: true },
     );
+    yield* grantRoutineOwnerPrivileges(client);
     const role = yield* query<{ rolbypassrls: boolean; rolsuper: boolean }>(
       client,
       'select rolsuper, rolbypassrls from pg_catalog.pg_roles where rolname = $1',

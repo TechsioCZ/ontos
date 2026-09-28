@@ -16,6 +16,10 @@ interface InfrastructureRow {
   readonly journal_count: number;
   readonly policy_count: number;
   readonly runtime_routine_count: number;
+  readonly runtime_schema_create: boolean;
+  readonly runtime_schema_usage: boolean;
+  readonly runtime_table_access_count: number;
+  readonly unsafe_runtime_table_privilege_count: number;
 }
 
 const verification = Effect.gen(function* verifyPricingDatabase() {
@@ -46,6 +50,22 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
   const infrastructure = yield* client
     .unsafe<InfrastructureRow>(
       `select
+           has_schema_privilege('ontos_runtime', $1, 'USAGE') as runtime_schema_usage,
+           has_schema_privilege('ontos_runtime', $1, 'CREATE') as runtime_schema_create,
+           (select count(*)::integer
+              from pg_catalog.pg_class as relation
+              join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+             where namespace.nspname = $1 and relation.relname = 'currency_support_revisions'
+               and has_table_privilege('ontos_runtime', relation.oid, 'SELECT')
+               and has_table_privilege('ontos_runtime', relation.oid, 'INSERT')
+               and has_table_privilege('ontos_runtime', relation.oid, 'UPDATE')) as runtime_table_access_count,
+           (select count(*)::integer
+              from pg_catalog.pg_class as relation
+              join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+             where namespace.nspname = $1 and relation.relkind in ('r', 'p')
+               and has_table_privilege('ontos_runtime', relation.oid,
+                 'DELETE, TRUNCATE, REFERENCES, TRIGGER, MAINTAIN, SELECT WITH GRANT OPTION, INSERT WITH GRANT OPTION, UPDATE WITH GRANT OPTION'))
+             as unsafe_runtime_table_privilege_count,
            (select count(*)::integer
               from pg_catalog.pg_class as relation
               join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
@@ -80,10 +100,14 @@ const verification = Effect.gen(function* verifyPricingDatabase() {
     row.forced_rls_count !== PRICING_TABLE_INVENTORY.length ||
     row.journal_count !== 1 ||
     row.policy_count !== 4 ||
-    row.runtime_routine_count !== 2
+    row.runtime_routine_count !== 2 ||
+    !row.runtime_schema_usage ||
+    row.runtime_schema_create ||
+    row.runtime_table_access_count !== 1 ||
+    row.unsafe_runtime_table_privilege_count !== 0
   ) {
     return yield* new PricingSchemaVerificationError({
-      reason: 'Pricing RLS, policy, journal, or routine inventory mismatch',
+      reason: 'Pricing RLS, policy, journal, runtime privilege, or routine inventory mismatch',
     });
   }
   return { tableCount: actualTables.length };
