@@ -1,6 +1,8 @@
 import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
-import { Config, ConfigProvider, Crypto, Effect, Option, Redacted, Schema } from 'effect';
+import { Config, ConfigProvider, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
+import type { HttpClient } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
 
 import { loadDotEnvProvider } from '../../src/environment/dotenv-provider.ts';
@@ -10,8 +12,9 @@ import { SPICEDB_ROOT_ENV_PATH, loadSpiceDbConfig } from '../../src/permissions/
 import type { SpiceDbConfigValue } from '../../src/permissions/config.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 import { openSpiceDbGrpcRpc } from '../../src/permissions/spicedb-grpc-rpc.ts';
-import { openSpiceDbHttpRpc } from '../../src/permissions/spicedb-http-rpc.ts';
-import type { SpiceDbRpc, SpiceDbRpcError } from '../../src/permissions/spicedb-rpc.ts';
+import { spiceDbHttpRpc } from '../../src/permissions/spicedb-http-rpc.ts';
+import type { SpiceDbHttpRpc } from '../../src/permissions/spicedb-http-rpc.ts';
+import type { SpiceDbRpcError } from '../../src/permissions/spicedb-rpc.ts';
 
 // Both transports run against the same SpiceDB (`serve --http-enabled`, the image stage runs), so
 // every response must be identical once the per-call revision tokens are cleared.
@@ -33,8 +36,7 @@ const makeTransports = Effect.gen(function* makeBothTransports() {
   const origin = yield* loadHttpOrigin(configuration);
   const wrongKey = `${configuration.preSharedKey}-wrong`;
   const httpWith = (preSharedKey: string) =>
-    openSpiceDbHttpRpc({
-      fetch: globalThis.fetch,
+    spiceDbHttpRpc({
       origin,
       preSharedKey: Redacted.make(preSharedKey),
       timeoutMilliseconds: SPICEDB_CHECK_TIMEOUT_MS,
@@ -56,26 +58,29 @@ type Outcome =
   | { readonly code: Option.Option<number>; readonly status: 'failed' }
   | { readonly json: Schema.Json; readonly status: 'ok' };
 
+// The gRPC port needs nothing; the gateway port needs the HttpClient this suite provides.
+type ParityRpc = SpiceDbHttpRpc;
+
 const outcome = <Response>(
-  effect: Effect.Effect<Response, SpiceDbRpcError>,
+  effect: Effect.Effect<Response, SpiceDbRpcError, HttpClient.HttpClient>,
   toJson: (response: Response) => Schema.Json,
-): Effect.Effect<Outcome> =>
+): Effect.Effect<Outcome, never, HttpClient.HttpClient> =>
   Effect.match(effect, {
     onFailure: ({ code }): Outcome => ({ code, status: 'failed' }),
     onSuccess: (response): Outcome => ({ json: toJson(response), status: 'ok' }),
   });
 
 interface Transports {
-  readonly grpc: SpiceDbRpc;
-  readonly http: SpiceDbRpc;
+  readonly grpc: ParityRpc;
+  readonly http: ParityRpc;
 }
 
 /** Runs one call through both transports and requires identical outcomes. */
 const parity = <Response>(
   transports: Transports,
-  call: (rpc: SpiceDbRpc) => Effect.Effect<Response, SpiceDbRpcError>,
+  call: (rpc: ParityRpc) => Effect.Effect<Response, SpiceDbRpcError, HttpClient.HttpClient>,
   toJson: (response: Response) => Schema.Json,
-): Effect.Effect<Outcome> =>
+): Effect.Effect<Outcome, never, HttpClient.HttpClient> =>
   Effect.all({ grpc: outcome(call(transports.grpc), toJson), http: outcome(call(transports.http), toJson) }).pipe(
     Effect.map(({ grpc, http }) => {
       expect(http).toStrictEqual(grpc);
@@ -280,9 +285,12 @@ const transportParityProgram = Effect.gen(function* provesTransportParity() {
   ).toMatchObject({ status: 'failed' });
 });
 
-it.layer(NodeServices.layer, { excludeTestServices: true })('SpiceDB transport parity', (suite) => {
-  suite.effect(
-    'the HTTP gateway transport returns exactly what the gRPC transport returns for every RPC OntOS uses',
-    () => transportParityProgram,
-  );
-});
+it.layer(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer), { excludeTestServices: true })(
+  'SpiceDB transport parity',
+  (suite) => {
+    suite.effect(
+      'the HTTP gateway transport returns exactly what the gRPC transport returns for every RPC OntOS uses',
+      () => transportParityProgram,
+    );
+  },
+);

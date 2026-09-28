@@ -1,17 +1,13 @@
 import { v1 } from '@authzed/authzed-node';
-import { Effect, Option, Redacted, Schema } from 'effect';
-import { HttpClientRequest, HttpClientResponse } from 'effect/unstable/http';
+import { Effect, Option, Schema } from 'effect';
+import type { Redacted } from 'effect';
+import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
 import { SpiceDbRpcError, spiceDbDeadline } from './spicedb-rpc.ts';
 import type { SpiceDbRpc } from './spicedb-rpc.ts';
 
-/**
- * Where the SpiceDB HTTP gateway (`serve --http-enabled`) answers. `fetch` is the global fetch on
- * Node and a Workers VPC binding's `fetch` on workerd, whose global fetch cannot reach private
- * origins.
- */
+/** Where the SpiceDB HTTP gateway (`serve --http-enabled`) answers, and with which key. */
 export interface SpiceDbHttpEndpoint {
-  readonly fetch: typeof globalThis.fetch;
   readonly origin: URL;
   readonly preSharedKey: Redacted.Redacted;
   readonly timeoutMilliseconds: number;
@@ -21,6 +17,18 @@ interface JsonMessageType<Message> {
   readonly fromJsonString: (json: string, options: { readonly ignoreUnknownFields: boolean }) => Message;
   readonly toJsonString: (message: Message) => string;
 }
+
+/**
+ * The SpiceDB RPCs over the gateway. Each call needs the Effect `HttpClient` service, which the
+ * runtime's composition root binds (on workerd, to the `SPICEDB` Workers VPC binding's fetch).
+ */
+export type SpiceDbHttpRpc = {
+  readonly [Rpc in Exclude<keyof SpiceDbRpc, 'close'>]: SpiceDbRpc[Rpc] extends (
+    request: infer Request,
+  ) => Effect.Effect<infer Response, SpiceDbRpcError>
+    ? (request: Request) => Effect.Effect<Response, SpiceDbRpcError, HttpClient.HttpClient>
+    : never;
+};
 
 // Unknown fields are skipped, as a gRPC client skips unknown binary fields.
 const jsonReadOptions = { ignoreUnknownFields: true } as const;
@@ -104,49 +112,36 @@ const failWithStatus = (text: string): Effect.Effect<never, SpiceDbRpcError> =>
   Effect.fail(new SpiceDbRpcError({ cause: text, code: Option.map(decodeRpcStatusText(text), ({ code }) => code) }));
 
 /** SpiceDB over its HTTP/JSON gateway, for runtimes without an HTTP/2 gRPC client. */
-export const openSpiceDbHttpRpc = (endpoint: SpiceDbHttpEndpoint): SpiceDbRpc => {
+export const spiceDbHttpRpc = (endpoint: SpiceDbHttpEndpoint): SpiceDbHttpRpc => {
   const deadline = spiceDbDeadline(endpoint.timeoutMilliseconds);
-  const readBody = (url: URL, response: Response): Effect.Effect<string, SpiceDbRpcError> =>
-    HttpClientResponse.fromWeb(HttpClientRequest.post(url), response).text.pipe(
-      Effect.mapError(transportFailure),
-      Effect.timeoutOrElse(deadline),
-      Effect.filterOrElse(() => response.ok, failWithStatus),
-    );
   // The whole exchange (request, status and body) shares one deadline, like a gRPC deadline.
-  const post = <Request>(path: string, type: JsonMessageType<Request>, request: Request) => {
-    const url = new URL(path, endpoint.origin);
-    return Effect.tryPromise({
-      catch: transportFailure,
-      // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this fetch Promise boundary and aborts it on interruption.
-      try: (signal) =>
-        endpoint.fetch(url, {
-          body: type.toJsonString(request),
-          headers: {
-            accept: 'application/json',
-            authorization: `Bearer ${Redacted.value(endpoint.preSharedKey)}`,
-            'content-type': 'application/json',
-          },
-          method: 'POST',
-          signal,
-        }),
-    }).pipe(
-      Effect.flatMap((response) => readBody(url, response)),
+  const post = <Request>(path: string, type: JsonMessageType<Request>, request: Request) =>
+    HttpClient.execute(
+      HttpClientRequest.post(new URL(path, endpoint.origin)).pipe(
+        HttpClientRequest.bearerToken(endpoint.preSharedKey),
+        HttpClientRequest.acceptJson,
+        HttpClientRequest.bodyText(type.toJsonString(request), 'application/json'),
+      ),
+    ).pipe(
+      Effect.flatMap((response) => response.text.pipe(Effect.map((text) => ({ status: response.status, text })))),
+      Effect.mapError(transportFailure),
+      Effect.filterOrElse(
+        ({ status }) => status >= 200 && status < 300,
+        ({ text }) => failWithStatus(text),
+      ),
+      Effect.map(({ text }) => text),
       Effect.timeoutOrElse(deadline),
     );
-  };
 
   const unary =
     <Request, Response>(path: string, requestType: JsonMessageType<Request>, responseType: JsonMessageType<Response>) =>
-    (request: Request): Effect.Effect<Response, SpiceDbRpcError> =>
+    (request: Request) =>
       post(path, requestType, request).pipe(Effect.flatMap((text) => readMessage(responseType, text)));
 
   return {
     checkBulkPermissions: (request) =>
       post('/v1/permissions/checkbulk', v1.CheckBulkPermissionsRequest, request).pipe(Effect.flatMap(readBulkResponse)),
     checkPermission: unary('/v1/permissions/check', v1.CheckPermissionRequest, v1.CheckPermissionResponse),
-    close: () => {
-      // Each call is a standalone fetch; there is no connection to release.
-    },
     // A failed stream fails the whole read, as a failed gRPC stream rejects `readRelationships`.
     readRelationships: (request) =>
       post('/v1/relationships/read', v1.ReadRelationshipsRequest, request).pipe(Effect.flatMap(readFrames)),

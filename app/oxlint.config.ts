@@ -65,6 +65,8 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         'verticals/*/api/index.ts',
         'packages/core-runtime/src/outbox/process.ts',
         'packages/core-runtime/src/db/client.ts',
+        // The workerd SpiceDB transport binds the Workers VPC fetcher to the Effect HttpClient.
+        'packages/core-runtime/src/permissions/spicedb-transport.workerd.ts',
         'apps/shell-super-app/api/auth/db/client.ts',
         'verticals/party-registry/src/db/client.ts',
         'packages/core-runtime/src/testing/actions.ts',
