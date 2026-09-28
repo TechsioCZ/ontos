@@ -419,6 +419,14 @@ export const variantPersistenceForScope = (
     if (row.productId !== input.currentProductRef.resourceId) {
       return { _tag: 'invalid_change' };
     }
+    // A retired Product blocks new corrections of its forms, as Product correction itself does.
+    const [parent] = yield* getProduct(row.productId);
+    if (parent === undefined) {
+      return yield* unavailable();
+    }
+    if (parent.lifecycleState === 'RETIRED') {
+      return { _tag: 'lifecycle_conflict' };
+    }
     if (
       input.classification === 'EVIDENCED_PARENT_CORRECTION' ||
       (input.targetProductRef !== undefined && input.targetProductRef.resourceId !== row.productId)

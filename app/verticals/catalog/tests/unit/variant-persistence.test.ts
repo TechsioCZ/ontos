@@ -199,10 +199,8 @@ describe('Variant persistence', () => {
           };
         },
         select: () => ({
-          from: (table: typeof productVariants) => {
-            expect(table).toBe(productVariants);
-            return lockedRow(row);
-          },
+          from: (table: typeof products | typeof productVariants) =>
+            lockedRow(table === products ? { ...row, lifecycleState: 'ACTIVE' } : row),
         }),
         update: (table: typeof productVariants) => {
           expect(table).toBe(productVariants);
@@ -267,6 +265,43 @@ describe('Variant persistence', () => {
           Match.orElse(() => false),
         ),
       ).toBe(true);
+    }),
+  );
+
+  it.effect('rejects a Variant correction under a retired Product before writing', () =>
+    Effect.gen(function* rejectCorrectionUnderRetiredProduct() {
+      const reads: string[] = [];
+      const transaction = {
+        insert: () => {
+          throw new Error('correction under a retired Product must not append a revision');
+        },
+        select: () => ({
+          from: (table: typeof products | typeof productVariants) => {
+            reads.push(table === products ? 'product' : 'variant');
+            return lockedRow(table === products ? { ...row, lifecycleState: 'RETIRED' } : row);
+          },
+        }),
+        update: () => {
+          throw new Error('correction under a retired Product must not update the Variant');
+        },
+      };
+      // @ts-expect-error Only the exercised Drizzle query chains are mocked.
+      const service = variantPersistenceForScope(transaction, scope);
+      const outcome = yield* service.change({
+        ...evidence,
+        classification: 'EVIDENCED_CORRECTION',
+        currentProductRef: productRef,
+        expectedRevision: 1,
+        originalDataErrorEvidenceRef: evidence.evidenceRefs[0],
+        variantRef,
+      });
+      expect(
+        Match.value(outcome).pipe(
+          Match.tag('lifecycle_conflict', () => true),
+          Match.orElse(() => false),
+        ),
+      ).toBe(true);
+      expect(reads).toEqual(['variant', 'product']);
     }),
   );
 

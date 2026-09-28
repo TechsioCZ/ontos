@@ -83,6 +83,15 @@ const input: PublishProductConfigurationInput = {
   reason: 'Verified product configuration',
 };
 
+const openMeasuredRule = (minimum: string, maximum: string) => ({
+  choiceKey: 'length',
+  evidenceRefs: ['open range'],
+  maximum,
+  maximumInclusive: false,
+  minimum,
+  minimumInclusive: false,
+});
+
 describe('Product Configuration publication input', () => {
   it('accepts an explicit, bounded Product-level rule snapshot', () => {
     expect(inspectProductConfigurationPublishInput(input)).toBeNull();
@@ -270,6 +279,33 @@ describe('Product Configuration publication input', () => {
         ],
       }),
     ).toBeNull();
+  });
+
+  it('keeps stepless open intervals publishable when a finer decimal lies between the bounds', () => {
+    for (const [minimum, maximum] of [
+      ['1', '2'],
+      ['0.1', '0.2'],
+      ['-1', '0'],
+    ] as const) {
+      expect(
+        inspectProductConfigurationPublishInput({ ...input, measuredRules: [openMeasuredRule(minimum, maximum)] }),
+      ).toBeNull();
+      expect(
+        inspectProductConfigurationPublishInput({
+          ...input,
+          measuredRules: [
+            openMeasuredRule(minimum, maximum),
+            { ...openMeasuredRule(minimum, maximum), variantId: 'black' },
+          ],
+        }),
+      ).toBeNull();
+    }
+    expect(
+      inspectProductConfigurationPublishInput({
+        ...input,
+        measuredRules: [{ ...openMeasuredRule('1', '2'), step: '1', stepBase: '0' }],
+      }),
+    ).toContain('contradictory');
   });
 
   it('rejects unsupported compatibility operands and missing evidence', () => {

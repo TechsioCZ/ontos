@@ -254,7 +254,9 @@ const scaledDecimal = (value: string, scale: number): bigint => {
 };
 const satisfiableMeasuredSet = (rules: readonly ConfigurationMeasuredRuleInput[]): boolean => {
   const decimals = rules.flatMap((rule) => [rule.minimum, rule.maximum, rule.step, rule.stepBase]);
-  const scale = Math.max(0, ...decimals.flatMap((value) => (value === undefined ? [] : [decimalParts(value).scale])));
+  // One digit finer than any rule decimal: a stepless open bound admits values between adjacent spellings.
+  const scale =
+    1 + Math.max(0, ...decimals.flatMap((value) => (value === undefined ? [] : [decimalParts(value).scale])));
   let minimum: bigint | undefined;
   let maximum: bigint | undefined;
   let residue = 0n;
