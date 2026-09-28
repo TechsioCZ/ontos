@@ -474,7 +474,8 @@ const addArtifactCommand = (
     if (script.includes('generate-ontos-module-contract.mts')) {
       return yield* scaffoldError(`vertical ${vertical.slug} ${label} script already contains module emission`);
     }
-    const buildToken = target === 'dist' ? 'modern build' : 'MODERNJS_DEPLOY=cloudflare modern build';
+    const buildToken =
+      target === 'dist' ? 'modern build --deploy-target node' : 'modern build --deploy-target cloudflare';
     if (!script.includes(buildToken)) {
       return yield* scaffoldError(`vertical ${vertical.slug} ${label} script is not a generated Modern build`);
     }

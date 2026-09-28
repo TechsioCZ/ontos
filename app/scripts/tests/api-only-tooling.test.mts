@@ -2229,6 +2229,7 @@ const framework = {
   createRequire: () => () => ({}),
   defineConfig: configuration => configuration,
   getBuildConfigEnvironment: name => name === 'ULTRAMODERN_MF_DEV_ORIGIN' ? ${JSON.stringify(shellOrigin)} : undefined,
+  resolveDeployTarget: () => ({ explicit: false, target: 'node' }),
   i18nPlugin: () => ({}),
   moduleFederationPlugin: () => ({}),
   pluginTailwindcss: () => ({}),
@@ -2395,7 +2396,8 @@ const framework = {
   builtinModules: [], createRequire: () => name => ({ version: name === 'effect/package.json' ? '4.0.0-rc.117' : '3.9.0-ultramodern.2' }),
   defineConfig: config => config, presetUltramodern: config => config,
   createModuleFederationConfig: config => config,
-  getBuildConfigEnvironment: () => undefined, ultramodernLocalisedUrls: {},
+  getBuildConfigEnvironment: () => undefined, resolveDeployTarget: () => ({ explicit: false, target: 'node' }),
+  ultramodernLocalisedUrls: {},
 };
 const module = { exports: {} };
 const spans = [];
@@ -2486,7 +2488,6 @@ import * as nodePath from 'node:path';
 import * as nodeUrl from 'node:url';
 import { runInNewContext } from 'node:vm';
 const environment = {
-  MODERNJS_DEPLOY: ${JSON.stringify(cloudflare ? 'cloudflare' : 'node')},
   ULTRAMODERN_MF_DEV_ORIGIN: 'https://shell.example.test',
   ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
   ZE_CI_TOKEN: 'proof-token',
@@ -2500,6 +2501,7 @@ const framework = {
   tanstackRouterPlugin: plugin('tanstack'), withZephyr: plugin('zephyr'),
   defineConfig: value => value, presetUltramodern: (value, identity) => ({ ...value, identity }),
   getBuildConfigEnvironment: name => environment[name],
+  resolveDeployTarget: () => ({ explicit: true, target: ${JSON.stringify(cloudflare ? 'cloudflare' : 'node')} }),
   ultramodernLocalisedUrls: {},
 };
 const moduleShim = { ...nodeModule, createRequire: () => Object.assign(() => ({}), { resolve: name => '/dependencies/' + name }) };

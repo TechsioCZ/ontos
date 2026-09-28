@@ -9,9 +9,9 @@
     "./current-storefront-application/read": "./src/api/current-storefront-application.read.ts"
   },
   "scripts": {
-    "build": "modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical storefront-registry --target dist && ultramodern-create ultramodern public-surface --app storefront-registry --target dist && cross-env MODERNJS_DEPLOY=node modern deploy --skip-build",
-    "cloudflare:build": "cross-env MODERNJS_DEPLOY=cloudflare modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical storefront-registry --target cloudflare-dist && ultramodern-create ultramodern public-surface --app storefront-registry --target cloudflare-dist && cross-env MODERNJS_DEPLOY=cloudflare modern deploy --skip-build",
-    "cloudflare:deploy": "cross-env ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS=true ZE_FAIL_BUILD=true pnpm run cloudflare:build && ultramodern-create ultramodern cloudflare-output-verify --app storefront-registry && wrangler deploy --config .output/wrangler.json",
+    "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical storefront-registry --target dist && ultramodern-create ultramodern public-surface --app storefront-registry --target dist && modern deploy --skip-build --deploy-target node",
+    "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical storefront-registry --target cloudflare-dist && ultramodern-create ultramodern public-surface --app storefront-registry --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
+    "cloudflare:deploy": "pnpm run cloudflare:build && ultramodern-create ultramodern cloudflare-output-verify --app storefront-registry --require-public-urls && wrangler deploy --config .output/wrangler.json",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app storefront-registry",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
@@ -50,7 +50,6 @@
     "@types/node": "20.19.43",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "cross-env": "10.1.0",
     "drizzle-kit": "1.0.0-rc.5-ab785fc",
     "effect-rstest": "https://pkg.pr.new/ScriptedAlchemy/effect-rstest@cbbf87e05c7517a85eb412d33421cd2ab5234597",
     "pg": "8.22.0",

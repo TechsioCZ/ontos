@@ -25,7 +25,7 @@
     "effect-native/no-literal-union-type-alias": 5,
     "effect-native/no-local-defect-seam": 2,
     "effect-native/no-manual-tag-comparison": 34,
-    "effect-native/no-native-error-construction": 9,
+    "effect-native/no-native-error-construction": 8,
     "effect-native/no-nullable-schema-field": 43,
     "effect-native/no-nullable-service-outcome": 3,
     "effect-native/no-per-operation-http-api-client": 15,

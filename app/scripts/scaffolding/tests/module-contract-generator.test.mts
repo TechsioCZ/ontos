@@ -132,9 +132,9 @@ const createFixture = (): Effect.Effect<string, unknown> =>
         name: '@app/property-registry',
         private: true,
         scripts: {
-          build: 'modern build && MODERNJS_DEPLOY=node modern deploy --skip-build',
+          build: 'modern build --deploy-target node && modern deploy --skip-build --deploy-target node',
           'cloudflare:build':
-            'MODERNJS_DEPLOY=cloudflare modern build && MODERNJS_DEPLOY=cloudflare modern deploy --skip-build',
+            'modern build --deploy-target cloudflare && modern deploy --skip-build --deploy-target cloudflare',
           existing: 'preserve-me',
         },
         type: 'module',
@@ -164,8 +164,8 @@ const createFixture = (): Effect.Effect<string, unknown> =>
         name: '@app/documents-center',
         private: true,
         scripts: {
-          build: 'modern build',
-          'cloudflare:build': 'MODERNJS_DEPLOY=cloudflare modern build',
+          build: 'modern build --deploy-target node',
+          'cloudflare:build': 'modern build --deploy-target cloudflare',
         },
         type: 'module',
         version: '0.1.0',

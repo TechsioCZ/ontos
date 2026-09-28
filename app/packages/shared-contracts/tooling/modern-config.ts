@@ -3,11 +3,7 @@ import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  contains as optionContains,
-  getOrElse as getOptionOrElse,
-  getOrUndefined as getOptionOrUndefined,
-} from 'effect/Option';
+import { getOrElse as getOptionOrElse, getOrUndefined as getOptionOrUndefined } from 'effect/Option';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
   Boolean as BooleanSchema,
@@ -100,15 +96,6 @@ const createBuildConfigReaders = (getBuildConfigEnvironment: BuildConfigEnvironm
   return { envValue, getBuildBoolean };
 };
 
-const getCloudflareDeployEnabled = (getBuildConfigEnvironment: BuildConfigEnvironment): boolean => {
-  const cloudflareDeployMode = getResultOrThrow(
-    decodeUnknownResult(OptionFromUndefinedOr(Literals(['cloudflare', 'node'])))(
-      getBuildConfigEnvironment('MODERNJS_DEPLOY'),
-    ),
-  );
-  return optionContains(cloudflareDeployMode, 'cloudflare');
-};
-
 const getBuildPort = (
   getBuildConfigEnvironment: BuildConfigEnvironment,
   portEnvironmentVariable: string,
@@ -143,42 +130,12 @@ const getDefaultRemoteAssetPrefix = (
   return remoteAssetOrigin.length > 0 ? `${remoteAssetOrigin.replace(/\/+$/u, '')}/` : 'auto';
 };
 
-const assertCloudflarePublicUrl = ({
-  appId,
-  cloudflareDeployEnabled,
-  cloudflarePublicUrlEnvironmentVariable,
-  configuredCloudflareUrl,
-  configuredSiteUrl,
-  getBuildBoolean,
-  inferredCloudflareUrl,
-}: {
-  appId: string;
-  cloudflareDeployEnabled: boolean;
-  cloudflarePublicUrlEnvironmentVariable: string;
-  configuredCloudflareUrl: string | undefined;
-  configuredSiteUrl: string | undefined;
-  getBuildBoolean: (name: string) => boolean;
-  inferredCloudflareUrl: string | undefined;
-}): void => {
-  if (
-    cloudflareDeployEnabled &&
-    getBuildBoolean('ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS') &&
-    configuredCloudflareUrl === undefined &&
-    configuredSiteUrl === undefined &&
-    inferredCloudflareUrl === undefined
-  ) {
-    // oxlint-disable-next-line effect-native/no-native-error-construction -- Missing required deployment configuration is a synchronous build-time invariant at this non-Effect tooling boundary.
-    throw new Error(
-      `Cloudflare deploy for ${appId} needs ${cloudflarePublicUrlEnvironmentVariable}, MODERN_PUBLIC_SITE_URL, or ULTRAMODERN_CLOUDFLARE_WORKERS_DEV_SUBDOMAIN.`,
-    );
-  }
-};
-
 export const createModernBuildContext = ({
   appId,
   cloudflarePublicUrlEnvironmentVariable,
   cloudflareWorkerName,
   defaultPort,
+  deployTarget,
   getBuildConfigEnvironment,
   portEnvironmentVariable,
 }: {
@@ -186,11 +143,13 @@ export const createModernBuildContext = ({
   cloudflarePublicUrlEnvironmentVariable: string;
   cloudflareWorkerName: string;
   defaultPort: number;
+  /** `resolveDeployTarget().target` from `@modern-js/app-tools-extensions/config`. */
+  deployTarget: string;
   getBuildConfigEnvironment: BuildConfigEnvironment;
   portEnvironmentVariable: string;
 }): ModernBuildContext => {
   const { envValue, getBuildBoolean } = createBuildConfigReaders(getBuildConfigEnvironment);
-  const cloudflareDeployEnabled = getCloudflareDeployEnabled(getBuildConfigEnvironment);
+  const cloudflareDeployEnabled = deployTarget === 'cloudflare';
   const port = getBuildPort(getBuildConfigEnvironment, portEnvironmentVariable, defaultPort);
   const configuredSiteUrl = envValue('MODERN_PUBLIC_SITE_URL');
   const configuredCloudflareUrl = envValue(cloudflarePublicUrlEnvironmentVariable);
@@ -223,16 +182,6 @@ export const createModernBuildContext = ({
   const buildCacheDirectory = `node_modules/.cache/rspack-${appId}-${buildTarget}`;
   // oxlint-disable-next-line github/js-class-name -- This interpolated value is a filesystem directory name required by Modern.js, not a CSS class name.
   const buildTempDirectory = `node_modules/.modern-js-${appId}-${buildTarget}`;
-
-  assertCloudflarePublicUrl({
-    appId,
-    cloudflareDeployEnabled,
-    cloudflarePublicUrlEnvironmentVariable,
-    configuredCloudflareUrl,
-    configuredSiteUrl,
-    getBuildBoolean,
-    inferredCloudflareUrl,
-  });
 
   return {
     assetPrefix,

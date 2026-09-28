@@ -70,9 +70,9 @@ const createWorkspace = Effect.fn('createWorkspace')(function* createWorkspaceEf
       name: '@app/isolation-owner',
       private: true,
       scripts: {
-        build: 'modern build && MODERNJS_DEPLOY=node modern deploy --skip-build',
+        build: 'modern build --deploy-target node && modern deploy --skip-build --deploy-target node',
         'cloudflare:build':
-          'MODERNJS_DEPLOY=cloudflare modern build && MODERNJS_DEPLOY=cloudflare modern deploy --skip-build',
+          'modern build --deploy-target cloudflare && modern deploy --skip-build --deploy-target cloudflare',
       },
       type: 'module',
       version: '0.0.0',
