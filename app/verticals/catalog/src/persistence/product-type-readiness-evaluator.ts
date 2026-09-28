@@ -63,6 +63,7 @@ const sameRef = (left: ProductRef | VariantRef, right: ProductRef | VariantRef):
   left.tenantId === right.tenantId && left.resourceId === right.resourceId;
 const catalogModuleId = 'commerce.catalog';
 const definitionResourceType = 'commerce.catalog.attribute-definition';
+const variantResourceType = 'commerce.catalog.variant';
 
 const countsAsEffectiveValue = (
   values: readonly AttributeValue[],
@@ -177,7 +178,7 @@ const snapshotProblem = ({
       (variant) =>
         variant.tenantId !== source.productRef.tenantId ||
         variant.moduleId !== catalogModuleId ||
-        variant.resourceType !== 'commerce.catalog.variant',
+        variant.resourceType !== variantResourceType,
     )
   ) {
     return 'Current Variant inventory contains a foreign Variant';
@@ -190,7 +191,7 @@ const snapshotProblem = ({
       (variant) =>
         variant.variantRef.tenantId !== source.productRef.tenantId ||
         variant.variantRef.moduleId !== catalogModuleId ||
-        variant.variantRef.resourceType !== 'commerce.catalog.variant' ||
+        variant.variantRef.resourceType !== variantResourceType ||
         !variantIds.has(variant.variantRef.resourceId),
     ) ||
     new Set(variants.map((variant) => variant.variantRef.resourceId)).size !== variants.length
@@ -245,6 +246,11 @@ const evaluateUntypedReadiness = (snapshot: ProductTypeReadinessSnapshot): Produ
   return { decisionRevision: revision, rules, status: 'CONFIRMED_UNTYPED_MINIMUM' };
 };
 
+const attestedVariant = (snapshot: ProductTypeReadinessSnapshot, variantRef: VariantRef): boolean =>
+  variantRef.moduleId === catalogModuleId &&
+  variantRef.resourceType === variantResourceType &&
+  snapshot.variantRefs.some((ref) => sameRef(ref, variantRef));
+
 /** #424 partial minimum only; no result here asserts overall #414 Catalog readiness. */
 export const evaluateCurrentProductTypeReadiness = (
   snapshot: ProductTypeReadinessSnapshot,
@@ -258,12 +264,7 @@ export const evaluateCurrentProductTypeReadiness = (
   if (productValueSource === undefined) {
     return { reason: 'Current Product value source is unavailable', status: 'INDETERMINATE' };
   }
-  if (
-    selectedVariantRef !== undefined &&
-    (selectedVariantRef.moduleId !== catalogModuleId ||
-      selectedVariantRef.resourceType !== 'commerce.catalog.variant' ||
-      !snapshot.variantRefs.some((ref) => sameRef(ref, selectedVariantRef)))
-  ) {
+  if (selectedVariantRef !== undefined && !attestedVariant(snapshot, selectedVariantRef)) {
     return { reason: 'Selected Variant is outside the owner-attested inventory', status: 'INDETERMINATE' };
   }
   if (source.status === 'UNTYPED') {
