@@ -33,7 +33,4 @@ export interface CoreSearchProjectionStoreService {
 export class CoreSearchProjectionStore extends Context.Service<
   CoreSearchProjectionStore,
   CoreSearchProjectionStoreService
->()(
-  // Preserve the public Context identity after splitting the service into its owning module.
-  '@app/core-runtime/search/projection/CoreSearchProjectionStore',
-) {}
+>()('@app/core-runtime/search/projection-store/CoreSearchProjectionStore') {}

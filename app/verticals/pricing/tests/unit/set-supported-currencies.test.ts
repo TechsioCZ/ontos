@@ -138,7 +138,7 @@ describe('Set supported currencies Action', () => {
       );
       expect(Schema.is(CurrencySupportPersistenceUnavailable)(contractFailure)).toBe(true);
       const encoded = Schema.is(CurrencySupportPersistenceUnavailable)(contractFailure)
-        ? Schema.encodeSync(CurrencySupportPersistenceUnavailable)(contractFailure)
+        ? yield* Schema.encodeEffect(CurrencySupportPersistenceUnavailable)(contractFailure)
         : contractFailure;
       expect(encoded).not.toHaveProperty('cause');
       expect(encoded).toHaveProperty('reason', 'Pricing currency support could not be verified');

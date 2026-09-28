@@ -240,7 +240,7 @@ describe('Storefront Registry administration Actions', () => {
       }).pipe(Effect.flip);
       expect(Schema.is(StorefrontAdministrationPersistenceUnavailable)(contractFailure)).toBe(true);
       const encoded = Schema.is(StorefrontAdministrationPersistenceUnavailable)(contractFailure)
-        ? Schema.encodeSync(StorefrontAdministrationPersistenceUnavailable)(contractFailure)
+        ? yield* Schema.encodeEffect(StorefrontAdministrationPersistenceUnavailable)(contractFailure)
         : contractFailure;
       expect(encoded).not.toHaveProperty('cause');
       expect(encoded).toHaveProperty('code', 'storefront_administration_persistence_unavailable');

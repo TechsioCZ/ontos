@@ -204,45 +204,43 @@ it.live('runtime RLS isolates tenant and legal-entity rows and never leaks trans
 
       const unscopedRows = yield* queryEffect(runtime, `select * from ${schema}.records`);
       expect(unscopedRows.length).toBe(0);
-      yield* Effect.gen(function* scopedRuntimeQueries() {
-        yield* queryEffect(runtime, 'begin');
-        yield* queryEffect(
+      yield* queryEffect(runtime, 'begin');
+      yield* queryEffect(
+        runtime,
+        "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)",
+        [tenantA, entityA],
+      );
+      const entityARows = yield* queryEffect<{ value: string }>(runtime, `select value from ${schema}.records`);
+      expect(entityARows).toEqual([{ value: 'entity-a' }]);
+      const foreignUpdate = yield* queryEffect(
+        runtime,
+        `update ${schema}.records set value = 'hacked' where value = 'tenant-b' returning value`,
+      );
+      expect(foreignUpdate.length).toBe(0);
+      const foreignDelete = yield* queryEffect(
+        runtime,
+        `delete from ${schema}.records where value = 'entity-b' returning value`,
+      );
+      expect(foreignDelete.length).toBe(0);
+      const forbiddenInsert = yield* Effect.flip(
+        queryTryEffect(
           runtime,
-          "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)",
-          [tenantA, entityA],
-        );
-        const entityARows = yield* queryEffect<{ value: string }>(runtime, `select value from ${schema}.records`);
-        expect(entityARows).toEqual([{ value: 'entity-a' }]);
-        const foreignUpdate = yield* queryEffect(
-          runtime,
-          `update ${schema}.records set value = 'hacked' where value = 'tenant-b' returning value`,
-        );
-        expect(foreignUpdate.length).toBe(0);
-        const foreignDelete = yield* queryEffect(
-          runtime,
-          `delete from ${schema}.records where value = 'entity-b' returning value`,
-        );
-        expect(foreignDelete.length).toBe(0);
-        const forbiddenInsert = yield* Effect.flip(
-          queryTryEffect(
-            runtime,
-            `insert into ${schema}.records (tenant_id, legal_entity_id, resource_id, value) values ($1, $2, $3, 'forbidden')`,
-            [tenantB, entityC, randomUUID()],
-          ),
-        );
-        expect(forbiddenInsert.code).toBe('42501');
-        yield* queryEffect(runtime, 'rollback');
+          `insert into ${schema}.records (tenant_id, legal_entity_id, resource_id, value) values ($1, $2, $3, 'forbidden')`,
+          [tenantB, entityC, randomUUID()],
+        ),
+      );
+      expect(forbiddenInsert.code).toBe('42501');
+      yield* queryEffect(runtime, 'rollback');
 
-        yield* queryEffect(runtime, 'begin');
-        yield* queryEffect(
-          runtime,
-          "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)",
-          [tenantA, entityB],
-        );
-        const entityBRows = yield* queryEffect<{ value: string }>(runtime, `select value from ${schema}.records`);
-        expect(entityBRows).toEqual([{ value: 'entity-b' }]);
-        yield* queryEffect(runtime, 'commit');
-      });
+      yield* queryEffect(runtime, 'begin');
+      yield* queryEffect(
+        runtime,
+        "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)",
+        [tenantA, entityB],
+      );
+      const entityBRows = yield* queryEffect<{ value: string }>(runtime, `select value from ${schema}.records`);
+      expect(entityBRows).toEqual([{ value: 'entity-b' }]);
+      yield* queryEffect(runtime, 'commit');
 
       const resetRows = yield* queryEffect(runtime, `select * from ${schema}.records`);
       expect(resetRows.length).toBe(0);

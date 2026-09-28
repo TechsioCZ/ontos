@@ -1,5 +1,6 @@
+// @effect-diagnostics strictEffectProvide:off -- Test-owned scripted database entrypoint; expires: 2026-12-31.
 import { PgClient } from '@effect/sql-pg';
-import { Effect } from 'effect';
+import { Effect, Layer } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { Reactivity } from 'effect/unstable/reactivity';
 import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
@@ -28,8 +29,9 @@ const prepareJournal = (legacy: boolean, contacts: boolean, renameFailure?: SqlE
   return Effect.gen(function* prepareScriptedJournal() {
     return yield* prepareContactsMigration(yield* PgClient.PgClient);
   }).pipe(
-    Effect.provide(scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute)))),
-    Effect.provide(Reactivity.layer),
+    Effect.provide(
+      scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute))).pipe(Layer.provideMerge(Reactivity.layer)),
+    ),
     Effect.map((state) => ({ queries, state })),
     Effect.mapError((failure) => ({ failure, queries })),
   );

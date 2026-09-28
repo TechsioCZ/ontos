@@ -1,3 +1,4 @@
+// @effect-diagnostics strictEffectProvide:off multipleEffectProvide:off -- Test-owned scripted database entrypoint for Action fixtures; Reactivity feeds both the scripted client and the executor. expires: 2026-12-31.
 import { randomUUID } from 'node:crypto';
 
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';

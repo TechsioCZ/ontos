@@ -172,6 +172,7 @@ it('rejects reserved and unconstrained extension schemas at construction', () =>
     Schema.BigInt,
     Schema.Literal(1n),
     Schema.Json,
+    // @effect-diagnostics-next-line schemaNumber:off -- The non-finite number schema is the rejected input under test.
     Schema.Number,
     Schema.Record(Schema.String, Schema.String),
     Schema.Symbol,

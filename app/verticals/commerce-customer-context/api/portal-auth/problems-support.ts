@@ -20,7 +20,7 @@ const FailureLogSummarySchema = Schema.Struct({
   code: Schema.optionalKey(Schema.String),
   operation: Schema.optionalKey(Schema.String),
   reason: Schema.optionalKey(Schema.String),
-  status: Schema.optionalKey(Schema.Union([Schema.String, Schema.Number])),
+  status: Schema.optionalKey(Schema.Union([Schema.String, Schema.Finite])),
 });
 
 export interface FailureLogSummary {

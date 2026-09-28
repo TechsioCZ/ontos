@@ -1,3 +1,4 @@
+// @effect-diagnostics strictEffectProvide:off -- Test-owned scripted database entrypoint; expires: 2026-12-31.
 import { PgClient } from '@effect/sql-pg';
 import type { AnyRelations } from 'drizzle-orm';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
@@ -17,8 +18,9 @@ export const makeTestDatabase = (
 ) =>
   Effect.scoped(
     makeWithDefaults({ relations: coreRelations }).pipe(
-      Effect.provide(scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute)))),
-      Effect.provide(Reactivity.layer),
+      Effect.provide(
+        scriptedPgClientLayer(Effect.succeed(testSqlConnection(execute))).pipe(Layer.provideMerge(Reactivity.layer)),
+      ),
     ),
   );
 

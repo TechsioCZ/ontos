@@ -51,7 +51,7 @@
     "@modern-js/runtime": "catalog:ultramodern",
     "@modern-js/runtime-extensions": "catalog:ultramodern",
     "@modern-js/runtime-renderer-extensions": "catalog:ultramodern",
-    "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.2",
+    "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.3",
     "@tanstack/react-router": "1.170.39",
     "@techsio/ui-kit": "0.25.1",
     "better-auth": "1.7.2",

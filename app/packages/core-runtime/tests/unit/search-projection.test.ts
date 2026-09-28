@@ -500,8 +500,8 @@ it.effect('native projection services preserve keys and provided identity', () =
   const store = makeInMemoryCoreSearchProjectionStore();
   return Effect.gen(function* testNativeServiceIdentity() {
     const runtime = yield* createCoreSearchQueryRuntime;
-    expect(CoreSearchProjectionStore.key).toBe('@app/core-runtime/search/projection/CoreSearchProjectionStore');
-    expect(CoreSearchQueryRuntime.key).toBe('@app/core-runtime/search/projection/CoreSearchQueryRuntime');
+    expect(CoreSearchProjectionStore.key).toBe('@app/core-runtime/search/projection-store/CoreSearchProjectionStore');
+    expect(CoreSearchQueryRuntime.key).toBe('@app/core-runtime/search/query-runtime/CoreSearchQueryRuntime');
     expect(yield* CoreSearchProjectionStore).toBe(store);
     expect(yield* CoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchQueryRuntime, runtime))).toBe(runtime);
   }).pipe(Effect.provideService(CoreSearchProjectionStore, store));

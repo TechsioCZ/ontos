@@ -33,7 +33,7 @@ export const decodeActionEndpointHeaders = (
   if (idempotencyKey === undefined) {
     return Effect.succeed({ idempotencyKey, traceId });
   }
-  return Schema.decodeUnknownEffect(ActionIdempotencyKeySchema)(idempotencyKey).pipe(
+  return Schema.decodeEffect(ActionIdempotencyKeySchema)(idempotencyKey).pipe(
     Effect.map((decodedKey) => ({ idempotencyKey: decodedKey, traceId })),
   );
 };
