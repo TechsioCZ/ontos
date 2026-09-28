@@ -35,6 +35,7 @@ const cases: readonly DatastoreParts[] = [
   { host: 'db18', password: 'plain', port: '5432' },
   { host: 'db18', password: 'p@ss:w/o%rd#?', port: '5432' },
   { host: 'db18', password: ' two words ', port: '5432' },
+  { host: 'postgres.internal.', password: 'absolute', port: '5432' },
   { host: 'db.internal.example', password: "%25%ZZ@@//??##::'!$&()*+,;=[]", port: '65535' },
   { host: '192.0.2.7', password: 'žluťoučký kůň', port: '1' },
   { host: '::1', password: 'p@ss', port: '5433' },
@@ -74,6 +75,8 @@ it.live(
       { host: 'db18/other', password: 'secret', port: '5432' },
       { host: 'user@db18', password: 'secret', port: '5432' },
       { host: '-db18', password: 'secret', port: '5432' },
+      { host: 'db18..internal', password: 'secret', port: '5432' },
+      { host: '.db18', password: 'secret', port: '5432' },
       { host: '[::1]', password: 'secret', port: '5432' },
     ]) {
       expect((yield* build(parts)).status).not.toBe(0);

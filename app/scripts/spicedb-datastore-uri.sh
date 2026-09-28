@@ -34,7 +34,8 @@ case "$host" in
     ;;
   *)
     case "$host" in
-      *[!0-9A-Za-z.-]* | -* | *- | .* | *.)
+      # A single trailing dot marks an absolute DNS name and is kept.
+      *[!0-9A-Za-z.-]* | -* | *- | *-. | .* | *..*)
         echo 'SPICEDB_DATABASE_HOST must be a hostname or an IP address' >&2
         exit 1
         ;;
