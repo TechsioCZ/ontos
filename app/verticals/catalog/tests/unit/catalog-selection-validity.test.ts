@@ -205,3 +205,55 @@ describe('Catalog Selection validity attestation', () => {
     }
   });
 });
+
+describe('Catalog audit F5 source validity ceiling', () => {
+  const sourceExpiry = '2026-09-18T12:00:10.000Z';
+  const expiringEvidence = decodeEvidence({ ...validEvidence, validUntil: sourceExpiry });
+
+  it('never extends a known source validity window to the requested later expiry', () => {
+    const attestation = requireDefined(
+      catalogSelectionValidityAttestationFor({
+        evidence: expiringEvidence,
+        purpose: 'PURCHASE_ACCEPTANCE',
+        validUntil: '2026-09-18T13:00:00.000Z',
+      }),
+    );
+    expect(attestation.validUntil).toBe(sourceExpiry);
+    expect(
+      catalogSelectionValidityCovers(attestation, {
+        ...request,
+        at: decodeInstant('2026-09-18T12:00:09.999Z'),
+      }),
+    ).toBe(true);
+    expect(
+      catalogSelectionValidityCovers(attestation, {
+        ...request,
+        at: decodeInstant(sourceExpiry),
+      }),
+    ).toBe(false);
+  });
+
+  it('retains an earlier requested expiry rather than extending it to the source expiry', () => {
+    const earlier = '2026-09-18T12:00:05.000Z';
+    const attestation = requireDefined(
+      catalogSelectionValidityAttestationFor({
+        evidence: expiringEvidence,
+        purpose: 'PURCHASE_ACCEPTANCE',
+        validUntil: earlier,
+      }),
+    );
+    expect(attestation.validUntil).toBe(earlier);
+  });
+
+  it('does not revive evidence that has already expired at the assessment instant', () => {
+    // Deliberately construct an expired owner observation to exercise this function's guard.
+    const expired = { ...validEvidence, validUntil: decodeInstant(instant) };
+    expect(
+      catalogSelectionValidityAttestationFor({
+        evidence: expired,
+        purpose: 'PURCHASE_ACCEPTANCE',
+        validUntil: '2026-09-18T13:00:00.000Z',
+      }),
+    ).toBeUndefined();
+  });
+});

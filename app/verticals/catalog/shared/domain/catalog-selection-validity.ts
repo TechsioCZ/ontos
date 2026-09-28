@@ -53,7 +53,9 @@ export const sameCatalogSelectionValiditySourceToken = (
 
 /**
  * True only while the request matches the attested exact selection and purpose and falls inside
- * the issued window. A source change requires re-assessment; retirement invalidates outright.
+ * the issued window. This compares supplied evidence; it does not read Current sources,
+ * authenticate provenance, or fence a concurrent source mutation through an Order commit.
+ * Those guarantees must be established by the owning acceptance protocol.
  */
 export const catalogSelectionValidityCovers = (
   attestation: CatalogSelectionValidityAttestation,
@@ -83,7 +85,10 @@ export const catalogSelectionValidityAttestationFor = (input: {
   if (evidence.status !== 'VALID' || evidence.purpose !== purpose || validUntil === undefined) {
     return undefined;
   }
-  if (validUntil <= evidence.assessedAt) {
+  // A requested window cannot outlive the owner evidence that justified it.
+  const effectiveValidUntil =
+    evidence.validUntil !== undefined && evidence.validUntil < validUntil ? evidence.validUntil : validUntil;
+  if (effectiveValidUntil <= evidence.assessedAt) {
     return undefined;
   }
   const base = {
@@ -96,7 +101,7 @@ export const catalogSelectionValidityAttestationFor = (input: {
     purpose,
     selection: evidence.selection,
     source: 'CATALOG_OWNER_CURRENT_READ' as const,
-    validUntil,
+    validUntil: effectiveValidUntil,
   };
   const decoded = Schema.decodeOption(CatalogSelectionValidityAttestationSchema)(base);
   return Option.isSome(decoded) ? decoded.value : undefined;
