@@ -141,7 +141,6 @@ export const readPriceGroupDefinition = Effect.fn('PriceGroupDefinitionRead.read
       return yield* notFound();
     }
 
-    const observedAt = DateTime.formatIso(yield* DateTime.now);
     if (input.definitionRevisionId !== undefined) {
       const snapshot = yield* services
         .readDefinitionRevision(
@@ -159,7 +158,8 @@ export const readPriceGroupDefinition = Effect.fn('PriceGroupDefinitionRead.read
       const response = {
         definition: snapshot.definition,
         identity: snapshot.identity,
-        observedAt,
+        // Historical lifecycle and its result-schema checks use the same requested as-of instant.
+        observedAt: input.trustedOperationAt,
         selection: 'HISTORICAL' as const,
       };
       return snapshot.scheduledRetirement === undefined
@@ -167,6 +167,7 @@ export const readPriceGroupDefinition = Effect.fn('PriceGroupDefinitionRead.read
         : { ...response, scheduledRetirement: snapshot.scheduledRetirement };
     }
 
+    const observedAt = DateTime.formatIso(yield* DateTime.now);
     const snapshot = yield* services
       .readCurrentDefinition(input.priceGroupRef, DateTime.toDateUtc(DateTime.makeUnsafe(input.trustedOperationAt)))
       .pipe(Effect.mapError(mapOwnerFailure));
