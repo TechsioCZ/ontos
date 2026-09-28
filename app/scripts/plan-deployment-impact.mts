@@ -710,13 +710,17 @@ const planCloudflareDeployments = (
     }
     placed.add(id);
   }
-  return orderedUnits
-    .filter((unit) => placed.has(unit.id) && (deployInputChanged || impacted.has(unit.id)))
-    .map((unit) => ({
-      id: unit.id,
-      packageName: unit.packageName,
-      workerName: requireString(workerNames.get(unit.id), `topology ${unit.id} cloudflare.workerName`),
-    }));
+  // The Shell Worker binds every vertical Worker as a service, beyond its Module Federation
+  // remotes, so its targets must exist first: providers deploy before the Shell.
+  const planned = orderedUnits.filter((unit) => placed.has(unit.id) && (deployInputChanged || impacted.has(unit.id)));
+  return [
+    ...planned.filter((unit) => unit.kind === 'provider'),
+    ...planned.filter((unit) => unit.kind === 'shell'),
+  ].map((unit) => ({
+    id: unit.id,
+    packageName: unit.packageName,
+    workerName: requireString(workerNames.get(unit.id), `topology ${unit.id} cloudflare.workerName`),
+  }));
 };
 
 const WORKSPACE_GLOB_PATTERN = /^(?<directory>[\w.-]+(?:\/[\w.-]+)*)\/\*$/u;

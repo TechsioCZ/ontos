@@ -36,6 +36,7 @@ interface FixtureOptions {
   readonly includeWorker?: boolean;
   readonly omitVerticalWorkerName?: boolean;
   readonly setupIds?: readonly string[];
+  readonly shellVerticalRefs?: readonly string[];
   readonly verticalId?: string;
 }
 
@@ -143,7 +144,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
         cloudflare: { workerName: 'app-shell-super-app' },
         id: SHELL_ID,
         package: SHELL_PACKAGE,
-        verticalRefs: [verticalId],
+        verticalRefs: options.shellVerticalRefs ?? [verticalId],
       },
       verticals: [
         options.omitVerticalWorkerName === true
@@ -393,6 +394,25 @@ it.live('replans every placed unit when the edge deploy workflow changes', () =>
           }
         }),
       { cloudflarePlacement: ['contacts'] },
+    );
+  }),
+);
+
+const UNREFERENCED_VERTICAL = 'zeta-ledger';
+
+it.live('deploys the Shell Worker after every placed vertical it binds, not only its MF remotes', () =>
+  Effect.gen(function* ordersShellAfterAllVerticals() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* ordersShellAfterAllVerticalsInFixture() {
+          const plan = yield* planDeploymentImpact({ changedPaths: [SHARED_CONTRACT_PATH], rootDirectory: root });
+          expect(plan.units.cloudflare.map(({ id }) => id)).toEqual([UNREFERENCED_VERTICAL, SHELL_ID]);
+        }),
+      {
+        cloudflarePlacement: [SHELL_ID, UNREFERENCED_VERTICAL],
+        shellVerticalRefs: [],
+        verticalId: UNREFERENCED_VERTICAL,
+      },
     );
   }),
 );
