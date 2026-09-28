@@ -189,6 +189,7 @@ it.effect('publishes a schema-valid deterministic Czech Launch operator fixture'
       tenantId: LOCAL_DEVELOPMENT_CONTEXT.tenantId,
     });
     expect(CZECH_LAUNCH_COMMERCE_FIXTURE.policies.quantity.revision.value).toEqual({
+      audience: 'SHARED',
       basis: {
         targetDivisibilityRevision: 1,
         targetRef: {
