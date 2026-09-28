@@ -20,7 +20,11 @@ jobs:
     name: Re-observe and re-publish the stage Application Composition
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    environment: stage
+    # Refreshing is not a deployment: without deployment: false the job would record a successful stage
+    # deployment for the schedule's main SHA, which the stage deploy would then treat as its diff base.
+    environment:
+      name: stage
+      deployment: false
     concurrency:
       group: zerops-stage
       cancel-in-progress: false

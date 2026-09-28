@@ -132,18 +132,46 @@ const decodeShellRuntime = (artifact: ObservedArtifact) =>
     Effect.mapError(invalidObservation(`Shell runtime contract at ${artifact.url} does not match its schema`)),
   );
 
-const governedPackages: ReadonlySet<string> = new Set(governedSharedSingletonPackages);
 const singletonOrder = Order.mapInput(Order.String, (singleton: SharedSingleton) => singleton.packageName);
 const moduleOrder = Order.mapInput(Order.String, (module: ApplicationCompositionModule) => module.moduleId);
 
-/** Strict shared singletons the Shell and every browser remote must agree on, from the observed manifest. */
-const governedSingletons = (manifest: ModuleFederationManifest): SharedSingleton[] =>
-  EffectArray.sort(
-    manifest.shared
-      .filter(({ name, singleton }) => singleton === true && governedPackages.has(name))
-      .map(({ name, requiredVersion }) => ({ packageName: name, version: requiredVersion ?? '' })),
-    singletonOrder,
+/**
+ * Strict shared singletons the Shell and every browser remote must agree on. Module Federation lists only
+ * the shared packages a build actually consumes, so a remote may omit a governed package it never loads;
+ * the Shell hosts all of them. Every listed governed package must be shared exactly once as a versioned
+ * singleton: an unshared or duplicated entry would let a remote run its own React, router, runtime, or
+ * i18n instance, so the observation is rejected.
+ */
+const governedSingletons = Effect.fn('ActiveApplicationComposition.governedSingletons')(function* governedSingletons(
+  manifest: ModuleFederationManifest,
+  url: string,
+  role: 'host' | 'remote',
+) {
+  const singletons = yield* Effect.forEach(
+    governedSharedSingletonPackages,
+    (packageName) => {
+      const entries = manifest.shared.filter(({ name }) => name === packageName);
+      const [entry] = entries;
+      if (entries.length === 0 && role === 'remote') {
+        return Effect.succeed(Option.none());
+      }
+      return entries.length === 1 &&
+        entry !== undefined &&
+        entry.singleton === true &&
+        entry.requiredVersion !== undefined &&
+        entry.requiredVersion !== ''
+        ? Effect.succeed(Option.some({ packageName, version: entry.requiredVersion }))
+        : Effect.fail(
+            new ActiveApplicationCompositionPublicationError({
+              message: `Module Federation manifest at ${url} does not share ${packageName} exactly once as a versioned singleton`,
+              reason: 'invalid_observation',
+            }),
+          );
+    },
+    { concurrency: 1 },
   );
+  return EffectArray.sort(EffectArray.getSomes(singletons), singletonOrder);
+});
 
 const contributionKeysOf = (contract: ModuleDeploymentContract): string[] =>
   EffectArray.sort(
@@ -222,7 +250,7 @@ const deriveModule = Effect.fn('ActiveApplicationComposition.deriveModule')(func
     manifest.exposes.map(({ path }) => path),
     Order.String,
   );
-  const sharedSingletons = governedSingletons(manifest);
+  const sharedSingletons = yield* governedSingletons(manifest, manifestArtifact.url, 'remote');
   const derived: DerivedModule = {
     evidence,
     manifestEvidence: Option.some([
@@ -266,7 +294,7 @@ export const deriveActiveApplicationCompositionSnapshot = Effect.fn('ActiveAppli
     const shell = {
       contributionAbi: shellRuntime.contributionAbi,
       coreCapabilities: shellRuntime.coreCapabilities,
-      sharedSingletons: governedSingletons(shellManifest),
+      sharedSingletons: yield* governedSingletons(shellManifest, observation.shell.federationManifest.url, 'host'),
     };
     const unrevised: ApplicationComposition = {
       modules: EffectArray.sort(

@@ -99,8 +99,11 @@ const moduleContract = (input: {
 const shared = (entries: readonly (readonly [string, string])[]) =>
   entries.map(([name, version]) => ({ name, requiredVersion: version, singleton: true }));
 
+const I18N_RUNTIME = '@modern-js/plugin-i18n/runtime';
+const PARTY_MANIFEST_URL = 'https://party-registry.example/mf-manifest.json';
+
 const governedShared = shared([
-  ['@modern-js/plugin-i18n/runtime', '3.9.0'],
+  [I18N_RUNTIME, '3.9.0'],
   ['@modern-js/runtime', '3.9.0'],
   ['@tanstack/react-router', '1.170.39'],
   ['react', '19.2.8'],
@@ -113,6 +116,8 @@ const PARTY_REMOTE = 'verticalPartyRegistry';
 const CUSTOMER_CONTEXT = 'commerce-customer-context';
 const PARTY_MODULE = 'party.registry';
 const PAGE_EXPOSE = './PageContacts';
+const SHELL_MANIFEST_URL = 'https://shell.example/mf-manifest.json';
+const SHELL_REMOTE = 'shellSuperApp';
 
 const partyRegistry: ObservedModuleDeployment = {
   appId: PARTY_REGISTRY,
@@ -125,7 +130,7 @@ const partyRegistry: ObservedModuleDeployment = {
       search: ['party.registry.search.parties'],
     }),
   ),
-  federationManifest: artifact('https://party-registry.example/mf-manifest.json', {
+  federationManifest: artifact(PARTY_MANIFEST_URL, {
     exposes: [{ path: './Route' }, { path: PAGE_EXPOSE }],
     name: PARTY_REMOTE,
     shared: [...governedShared, { name: 'effect', requiredVersion: '4.0.0', singleton: true }],
@@ -152,9 +157,9 @@ const observation = (modules: readonly ObservedModuleDeployment[]): ActiveApplic
   modules,
   observedAt,
   shell: {
-    federationManifest: artifact('https://shell.example/mf-manifest.json', {
+    federationManifest: artifact(SHELL_MANIFEST_URL, {
       exposes: [],
-      name: 'shellSuperApp',
+      name: SHELL_REMOTE,
       shared: governedShared,
     }),
     runtimeContract: artifact('https://shell.example/.well-known/ontos-shell-runtime.json', shellRuntimeContract),
@@ -230,15 +235,59 @@ it.effect('rejects observations that contradict the deployment identity or Shell
       ...incompatibleShell,
       shell: {
         ...incompatibleShell.shell,
-        federationManifest: artifact('https://shell.example/mf-manifest.json', {
+        federationManifest: artifact(SHELL_MANIFEST_URL, {
           exposes: [],
-          name: 'shellSuperApp',
+          name: SHELL_REMOTE,
           shared: shared([['react', '18.3.1']]),
         }),
       },
     };
     const incompatible = yield* Effect.flip(deriveActiveApplicationCompositionSnapshot(shellWithOldReact));
-    expect(incompatible.message).toMatch(/valid Application Composition/u);
+    expect(incompatible.message).toMatch(/share @modern-js\/plugin-i18n\/runtime exactly once/u);
+
+    const olderReactShell = {
+      ...incompatibleShell,
+      shell: {
+        ...incompatibleShell.shell,
+        federationManifest: artifact(SHELL_MANIFEST_URL, {
+          exposes: [],
+          name: SHELL_REMOTE,
+          shared: governedShared.map((entry) =>
+            entry.name === 'react' ? { ...entry, requiredVersion: '18.3.1' } : entry,
+          ),
+        }),
+      },
+    };
+    const olderReact = yield* Effect.flip(deriveActiveApplicationCompositionSnapshot(olderReactShell));
+    expect(olderReact.message).toMatch(/valid Application Composition/u);
+
+    const unsharedReact = observation([
+      {
+        ...partyRegistry,
+        federationManifest: artifact(PARTY_MANIFEST_URL, {
+          exposes: [{ path: PAGE_EXPOSE }],
+          name: PARTY_REMOTE,
+          shared: governedShared.map((entry) => (entry.name === 'react' ? { ...entry, singleton: false } : entry)),
+        }),
+      },
+    ]);
+    const unshared = yield* Effect.flip(deriveActiveApplicationCompositionSnapshot(unsharedReact));
+    expect(unshared.message).toMatch(/does not share react exactly once/u);
+
+    const withoutI18n = observation([
+      {
+        ...partyRegistry,
+        federationManifest: artifact(PARTY_MANIFEST_URL, {
+          exposes: [{ path: PAGE_EXPOSE }],
+          name: PARTY_REMOTE,
+          shared: governedShared.filter(({ name }) => name !== I18N_RUNTIME),
+        }),
+      },
+    ]);
+    const remoteWithoutI18n = yield* deriveActiveApplicationCompositionSnapshot(withoutI18n);
+    expect(
+      remoteWithoutI18n.composition.modules[0]?.sharedSingletons.map(({ packageName }) => packageName),
+    ).not.toContain(I18N_RUNTIME);
   }),
 );
 
