@@ -21,11 +21,11 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
-      - name: Install the repository toolchain
-        uses: ./.github/actions/install-app
-      - name: Inspect pinned migration and test commands
-        working-directory: app
-        run: |
-          mise exec -- pnpm --filter @app/price-group-catalog exec drizzle-kit generate --help
-          mise exec -- pnpm --filter @app/price-group-catalog exec rstest --help
-          node -e 'for (const p of ["package.json", "verticals/price-group-catalog/package.json", "verticals/commerce-customer-context/package.json"]) { console.log(p); console.log(JSON.parse(require("node:fs").readFileSync(p, "utf8")).scripts); }'
+      - name: Archive committed source only
+        run: git archive --format=tar --output=/tmp/ontos-source.tar HEAD
+      - name: Export committed source
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: issue-334-source
+          path: /tmp/ontos-source.tar
+          retention-days: 1
