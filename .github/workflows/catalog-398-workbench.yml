@@ -1,0 +1,81 @@
+name: Catalog 398 remediation workbench
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - .github/workflows/catalog-398-workbench.yml
+      - .github/catalog-398-remediate.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-398-workbench
+  cancel-in-progress: false
+
+jobs:
+  regressions:
+    if: github.repository == 'TechsioCZ/ontos' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'fix/catalog-398-audit-remediation'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    env:
+      MODERN_PUBLIC_SITE_URL: http://localhost:8080
+      ULTRAMODERN_SOURCE_REVISION: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout the exact remediation head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '26.7.0'
+      - name: Setup mise
+        uses: jdx/mise-action@5ac50f778e26fac95da98d50503682459e86d566
+      - name: Install the frozen workspace
+        working-directory: app
+        run: mise exec -- pnpm install --frozen-lockfile
+      - name: Add the reproducing regression cases
+        run: python3 .github/catalog-398-remediate.py tests
+      - name: Run the reproductions before the fix
+        working-directory: app
+        shell: bash
+        run: |
+          set +e
+          mise exec -- pnpm --filter @app/catalog exec rstest run --project unit tests/unit/product-configuration.test.ts tests/unit/variant-persistence.test.ts > /tmp/catalog-398-red.log 2>&1
+          result=$?
+          set -e
+          cat /tmp/catalog-398-red.log
+          if [ "$result" -eq 0 ]; then
+            echo 'The reproductions no longer fail; stop and reassess the source revision.' >&2
+            exit 1
+          fi
+          grep -q 'F6 preserves the sign of nonzero fractional configurations' /tmp/catalog-398-red.log
+          grep -q 'F2 rejects retired combination confirmation before dependent reads or writes' /tmp/catalog-398-red.log
+      - name: Apply the reviewed minimal fixes
+        run: python3 .github/catalog-398-remediate.py fixes
+      - name: Format the changed Catalog files
+        working-directory: app
+        run: mise exec -- pnpm exec oxfmt verticals/catalog/shared/domain/product-configuration.ts verticals/catalog/src/persistence/variant-persistence.ts verticals/catalog/tests/unit/product-configuration.test.ts verticals/catalog/tests/unit/variant-persistence.test.ts
+      - name: Run the complete Catalog unit suite
+        working-directory: app
+        run: mise exec -- pnpm --filter @app/catalog test:unit
+      - name: Check the changed Catalog files
+        working-directory: app
+        run: mise exec -- pnpm exec oxlint verticals/catalog/shared/domain/product-configuration.ts verticals/catalog/src/persistence/variant-persistence.ts verticals/catalog/tests/unit/product-configuration.test.ts verticals/catalog/tests/unit/variant-persistence.test.ts
+      - name: Commit and publish only the verified Catalog changes
+        working-directory: app
+        shell: bash
+        run: |
+          git diff --check
+          git diff --stat
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add verticals/catalog
+          mise exec -- git commit -m 'fix(catalog): preserve signed configurations and guard retired variants'
+          mise exec -- git push origin HEAD:refs/heads/fix/catalog-398-audit-remediation
+          git rev-parse HEAD
