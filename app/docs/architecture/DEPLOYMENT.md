@@ -212,9 +212,9 @@ Do not report release success before all required smoke checks pass.
 
 `topology/cloudflare-placement.json` lists the delivery units CI also ships as Cloudflare Workers;
 each needs a `cloudflare.workerName` in the reference topology, and its Worker configuration must be
-deployable on its own. The Shell is not placed yet: its Worker still binds the API-only units as
-Worker services, and those units stay on Zerops in the hybrid topology. Placing it goes with
-switching those bindings to `deploy.worker.vpcServices`. The deployment planner emits the
+deployable on its own. In the hybrid topology every vertical (UI and headless API) and the Shell
+are placed, so every Worker the Shell binds as a service is placed too; Zerops keeps only the data
+plane and the outbox worker host. The deployment planner emits the
 placed, impacted units as `units.cloudflare` in dependency order (providers before Shell).
 
 The `deploy-cloudflare` job runs after `deploy-stage` has migrated the database, in its own
