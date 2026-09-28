@@ -171,16 +171,25 @@ const answerUnavailable =
 const untrustedOriginProblem = () => forbiddenProblem('origin_not_trusted');
 
 /** Only sign-in carries caller input; elsewhere an owner-input rejection is an internal fault. */
-const signInFailureProblem = (error: CommercePortalAuthSessionFailure) =>
-  Schema.is(CommercePortalAuthSessionInvalidRequest)(error) ? invalidProblem() : unavailableProblem();
+const answerSignInFailure = (
+  error: CommercePortalAuthSessionFailure,
+): Effect.Effect<never, ReturnType<typeof invalidProblem> | ReturnType<typeof unavailableProblem>> =>
+  Schema.is(CommercePortalAuthSessionInvalidRequest)(error)
+    ? Effect.fail(invalidProblem())
+    : answerUnavailable()(error);
 
-const evidenceFailureProblem = (error: CommercePortalAuthSessionEvidenceFailure) => {
+const answerEvidenceFailure = (
+  error: CommercePortalAuthSessionEvidenceFailure,
+): Effect.Effect<
+  never,
+  ReturnType<typeof unavailableProblem> | ReturnType<typeof forbiddenProblem> | ReturnType<typeof authenticationProblem>
+> => {
   if (!Schema.is(CommercePortalAuthSessionEvidenceRejected)(error)) {
-    return unavailableProblem();
+    return answerUnavailable()(error);
   }
-  return error.reason.includes('disabled')
-    ? forbiddenProblem('account_disabled')
-    : authenticationProblem('session_expired');
+  return Effect.fail(
+    error.reason.includes('disabled') ? forbiddenProblem('account_disabled') : authenticationProblem('session_expired'),
+  );
 };
 
 interface AuthSessionResponse {
@@ -489,7 +498,9 @@ const signIn = Effect.fn('CommercePortalAuthSessionHttp.signIn')(function* signI
     subjectDigest,
   });
   const lifecycle = yield* CommercePortalAuthSessionLifecycle;
-  const result = yield* lifecycle.signIn(payload).pipe(Effect.mapError(signInFailureProblem));
+  const result = yield* lifecycle
+    .signIn(payload)
+    .pipe(Effect.matchEffect({ onFailure: answerSignInFailure, onSuccess: Effect.succeed }));
   const providerSubjectId = signInAuditProviderSubjectId(result.outcome);
   const sessionRef = signInAuditSessionRef(result.outcome);
   const evidence = yield* Effect.result(
@@ -609,7 +620,7 @@ const getSession = Effect.fn('CommercePortalAuthSessionHttp.getSession')(functio
     .evidenceForSession(referenceInput(providerSession.value.session, sessionRef))
     .pipe(Effect.result);
   if (Result.isFailure(evidence)) {
-    return yield* Effect.fail(evidenceFailureProblem(evidence.failure));
+    return yield* answerEvidenceFailure(evidence.failure);
   }
   return { session: toSessionSnapshot(evidence.success), state: 'authenticated' } as const;
 });

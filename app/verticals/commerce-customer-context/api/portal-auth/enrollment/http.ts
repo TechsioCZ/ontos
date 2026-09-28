@@ -198,7 +198,7 @@ const isAttemptUnavailable = Schema.is(CommerceEnrollmentAttemptUnavailable);
  * Every governed Action failure this route can surface collapses to two public answers. An Attempt
  * the owner reports as retryably unavailable is the retryable 503; every other governed refusal is
  * the owner's closed-vocabulary 403, so a caller never learns which governed rule refused it. The
- * failing value is preserved as the problem's `cause` either way.
+ * problem is exactly its schema; the Action runtime records the rejected invocation.
  */
 const actionProblem = (error: { readonly _tag: string }) =>
   isAttemptUnavailable(error)
