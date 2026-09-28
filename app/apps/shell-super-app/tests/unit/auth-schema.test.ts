@@ -1,10 +1,13 @@
+import { getAuthTables } from 'better-auth/db';
 import { getColumns } from 'drizzle-orm';
+import { getTableConfig } from 'drizzle-orm/pg-core';
 import { expect, test } from 'effect-rstest';
 
 import { compareAuthCatalog, expectedAuthTableCatalog } from '../../api/auth/db/catalog.ts';
 import {
   AUTH_SCHEMA_NAME,
   AUTH_TABLE_INVENTORY,
+  account,
   apikey,
   session,
   supportImpersonationRecovery,
@@ -29,6 +32,19 @@ test('owns the exact Better Auth model inside the auth schema', () => {
     'auth.apikey',
     'auth.support_impersonation_recovery',
   ]);
+});
+
+test('keys accounts on the Better Auth provider identity and keeps only a nullable legacy issuer', () => {
+  const { issuer, ...columns } = getColumns(account);
+  expect(Object.keys(columns).toSorted()).toEqual(
+    ['id', ...Object.keys(getAuthTables({})['account']?.fields ?? {})].toSorted(),
+  );
+  expect(issuer.notNull).toBe(false);
+  expect(
+    getTableConfig(account)
+      .indexes.filter((index) => index.config.unique)
+      .map((index) => index.config.columns.map((column) => ('name' in column ? column.name : undefined))),
+  ).toContainEqual(['provider_id', 'account_id']);
 });
 
 test('stores one nullable typed active tenant and legal entity on the private session row', () => {

@@ -112,7 +112,7 @@
   "dependencies": {
     "@authzed/authzed-node": "1.6.1",
     "@effect/sql-pg": "4.0.0-rc.117",
-    "better-auth": "1.7.2",
+    "better-auth": "1.7.6",
     "drizzle-orm": "1.0.0-rc.5-ab785fc"
   },
   "devDependencies": {

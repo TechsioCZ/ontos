@@ -11,7 +11,7 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
-    "better-auth": "1.7.2",
+    "better-auth": "1.7.6",
     "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.0-rc.117"
   },

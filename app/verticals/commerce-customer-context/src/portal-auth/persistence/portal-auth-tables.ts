@@ -100,7 +100,9 @@ export const account = commercePortalAuthSchema.table(
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow().notNull(),
     id: text('id').primaryKey(),
     idToken: text('id_token'),
-    issuer: text('issuer').notNull(),
+    // Nullable until no Better Auth 1.7.2 writer remains; 1.7.3+ no longer writes it. Drop it and
+    // its index in that later contraction release.
+    issuer: text('issuer'),
     password: text('password'),
     providerId: text('provider_id').notNull(),
     refreshToken: text('refresh_token'),
@@ -113,6 +115,7 @@ export const account = commercePortalAuthSchema.table(
   },
   (table) => [
     uniqueIndex('commerce_auth_account_issuer_account_id_uk').on(table.issuer, table.accountId),
+    uniqueIndex('commerce_auth_account_provider_id_account_id_uk').on(table.providerId, table.accountId),
     index('commerce_auth_account_user_id_idx').on(table.userId),
   ],
 );

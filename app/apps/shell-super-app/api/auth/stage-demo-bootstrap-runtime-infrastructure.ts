@@ -85,7 +85,6 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
       .select({
         accountId: account.accountId,
         id: account.id,
-        issuer: account.issuer,
         password: account.password,
       })
       .from(account)
@@ -101,7 +100,6 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
     }
     yield* classifyExactStageDemoRecord('Better Auth credential account', credential, {
       accountId: existingUser.id,
-      issuer: 'local:credential',
     });
     const hash = credential.password;
     const validPassword = yield* Effect.tryPromise({

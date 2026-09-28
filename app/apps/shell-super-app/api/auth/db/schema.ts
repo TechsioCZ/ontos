@@ -73,10 +73,10 @@ export const account = authSchema.table(
   'account',
   {
     id: text('id').primaryKey(),
-    // Better Auth 1.7 keys provider identities on (issuer, accountId). Credential accounts use
-    // the synthetic issuer `local:credential`; OAuth providers use their trusted issuer or
-    // `local:oauth:<providerId>`.
-    issuer: text('issuer').notNull(),
+    // Better Auth 1.7.3+ keys accounts on (providerId, accountId) and no longer writes `issuer`;
+    // the column stays nullable, still filled by the `account_issuer_compat` trigger, until no
+    // 1.7.2 writer remains. Drop it, its index and the trigger in that later contraction release.
+    issuer: text('issuer'),
     accountId: text('account_id').notNull(),
     providerId: text('provider_id').notNull(),
     userId: text('user_id')
@@ -98,6 +98,7 @@ export const account = authSchema.table(
   },
   (table) => [
     uniqueIndex('auth_account_issuer_account_id_uk').on(table.issuer, table.accountId),
+    uniqueIndex('auth_account_provider_id_account_id_uk').on(table.providerId, table.accountId),
     index('auth_account_user_id_idx').on(table.userId),
   ],
 );

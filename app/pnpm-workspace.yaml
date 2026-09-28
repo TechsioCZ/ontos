@@ -109,8 +109,5 @@ allowBuilds:
   sharp: true
   workerd: true
 patchedDependencies:
-  # upstream: https://github.com/better-auth/better-fetch/pull/126 and /pull/125 (released in 1.3.2).
-  # better-auth 1.7.2 pins 1.3.1; 1.7.3+ drops account.issuer, so the bump waits for that auth schema migration.
-  '@better-fetch/fetch@1.3.1': patches/@better-fetch__fetch@1.3.1.patch
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380
   drizzle-orm@1.0.0-rc.5-ab785fc: patches/drizzle-orm-rc5-declarations.patch
