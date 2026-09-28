@@ -30,6 +30,7 @@ const planningFailure = <A, E>(effect: Effect.Effect<A, E>) =>
   );
 
 interface FixtureOptions {
+  readonly cloudflareBuildEnvironment?: Readonly<Record<string, string>>;
   readonly cloudflarePlacement?: readonly string[];
   readonly extraSharedPackages?: readonly FixtureOwner[];
   readonly includeContactOwner?: boolean;
@@ -73,6 +74,7 @@ interface FixtureTopology {
 }
 
 interface FixtureCloudflarePlacement {
+  readonly buildEnvironment: Readonly<Record<string, string>>;
   readonly schemaVersion: 1;
   readonly units: readonly string[];
 }
@@ -153,6 +155,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
       ],
     });
     yield* writeJson(root, CLOUDFLARE_PLACEMENT_PATH, {
+      buildEnvironment: options.cloudflareBuildEnvironment ?? {},
       schemaVersion: 1,
       units: options.cloudflarePlacement ?? [],
     });
@@ -394,6 +397,53 @@ it.live('replans every placed unit when the edge deploy workflow changes', () =>
           }
         }),
       { cloudflarePlacement: ['contacts'] },
+    );
+  }),
+);
+
+it.live('replans every unit, on Zerops and the edge, when the planner itself changes', () =>
+  Effect.gen(function* replansEverythingForPlannerChanges() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* replansEverythingForPlannerChangesInFixture() {
+          const plan = yield* planDeploymentImpact({
+            changedPaths: ['scripts/plan-deployment-impact.mts'],
+            rootDirectory: root,
+          });
+          expect(plan.units.cloudflare.map(({ id }) => id)).toEqual(['contacts', SHELL_ID]);
+          expect(plan.phases.map((phase) => phase.id)).toEqual(['migrator', 'spicedb', 'contacts', SHELL_ID]);
+        }),
+      { cloudflarePlacement: [SHELL_ID, 'contacts'] },
+    );
+  }),
+);
+
+it.live('replans every placed unit when the edge build environment changes', () =>
+  Effect.gen(function* replansPlacedUnitsForBuildEnvironment() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* replansPlacedUnitsForBuildEnvironmentInFixture() {
+          const plan = yield* planDeploymentImpact({ changedPaths: [CLOUDFLARE_PLACEMENT_PATH], rootDirectory: root });
+          expect(plan.units.cloudflare.map(({ id }) => id)).toEqual(['contacts']);
+        }),
+      {
+        cloudflareBuildEnvironment: { ULTRAMODERN_MF_DEV_ORIGIN: 'https://stage.example.test' },
+        cloudflarePlacement: ['contacts'],
+      },
+    );
+  }),
+);
+
+it.live('fails closed for an edge build variable the Cloudflare builds do not read', () =>
+  Effect.gen(function* failsClosedForForeignBuildVariable() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* failsClosedForForeignBuildVariableInFixture() {
+          expect(
+            yield* planningFailure(planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root })),
+          ).toMatch(/buildEnvironment key "CLOUDFLARE_API_TOKEN" must be a MODERN_, ULTRAMODERN_ or VERTICAL_ build/u);
+        }),
+      { cloudflareBuildEnvironment: { CLOUDFLARE_API_TOKEN: 'leaked' }, cloudflarePlacement: ['contacts'] },
     );
   }),
 );

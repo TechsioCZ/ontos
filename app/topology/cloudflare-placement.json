@@ -1,4 +1,5 @@
 {
+  "buildEnvironment": {},
   "schemaVersion": 1,
   "units": [
     "party-registry",

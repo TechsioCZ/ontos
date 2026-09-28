@@ -102,7 +102,12 @@ type Ownership = typeof OwnershipSchema.Type;
 
 // Which delivery units ship as Cloudflare Workers. The topology names each unit's Worker; placement
 // decides which of them CI deploys, so moving a unit to the edge is one reviewed topology change.
+// `buildEnvironment` is the non-secret configuration the placed units' Cloudflare builds read
+// (public URLs, Worker binding names, the Shell origin). Keeping it in the reviewed document makes
+// every change to it a topology change, which replans every unit, so no Worker keeps a stale build.
+const CLOUDFLARE_BUILD_VARIABLE_PATTERN = /^(?:MODERN|ULTRAMODERN|VERTICAL)_[A-Z0-9_]+$/u;
 const CloudflarePlacementSchema = Schema.Struct({
+  buildEnvironment: Schema.Record(Schema.String, Schema.String),
   schemaVersion: Schema.Literal(1),
   units: Schema.Array(Schema.String),
 });
@@ -688,6 +693,17 @@ const cloudflareWorkerNames = (topology: ReferenceTopology): ReadonlyMap<string,
     ),
   );
 
+// Only build variables reach the Cloudflare builds; credentials stay out of the reviewed document.
+const validateCloudflareBuildEnvironment = (buildEnvironment: Readonly<Record<string, string>>): void => {
+  for (const key of Object.keys(buildEnvironment)) {
+    if (!CLOUDFLARE_BUILD_VARIABLE_PATTERN.test(key)) {
+      fail(
+        `${CLOUDFLARE_PLACEMENT_PATH} buildEnvironment key "${key}" must be a MODERN_, ULTRAMODERN_ or VERTICAL_ build variable`,
+      );
+    }
+  }
+};
+
 const planCloudflareDeployments = (
   placement: readonly string[],
   workerNames: ReadonlyMap<string, string>,
@@ -906,6 +922,9 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   'scripts/scaffolding/shared.mts',
   'tsconfig.base.json',
   WORKSPACE_MANIFEST,
+  // The planner decides what every other input impacts: after a repair to one of its rules, the
+  // units the old rule skipped must deploy too.
+  'scripts/plan-deployment-impact.mts',
   'scripts/install-zerops-node.sh',
   'scripts/verify-zerops-workspace-install.mts',
   'scripts/generate-outbox-worker-deployment.mjs',
@@ -1084,6 +1103,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       CloudflarePlacementSchema,
       pathService.join(rootDirectory, CLOUDFLARE_PLACEMENT_PATH),
     );
+    validateCloudflareBuildEnvironment(cloudflarePlacement.buildEnvironment);
     const stageSetups = parseStageSetups(
       yield* fileSystem.readFileString(pathService.join(rootDirectory, 'zerops.yaml')),
     );

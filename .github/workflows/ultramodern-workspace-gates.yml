@@ -599,16 +599,44 @@ jobs:
           --limit 200
           --minimum-severity DEBUG
 
+  # The edge deploy runs only when the repository is configured for Cloudflare: the
+  # CLOUDFLARE_ACCOUNT_ID variable and the `stage-edge` CLOUDFLARE_API_TOKEN secret. Environment
+  # secrets are unreadable in a job-level `if`, so this job reads them from `stage-edge` without
+  # creating a deployment (`deployment: false`); only a real edge deploy enters its history.
+  edge-deploy-readiness:
+    name: Check the Cloudflare edge deploy configuration
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: stage-edge
+      deployment: false
+    permissions: {}
+    outputs:
+      configured: ${{ steps.configuration.outputs.configured }}
+    steps:
+      - name: Check the Cloudflare account and deploy token
+        id: configuration
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          if [[ -n "$CLOUDFLARE_ACCOUNT_ID" && -n "$CLOUDFLARE_API_TOKEN" ]]; then
+            echo 'configured=true' >>"$GITHUB_OUTPUT"
+          else
+            echo 'configured=false' >>"$GITHUB_OUTPUT"
+            echo '::notice title=Edge deploy not configured::Set the CLOUDFLARE_ACCOUNT_ID variable and the stage-edge CLOUDFLARE_API_TOKEN secret to deploy edge units.'
+          fi
+
   # Edge units (topology/cloudflare-placement.json) ship as Cloudflare Workers after the Zerops
   # deploy has migrated the database, so Worker code never runs against an older schema. The
   # `stage-edge` environment keeps its own deployment history: the job plans against the last
   # successful edge deployment, so a failed or skipped edge deploy is never hidden by a successful
-  # Zerops one. The CLOUDFLARE_ACCOUNT_ID repository variable enables it; without it the job is
-  # skipped and records nothing.
+  # Zerops one. Unconfigured repositories skip it, so it records nothing.
   deploy-cloudflare:
     name: Deploy edge units to Cloudflare Workers after the stage migration
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && vars.CLOUDFLARE_ACCOUNT_ID != ''
-    needs: [deploy-stage]
+    if: needs.edge-deploy-readiness.outputs.configured == 'true'
+    needs: [deploy-stage, edge-deploy-readiness]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: stage-edge
@@ -620,15 +648,6 @@ jobs:
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
         with:
           egress-policy: audit
-
-      - name: Require the Cloudflare deploy token
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: |
-          if [[ -z "$CLOUDFLARE_API_TOKEN" ]]; then
-            echo 'CLOUDFLARE_ACCOUNT_ID is set, but the stage-edge environment has no CLOUDFLARE_API_TOKEN secret.' >&2
-            exit 1
-          fi
 
       - name: Checkout main revision
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -676,19 +695,19 @@ jobs:
         working-directory: app
         env:
           CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
-          # Worker public URLs and binding names are edge configuration: `stage-edge` environment
-          # (or repository) variables, exported to the Cloudflare builds that read them.
-          EDGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
+          # Worker public URLs, binding names and the Shell origin are reviewed edge configuration
+          # (topology/cloudflare-placement.json `buildEnvironment`), so changing them replans every
+          # placed unit.
           while IFS=$'\t' read -r key value; do
             export "$key=$value"
-          done < <(jq -r 'to_entries[] | select(.key | test("^(MODERN_|ULTRAMODERN_|VERTICAL_)")) | [.key, .value] | @tsv' <<<"$EDGE_VARIABLES_JSON")
+          done < <(jq -r '.buildEnvironment | to_entries[] | [.key, .value] | @tsv' topology/cloudflare-placement.json)
           # The placed units bake the Shell origin into their API CORS allowlist; without it they
           # fall back to the local development origin and reject the real stage Shell.
           if [[ -z "${ULTRAMODERN_MF_DEV_ORIGIN:-}" ]]; then
-            echo 'stage-edge must set ULTRAMODERN_MF_DEV_ORIGIN to the stage Shell origin; no Worker was changed.' >&2
+            echo 'topology/cloudflare-placement.json must set buildEnvironment.ULTRAMODERN_MF_DEV_ORIGIN to the stage Shell origin; no Worker was changed.' >&2
             exit 1
           fi
           mapfile -t units < <(jq -r '.[] | [.id, .packageName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
@@ -742,13 +761,12 @@ jobs:
         working-directory: app
         env:
           CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
-          EDGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
           while IFS=$'\t' read -r key value; do
             export "$key=$value"
-          done < <(jq -r 'to_entries[] | select(.key | test("^(MODERN_|ULTRAMODERN_|VERTICAL_)")) | [.key, .value] | @tsv' <<<"$EDGE_VARIABLES_JSON")
+          done < <(jq -r '.buildEnvironment | to_entries[] | [.key, .value] | @tsv' topology/cloudflare-placement.json)
           mapfile -t packages < <(jq -r '.[].packageName' <<<"$CLOUDFLARE_UNITS_JSON")
           for package in "${packages[@]}"; do
             mise exec -- pnpm --filter "$package" run cloudflare:proof
@@ -757,9 +775,10 @@ jobs:
       # Worker versions are immutable. After a failed deploy or proof, each Worker this run
       # deployed returns to its snapshotted state: the exact version that was active before, or no
       # Worker at all when this run created it. A Worker counts as restored only once that state is
-      # observed; anything left on the candidate is reported.
+      # observed; anything left on the candidate is reported. A cancelled run restores too: its
+      # deploy may have stopped after some Workers changed.
       - name: Restore the edge Workers this run deployed
-        if: failure() && steps.deploy.outcome != 'skipped'
+        if: (failure() || cancelled()) && steps.deploy.outcome != 'skipped'
         working-directory: app
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}

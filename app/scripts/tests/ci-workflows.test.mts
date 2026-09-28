@@ -59,28 +59,53 @@ const EdgeDeployWorkflowSchema = Schema.Struct({
       steps: Schema.Array(WorkflowStepSchema),
     }),
     'deploy-stage': Schema.Struct({ environment: Schema.String }),
+    'edge-deploy-readiness': Schema.Struct({
+      environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
+      if: Schema.String,
+      outputs: Schema.Record(Schema.String, Schema.String),
+      steps: Schema.Array(WorkflowStepSchema),
+    }),
   }),
 });
 
 /** Every `pnpm …` command line a workflow step runs. */
 const packageCommands = (step: typeof WorkflowStepSchema.Type) => (step.run ?? '').match(/pnpm [^\n]*/gu) ?? [];
-const WRANGLER_COMMAND = /^pnpm --filter "\$(?:[a-z_]+|\d)" exec wrangler /u;
-
-it('deploys planned edge units to Cloudflare after the stage migration, with their own deployment history', () => {
-  const { jobs } = Schema.decodeUnknownSync(EdgeDeployWorkflowSchema)(
+const readEdgeDeployJobs = () =>
+  Schema.decodeUnknownSync(EdgeDeployWorkflowSchema)(
     parse(
       readFileSync(new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url), 'utf-8'),
     ),
-  );
+  ).jobs;
+
+it('deploys to Cloudflare only when both the account and the deploy token are configured', () => {
+  const jobs = readEdgeDeployJobs();
+  // The job runs only with both the account and the token; an unconfigured repository skips it,
+  // so it records no deployment at all and CI stays green.
+  const readiness = jobs['edge-deploy-readiness'];
+  expect(readiness.if).toContain("github.ref == 'refs/heads/main'");
+  // Reading `stage-edge` secrets for the check must not add an entry to its deployment history.
+  expect(readiness.environment).toEqual({ deployment: false, name: 'stage-edge' });
+  const [check] = readiness.steps;
+  expect(readiness.steps).toHaveLength(1);
+  expect(check?.env).toEqual({
+    CLOUDFLARE_ACCOUNT_ID: expression('vars.CLOUDFLARE_ACCOUNT_ID'),
+    CLOUDFLARE_API_TOKEN: expression('secrets.CLOUDFLARE_API_TOKEN'),
+  });
+  expect(check?.run).toContain('-n "$CLOUDFLARE_ACCOUNT_ID" && -n "$CLOUDFLARE_API_TOKEN"');
+  expect(readiness.outputs.configured).toBe(expression(`steps.${check?.id ?? ''}.outputs.configured`));
+});
+
+const WRANGLER_COMMAND = /^pnpm --filter "\$(?:[a-z_]+|\d)" exec wrangler /u;
+
+it('deploys planned edge units to Cloudflare after the stage migration, with their own deployment history', () => {
+  const jobs = readEdgeDeployJobs();
   const edge = jobs['deploy-cloudflare'];
   // A separate environment keeps a failed or skipped edge deploy from hiding behind a successful
   // Zerops deployment of the same revision.
   expect(jobs['deploy-stage'].environment).toBe('stage');
   expect(edge.environment).toBe('stage-edge');
-  expect(edge.needs).toEqual(['deploy-stage']);
-  expect(edge.if).toContain("github.ref == 'refs/heads/main'");
-  // Unconfigured repositories skip the job, so it records no deployment at all.
-  expect(edge.if).toContain("vars.CLOUDFLARE_ACCOUNT_ID != ''");
+  expect(edge.needs).toEqual(['deploy-stage', 'edge-deploy-readiness']);
+  expect(edge.if).toBe("needs.edge-deploy-readiness.outputs.configured == 'true'");
   expect(edge.env).toBeUndefined();
   const byName = new Map(edge.steps.map((step) => [step.name, step]));
   expect(byName.get('Resolve the last successful edge deployment')?.run).toContain('--environment stage-edge');
@@ -99,6 +124,14 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   expect(proof?.run).toContain('run cloudflare:proof');
   // The placed units' CORS allowlist needs the real Shell origin before any Worker is built.
   const buildRun = build?.run ?? '';
+  // Build configuration comes from the reviewed placement document, not from environment
+  // variables a Git diff cannot see.
+  for (const step of [build, proof]) {
+    expect(step?.run).toContain(
+      ".buildEnvironment | to_entries[] | [.key, .value] | @tsv' topology/cloudflare-placement.json",
+    );
+    expect(JSON.stringify(step?.env)).not.toContain('vars');
+  }
   expect(buildRun).toContain('ULTRAMODERN_MF_DEV_ORIGIN');
   expect(buildRun.indexOf('ULTRAMODERN_MF_DEV_ORIGIN')).toBeLessThan(buildRun.indexOf('run cloudflare:build'));
   // Every Worker is snapshotted before the first one changes, and restored to that snapshot after
@@ -107,12 +140,12 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   expect(restore?.run).toContain('wrangler rollback "$previous_version"');
   expect(restore?.run).toContain('wrangler delete --name "$deployed_worker"');
   expect(restore?.run).not.toMatch(/wrangler (?:rollback|delete)[^\n]*\|\| true/u);
-  expect(restore?.if).toBe("failure() && steps.deploy.outcome != 'skipped'");
+  // A cancelled run may have stopped mid-deploy, so it restores too.
+  expect(restore?.if).toBe("(failure() || cancelled()) && steps.deploy.outcome != 'skipped'");
   // The account token reaches only the steps that use it, and those run nothing but Wrangler:
   // building, verifying and proving a unit executes dependency code.
   const tokenSteps = edge.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined);
   expect(tokenSteps.map((step) => step.name)).toEqual([
-    'Require the Cloudflare deploy token',
     'Deploy planned edge units in dependency order',
     'Restore the edge Workers this run deployed',
   ]);

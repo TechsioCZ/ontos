@@ -224,19 +224,26 @@ from there, and ships the planned units in three passes: build and verify every 
 run each unit's `cloudflare:proof`. Only the Wrangler steps receive `CLOUDFLARE_API_TOKEN`; the
 build, verification and proof run dependency code and never see it. Every Worker's active version
 is recorded before the first deploy. A failed deploy or proof returns each Worker this run deployed
-to that state: the recorded version, or no Worker at all when the run created it. The restore step
-verifies that state, and any Worker left on the candidate is reported and fails the job. A change to the edge workflow or the install action
-replans every placed unit. Because the history is separate,
-a failed edge deploy is replanned by the next run even when Zerops succeeded for the same
-revision.
+to that state: the recorded version, or no Worker at all when the run created it. A cancelled run
+restores the same way, because its deploy may have stopped after some Workers changed. The restore
+step verifies that state, and any Worker left on the candidate is reported and fails the job. A
+change to the edge workflow or the install action replans every placed unit, and a change to the
+planner itself replans every unit on Zerops and the edge. Because the history is separate, a failed
+edge deploy is replanned by the next run even when Zerops succeeded for the same revision.
 
-The `CLOUDFLARE_ACCOUNT_ID` repository variable enables the job. Without it the job is skipped and
-records nothing. With it, the `stage-edge` environment must hold the `CLOUDFLARE_API_TOKEN` secret
-and the edge configuration the Worker builds read: `ULTRAMODERN_PUBLIC_URL_*` for every Worker (the
-output verifier requires them), `ULTRAMODERN_MF_DEV_ORIGIN` set to the stage Shell origin (the
-placed units' API CORS allowlist; the job fails before changing any Worker without it), plus any
-`VERTICAL_*_WORKER_BINDING` / `_WORKER_NAME` overrides.
-The job sees only `stage-edge` and repository variables, never the Zerops `stage` environment.
+The job runs only when the repository is configured for Cloudflare: the `CLOUDFLARE_ACCOUNT_ID`
+variable and the `CLOUDFLARE_API_TOKEN` secret in the `stage-edge` environment. The
+`edge-deploy-readiness` job checks both from `stage-edge` without creating a deployment; if either is
+missing, `deploy-cloudflare` is skipped, records nothing, and CI stays green.
+
+The non-secret configuration the Worker builds read is reviewed source, the `buildEnvironment` of
+`topology/cloudflare-placement.json`: `ULTRAMODERN_PUBLIC_URL_*` for every Worker (the output
+verifier requires them), `ULTRAMODERN_MF_DEV_ORIGIN` set to the stage Shell origin (the placed
+units' API CORS allowlist; the job fails before changing any Worker without it), plus any
+`MODERN_ASSET_PREFIX` or `VERTICAL_*_WORKER_BINDING` / `_WORKER_NAME` overrides. Only `MODERN_`,
+`ULTRAMODERN_` and `VERTICAL_` keys are accepted. Because it is a topology document, changing a
+value replans every unit, so no Worker keeps a build of the old configuration. The job never reads
+the Zerops `stage` environment.
 Each Worker's runtime configuration is set once, outside CI, before its first deploy: secrets
 (`wrangler secret put`, for example `SPICEDB_PRESHARED_KEY` and `BETTER_AUTH_SECRET`) and the
 Hyperdrive and Workers VPC bindings its Worker configuration declares. The per-unit
