@@ -378,6 +378,25 @@ it.live('deploys placed Cloudflare units that are impacted, providers before the
   }),
 );
 
+it.live('replans every placed unit when the edge deploy workflow changes', () =>
+  Effect.gen(function* replansPlacedUnitsForDeployInputs() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* replansPlacedUnitsForDeployInputsInFixture() {
+          for (const changedPath of [
+            '.github/workflows/ultramodern-workspace-gates.yml',
+            '.github/actions/install-app/action.yml',
+          ]) {
+            const plan = yield* planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
+            expect(plan.units.cloudflare.map(({ id }) => id)).toEqual(['contacts']);
+            expect(plan.phases).toEqual([]);
+          }
+        }),
+      { cloudflarePlacement: ['contacts'] },
+    );
+  }),
+);
+
 it.live('keeps unplaced units off Cloudflare', () =>
   Effect.gen(function* keepsUnplacedUnitsOffCloudflare() {
     yield* withFixture((root) =>

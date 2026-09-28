@@ -107,6 +107,12 @@ const CloudflarePlacementSchema = Schema.Struct({
   units: Schema.Array(Schema.String),
 });
 const CLOUDFLARE_PLACEMENT_PATH = 'topology/cloudflare-placement.json';
+// Repository-root inputs of the edge deploy itself: a change to how Workers are built or deployed
+// replans every placed unit, even when no unit's source changed.
+const CLOUDFLARE_DEPLOY_INPUT_PATHS: ReadonlySet<string> = new Set([
+  '.github/actions/install-app/action.yml',
+  '.github/workflows/ultramodern-workspace-gates.yml',
+]);
 
 const AuthorizationEnvironmentSchema = Schema.Literals(['development', 'production', 'stage']);
 const AuthorizationModeSchema = Schema.Literals(['enforced', 'report_only']);
@@ -687,7 +693,9 @@ const planCloudflareDeployments = (
   workerNames: ReadonlyMap<string, string>,
   orderedUnits: readonly TopologyUnit[],
   impacted: ReadonlySet<string>,
+  changedPaths: readonly string[],
 ): readonly CloudflareDeployment[] => {
+  const deployInputChanged = changedPaths.some((changedPath) => CLOUDFLARE_DEPLOY_INPUT_PATHS.has(changedPath));
   const unitIds = new Set(orderedUnits.map((unit) => unit.id));
   const placed = new Set<string>();
   for (const id of placement) {
@@ -703,7 +711,7 @@ const planCloudflareDeployments = (
     placed.add(id);
   }
   return orderedUnits
-    .filter((unit) => placed.has(unit.id) && impacted.has(unit.id))
+    .filter((unit) => placed.has(unit.id) && (deployInputChanged || impacted.has(unit.id)))
     .map((unit) => ({
       id: unit.id,
       packageName: unit.packageName,
@@ -1147,6 +1155,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
           cloudflareWorkerNames(topology),
           orderedUnits,
           impacted,
+          changedPaths,
         ),
         migrator,
         providers: phases.filter((phase) => phase.kind === 'provider').map((phase) => phase.id),
