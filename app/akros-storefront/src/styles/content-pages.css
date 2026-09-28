@@ -385,6 +385,17 @@
   text-align: left;
 }
 
+.akros-faq-answer-details {
+  display: grid;
+  gap: var(--dimension-8);
+  padding-block: var(--dimension-4) var(--dimension-12);
+  line-height: 1.5;
+}
+
+.akros-faq-answer-details p {
+  margin: 0;
+}
+
 .akros-faq-accordion-list [data-part="item"][data-state="open"] .akros-faq-answer-summary {
   display: none;
 }

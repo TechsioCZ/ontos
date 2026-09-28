@@ -31,8 +31,8 @@ export function FaqExplorer() {
     if (!normalizedQuery) return activeGroup.items;
 
     return faqGroups.flatMap((group) =>
-      group.items.filter(([question, answer]) =>
-        normalize(`${question} ${answer}`).includes(normalizedQuery),
+      group.items.filter(([question, answer, details]) =>
+        normalize(`${question} ${answer} ${details.join(" ")}`).includes(normalizedQuery),
       ),
     );
   }, [activeGroup, normalizedQuery]);
@@ -84,7 +84,7 @@ export function FaqExplorer() {
           </h2>
           {visibleItems.length > 0 ? (
             <div className="akros-faq-accordion-list">
-              {visibleItems.map(([question, answer]) => (
+              {visibleItems.map(([question, answer, details]) => (
                 <Accordion collapsible key={question} shadow="none" size="sm" variant="default">
                   <Accordion.Item value={question}>
                     <Accordion.Header>
@@ -96,7 +96,13 @@ export function FaqExplorer() {
                       </Accordion.Title>
                       <Accordion.Indicator />
                     </Accordion.Header>
-                    <Accordion.Content>{answer}</Accordion.Content>
+                    <Accordion.Content>
+                      <div className="akros-faq-answer-details">
+                        {details.map((paragraph) => (
+                          <p key={paragraph}>{paragraph}</p>
+                        ))}
+                      </div>
+                    </Accordion.Content>
                   </Accordion.Item>
                 </Accordion>
               ))}
