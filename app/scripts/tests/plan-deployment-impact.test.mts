@@ -30,9 +30,11 @@ const planningFailure = <A, E>(effect: Effect.Effect<A, E>) =>
   );
 
 interface FixtureOptions {
+  readonly cloudflarePlacement?: readonly string[];
   readonly extraSharedPackages?: readonly FixtureOwner[];
   readonly includeContactOwner?: boolean;
   readonly includeWorker?: boolean;
+  readonly omitVerticalWorkerName?: boolean;
   readonly setupIds?: readonly string[];
   readonly verticalId?: string;
 }
@@ -52,11 +54,13 @@ interface FixtureTopology {
   readonly schemaVersion: number;
   readonly sharedPackages: readonly FixtureOwner[];
   readonly shell: {
+    readonly cloudflare: { readonly workerName: string };
     readonly id: string;
     readonly package: string;
     readonly verticalRefs: readonly string[];
   };
   readonly verticals: readonly {
+    readonly cloudflare?: { readonly workerName: string };
     readonly id: string;
     readonly moduleFederation: {
       readonly remotes: readonly string[];
@@ -67,7 +71,12 @@ interface FixtureTopology {
   }[];
 }
 
-type FixtureDocument = FixtureOwnership | FixtureTopology;
+interface FixtureCloudflarePlacement {
+  readonly schemaVersion: 1;
+  readonly units: readonly string[];
+}
+
+type FixtureDocument = FixtureCloudflarePlacement | FixtureOwnership | FixtureTopology;
 
 const CORE_RUNTIME_OWNER = {
   id: 'core-runtime',
@@ -86,10 +95,12 @@ const SHELL_OWNER = {
   package: SHELL_PACKAGE,
   path: 'apps/shell-super-app',
 } as const satisfies FixtureOwner;
+const CLOUDFLARE_PLACEMENT_PATH = 'topology/cloudflare-placement.json';
 const OWNERSHIP_PATH = 'topology/ownership.json';
 const TOPOLOGY_PATH = 'topology/reference-topology.json';
 const WORKSPACE_MANIFEST_PATH = 'pnpm-workspace.yaml';
 const DOCUMENTATION_PATH = 'docs/README.md';
+const SHARED_CONTRACT_PATH = 'packages/shared-contracts/src/gateway-context.ts';
 
 const planDeploymentImpact = (options: PlanDeploymentImpactOptions) =>
   planDeploymentImpactEffect(options).pipe(Effect.provide(NodeServices.layer));
@@ -119,22 +130,30 @@ const makeFixture = (options: FixtureOptions = {}) =>
     const verticalId = options.verticalId ?? 'contacts';
     const verticalPackage = `@app/${verticalId}`;
     const verticalPath = `verticals/${verticalId}`;
+    const vertical: FixtureTopology['verticals'][number] = {
+      id: verticalId,
+      moduleFederation: { remotes: [], verticalRefs: [] },
+      package: verticalPackage,
+      path: verticalPath,
+    };
     yield* writeJson(root, TOPOLOGY_PATH, {
       schemaVersion: 1,
       sharedPackages: [CORE_RUNTIME_OWNER, SHARED_CONTRACTS_OWNER, ...(options.extraSharedPackages ?? [])],
       shell: {
+        cloudflare: { workerName: 'app-shell-super-app' },
         id: SHELL_ID,
         package: SHELL_PACKAGE,
         verticalRefs: [verticalId],
       },
       verticals: [
-        {
-          id: verticalId,
-          moduleFederation: { remotes: [], verticalRefs: [] },
-          package: verticalPackage,
-          path: verticalPath,
-        },
+        options.omitVerticalWorkerName === true
+          ? vertical
+          : { ...vertical, cloudflare: { workerName: `app-${verticalId}` } },
       ],
+    });
+    yield* writeJson(root, CLOUDFLARE_PLACEMENT_PATH, {
+      schemaVersion: 1,
+      units: options.cloudflarePlacement ?? [],
     });
     yield* writeJson(root, OWNERSHIP_PATH, {
       owners: [
@@ -246,6 +265,7 @@ it.live('plans current Contacts owner-local changes without a hard-coded owner r
           rootDirectory: root,
         });
         expect(plan.units).toEqual({
+          cloudflare: [],
           migrator: false,
           providers: ['contacts'],
           shell: false,
@@ -325,11 +345,84 @@ it.live('expands shared-package changes to every consumer in dependency order', 
     yield* withFixture((root) =>
       Effect.gen(function* testEffect19() {
         const plan = yield* planDeploymentImpact({
-          changedPaths: ['packages/shared-contracts/src/gateway-context.ts'],
+          changedPaths: [SHARED_CONTRACT_PATH],
           rootDirectory: root,
         });
         expect(plan.phases.map((phase) => phase.id)).toEqual(['contacts', SHELL_ID]);
       }),
+    );
+  }),
+);
+
+it.live('deploys placed Cloudflare units that are impacted, providers before the Shell', () =>
+  Effect.gen(function* plansCloudflareDeployments() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* plansCloudflareDeploymentsInFixture() {
+          const shared = yield* planDeploymentImpact({
+            changedPaths: [SHARED_CONTRACT_PATH],
+            rootDirectory: root,
+          });
+          expect(shared.units.cloudflare).toEqual([
+            { id: 'contacts', packageName: '@app/contacts', workerName: 'app-contacts' },
+            { id: SHELL_ID, packageName: SHELL_PACKAGE, workerName: 'app-shell-super-app' },
+          ]);
+          const shellOnly = yield* planDeploymentImpact({
+            changedPaths: ['apps/shell-super-app/src/routes/page.tsx'],
+            rootDirectory: root,
+          });
+          expect(shellOnly.units.cloudflare.map(({ id }) => id)).toEqual([SHELL_ID]);
+        }),
+      { cloudflarePlacement: [SHELL_ID, 'contacts'] },
+    );
+  }),
+);
+
+it.live('keeps unplaced units off Cloudflare', () =>
+  Effect.gen(function* keepsUnplacedUnitsOffCloudflare() {
+    yield* withFixture((root) =>
+      Effect.gen(function* keepsUnplacedUnitsOffCloudflareInFixture() {
+        const plan = yield* planDeploymentImpact({
+          changedPaths: [SHARED_CONTRACT_PATH],
+          rootDirectory: root,
+        });
+        expect(plan.units.cloudflare).toEqual([]);
+        expect(plan.phases.map((phase) => phase.id)).toEqual(['contacts', SHELL_ID]);
+      }),
+    );
+  }),
+);
+
+for (const [placement, failure] of [
+  [['billing'], /places "billing", which is not a topology delivery unit/u],
+  [['contacts', 'contacts'], /places "contacts" more than once/u],
+  [['core-runtime'], /places "core-runtime", which is not a topology delivery unit/u],
+] as const) {
+  it.live(`fails closed for Cloudflare placement ${placement.join(', ')}`, () =>
+    Effect.gen(function* failsClosedForPlacement() {
+      yield* withFixture(
+        (root) =>
+          Effect.gen(function* failsClosedForPlacementInFixture() {
+            expect(
+              yield* planningFailure(planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root })),
+            ).toMatch(failure);
+          }),
+        { cloudflarePlacement: placement },
+      );
+    }),
+  );
+}
+
+it.live('fails closed for a Cloudflare placement whose topology entry names no Worker', () =>
+  Effect.gen(function* failsClosedWithoutWorkerName() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* failsClosedWithoutWorkerNameInFixture() {
+          expect(
+            yield* planningFailure(planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root })),
+          ).toMatch(/places "contacts", whose topology entry names no Cloudflare workerName/u);
+        }),
+      { cloudflarePlacement: ['contacts'], omitVerticalWorkerName: true },
     );
   }),
 );

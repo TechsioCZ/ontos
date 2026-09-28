@@ -49,6 +49,15 @@ interface DeploymentPhase {
   readonly stageSetup: string;
 }
 
+/** A delivery unit CI deploys to Cloudflare Workers, in dependency order. */
+export interface CloudflareDeployment {
+  readonly id: string;
+  readonly packageName: string;
+  readonly workerName: string;
+}
+
+const CloudflareWorkerSchema = Schema.optional(Schema.Struct({ workerName: Schema.optional(Schema.String) }));
+
 const TopologyOwnerSchema = Schema.Struct({
   id: Schema.optional(Schema.String),
   package: Schema.optional(Schema.String),
@@ -59,6 +68,7 @@ const ReferenceTopologySchema = Schema.Struct({
   sharedPackages: Schema.optional(Schema.Array(TopologyOwnerSchema)),
   shell: Schema.optional(
     Schema.Struct({
+      cloudflare: CloudflareWorkerSchema,
       id: Schema.optional(Schema.String),
       package: Schema.optional(Schema.String),
       verticalRefs: Schema.optional(Schema.Array(Schema.String)),
@@ -67,6 +77,7 @@ const ReferenceTopologySchema = Schema.Struct({
   verticals: Schema.optional(
     Schema.Array(
       Schema.Struct({
+        cloudflare: CloudflareWorkerSchema,
         id: Schema.optional(Schema.String),
         moduleFederation: Schema.optional(
           Schema.Struct({
@@ -88,6 +99,14 @@ const OwnershipSchema = Schema.Struct({
 });
 
 type Ownership = typeof OwnershipSchema.Type;
+
+// Which delivery units ship as Cloudflare Workers. The topology names each unit's Worker; placement
+// decides which of them CI deploys, so moving a unit to the edge is one reviewed topology change.
+const CloudflarePlacementSchema = Schema.Struct({
+  schemaVersion: Schema.Literal(1),
+  units: Schema.Array(Schema.String),
+});
+const CLOUDFLARE_PLACEMENT_PATH = 'topology/cloudflare-placement.json';
 
 const AuthorizationEnvironmentSchema = Schema.Literals(['development', 'production', 'stage']);
 const AuthorizationModeSchema = Schema.Literals(['enforced', 'report_only']);
@@ -121,6 +140,7 @@ export interface DeploymentImpactPlan {
   readonly phases: readonly DeploymentPhase[];
   readonly schemaVersion: 1;
   readonly units: {
+    readonly cloudflare: readonly CloudflareDeployment[];
     readonly migrator: boolean;
     readonly providers: readonly string[];
     readonly shell: boolean;
@@ -292,6 +312,9 @@ const DeploymentImpactPlanSchema = Schema.Struct({
   phases: Schema.Array(DeploymentPhaseSchema),
   schemaVersion: Schema.Literal(1),
   units: Schema.Struct({
+    cloudflare: Schema.Array(
+      Schema.Struct({ id: Schema.String, packageName: Schema.String, workerName: Schema.String }),
+    ),
     migrator: Schema.Boolean,
     providers: Schema.Array(Schema.String),
     shell: Schema.Boolean,
@@ -650,6 +673,44 @@ const buildTopologyUnits = (
   return units;
 };
 
+const cloudflareWorkerNames = (topology: ReferenceTopology): ReadonlyMap<string, string> =>
+  new Map(
+    [topology.shell, ...(topology.verticals ?? [])].flatMap((unit) =>
+      unit?.id === undefined || unit.cloudflare?.workerName === undefined
+        ? []
+        : [[unit.id, unit.cloudflare.workerName] as const],
+    ),
+  );
+
+const planCloudflareDeployments = (
+  placement: readonly string[],
+  workerNames: ReadonlyMap<string, string>,
+  orderedUnits: readonly TopologyUnit[],
+  impacted: ReadonlySet<string>,
+): readonly CloudflareDeployment[] => {
+  const unitIds = new Set(orderedUnits.map((unit) => unit.id));
+  const placed = new Set<string>();
+  for (const id of placement) {
+    if (placed.has(id)) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} places "${id}" more than once`);
+    }
+    if (!unitIds.has(id)) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} places "${id}", which is not a topology delivery unit`);
+    }
+    if (!workerNames.has(id)) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} places "${id}", whose topology entry names no Cloudflare workerName`);
+    }
+    placed.add(id);
+  }
+  return orderedUnits
+    .filter((unit) => placed.has(unit.id) && impacted.has(unit.id))
+    .map((unit) => ({
+      id: unit.id,
+      packageName: unit.packageName,
+      workerName: requireString(workerNames.get(unit.id), `topology ${unit.id} cloudflare.workerName`),
+    }));
+};
+
 const WORKSPACE_GLOB_PATTERN = /^(?<directory>[\w.-]+(?:\/[\w.-]+)*)\/\*$/u;
 
 const WorkspaceManifestSchema = Schema.Struct({ packages: Schema.NonEmptyArray(Schema.String) });
@@ -994,6 +1055,10 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       pathService.join(rootDirectory, 'topology/reference-topology.json'),
     );
     const ownership = yield* readJson(OwnershipSchema, pathService.join(rootDirectory, 'topology/ownership.json'));
+    const cloudflarePlacement = yield* readJson(
+      CloudflarePlacementSchema,
+      pathService.join(rootDirectory, CLOUDFLARE_PLACEMENT_PATH),
+    );
     const stageSetups = parseStageSetups(
       yield* fileSystem.readFileString(pathService.join(rootDirectory, 'zerops.yaml')),
     );
@@ -1064,6 +1129,12 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       phases,
       schemaVersion: 1,
       units: {
+        cloudflare: planCloudflareDeployments(
+          cloudflarePlacement.units,
+          cloudflareWorkerNames(topology),
+          orderedUnits,
+          impacted,
+        ),
         migrator,
         providers: phases.filter((phase) => phase.kind === 'provider').map((phase) => phase.id),
         shell: impacted.has(shell.id),
@@ -1114,14 +1185,17 @@ const loadAuthorizationPromotionGate = (
 
 const PlanJsonSchema = Schema.fromJsonString(DeploymentImpactPlanSchema);
 const ProvidersJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
+const CloudflareJsonSchema = Schema.fromJsonString(DeploymentImpactPlanSchema.fields.units.fields.cloudflare);
 
 const writeGitHubOutputs = (plan: DeploymentImpactPlan, outputPath: string) =>
   Effect.gen(function* writeGitHubOutputsEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const planJson = yield* Schema.encodeEffect(PlanJsonSchema)(plan);
     const providersJson = yield* Schema.encodeEffect(ProvidersJsonSchema)(plan.units.providers);
+    const cloudflareJson = yield* Schema.encodeEffect(CloudflareJsonSchema)(plan.units.cloudflare);
     const output = [
       `any=${String(plan.any)}`,
+      `cloudflare=${cloudflareJson}`,
       `migrator=${String(plan.units.migrator)}`,
       `plan=${planJson}`,
       `providers=${providersJson}`,
