@@ -29,9 +29,11 @@ p = app / 'verticals/price-group-catalog/tests/integration/governed-routine-beha
 p.write_text("import { randomUUID } from 'node:crypto';\n\n" + p.read_text())
 p = app / 'verticals/price-group-catalog/tests/integration/price-group-currentness-regressions.test.ts'
 replace(p, "import { scopedRoutineInvokerFromTransaction } from '@app/core-runtime';",
-           "import { scopedRoutineInvokerFromTransaction } from '@app/core-runtime';\nimport type { OperationalScope } from '@app/core-runtime';\nimport type { PriceGroupCatalogTransaction } from '../../src/database/types.ts';")
+           "import { scopedRoutineInvokerFromTransaction } from '@app/core-runtime';\nimport type { OperationalScope } from '@app/core-runtime';\nimport type { PriceGroupCatalogDatabaseExecutor } from '../../src/database/types.ts';")
 replace(p, 'const fixture = Effect.gen(function* priceGroupFixture() {',
-'''const invokerForTransaction = (transaction: PriceGroupCatalogTransaction, scope: OperationalScope) =>
+'''type PriceGroupCatalogTransaction = Parameters<Parameters<PriceGroupCatalogDatabaseExecutor['transaction']>[0]>[0];
+
+const invokerForTransaction = (transaction: PriceGroupCatalogTransaction, scope: OperationalScope) =>
   scopedRoutineInvokerFromTransaction((statement) => transaction.execute(statement, 'objects'), scope);
 
 const fixture = Effect.gen(function* priceGroupFixture() {''')
