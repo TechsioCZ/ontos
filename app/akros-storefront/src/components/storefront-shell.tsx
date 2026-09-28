@@ -27,11 +27,21 @@ export function StorefrontShell({
   );
 }
 
-export function StorefrontWideShell({ children }: { children: ReactNode }) {
+export function StorefrontWideShell({
+  children,
+  fullBleed = false,
+}: {
+  children: ReactNode;
+  fullBleed?: boolean;
+}) {
   return (
     <div className="akros-shell">
       <SiteHeader />
-      <main className="akros-wide-main">{children}</main>
+      <main
+        className={fullBleed ? "akros-wide-main akros-wide-main--full-bleed" : "akros-wide-main"}
+      >
+        {children}
+      </main>
       <SiteFooter />
     </div>
   );

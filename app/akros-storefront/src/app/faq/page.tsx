@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Badge } from "@techsio/ui-kit/atoms/badge";
 
 import { FaqExplorer } from "@/components/faq-explorer";
 import { MockContactForm } from "@/components/mock-contact-form";
@@ -9,14 +8,8 @@ export const metadata: Metadata = { title: "Často kladené otázky" };
 
 export default function FaqPage() {
   return (
-    <StorefrontWideShell>
+    <StorefrontWideShell fullBleed>
       <article className="akros-faq-page">
-        <header className="akros-faq-hero">
-          <Badge size="sm" variant="primary">
-            ZÁKAZNICKÁ PODPORA
-          </Badge>
-          <h1>Jak vám můžeme dnes pomoci?</h1>
-        </header>
         <FaqExplorer />
         <section className="akros-faq-contact" aria-labelledby="faq-contact-title">
           <h2 id="faq-contact-title">Nenašli jste odpověď?</h2>

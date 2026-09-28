@@ -22,9 +22,9 @@ export function MockContactForm({ compact = false }: { compact?: boolean }) {
           id={compact ? "faq-name" : "contact-name"}
           label="Jméno"
           name="name"
-          placeholder="Jan Novák"
+          placeholder={compact ? "Zadejte celé jméno" : "Jan Novák"}
           required
-          size="md"
+          size={compact ? "sm" : "md"}
         />
         <FormInput
           autoComplete="email"
@@ -32,9 +32,9 @@ export function MockContactForm({ compact = false }: { compact?: boolean }) {
           inputMode="email"
           label="E-mail"
           name="email"
-          placeholder="jan.novak@akros.cz"
+          placeholder={compact ? "např. jmeno@firma.cz" : "jan.novak@akros.cz"}
           required
-          size="md"
+          size={compact ? "sm" : "md"}
           type="email"
         />
       </div>
@@ -47,16 +47,20 @@ export function MockContactForm({ compact = false }: { compact?: boolean }) {
           size="md"
         />
       )}
-      <FormTextarea
-        id={compact ? "faq-message" : "contact-message"}
-        label="Zpráva"
-        name="message"
-        placeholder="Popište detail vašeho požadavku"
-        required
-        rows={compact ? 4 : 6}
-        size="md"
-      />
-      <Button type="submit" variant="primary">
+      <div className={compact ? "akros-contact-form__message--compact" : undefined}>
+        <FormTextarea
+          id={compact ? "faq-message" : "contact-message"}
+          label="Zpráva"
+          name="message"
+          placeholder={
+            compact ? "Zde podrobně popište váš dotaz…" : "Popište detail vašeho požadavku"
+          }
+          required
+          rows={compact ? 4 : 6}
+          size={compact ? "sm" : "md"}
+        />
+      </div>
+      <Button size={compact ? "md" : undefined} type="submit" variant="primary">
         Odeslat dotaz
       </Button>
       {submitted && (

@@ -1,0 +1,8 @@
+:root {
+  /* The Akros Figma accordion uses its own white, compact card surface. */
+  --color-accordion-bg: var(--color-base);
+  --color-accordion-content-bg: var(--color-base);
+  --color-accordion-title-bg: var(--color-base);
+  --color-accordion-border: var(--color-black-15);
+  --radius-accordion: var(--dimension-4);
+}

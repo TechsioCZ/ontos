@@ -1,6 +1,7 @@
 @import "@techsio/ui-kit/tokens-with-tailwind";
 @import "@techsio/ui-kit/tokens/figma/akros/variables";
 @import "../tokens/_akros-typography.css";
+@import "../tokens/components/molecules/_akros-accordion.css";
 @import "../tokens/components/molecules/_akros-breadcrumb.css";
 @import "../tokens/components/molecules/_akros-product-card.css";
 @import "../tokens/components/molecules/_akros-vertical-navigation.css";
@@ -218,6 +219,11 @@ body {
   min-height: 55vh;
   gap: 24px;
   padding-block: 40px 64px;
+}
+
+.akros-wide-main.akros-wide-main--full-bleed {
+  gap: 0;
+  padding: 0;
 }
 
 .akros-benefits {
