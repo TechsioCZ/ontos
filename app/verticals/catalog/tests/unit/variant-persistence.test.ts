@@ -301,7 +301,7 @@ describe('Variant persistence', () => {
           Match.orElse(() => false),
         ),
       ).toBe(true);
-      expect(reads).toEqual(['variant', 'product']);
+      expect(reads).toEqual(['product', 'variant']);
     }),
   );
 

@@ -406,6 +406,11 @@ export const variantPersistenceForScope = (
     ) {
       return { _tag: 'invalid_change' };
     }
+    // Product-then-Variant lock order matches create/confirm so concurrent writers cannot deadlock.
+    const [parent] = yield* getProduct(input.currentProductRef.resourceId);
+    if (parent === undefined) {
+      return { _tag: 'not_found' };
+    }
     const [row] = yield* getVariant(input.variantRef.resourceId);
     if (row === undefined) {
       return { _tag: 'not_found' };
@@ -416,14 +421,10 @@ export const variantPersistenceForScope = (
     if (row.lifecycleState === 'RETIRED') {
       return { _tag: 'lifecycle_conflict' };
     }
-    if (row.productId !== input.currentProductRef.resourceId) {
+    if (row.productId !== parent.productId) {
       return { _tag: 'invalid_change' };
     }
     // A retired Product blocks new corrections of its forms, as Product correction itself does.
-    const [parent] = yield* getProduct(row.productId);
-    if (parent === undefined) {
-      return yield* unavailable();
-    }
     if (parent.lifecycleState === 'RETIRED') {
       return { _tag: 'lifecycle_conflict' };
     }
