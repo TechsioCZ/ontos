@@ -24,7 +24,12 @@ export function CartContent() {
     return (
       <div className="akros-empty-state akros-empty-state--cart">
         <p>{cs.cart.empty}</p>
-        <LinkButton as={NextLink} href="/kategorie/nerezovy-spojovaci-material" variant="primary">
+        <LinkButton
+          as={NextLink}
+          href="/kategorie/nerezovy-spojovaci-material"
+          size="md"
+          variant="primary"
+        >
           {cs.actions.backToCatalog}
         </LinkButton>
       </div>

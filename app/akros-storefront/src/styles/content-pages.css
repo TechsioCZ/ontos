@@ -683,34 +683,45 @@
 
 .akros-not-found {
   display: grid;
-  min-height: 680px;
+  min-height: 749px;
   justify-items: center;
   align-content: center;
-  gap: 24px;
-  padding: 64px 16px;
+  gap: 32px;
+  padding-inline: 16px;
+  background: var(--color-base);
   text-align: center;
 }
 
-.akros-not-found > p {
+.akros-not-found__copy {
+  display: grid;
+  width: min(100%, 600px);
+  gap: 12px;
+}
+
+.akros-not-found__copy p {
   max-width: 600px;
   margin: 0;
   color: var(--color-fg-secondary);
-  line-height: 1.5;
+  font-size: 16px;
+  line-height: 19px;
 }
 
 .akros-not-found h1 {
   max-width: 600px;
   margin: 0;
-  font-size: clamp(28px, 4vw, 40px);
+  font-size: 28px;
+  font-weight: 800;
+  line-height: 34px;
 }
 
 .akros-not-found__code {
   display: flex;
+  gap: 12px;
   align-items: center;
-  color: var(--color-float);
-  font-size: clamp(88px, 12vw, 132px);
-  font-weight: 800;
-  line-height: 1;
+  color: var(--color-neutral-200);
+  font-size: 128px;
+  font-weight: 900;
+  line-height: 155px;
 }
 
 .akros-not-found__product {
@@ -719,27 +730,42 @@
   height: 120px;
   place-items: center;
   border-radius: 50%;
-  background: var(--color-primary-disabled);
+  background: var(--color-bg-outlined-primary-active);
+  color: var(--color-fg-primary);
+  font-family: "Segoe UI Emoji", "Apple Color Emoji", sans-serif;
+  font-size: 48px;
+  font-weight: 400;
 }
 
-.akros-not-found__product img {
-  width: 76px;
-  height: 76px;
-  object-fit: contain;
+.akros-not-found__search {
+  display: grid;
+  width: min(100%, 500px);
+  gap: 8px;
 }
 
-.akros-not-found__search,
+.akros-not-found__search strong,
+.akros-not-found__categories strong {
+  font-size: 14px;
+  line-height: normal;
+}
+
+.akros-not-found__search strong {
+  line-height: 17px;
+}
+
 .akros-not-found__categories {
   display: grid;
   width: min(100%, 600px);
-  gap: 12px;
+  gap: 16px;
+  padding-top: 20px;
+  color: var(--color-fg-secondary);
 }
 
 .akros-not-found__categories > div {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 12px;
+  gap: 16px;
 }
 
 @media (max-width: 1100px) {
@@ -820,5 +846,6 @@
   .akros-not-found__product {
     width: 88px;
     height: 88px;
+    font-size: 40px;
   }
 }

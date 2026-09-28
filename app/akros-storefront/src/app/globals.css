@@ -11,6 +11,13 @@
 @source "../../node_modules/@techsio/ui-kit/dist";
 
 :root {
+  /* Figma keeps Input and Textarea on the white base surface in all interactive states. */
+  --color-input-bg-base: var(--color-base);
+  --color-input-bg-hover: var(--color-base);
+  --color-input-bg-focus: var(--color-base);
+  --color-textarea-bg: var(--color-base);
+  --color-textarea-bg-hover: var(--color-base);
+  --color-textarea-bg-focus: var(--color-base);
   --akros-content-max: 1440px;
   --akros-page-gutter: 64px;
   --akros-section-gap: 48px;
@@ -392,6 +399,7 @@ body {
 
 .akros-empty-state--cart {
   display: grid;
+  align-self: start;
   justify-items: start;
   gap: 20px;
 }
