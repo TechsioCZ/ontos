@@ -184,6 +184,8 @@ export default defineConfig({
     '.modernjs',
     '**/modern-tanstack/**',
     '**/routeTree.gen.*',
+    // Framework output of `ultramodern-create ultramodern routes-generate`; route.meta.ts files are the linted source.
+    '**/src/routes/ultramodern-route-metadata.ts',
     'tools/oxlint/anti-slop/**',
     'tools/oxlint/effect-native/tests/fixtures/**',
   ],
@@ -329,10 +331,7 @@ export default defineConfig({
       files: [
         '**/route.meta.ts',
         'apps/shell-super-app/shared/ultramodern-build.ts',
-        'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
-        'verticals/commerce-market-catalog/src/routes/ultramodern-route-metadata.ts',
         'verticals/party-registry/shared/ultramodern-build.ts',
-        'verticals/party-registry/src/routes/ultramodern-route-metadata.ts',
         'verticals/party-registry/vertical.manifest.ts',
       ],
       rules: {

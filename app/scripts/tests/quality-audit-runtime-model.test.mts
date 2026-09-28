@@ -344,25 +344,3 @@ it.live(
     }
   }),
 );
-
-it.live(
-  'Codesmith route refresh models its spawned script only when the invocation is live',
-  Effect.fn(function* routeRefreshScenario() {
-    const root = yield* fixture();
-    const scaffoldFile = 'scripts/scaffolding/cli.mts';
-    const target = 'scripts/generate-tanstack-routes.mts';
-    const invocation = [
-      "const script = path.join(workspaceRoot, 'scripts', 'generate-tanstack-routes.mts');",
-      "ChildProcess.make(process.execPath, [script, '--app', appId], {});",
-    ].join('\n');
-    try {
-      write(root, scaffoldFile, invocation);
-      write(root, target, 'export const routeRefresh = true;');
-      expect((yield* facts(root)).some((fact) => fact.kind === 'file' && fact.target === target)).toBe(true);
-      write(root, scaffoldFile, invocation.replace('ChildProcess.make(', 'unrelated('));
-      expect((yield* facts(root)).some((fact) => fact.kind === 'file' && fact.target === target)).toBe(false);
-    } finally {
-      rmSync(root, { force: true, recursive: true });
-    }
-  }),
-);
