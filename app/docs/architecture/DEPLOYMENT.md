@@ -208,6 +208,18 @@ Use this sequence for a new or changed MicroVertical:
 
 Do not report release success before all required smoke checks pass.
 
+### Edge units on Cloudflare Workers
+
+`topology/cloudflare-placement.json` lists the delivery units CI also ships as Cloudflare Workers;
+each needs a `cloudflare.workerName` in the reference topology. The deployment planner emits the
+placed, impacted units as `units.cloudflare` in dependency order (providers before Shell), and the
+`deploy-cloudflare` job deploys them after `deploy-stage` has migrated the database: per unit
+`cloudflare:deploy`, then its `cloudflare:proof` against the public URL. A failed deploy or proof
+rolls this run's Workers back to their previous versions. The job is inert until the `stage`
+environment provides the `CLOUDFLARE_API_TOKEN` secret and the `CLOUDFLARE_ACCOUNT_ID` variable.
+Placement adds the Worker delivery; retiring a unit's Zerops service is a separate topology and
+`zerops.yaml` change.
+
 ## Required smoke suite
 
 Provider readiness alone is insufficient. The post-deploy release gate exercises:

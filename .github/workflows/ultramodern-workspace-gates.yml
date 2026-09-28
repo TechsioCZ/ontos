@@ -392,6 +392,8 @@ jobs:
     permissions:
       contents: read
       deployments: read
+    outputs:
+      cloudflare: ${{ steps.impact.outputs.cloudflare }}
     env:
       ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
@@ -598,3 +600,81 @@ jobs:
           --service-id "$ZEROPS_SHELL_SERVICE_ID"
           --limit 200
           --minimum-severity DEBUG
+
+  # Edge units (topology/cloudflare-placement.json) ship as Cloudflare Workers after the Zerops
+  # deploy has migrated the database, so Worker code never runs against an older schema. The job is
+  # inert until the stage environment provides CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
+  deploy-cloudflare:
+    name: Deploy edge units to Cloudflare Workers after the stage migration
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.deploy-stage.outputs.cloudflare != '[]'
+    needs: [deploy-stage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: stage
+    permissions:
+      contents: read
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Require Cloudflare credentials
+        id: credentials
+        run: |
+          if [[ -z "$CLOUDFLARE_API_TOKEN" || -z "$CLOUDFLARE_ACCOUNT_ID" ]]; then
+            echo '::notice title=Cloudflare deploy not configured::The stage environment has no CLOUDFLARE_API_TOKEN secret and CLOUDFLARE_ACCOUNT_ID variable, so the planned edge units were not deployed to Cloudflare.'
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout main revision
+        if: steps.credentials.outputs.enabled == 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        if: steps.credentials.outputs.enabled == 'true'
+        uses: ./.github/actions/install-app
+
+      - name: Deploy planned edge units in dependency order
+        if: steps.credentials.outputs.enabled == 'true'
+        working-directory: app
+        env:
+          CLOUDFLARE_UNITS_JSON: ${{ needs.deploy-stage.outputs.cloudflare }}
+          # Public URLs and Worker binding names are stage variables the Cloudflare builds read.
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          while IFS=$'\t' read -r key value; do
+            export "$key=$value"
+          done < <(jq -r 'to_entries[] | select(.key | test("^(MODERN_PUBLIC_|ULTRAMODERN_|VERTICAL_)")) | [.key, .value] | @tsv' <<<"$STAGE_VARIABLES_JSON")
+          deployed=()
+          # Worker versions are immutable; rollback returns each Worker this run deployed to its
+          # previous version. A Worker's first deployment has none, so it stays for inspection.
+          rollback() {
+            for deployment in "${deployed[@]}"; do
+              IFS=$'\t' read -r deployed_package deployed_worker <<<"$deployment"
+              mise exec -- pnpm --filter "$deployed_package" exec wrangler rollback --name "$deployed_worker" --message "Rollback of $GITHUB_SHA after a failed edge deploy" --yes || true
+            done
+          }
+          while IFS=$'\t' read -r package worker; do
+            if ! mise exec -- pnpm --filter "$package" run cloudflare:deploy; then
+              echo "Cloudflare deploy failed for planned edge unit $package ($worker)" >&2
+              rollback
+              exit 1
+            fi
+            deployed+=("$package"$'\t'"$worker")
+            if ! mise exec -- pnpm --filter "$package" run cloudflare:proof; then
+              echo "Public-URL proof failed for edge unit $package ($worker); rolling back this run's Workers" >&2
+              rollback
+              exit 1
+            fi
+          done < <(jq -r '.[] | [.packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
