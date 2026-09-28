@@ -1,18 +1,32 @@
 "use client";
 
 import NextLink from "next/link";
+import { useRouter } from "next/navigation";
+import type { FormEvent } from "react";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { SearchForm } from "@techsio/ui-kit/molecules/search-form";
 
 import { StorefrontWideShell } from "@/components/storefront-shell";
 
 export default function NotFoundPage() {
+  const router = useRouter();
+
+  const handleSearch = (event: FormEvent<HTMLFormElement>) => {
+    const query = new FormData(event.currentTarget).get("q");
+
+    if (typeof query === "string" && query.trim()) {
+      router.push(`/vyhledavani?q=${encodeURIComponent(query.trim())}`);
+    }
+  };
+
   return (
     <StorefrontWideShell fullBleed>
       <section className="akros-not-found" aria-labelledby="not-found-title">
         <div className="akros-not-found__code" aria-hidden="true">
           <span>4</span>
-          <span className="akros-not-found__product">🔩</span>
+          <span className="akros-not-found__product">
+            <span className="inline-block -rotate-[45deg] leading-none">🔩</span>
+          </span>
           <span>4</span>
         </div>
         <div className="akros-not-found__copy">
@@ -24,7 +38,7 @@ export default function NotFoundPage() {
         </div>
         <div className="akros-not-found__search">
           <strong>Zkuste vyhledat materiál znovu:</strong>
-          <SearchForm action="/vyhledavani" method="get" size="sm">
+          <SearchForm action="/vyhledavani" method="get" onSubmit={handleSearch} size="sm">
             <SearchForm.Control>
               <SearchForm.Input name="q" placeholder="Hledat matici, šroub…" />
               <SearchForm.Button>Hledat</SearchForm.Button>
@@ -39,7 +53,7 @@ export default function NotFoundPage() {
               href="/kategorie/srouby"
               size="sm"
               theme="outlined"
-              variant="secondary"
+              variant="primary"
             >
               Nerezové šrouby
             </LinkButton>
@@ -48,7 +62,7 @@ export default function NotFoundPage() {
               href="/kategorie/matice"
               size="sm"
               theme="outlined"
-              variant="secondary"
+              variant="primary"
             >
               Nerezové matice
             </LinkButton>
@@ -57,7 +71,7 @@ export default function NotFoundPage() {
               href="/kategorie/zavitove-tyce"
               size="sm"
               theme="outlined"
-              variant="secondary"
+              variant="primary"
             >
               Závitové tyče
             </LinkButton>
