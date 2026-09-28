@@ -47,6 +47,22 @@ jobs:
           fetch-depth: 0
       - name: Install repository toolchain
         uses: ./.github/actions/install-app
+      - name: Use native Schema assertions for governed outcomes
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/scripts/integration/migrator-runtime-owner-access.test.mts')
+          source = p.read_text()
+          replacements = {
+            "import { Effect, Option } from 'effect';": "import { Effect, Option, Schema } from 'effect';",
+            "  expect(storefront[0]?.payload).toMatchObject({ _tag: 'created', changed: true });": "  yield* Schema.decodeUnknownEffect(Schema.Struct({ _tag: Schema.Literal('created'), changed: Schema.Literal(true) }))(storefront[0]?.payload);",
+            "  expect(read[0]?.payload).toMatchObject({ _tag: 'found', current: { lifecycle: 'ACTIVE', revision: 1 } });": "  yield* Schema.decodeUnknownEffect(Schema.Struct({ _tag: Schema.Literal('found'), current: Schema.Struct({ lifecycle: Schema.Literal('ACTIVE'), revision: Schema.Literal(1) }) }))(read[0]?.payload);",
+          }
+          for old, new in replacements.items():
+            assert source.count(old) == 1, old
+            source = source.replace(old, new)
+          p.write_text(source)
+          PY
       - name: Format and lint the four access-repair files
         working-directory: app
         run: |
