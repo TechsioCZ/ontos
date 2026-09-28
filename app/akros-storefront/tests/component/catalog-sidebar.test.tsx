@@ -1,4 +1,5 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { CatalogSidebar } from "@/components/catalog-sidebar";
@@ -25,5 +26,27 @@ describe("CatalogSidebar", () => {
         ?.getAttribute("data-akros-depth"),
     ).toBe("0");
     expect(expandedBranches).toHaveLength(5);
+  });
+
+  it("exposes the depth of a manually opened branch for its background tone", async () => {
+    const user = userEvent.setup();
+    const { container } = render(<CatalogSidebar />);
+
+    const [desktopNavigation] = within(container).getAllByRole("navigation", {
+      name: cs.catalog.title,
+    });
+    const trigger = within(desktopNavigation).getByRole("button", {
+      name: "Nerezový spojovací materiál",
+    });
+
+    await user.click(trigger);
+
+    await waitFor(() => {
+      expect(
+        desktopNavigation.querySelector(
+          '[data-part="branch"][data-state="open"] > [data-akros-depth="0"]',
+        ),
+      ).not.toBeNull();
+    });
   });
 });

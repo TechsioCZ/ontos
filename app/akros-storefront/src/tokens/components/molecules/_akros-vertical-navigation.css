@@ -22,22 +22,27 @@
   );
 }
 
+[data-akros-catalog] [data-part="branch"][data-state="open"] > [data-akros-depth="0"],
 [data-akros-catalog] [data-akros-depth="0"]:is([data-current-path], [data-current]) {
   background-color: var(--color-akros-catalog-path-level-0);
 }
 
+[data-akros-catalog] [data-part="branch"][data-state="open"] > [data-akros-depth="1"],
 [data-akros-catalog] [data-akros-depth="1"]:is([data-current-path], [data-current]) {
   background-color: var(--color-akros-catalog-path-level-1);
 }
 
+[data-akros-catalog] [data-part="branch"][data-state="open"] > [data-akros-depth="2"],
 [data-akros-catalog] [data-akros-depth="2"]:is([data-current-path], [data-current]) {
   background-color: var(--color-akros-catalog-path-level-2);
 }
 
+[data-akros-catalog] [data-part="branch"][data-state="open"] > [data-akros-depth="3"],
 [data-akros-catalog] [data-akros-depth="3"]:is([data-current-path], [data-current]) {
   background-color: var(--color-akros-catalog-path-level-3);
 }
 
+[data-akros-catalog] [data-part="branch"][data-state="open"] > [data-akros-depth="4"],
 [data-akros-catalog] [data-akros-depth="4"]:is([data-current-path], [data-current]) {
   background-color: var(--color-akros-catalog-path-level-4);
 }
