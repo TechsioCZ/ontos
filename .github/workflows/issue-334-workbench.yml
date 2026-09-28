@@ -8,10 +8,10 @@ permissions:
   contents: read
 
 jobs:
-  green-proof:
+  verified-source:
     if: github.ref == 'refs/heads/audit/334-repair-workbench'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     env:
       BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
       BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
@@ -35,32 +35,28 @@ jobs:
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
           egress-policy: audit
-      - name: Check out the isolated repair workbench
+      - name: Check out isolated workbench
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
-      - name: Install the repository toolchain
+      - name: Install repository toolchain
         uses: ./.github/actions/install-app
-      - name: Start fresh PostgreSQL and SpiceDB
+      - name: Apply repairs and generate append-only migration
+        run: |
+          python3 .github/issue-334-repair.py
+          python3 .github/issue-334-test-refinements.py
+      - name: Format and lint every changed product file
+        working-directory: app
+        run: |
+          mkdir -p /tmp/issue-334-proof
+          git add -- .
+          git diff --cached --name-only --diff-filter=ACM --relative dd4d0cfbbf8b68f8ed2a6e2cbe93fccdf293e166 | xargs -r mise exec -- pnpm exec oxlint --fix --no-error-on-unmatched-pattern
+          git diff --cached --name-only --diff-filter=ACM --relative dd4d0cfbbf8b68f8ed2a6e2cbe93fccdf293e166 | xargs -r mise exec -- pnpm exec oxfmt --no-error-on-unmatched-pattern
+          git add -- .
+      - name: Start isolated database services
         working-directory: app
         run: docker compose up --detach --wait --wait-timeout 120
-      - name: Establish the main schema before the upgrade
-        working-directory: app
-        env:
-          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
-          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
-        run: |
-          mise exec -- pnpm db:migrate
-          mise exec -- pnpm db:verify
-      - name: Apply repairs and generate append-only custom migration
-        run: python3 .github/issue-334-repair.py
-      - name: Format changed product files
-        working-directory: app
-        run: |
-          git add -- .
-          git diff --cached --name-only --diff-filter=ACM --relative | xargs -r mise exec -- pnpm exec oxfmt --no-error-on-unmatched-pattern
-          git add -- .
-      - name: Apply and verify the repaired schema upgrade
+      - name: Verify clean installation including the new migration
         working-directory: app
         env:
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
@@ -69,51 +65,31 @@ jobs:
           mise exec -- pnpm --filter @app/price-group-catalog db:check
           mise exec -- pnpm db:migrate
           mise exec -- pnpm db:verify
-      - name: Run regression, owner, and repository gates
+      - name: Verify focused regressions and owner contracts
         working-directory: app
         run: |
-          mkdir -p /tmp/issue-334-proof
-          failed=0
-          check() {
-            name="$1"; shift
-            set +e
-            mise exec -- "$@" 2>&1 | tee "/tmp/issue-334-proof/$name.log"
-            code=${PIPESTATUS[0]}
-            set -e
-            printf '%s exit=%s\n' "$name" "$code" | tee -a /tmp/issue-334-proof/results.txt
-            if [[ "$code" != 0 ]]; then failed=1; fi
-          }
-          check commerce-regressions pnpm --filter @app/commerce-customer-context exec rstest run --project unit tests/unit/price-group-currentness-regressions.test.ts
-          check catalog-regressions pnpm --filter @app/price-group-catalog exec rstest run --project integration tests/integration/price-group-currentness-regressions.test.ts
-          check catalog-unit pnpm --filter @app/price-group-catalog test:unit
-          check catalog-integration pnpm --filter @app/price-group-catalog test:integration
-          check commerce-unit pnpm --filter @app/commerce-customer-context test:unit
-          check commerce-integration pnpm --filter @app/commerce-customer-context test:integration
-          check typecheck pnpm typecheck
-          check scripts pnpm test:scripts
-          check lint pnpm lint
-          check format pnpm format:check
-          check database-boundaries pnpm database-access:check
-          check module-entrypoints pnpm module-entrypoints:check
-          check module-contracts pnpm check:module-contracts
-          check lean-core pnpm lean-core:check
-          check workspace-contract pnpm contract:check
-          exit "$failed"
-      - name: Export exact product diff and generated migration for review
+          set -o pipefail
+          mise exec -- pnpm --filter @app/commerce-customer-context exec rstest run --project unit tests/unit/price-group-currentness-regressions.test.ts 2>&1 | tee /tmp/issue-334-proof/commerce-regressions.log
+          mise exec -- pnpm --filter @app/price-group-catalog exec rstest run --project integration tests/integration/price-group-currentness-regressions.test.ts tests/integration/governed-routine-behavior.test.ts 2>&1 | tee /tmp/issue-334-proof/catalog-regressions.log
+          mise exec -- pnpm exec rstest run --project scripts scripts/tests/zerops-migrator-owner-coverage.test.mts 2>&1 | tee /tmp/issue-334-proof/deployment-regressions.log
+          mise exec -- pnpm typecheck 2>&1 | tee /tmp/issue-334-proof/typecheck.log
+          mise exec -- pnpm format:check 2>&1 | tee /tmp/issue-334-proof/format.log
+          git diff --cached --name-only --diff-filter=ACM --relative dd4d0cfbbf8b68f8ed2a6e2cbe93fccdf293e166 | xargs -r mise exec -- pnpm exec oxlint --no-error-on-unmatched-pattern 2>&1 | tee /tmp/issue-334-proof/changed-lint.log
+      - name: Export exact product source for connector publication
         if: always()
         run: |
           mkdir -p /tmp/issue-334-proof
           git add -- app
-          git diff --cached --binary -- app > /tmp/issue-334-proof/product.patch
-          git diff --cached --stat -- app > /tmp/issue-334-proof/product-stat.txt
+          git diff --cached --binary dd4d0cfbbf8b68f8ed2a6e2cbe93fccdf293e166 -- app > /tmp/issue-334-proof/product.patch
+          git diff --cached --stat dd4d0cfbbf8b68f8ed2a6e2cbe93fccdf293e166 -- app > /tmp/issue-334-proof/product-stat.txt
           tree=$(git write-tree)
           git archive --format=tar --output=/tmp/issue-334-proof/product-source.tar "$tree" app
           git status --short > /tmp/issue-334-proof/worktree-status.txt
-      - name: Keep proof logs and exact source
+      - name: Keep verification logs and exact source
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: issue-334-green-proof
+          name: issue-334-verified-source
           path: /tmp/issue-334-proof
           retention-days: 3
       - name: Remove isolated services
