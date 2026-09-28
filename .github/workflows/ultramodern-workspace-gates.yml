@@ -684,6 +684,12 @@ jobs:
           while IFS=$'\t' read -r key value; do
             export "$key=$value"
           done < <(jq -r 'to_entries[] | select(.key | test("^(MODERN_|ULTRAMODERN_|VERTICAL_)")) | [.key, .value] | @tsv' <<<"$EDGE_VARIABLES_JSON")
+          # The placed units bake the Shell origin into their API CORS allowlist; without it they
+          # fall back to the local development origin and reject the real stage Shell.
+          if [[ -z "${ULTRAMODERN_MF_DEV_ORIGIN:-}" ]]; then
+            echo 'stage-edge must set ULTRAMODERN_MF_DEV_ORIGIN to the stage Shell origin; no Worker was changed.' >&2
+            exit 1
+          fi
           active_version() {
             mise exec -- pnpm --filter "$1" exec wrangler deployments status --name "$2" --json \
               | jq -er '.versions | map(select(.percentage == 100)) | .[0].version_id'

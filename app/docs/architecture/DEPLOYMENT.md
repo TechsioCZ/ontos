@@ -230,7 +230,9 @@ revision.
 The `CLOUDFLARE_ACCOUNT_ID` repository variable enables the job. Without it the job is skipped and
 records nothing. With it, the `stage-edge` environment must hold the `CLOUDFLARE_API_TOKEN` secret
 and the edge configuration the Worker builds read: `ULTRAMODERN_PUBLIC_URL_*` for every Worker (the
-output verifier requires them), plus any `VERTICAL_*_WORKER_BINDING` / `_WORKER_NAME` overrides.
+output verifier requires them), `ULTRAMODERN_MF_DEV_ORIGIN` set to the stage Shell origin (the
+placed units' API CORS allowlist; the job fails before changing any Worker without it), plus any
+`VERTICAL_*_WORKER_BINDING` / `_WORKER_NAME` overrides.
 The job sees only `stage-edge` and repository variables, never the Zerops `stage` environment.
 Each Worker's runtime configuration is set once, outside CI, before its first deploy: secrets
 (`wrangler secret put`, for example `SPICEDB_PRESHARED_KEY` and `BETTER_AUTH_SECRET`) and the

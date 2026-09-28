@@ -88,6 +88,10 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   expect(deploy?.run).toContain('wrangler deployments status');
   expect(deploy?.run).toContain('wrangler rollback "$previous_version"');
   expect(deploy?.run).not.toMatch(/wrangler rollback[^\n]*\|\| true/u);
+  // The placed units' CORS allowlist needs the real Shell origin before any Worker changes.
+  expect(deploy?.run).toContain('ULTRAMODERN_MF_DEV_ORIGIN');
+  const deployRun = deploy?.run ?? '';
+  expect(deployRun.indexOf('ULTRAMODERN_MF_DEV_ORIGIN')).toBeLessThan(deployRun.indexOf('mapfile'));
   // A Worker this run created is removed again, so a failed first deploy leaves nothing public.
   expect(deploy?.run).toContain('wrangler delete --name "$deployed_worker"');
   // The account token reaches only the steps that use it.
