@@ -352,6 +352,7 @@ const customerCommercePolicyOwnerEvidence = {
           policyRevisionId: quantityPolicyRevisionId,
           scope: { channelId: 'B2C', kind: 'CHANNEL_SELLER', sellingLegalEntityId },
           value: {
+            audience: 'SHARED',
             basis: {
               targetDivisibilityRevision: 1,
               targetRef: catalogPackageOptionRef,
@@ -502,6 +503,7 @@ export const CZECH_LAUNCH_COMMERCE_FIXTURE = Object.freeze({
         revisionId: quantityPolicyRevisionId,
         scope: { channelId: 'B2C', kind: 'CHANNEL_SELLER', sellingLegalEntityId },
         value: {
+          audience: 'SHARED',
           basis: {
             targetDivisibilityRevision: 1,
             targetRef: catalogPackageOptionRef,

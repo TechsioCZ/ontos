@@ -1,19 +1,23 @@
 import { Effect, Schema } from 'effect';
+import { OperationContextUnavailable } from '@app/core-runtime';
 import { expect, it } from 'effect-rstest';
 
-import { getReadConditionalPermissionPlan } from '../../../../packages/core-runtime/src/reads/definition.ts';
+import {
+  getReadConditionalPermissionPlan,
+  getReadServiceFactory,
+} from '../../../../packages/core-runtime/src/reads/definition.ts';
 
 import {
   CommerceQuantityResolutionRequestSchema,
   CommerceQuantityResolutionResponseSchema,
 } from '../../shared/apis/commerce-quantity-resolution.ts';
-import { CommerceQuantityCatalogUnavailableSchema } from '../../shared/domain/commerce-quantity-catalog-port.ts';
-import { CommerceQuantityPolicyUnavailableSchema } from '../../shared/domain/commerce-quantity-policy-port.ts';
 import {
   commerceQuantityGuestPermissionTargets,
   commerceQuantityProfilePermissionTargets,
   commerceQuantityResolutionProductionServices,
   commerceQuantityResolutionPermission,
+  commerceQuantityResolutionRead,
+  makeCommerceQuantityResolutionServices,
   handleCommerceQuantityResolution,
 } from '../../src/api/commerce-quantity-resolution.read.ts';
 
@@ -128,17 +132,19 @@ it.effect('rejects claimed purchasing scope before invoking dependencies', () =>
   }),
 );
 
-it.effect('keeps production fail closed until Catalog and policy adapters are installed', () =>
-  Effect.gen(function* unavailableProductionDependencies() {
-    const services = yield* commerceQuantityResolutionProductionServices;
-    const failure = yield* services.resolve(request).pipe(Effect.flip);
-    expect(
-      Schema.is(CommerceQuantityCatalogUnavailableSchema)(failure) ||
-        Schema.is(CommerceQuantityPolicyUnavailableSchema)(failure),
-    ).toBe(true);
-    if (Schema.is(CommerceQuantityCatalogUnavailableSchema)(failure)) {
-      expect(failure.retryable).toBe(true);
-    }
+it.effect('the registered production factory fails closed without authoritative Cart context', () =>
+  Effect.gen(function* unavailableProductionContext() {
+    expect(getReadServiceFactory(commerceQuantityResolutionRead)).toBe(makeCommerceQuantityResolutionServices);
+    const transaction = { invoke: () => Effect.die('Unconfigured purchase context must not access persistence') };
+    expect(makeCommerceQuantityResolutionServices(transaction, scope)).toBe(
+      commerceQuantityResolutionProductionServices,
+    );
+    const failure = yield* makeCommerceQuantityResolutionServices(transaction, scope).pipe(Effect.flip);
+    expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
+    expect(failure).toMatchObject({
+      code: 'operation_context_unavailable',
+      reason: 'Authoritative Cart purchasing context is not configured for Commerce Quantity Resolution',
+    });
   }),
 );
 

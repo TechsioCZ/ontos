@@ -266,7 +266,13 @@ const makeService = Effect.fn('CustomerCommercePolicyAdministrationService.make'
         ),
       ),
     readCurrentCommerceQuantityRules: (at: string) =>
-      repository.loadCommerceQuantityRuleState.pipe(Effect.map((state) => currentCommerceQuantityRuleSet(state, at))),
+      Effect.all(
+        {
+          assignments: repository.loadCommerceQuantityRuleAssignments,
+          rules: repository.loadCommerceQuantityRuleState,
+        },
+        { concurrency: 2 },
+      ).pipe(Effect.map(({ assignments, rules }) => currentCommerceQuantityRuleSet(rules, assignments, at))),
     readCurrentMarketBootstrapPolicy: (at: string) =>
       repository.loadMarketBootstrapPolicyState.pipe(Effect.map((state) => currentMarketBootstrapPolicySet(state, at))),
     readCurrentMarketBootstrapPolicyCandidates: (input: MarketBootstrapPolicyBatchCurrentRequest) =>

@@ -243,6 +243,25 @@ export const CommerceQuantityBasisSchema = Schema.Struct({
 );
 export type CommerceQuantityBasis = typeof CommerceQuantityBasisSchema.Type;
 
+/** Declarative commercial basis. Catalog retains each selection's physical revision evidence. */
+export const CommerceQuantityPurchaseUnitBasisSchema = Schema.Struct({
+  kind: Schema.Literal('PURCHASE_UNIT'),
+  unitRef: CatalogResourceRefSchema.check(
+    Schema.makeFilter((ref) =>
+      ref.moduleId === 'commerce.catalog' && ref.resourceType === 'commerce.catalog.product-unit'
+        ? undefined
+        : 'A commercial Quantity basis must reference a Catalog Unit',
+    ),
+  ),
+});
+
+/** Legacy exact basis remains readable; it must not narrow a Product/Variant selector. */
+export const CommerceQuantityPolicyBasisSchema = Schema.Union([
+  CommerceQuantityPurchaseUnitBasisSchema,
+  CommerceQuantityBasisSchema,
+]);
+export type CommerceQuantityPolicyBasis = typeof CommerceQuantityPolicyBasisSchema.Type;
+
 const compareExactPositiveQuantities = (left: string, right: string): -1 | 0 | 1 => {
   const [leftInteger = '0', leftFraction = ''] = left.split('.');
   const [rightInteger = '0', rightFraction = ''] = right.split('.');
@@ -281,7 +300,9 @@ export const QuantityEnvelopeSchema = Schema.Union([
 export type QuantityEnvelope = typeof QuantityEnvelopeSchema.Type;
 
 export const CommerceQuantityRuleValueSchema = Schema.Struct({
-  basis: CommerceQuantityBasisSchema,
+  // Missing only on legacy revisions; Current composition resolves it from retained assignment history.
+  audience: Schema.optionalKey(Schema.Literals(['SHARED', 'ASSIGNMENT_ONLY'])),
+  basis: CommerceQuantityPolicyBasisSchema,
   constraintMode: Schema.Literals(['REPLACEABLE_ENVELOPE', 'NON_RELAXABLE_CONSTRAINT']),
   envelope: QuantityEnvelopeSchema,
   kind: Schema.Literal('COMMERCE_QUANTITY_RULE'),
@@ -363,7 +384,9 @@ export const CommerceQuantityRuleRevisionSchema = Schema.Struct({
     } else if (revision.value.selector.kind === 'PACKAGE_OPTION') {
       selectorTenantId = revision.value.selector.packageOptionRef.tenantId;
     }
-    return selectorTenantId === revision.tenantId && revision.value.basis.targetRef.tenantId === revision.tenantId
+    return selectorTenantId === revision.tenantId &&
+      revision.value.basis.unitRef.tenantId === revision.tenantId &&
+      (!('targetRef' in revision.value.basis) || revision.value.basis.targetRef.tenantId === revision.tenantId)
       ? undefined
       : 'Quantity selector, basis, and policy Revision must belong to the same Tenant';
   }),

@@ -1,6 +1,8 @@
 /* oxlint-disable anti-slop/no-conditional-empty-object-spread, anti-slop/no-unsafe-dictionary-type, effect-native/no-manual-tag-comparison -- Focused fixtures assert exact discriminated outcomes and sparse schema overrides; tracked in: #333; remove-when: fixture builders are generated from the quantity contract. */
-import { Effect, Schema } from 'effect';
+import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
+import { commerceQuantityResolutionServicesFromPorts } from '../../src/api/commerce-quantity-resolution.read.ts';
 import {
   CurrentCommerceQuantityAssignmentSchema,
   CurrentCommerceQuantityPolicySetSchema,
@@ -115,6 +117,7 @@ const assignmentIds = {
 const rule = (
   policyRevisionId: string,
   input: {
+    readonly audience?: 'SHARED' | 'ASSIGNMENT_ONLY';
     readonly constraintMode?: 'NON_RELAXABLE_CONSTRAINT' | 'REPLACEABLE_ENVELOPE';
     readonly envelope?:
       | { readonly kind: 'NO_COMMERCIAL_QUANTITY_RESTRICTION' }
@@ -144,6 +147,7 @@ const rule = (
       ...(scopeKind === 'STOREFRONT_MARKET_CHANNEL_SELLER' ? { storefrontId: 'main' } : {}),
     },
     value: {
+      audience: input.audience ?? 'SHARED',
       basis,
       constraintMode: input.constraintMode ?? 'REPLACEABLE_ENVELOPE',
       envelope: input.envelope ?? { kind: 'NO_COMMERCIAL_QUANTITY_RESTRICTION' },
@@ -191,7 +195,7 @@ const resolve = (
 describe('Commerce Quantity resolution', () => {
   it('selects Catalog specificity before a concrete-profile ALL assignment', () => {
     const productRule = rule(uuids[0], { selector: { kind: 'PRODUCT', productRef } });
-    const assignedAll = rule(uuids[1]);
+    const assignedAll = rule(uuids[1], { audience: 'ASSIGNMENT_ONLY' });
     const profileRequest = Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({
       ...request,
       subject: { kind: 'RETAIL', profileRef },
@@ -209,6 +213,7 @@ describe('Commerce Quantity resolution', () => {
 
   it('selects a same-specificity profile exception before a shared envelope and before commercial scope', () => {
     const assignedProduct = rule(uuids[0], {
+      audience: 'ASSIGNMENT_ONLY',
       scopeKind: 'CHANNEL_SELLER',
       selector: { kind: 'PRODUCT', productRef },
     });
@@ -260,6 +265,7 @@ describe('Commerce Quantity resolution', () => {
 
   it('keeps assigned rules out of Guest resolution', () => {
     const assignedOnly = rule(uuids[0], {
+      audience: 'ASSIGNMENT_ONLY',
       envelope: { kind: 'BOUNDED', maximum: null, minimum: '10', multiple: null },
       selector: { kind: 'PRODUCT', productRef },
     });
@@ -364,6 +370,7 @@ describe('Commerce Quantity resolution', () => {
     const outcome = resolve([variantOneRule, variantTwoRule], {
       catalogLines: [
         catalogLine({
+          basis: { ...basis, targetRef: firstVariant },
           catalogSelection: { productRef, variantRef: firstVariant },
           equivalentSelectionKey: 'variant-1:configuration-1',
           normalizedQuantity: '4',
@@ -373,6 +380,7 @@ describe('Commerce Quantity resolution', () => {
           lineId: 'line-2',
           selection: {
             ...catalogLine({
+              basis: { ...basis, targetRef: secondVariant },
               catalogSelection: { productRef, variantRef: secondVariant },
               equivalentSelectionKey: 'variant-2:configuration-2',
               normalizedQuantity: '4',
@@ -478,4 +486,235 @@ describe('Commerce Quantity resolution', () => {
       }),
     ).toThrow();
   });
+});
+
+describe('Issue #333 audit: reusable policy versus exact Catalog basis', () => {
+  it('applies one Product rule to two independently evidenced Variants without pooling them', () => {
+    const secondVariant = variantRef('50000000-0000-4000-8000-000000000004');
+    const secondSelection = { productRef, variantRef: secondVariant };
+    const secondLine = {
+      ...catalogLine({
+        basis: { ...basis, targetDivisibilityRevision: 2, targetRef: secondVariant },
+        catalogSelection: secondSelection,
+        equivalentSelectionKey: 'second-exact-variant',
+        hierarchyRevision: 'hierarchy:second',
+        ownerRevision: 'selection:second',
+      }),
+      lineId: 'line-2',
+    };
+    const twoLines = Schema.decodeUnknownSync(CommerceQuantityResolutionRequestSchema)({
+      ...request,
+      lines: [...request.lines, { lineId: 'line-2', requestedQuantity: '5', selection: secondSelection }],
+    });
+    const outcome = resolve(
+      [
+        rule(uuids[0], {
+          envelope: { kind: 'BOUNDED', maximum: '5', minimum: '5', multiple: '5' },
+          selector: { kind: 'PRODUCT', productRef },
+        }),
+      ],
+      { catalogLines: [catalogLine(), secondLine], resolutionRequest: twoLines },
+    );
+    expect(outcome).toMatchObject({
+      _tag: 'COMMERCE_QUANTITY_PERMITTED',
+      lines: [
+        { basis, lineIds: ['line-1'], normalizedQuantity: '5' },
+        {
+          basis: { targetDivisibilityRevision: 2, targetRef: secondVariant },
+          lineIds: ['line-2'],
+          normalizedQuantity: '5',
+        },
+      ],
+    });
+  });
+
+  it('selects a narrower valid envelope before validating an overridden incompatible ALL basis', () => {
+    const fallback = rule(uuids[0]);
+    const incompatibleFallback = {
+      ...fallback,
+      value: {
+        ...fallback.value,
+        basis: {
+          ...basis,
+          unitRef: { ...basis.unitRef, resourceId: '50000000-0000-4000-8000-000000000005' },
+        },
+      },
+    };
+    const exact = rule(uuids[1], { selector: { kind: 'VARIANT', variantRef: basis.targetRef } });
+    expect(resolve([incompatibleFallback, exact])).toMatchObject({
+      _tag: 'COMMERCE_QUANTITY_PERMITTED',
+      lines: [{ winningRuleRevisionId: uuids[1] }],
+    });
+    expect(resolve([incompatibleFallback])).toMatchObject({
+      _tag: 'COMMERCE_QUANTITY_POLICY_UNVERIFIABLE',
+      reason: 'CATALOG_BASIS_STALE',
+    });
+    expect(
+      resolve([
+        {
+          ...incompatibleFallback,
+          value: {
+            ...incompatibleFallback.value,
+            constraintMode: 'NON_RELAXABLE_CONSTRAINT',
+          },
+        },
+        exact,
+      ]),
+    ).toMatchObject({ _tag: 'COMMERCE_QUANTITY_POLICY_UNVERIFIABLE', reason: 'CATALOG_BASIS_STALE' });
+  });
+
+  it('never treats an explicitly assignment-only rule with no Current assignment as shared', () => {
+    const shared = rule(uuids[0]);
+    const privateRule = rule(uuids[1], { selector: { kind: 'PRODUCT', productRef } });
+    const outcome = resolve([shared, { ...privateRule, value: { ...privateRule.value, audience: 'ASSIGNMENT_ONLY' } }]);
+    expect(outcome).toMatchObject({
+      _tag: 'COMMERCE_QUANTITY_PERMITTED',
+      lines: [{ winningRuleRevisionId: uuids[0] }],
+    });
+  });
+});
+
+describe('Issue #333 audit: Current owner observation and final validation', () => {
+  it.effect('accepts real observation latency and retains the actual owner times', () =>
+    Effect.gen(function* latencyIsNotStaleness() {
+      yield* TestClock.setTime(Date.parse(observedAt));
+      let catalogReads = 0;
+      const observations: string[] = [];
+      const services = commerceQuantityResolutionServicesFromPorts(
+        {
+          resolveCurrentSelections: () =>
+            Effect.gen(function* delayedCatalogRead() {
+              catalogReads += 1;
+              yield* TestClock.adjust(5);
+              const actualObservation = DateTime.formatIso(yield* DateTime.now);
+              observations.push(actualObservation);
+              return [catalogLine({ completeness: { ...completeness('catalog:12'), observedAt: actualObservation } })];
+            }),
+        },
+        {
+          readCurrent: (at) =>
+            Effect.succeed(
+              Schema.decodeUnknownSync(CurrentCommerceQuantityPolicySetSchema)({
+                ...policy([rule(uuids[0])]),
+                assignmentSet: {
+                  ...policy([]).assignmentSet,
+                  completeness: { ...completeness('assignments:3'), observedAt: at },
+                },
+                ruleSet: {
+                  ...policy([rule(uuids[0])]).ruleSet,
+                  completeness: { ...completeness('rules:9'), observedAt: at },
+                },
+              }),
+            ),
+        },
+      );
+      const result = yield* services.resolve(request);
+      expect(result).toMatchObject({ _tag: 'COMMERCE_QUANTITY_PERMITTED' });
+      expect(catalogReads).toBe(2);
+      if (result._tag === 'COMMERCE_QUANTITY_PERMITTED') {
+        expect(result.lines[0]?.catalogCompleteness.observedAt).toBe(observations[1]);
+        expect(result.observedAt).toBe('2026-09-21T10:00:00.010Z');
+      }
+    }),
+  );
+
+  it.effect('discards a changed Catalog attempt and retries both owners without old/new mixing', () =>
+    Effect.gen(function* changedCatalogRetries() {
+      yield* TestClock.setTime(Date.parse(observedAt));
+      let reads = 0;
+      let policyReads = 0;
+      const services = commerceQuantityResolutionServicesFromPorts(
+        {
+          resolveCurrentSelections: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return [
+                catalogLine({
+                  completeness: completeness(reads === 1 ? 'catalog:12' : 'catalog:13'),
+                  ownerRevision: reads === 1 ? 'selection:12' : 'selection:13',
+                }),
+              ];
+            }),
+        },
+        {
+          readCurrent: () =>
+            Effect.sync(() => {
+              policyReads += 1;
+              return policy([rule(uuids[0])]);
+            }),
+        },
+      );
+      const result = yield* services.resolve(request);
+      expect(result).toMatchObject({
+        _tag: 'COMMERCE_QUANTITY_PERMITTED',
+        lines: [{ catalogOwnerRevision: 'selection:13' }],
+      });
+      expect(reads).toBe(4);
+      expect(policyReads).toBe(4);
+    }),
+  );
+
+  it.effect('does not publish success when the material policy set keeps changing', () =>
+    Effect.gen(function* unstablePolicyFailsClosed() {
+      yield* TestClock.setTime(Date.parse(observedAt));
+      let reads = 0;
+      const services = commerceQuantityResolutionServicesFromPorts(
+        {
+          resolveCurrentSelections: () => Effect.succeed([catalogLine()]),
+        },
+        {
+          readCurrent: () =>
+            Effect.sync(() => {
+              reads += 1;
+              const current = policy([rule(uuids[0])]);
+              return { ...current, ruleSet: { ...current.ruleSet, completeness: completeness(`rules:${reads}`) } };
+            }),
+        },
+      );
+      expect(yield* services.resolve(request)).toEqual({
+        _tag: 'COMMERCE_QUANTITY_POLICY_UNVERIFIABLE',
+        reason: 'POLICY_EVIDENCE_STALE',
+      });
+      expect(reads).toBe(6);
+    }),
+  );
+});
+
+describe('Commercial purchase Unit and exact Catalog physical basis', () => {
+  it('does not pin a declarative Unit rule to one physical target or Unit rounding revision', () => {
+    const base = rule(uuids[0]);
+    const unitRule = { ...base, value: { ...base.value, basis: { kind: 'PURCHASE_UNIT', unitRef: basis.unitRef } } };
+    const current = catalogLine({ basis: { ...basis, targetDivisibilityRevision: 8, unitRuleRevision: 10 } });
+    expect(resolveCommerceQuantity({ catalogLines: [current], policy: policy([unitRule]), request })._tag).toBe(
+      'COMMERCE_QUANTITY_PERMITTED',
+    );
+    const otherUnit = { ...basis.unitRef, resourceId: '50000000-0000-4000-8000-000000000099' };
+    const incompatible = catalogLine({ basis: { ...basis, unitRef: otherUnit } });
+    expect(
+      resolveCommerceQuantity({ catalogLines: [incompatible], policy: policy([unitRule]), request }),
+    ).toMatchObject({
+      _tag: 'COMMERCE_QUANTITY_POLICY_UNVERIFIABLE',
+      reason: 'CATALOG_BASIS_STALE',
+    });
+    const foreignTarget = catalogLine({
+      basis: { ...basis, targetRef: variantRef('50000000-0000-4000-8000-000000000098') },
+    });
+    expect(
+      resolveCommerceQuantity({ catalogLines: [foreignTarget], policy: policy([unitRule]), request }),
+    ).toMatchObject({
+      _tag: 'COMMERCE_QUANTITY_POLICY_UNVERIFIABLE',
+      reason: 'CATALOG_SELECTION_MISMATCH',
+    });
+  });
+
+  it.effect('does not turn an owner outage into permission or absence', () =>
+    Effect.gen(function* ownerOutage() {
+      const service = commerceQuantityResolutionServicesFromPorts(
+        unavailableCommerceQuantityCatalogPort(),
+        unavailableCommerceQuantityPolicyPort(),
+      );
+      const failure = yield* service.resolve(request).pipe(Effect.flip);
+      expect(['CommerceQuantityCatalogUnavailable', 'CommerceQuantityPolicyUnavailable']).toContain(failure._tag);
+    }),
+  );
 });

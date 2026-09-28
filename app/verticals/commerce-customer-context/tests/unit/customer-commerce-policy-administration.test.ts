@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'effect-rstest';
-import { Schema } from 'effect';
+import { Match, Schema } from 'effect';
 import {
   AssignCommerceQuantityCommandTagSchema,
   BrokenAssignmentTagSchema,
@@ -29,6 +29,7 @@ import {
   assignCommerceQuantityRule,
   currentCommerceQuantityAssignmentSet,
   currentCommerceQuantityPolicySet,
+  currentCommerceQuantityRuleSet,
   currentPurchaseCurrencyPolicySet,
   emptyCustomerCommercePolicySet,
   emptyQuantityAssignmentSet,
@@ -97,7 +98,7 @@ const quantityRule = Schema.decodeUnknownSync(CommerceQuantityRuleRevisionSchema
   field: 'COMMERCE_QUANTITY_RULE',
   idempotencyKey: 'quantity-rule-1',
   lifecycle: 'ACTIVE',
-  reason: 'Approved shared Product envelope',
+  reason: 'Approved assigned Product envelope',
   revisionId: '77777777-7777-4777-8777-777777777777',
   scope: {
     channelId: 'b2b',
@@ -107,6 +108,7 @@ const quantityRule = Schema.decodeUnknownSync(CommerceQuantityRuleRevisionSchema
   },
   tenantId,
   value: {
+    audience: 'ASSIGNMENT_ONLY',
     basis: {
       targetDivisibilityRevision: 3,
       targetRef: catalogRef('commerce.catalog.variant', '55555555-5555-4555-8555-555555555555'),
@@ -132,6 +134,7 @@ const assignmentPayload = (
   overrides: {
     readonly assignmentId?: string;
     readonly effectiveFrom?: string;
+    readonly effectiveTo?: string | null;
     readonly idempotencyKey?: string;
     readonly reason?: string;
   } = {},
@@ -827,5 +830,229 @@ describe('Customer Commerce Policy administration', () => {
         }),
       ).toThrow();
     }
+  });
+});
+
+describe('Issue #333 audit: lifecycle applicability', () => {
+  it('allows R1 -> R2 -> R3 of the same exact candidate without rewriting R1', () => {
+    const first = administerPurchaseCurrencyPolicy(
+      emptyCustomerCommercePolicySet('PURCHASE_CURRENCY'),
+      createCurrencyCommand(),
+    );
+    if (!Schema.is(CustomerCommercePolicyChangedTagSchema)(first)) {
+      throw new Error('expected first creation');
+    }
+    const replacement = (
+      expectedGeneration: number,
+      replacedRevisionId: string,
+      revisionId: string,
+      effectiveFrom: string,
+    ) =>
+      toTrustedPurchaseCurrencyPolicyAdministrationCommand(
+        Schema.decodeUnknownSync(PurchaseCurrencyPolicyAdministrationPayloadSchema)({
+          _tag: 'REPLACE_REVISION',
+          expectedGeneration,
+          replacedRevisionId,
+          replacement: { ...revisionPayload, effectiveFrom, idempotencyKey: revisionId, revisionId },
+        }),
+        trusted,
+        observedAt,
+      );
+    const secondId = '33333333-3333-4333-8333-333333333340';
+    const thirdId = '33333333-3333-4333-8333-333333333341';
+    const second = administerPurchaseCurrencyPolicy(
+      first.state,
+      replacement(1, revisionPayload.revisionId, secondId, '2026-11-01T00:00:00.000Z'),
+    );
+    if (!Schema.is(CustomerCommercePolicyChangedTagSchema)(second)) {
+      throw new Error('expected second revision');
+    }
+    const third = administerPurchaseCurrencyPolicy(
+      second.state,
+      replacement(2, secondId, thirdId, '2026-12-01T00:00:00.000Z'),
+    );
+    expect(Schema.is(CustomerCommercePolicyChangedTagSchema)(third)).toBe(true);
+    if (!Schema.is(CustomerCommercePolicyChangedTagSchema)(third)) {
+      throw new Error('history must not block the third revision');
+    }
+    expect(third.state.revisions[0]).toEqual(first.state.revisions[0]);
+    for (const [at, expectedId] of [
+      ['2026-10-31T23:59:59.999Z', revisionPayload.revisionId],
+      ['2026-11-01T00:00:00.000Z', secondId],
+      ['2026-11-30T23:59:59.999Z', secondId],
+      ['2026-12-01T00:00:00.000Z', thirdId],
+    ]) {
+      expect(
+        currentPurchaseCurrencyPolicySet(third.state, at ?? '').candidates.map(
+          ({ policyRevisionId }) => policyRevisionId,
+        ),
+      ).toEqual([expectedId]);
+    }
+    const conflict = administerPurchaseCurrencyPolicy(
+      third.state,
+      createCurrencyCommand(
+        { idempotencyKey: 'genuine-overlap', revisionId: '33333333-3333-4333-8333-333333333342' },
+        3,
+      ),
+    );
+    expect(
+      Match.value(conflict).pipe(
+        Match.tag('OVERLAPPING_CURRENT_REVISION', () => true),
+        Match.orElse(() => false),
+      ),
+    ).toBe(true);
+  });
+
+  it('permits a new candidate at retirement, but still rejects overlap before retirement', () => {
+    const first = administerPurchaseCurrencyPolicy(
+      emptyCustomerCommercePolicySet('PURCHASE_CURRENCY'),
+      createCurrencyCommand(),
+    );
+    if (!Schema.is(CustomerCommercePolicyChangedTagSchema)(first)) {
+      throw new Error('expected creation');
+    }
+    const retireAt = '2026-11-01T00:00:00.000Z';
+    const retired = administerPurchaseCurrencyPolicy(
+      first.state,
+      toTrustedPurchaseCurrencyPolicyAdministrationCommand(
+        Schema.decodeUnknownSync(PurchaseCurrencyPolicyAdministrationPayloadSchema)({
+          _tag: 'RETIRE_REVISION',
+          effectiveAt: retireAt,
+          expectedGeneration: 1,
+          idempotencyKey: 'audit-retire',
+          reason: 'End this policy',
+          revisionId: revisionPayload.revisionId,
+        }),
+        trusted,
+        observedAt,
+      ),
+    );
+    if (!Schema.is(CustomerCommercePolicyChangedTagSchema)(retired)) {
+      throw new Error('expected retirement');
+    }
+    for (const [start, allowed] of [
+      ['2026-10-31T23:59:59.999Z', false],
+      [retireAt, true],
+      ['2026-11-01T00:00:00.001Z', true],
+    ] as const) {
+      const command = toTrustedPurchaseCurrencyPolicyAdministrationCommand(
+        Schema.decodeUnknownSync(PurchaseCurrencyPolicyAdministrationPayloadSchema)({
+          _tag: 'CREATE_REVISION',
+          expectedGeneration: 2,
+          revision: {
+            ...revisionPayload,
+            effectiveFrom: start,
+            idempotencyKey: 'audit-new',
+            revisionId: '33333333-3333-4333-8333-333333333343',
+          },
+        }),
+        trusted,
+        observedAt,
+      );
+      expect(
+        Match.value(administerPurchaseCurrencyPolicy(retired.state, command)).pipe(
+          Match.tag('CHANGED', () => true),
+          Match.tag('OVERLAPPING_CURRENT_REVISION', () => false),
+          Match.orElse(() => null),
+        ),
+      ).toBe(allowed);
+    }
+  });
+});
+
+describe('Quantity audience is independent of Current assignment cardinality', () => {
+  it('preserves assignment-only meaning before activation, at expiry, and after unassignment without rewriting legacy revisions', () => {
+    const assigned = assignCommerceQuantityRule(
+      emptyQuantityAssignmentSet(),
+      quantityRuleState,
+      toTrustedCommerceQuantityAssignmentCommand(
+        assignmentPayload({ effectiveTo: '2026-12-01T00:00:00.000Z' }),
+        trusted,
+        observedAt,
+      ),
+    );
+    if (!Schema.is(CustomerCommercePolicyChangedTagSchema)(assigned)) {
+      throw new Error('expected assignment');
+    }
+    const { audience: _audience, ...legacyValue } = quantityRule.value;
+    const legacyState = { ...quantityRuleState, revisions: [{ ...quantityRule, value: legacyValue }] };
+    const retainedBefore = JSON.stringify(legacyState);
+    const withoutAssignment = currentCommerceQuantityRuleSet(
+      legacyState,
+      emptyQuantityAssignmentSet(),
+      '2026-10-01T00:00:00.000Z',
+    );
+    const withAssignment = currentCommerceQuantityRuleSet(legacyState, assigned.state, '2026-10-01T00:00:00.000Z');
+    expect(withAssignment.completeness.ownerRevision).not.toBe(withoutAssignment.completeness.ownerRevision);
+    expect(withAssignment.candidates[0]?.value.audience).toBe('ASSIGNMENT_ONLY');
+    expect(withoutAssignment.candidates[0]?.value.audience).toBe('SHARED');
+    for (const at of ['2026-10-01T00:00:00.000Z', '2026-11-30T23:59:59.999Z', '2026-12-01T00:00:00.000Z']) {
+      const projected = currentCommerceQuantityPolicySet(legacyState, assigned.state, at);
+      expect(projected.ruleSet.candidates[0]?.value.audience).toBe('ASSIGNMENT_ONLY');
+      expect(projected.assignmentSet.assignments).toHaveLength(at < '2026-12-01T00:00:00.000Z' ? 1 : 0);
+      expect(currentCommerceQuantityRuleSet(legacyState, assigned.state, at).candidates).toEqual(
+        projected.ruleSet.candidates,
+      );
+    }
+    const unassign = Schema.decodeUnknownSync(CommerceQuantityAssignmentPayloadSchema)({
+      _tag: 'UNASSIGN',
+      assignmentId: assigned.state.assignments[0]?.assignmentId,
+      effectiveAt: '2026-11-01T00:00:00.000Z',
+      expectedGeneration: 1,
+      idempotencyKey: 'audience-unassign',
+      reason: 'End personal exception',
+    });
+    const ended = assignCommerceQuantityRule(
+      assigned.state,
+      legacyState,
+      toTrustedCommerceQuantityAssignmentCommand(unassign, trusted, observedAt),
+    );
+    if (!Schema.is(CustomerCommercePolicyChangedTagSchema)(ended)) {
+      throw new Error('expected unassignment');
+    }
+    const after = currentCommerceQuantityPolicySet(legacyState, ended.state, '2026-11-01T00:00:00.000Z');
+    expect(after.assignmentSet.assignments).toEqual([]);
+    expect(after.ruleSet.candidates[0]?.value.audience).toBe('ASSIGNMENT_ONLY');
+    expect(JSON.stringify(legacyState)).toBe(retainedBefore);
+    expect(legacyState.revisions[0]?.value).not.toHaveProperty('audience');
+  });
+
+  it('keeps a future assignment private and rejects implicit shared-to-personal conversion', () => {
+    const assigned = assignCommerceQuantityRule(
+      emptyQuantityAssignmentSet(),
+      quantityRuleState,
+      toTrustedCommerceQuantityAssignmentCommand(
+        assignmentPayload({ effectiveFrom: '2026-11-01T00:00:00.000Z' }),
+        trusted,
+        observedAt,
+      ),
+    );
+    if (!Schema.is(CustomerCommercePolicyChangedTagSchema)(assigned)) {
+      throw new Error('expected future assignment');
+    }
+    const { audience: _audience, ...value } = quantityRule.value;
+    const legacyState = { ...quantityRuleState, revisions: [{ ...quantityRule, value }] };
+    const future = currentCommerceQuantityPolicySet(legacyState, assigned.state, '2026-10-01T00:00:00.000Z');
+    expect(future.assignmentSet.assignments).toEqual([]);
+    expect(future.ruleSet.candidates[0]?.value.audience).toBe('ASSIGNMENT_ONLY');
+    const sharedState = {
+      ...quantityRuleState,
+      revisions: [{ ...quantityRule, value: { ...value, audience: 'SHARED' as const } }],
+    };
+    const command = toTrustedCommerceQuantityAssignmentCommand(assignmentPayload(), trusted, observedAt);
+    expect(
+      Schema.is(InvalidLifecycleTransitionTagSchema)(
+        assignCommerceQuantityRule(emptyQuantityAssignmentSet(), sharedState, command),
+      ),
+    ).toBe(true);
+    expect(
+      Schema.is(InvalidLifecycleTransitionTagSchema)(
+        assignCommerceQuantityRule(emptyQuantityAssignmentSet(), legacyState, command),
+      ),
+    ).toBe(true);
+    expect(
+      currentCommerceQuantityPolicySet(legacyState, emptyQuantityAssignmentSet(), '2026-10-01T00:00:00.000Z').ruleSet
+        .candidates[0]?.value.audience,
+    ).toBe('SHARED');
   });
 });

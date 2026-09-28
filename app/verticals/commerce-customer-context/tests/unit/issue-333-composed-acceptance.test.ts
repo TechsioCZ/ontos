@@ -170,6 +170,7 @@ it.effect('composes the Czech Launch inventory and four policy defaults behind g
       },
     ]);
     expect(CZECH_LAUNCH_COMMERCE_FIXTURE.policies.quantity.revision.value).toEqual({
+      audience: 'SHARED',
       basis: {
         targetDivisibilityRevision: 1,
         targetRef: {

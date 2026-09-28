@@ -10,6 +10,7 @@ import type {
 } from './customer-commerce-policy-administration.ts';
 import type {
   CommerceQuantityBasis,
+  CommerceQuantityPolicyBasis,
   CommerceQuantityPolicyScope,
   CommerceQuantitySelector,
   ExactPositiveCommerceQuantity,
@@ -255,11 +256,9 @@ const profileMatches = (
   assignment.profile.kind === subject.kind &&
   refEquals(assignment.profile.profileRef, subject.profileRef);
 
-const basisEquals = (left: CommerceQuantityBasis, right: CommerceQuantityBasis): boolean =>
-  left.targetDivisibilityRevision === right.targetDivisibilityRevision &&
-  left.unitRuleRevision === right.unitRuleRevision &&
-  refEquals(left.targetRef, right.targetRef) &&
-  refEquals(left.unitRef, right.unitRef);
+const policyBasisCompatible = (policy: CommerceQuantityPolicyBasis, current: CommerceQuantityBasis): boolean =>
+  refEquals(policy.unitRef, current.unitRef) &&
+  (!('unitRuleRevision' in policy) || policy.unitRuleRevision === current.unitRuleRevision);
 
 const completenessCurrentAt = (
   evidence: CurrentCommerceQuantityPolicySet['ruleSet']['completeness'],
@@ -292,7 +291,7 @@ const candidateVisibleTo = (
   subject: CommerceQuantityResolutionSubject,
 ): boolean => {
   const assigned = candidateAssignments(candidate, assignments);
-  return assigned.length === 0 || assigned.some((assignment) => profileMatches(assignment, subject));
+  return candidate.value.audience === 'SHARED' || assigned.some((assignment) => profileMatches(assignment, subject));
 };
 
 const assignmentRank = (
@@ -344,7 +343,8 @@ const firstBrokenAssignment = (
     (assignment) =>
       profileMatches(assignment, subject) &&
       !policy.ruleSet.candidates.some(
-        ({ policyRevisionId }) => policyRevisionId === assignment.ruleRevisionRef.resourceId,
+        ({ policyRevisionId, value }) =>
+          policyRevisionId === assignment.ruleRevisionRef.resourceId && value.audience === 'ASSIGNMENT_ONLY',
       ),
   );
 
@@ -408,6 +408,10 @@ export const resolveCommerceQuantity = (input: CommerceQuantityResolutionInput):
 
   const equivalentBasis = new Map<string, string>();
   for (const { selection } of input.catalogLines) {
+    const target = selection.catalogSelection.packageOption?.optionRef ?? selection.catalogSelection.variantRef;
+    if (!refEquals(selection.basis.targetRef, target)) {
+      return { _tag: 'COMMERCE_QUANTITY_POLICY_UNVERIFIABLE', reason: 'CATALOG_SELECTION_MISMATCH' };
+    }
     if (!completenessCurrentAt(selection.completeness, input.request.at)) {
       return { _tag: 'COMMERCE_QUANTITY_POLICY_UNVERIFIABLE', reason: 'CATALOG_EVIDENCE_STALE' };
     }
@@ -432,13 +436,7 @@ export const resolveCommerceQuantity = (input: CommerceQuantityResolutionInput):
       continue;
     }
     const candidates = applicableCandidates(input, representative.selection);
-    if (candidates.some((candidate) => !basisEquals(candidate.value.basis, representative.selection.basis))) {
-      return { _tag: 'COMMERCE_QUANTITY_POLICY_UNVERIFIABLE', reason: 'CATALOG_BASIS_STALE' };
-    }
-    const compatible = candidates.filter((candidate) =>
-      basisEquals(candidate.value.basis, representative.selection.basis),
-    );
-    const envelopes = compatible.filter(({ value }) => value.constraintMode === 'REPLACEABLE_ENVELOPE');
+    const envelopes = candidates.filter(({ value }) => value.constraintMode === 'REPLACEABLE_ENVELOPE');
     if (envelopes.length === 0) {
       return {
         _tag: 'MISSING_COMMERCE_QUANTITY_POLICY',
@@ -500,8 +498,11 @@ export const resolveCommerceQuantity = (input: CommerceQuantityResolutionInput):
         reason: 'PHYSICAL_NOT_MULTIPLE',
       };
     }
-    const constraints = compatible.filter(({ value }) => value.constraintMode === 'NON_RELAXABLE_CONSTRAINT');
+    const constraints = candidates.filter(({ value }) => value.constraintMode === 'NON_RELAXABLE_CONSTRAINT');
     const allEnvelopes = [winner, ...constraints];
+    if (allEnvelopes.some(({ value }) => !policyBasisCompatible(value.basis, representative.selection.basis))) {
+      return { _tag: 'COMMERCE_QUANTITY_POLICY_UNVERIFIABLE', reason: 'CATALOG_BASIS_STALE' };
+    }
     for (const candidate of allEnvelopes) {
       const failed = violation(total, candidate.value.envelope);
       if (failed !== undefined) {

@@ -1,14 +1,24 @@
+import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { sql } from 'drizzle-orm';
-import { Effect } from 'effect';
+import { Effect, Schema } from 'effect';
+import { scopedRoutineInvokerFromTransaction, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { customerCommercePolicyRepositoryForScope } from '../../src/persistence/customer-commerce-policy-persistence.ts';
+import {
+  CustomerCommercePolicyTrustedActionContextSchema,
+  PurchaseCurrencyPolicyAdministrationPayloadSchema,
+  toTrustedPurchaseCurrencyPolicyAdministrationCommand,
+  currentCommerceQuantityPolicySet,
+} from '../../shared/domain/customer-commerce-policy-administration.ts';
 import { expect, it } from 'effect-rstest';
+import { customerCommercePolicyAdministrationServiceFactory } from '../../src/services/customer-commerce-policy-administration.service.ts';
 
 import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
-import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
+import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
+import type { CoreTransaction } from '../../../../packages/core-runtime/src/db/types.ts';
 
 const tenantId = 'd3300000-0000-4000-8000-000000000001';
 const otherTenantId = 'd3300000-0000-4000-8000-000000000002';
@@ -24,7 +34,7 @@ const replacementBootstrapRevisionId = 'd3330000-0000-4000-8000-000000000002';
 const dormantBootstrapRevisionId = 'd3330000-0000-4000-8000-000000000003';
 const firstAssignmentId = 'd3340000-0000-4000-8000-000000000001';
 const replacementAssignmentId = 'd3340000-0000-4000-8000-000000000002';
-const replacementBoundary = '2031-01-01T00:00:00Z';
+const replacementBoundary = '2031-01-01T00:00:00.000Z';
 
 interface JsonResult extends Record<string, unknown> {
   readonly result: unknown;
@@ -90,7 +100,7 @@ interface RevisionIdentity extends Record<string, unknown> {
   readonly revisionId: string;
 }
 
-type CommerceCustomerContextTestDatabase = TestDatabaseFromClient<typeof commerceCustomerContextRelations>;
+type CommerceCustomerContextTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
 
 const one = <Row>(rows: readonly Row[]): Row => {
   const [row] = rows;
@@ -102,7 +112,7 @@ const one = <Row>(rows: readonly Row[]): Row => {
 
 const scoped = <Value, Failure>(
   database: CommerceCustomerContextTestDatabase,
-  operation: (transaction: CommerceCustomerContextTransaction) => Effect.Effect<Value, Failure>,
+  operation: (transaction: CoreTransaction) => Effect.Effect<Value, Failure>,
   scopeTenantId = tenantId,
   scopeLegalEntityId = legalEntityId,
 ) =>
@@ -114,6 +124,30 @@ const scoped = <Value, Failure>(
         'objects',
       );
       return yield* operation(transaction);
+    }),
+  );
+
+const readPolicyAt = <OriginalValue, SharedValue>(
+  database: CommerceCustomerContextTestDatabase,
+  ownerScope: Parameters<typeof customerCommercePolicyRepositoryForScope>[1],
+  at: string,
+  originalValue: OriginalValue,
+  sharedValue: SharedValue,
+) =>
+  scoped(database, (transaction) =>
+    Effect.gen(function* readOwnerPolicy() {
+      const invoker = scopedRoutineInvokerFromTransaction(
+        (statement) => transaction.execute<Record<string, never>>(statement, 'objects'),
+        ownerScope,
+      );
+      const repository = yield* customerCommercePolicyRepositoryForScope(invoker, ownerScope);
+      const rules = yield* repository.loadCommerceQuantityRuleState;
+      const assignments = yield* repository.loadCommerceQuantityRuleAssignments;
+      expect(rules.revisions.find(({ revisionId }) => revisionId === quantityRevisionId)?.value).toEqual(originalValue);
+      expect(
+        rules.revisions.find(({ revisionId }) => revisionId === 'd3320000-0000-4000-8000-000000000003')?.value,
+      ).toEqual(sharedValue);
+      return currentCommerceQuantityPolicySet(rules, assignments, at);
     }),
   );
 
@@ -167,7 +201,7 @@ const lifecycleTransition = (revisionId: string, lifecycle: LifecycleTransition[
   effectiveAt: replacementBoundary,
   idempotencyKey: `${revisionId}:${lifecycle.toLowerCase()}`,
   lifecycle,
-  observedAt: '2029-01-01T00:00:00Z',
+  observedAt: '2029-01-01T00:00:00.000Z',
   reason: 'Scheduled replacement boundary',
   revisionId,
 });
@@ -178,7 +212,7 @@ const currencyPayload = (
   lifecycleTransitions: readonly LifecycleTransition[] = [],
 ) => ({
   completeness: {
-    observedAt: '2029-01-01T00:00:00Z',
+    observedAt: '2029-01-01T00:00:00.000Z',
     ownerRevision: `PURCHASE_CURRENCY:${generation}`,
     scope: {
       kind: 'EXACT_PREDICATE',
@@ -201,7 +235,7 @@ const quantityAssignment = (assignmentId: string, effectiveFrom: string) => ({
   actorPrincipalId: actorId,
   assignmentId,
   effectiveFrom,
-  effectiveTo: '2035-01-01T00:00:00Z',
+  effectiveTo: '2035-01-01T00:00:00.000Z',
   idempotencyKey: `assignment-${assignmentId}`,
   lifecycle: 'ACTIVE',
   profile: {
@@ -214,7 +248,7 @@ const quantityAssignment = (assignmentId: string, effectiveFrom: string) => ({
     },
   },
   reason: 'PostgreSQL assignment acceptance',
-  recordedAt: '2029-01-01T00:00:00Z',
+  recordedAt: '2029-01-01T00:00:00.000Z',
   ruleRevisionRef: {
     moduleId: 'commerce.customer-context',
     resourceId: quantityRevisionId,
@@ -230,9 +264,9 @@ const quantityUnassignment = (idempotencyKey: string) => ({
   actionInvocationId: actorId,
   actorPrincipalId: actorId,
   assignmentId: firstAssignmentId,
-  effectiveAt: '2032-01-01T00:00:00Z',
+  effectiveAt: '2032-01-01T00:00:00.000Z',
   idempotencyKey,
-  observedAt: '2029-01-01T00:00:00Z',
+  observedAt: '2029-01-01T00:00:00.000Z',
   reason: 'Scheduled unassignment',
 });
 
@@ -244,7 +278,7 @@ const assignmentPayload = (
   unassignments: readonly QuantityUnassignment[],
 ) => ({
   completeness: {
-    observedAt: '2029-01-01T00:00:00Z',
+    observedAt: '2029-01-01T00:00:00.000Z',
     ownerRevision: `COMMERCE_QUANTITY_ASSIGNMENT:${generation}`,
     scope: {
       kind: 'EXACT_PREDICATE',
@@ -265,8 +299,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
   Effect.scoped(
     Effect.gen(function* postgresPolicyAcceptance() {
       const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
-      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
-      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceCustomerContextRelations);
+      const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>
@@ -292,7 +326,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
       yield* cleanup();
       yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
 
-      const firstRevision = currencyRevision(currencyRevisionId, '2030-01-01T00:00:00Z', null);
+      const firstRevision = currencyRevision(currencyRevisionId, '2030-01-01T00:00:00.000Z', null);
       const secondRevision = currencyRevision(adjacentCurrencyRevisionId, replacementBoundary, null, 'SCHEDULED');
       const replacementTransitions = [
         lifecycleTransition(currencyRevisionId, 'RETIRED'),
@@ -336,8 +370,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
                   from commerce_customer_context.purchase_currency_policy_revisions
                  where tenant_id = ${tenantId}::uuid
                    and legal_entity_id = ${legalEntityId}::uuid
-                   and applicable_from <= '2030-12-31T23:59:59Z'::timestamptz
-                   and (applicable_to is null or '2030-12-31T23:59:59Z'::timestamptz < applicable_to)`,
+                   and applicable_from <= '2030-12-31T23:59:59.000Z'::timestamptz
+                   and (applicable_to is null or '2030-12-31T23:59:59.000Z'::timestamptz < applicable_to)`,
             'objects',
           )
           .pipe(Effect.map(one)),
@@ -360,7 +394,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
 
       yield* scoped(admin, (transaction) =>
         transaction.execute(sql`update commerce_customer_context.purchase_currency_policy_revisions
-                                   set applicable_to = '2032-01-01T00:00:00Z'
+                                   set applicable_to = '2032-01-01T00:00:00.000Z'
                                  where policy_revision_id = ${adjacentCurrencyRevisionId}::uuid`),
       );
       yield* scoped(admin, (transaction) =>
@@ -394,8 +428,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
              effective_from, applicable_from, lifecycle, idempotency_key, action_invocation_id, actor_principal_id,
              reason, rule_kind, currency_code)
             values (gen_random_uuid(), ${tenantId}::uuid, ${legalEntityId}::uuid,
-              'STOREFRONT_CHANNEL_SELLER', 'web', 'store', '2032-01-01T00:00:00Z',
-              '2032-01-01T00:00:00Z', 'ACTIVE',
+              'STOREFRONT_CHANNEL_SELLER', 'web', 'store', '2032-01-01T00:00:00.000Z',
+              '2032-01-01T00:00:00.000Z', 'ACTIVE',
               'invalid-storefront-scope', ${actorId}::uuid, ${actorId}::uuid, 'Invalid scope',
               'DEFAULT_CURRENCY', 'EUR')`),
         ),
@@ -407,8 +441,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
              applicable_from, applicable_to, lifecycle, idempotency_key, action_invocation_id,
              actor_principal_id, reason, rule_kind, currency_code)
             values (gen_random_uuid(), ${tenantId}::uuid, ${legalEntityId}::uuid, 'SELLER',
-              '2030-06-01T00:00:00Z', '2030-07-01T00:00:00Z', '2030-06-01T00:00:00Z',
-              '2030-07-01T00:00:00Z', 'ACTIVE', 'overlap',
+              '2030-06-01T00:00:00.000Z', '2030-07-01T00:00:00.000Z', '2030-06-01T00:00:00.000Z',
+              '2030-07-01T00:00:00.000Z', 'ACTIVE', 'overlap',
               ${actorId}::uuid, ${actorId}::uuid, 'Overlap', 'DEFAULT_CURRENCY', 'USD')`),
         ),
       );
@@ -422,8 +456,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
              applicable_from, applicable_to, lifecycle, idempotency_key, action_invocation_id,
              actor_principal_id, reason, rule_kind, currency_code)
             values (gen_random_uuid(), ${tenantId}::uuid, ${legalEntityId}::uuid, 'SELLER',
-              '2030-06-01T00:00:00Z', '2030-07-01T00:00:00Z', '2030-06-01T00:00:00Z',
-              '2030-07-01T00:00:00Z', 'ACTIVE', ${idempotencyKey},
+              '2030-06-01T00:00:00.000Z', '2030-07-01T00:00:00.000Z', '2030-06-01T00:00:00.000Z',
+              '2030-07-01T00:00:00.000Z', 'ACTIVE', ${idempotencyKey},
               ${actorId}::uuid, ${actorId}::uuid, 'Allowed currency',
           'ALLOWED_CURRENCY_CONSTRAINT', ${currencyCode})`),
         );
@@ -431,7 +465,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
 
       const paymentTermPayload = {
         completeness: {
-          observedAt: '2029-01-01T00:00:00Z',
+          observedAt: '2029-01-01T00:00:00.000Z',
           ownerRevision: 'PAYMENT_TERM:1',
           scope: {
             kind: 'EXACT_PREDICATE',
@@ -447,8 +481,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
             {
               actionInvocationId: actorId,
               actorPrincipalId: actorId,
-              effectiveFrom: '2041-01-01T00:00:00Z',
-              effectiveTo: '2042-01-01T00:00:00Z',
+              effectiveFrom: '2041-01-01T00:00:00.000Z',
+              effectiveTo: '2042-01-01T00:00:00.000Z',
               field: 'PAYMENT_TERM',
               idempotencyKey: 'payment-term-persisted',
               lifecycle: 'ACTIVE',
@@ -510,8 +544,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
            applicable_from, applicable_to, lifecycle, idempotency_key, action_invocation_id,
            actor_principal_id, reason, rule_kind, payment_term_resource_id)
           values (gen_random_uuid(), ${tenantId}::uuid, ${legalEntityId}::uuid, 'SELLER',
-            '2030-01-01T00:00:00Z', '2031-01-01T00:00:00Z', '2030-01-01T00:00:00Z',
-            '2031-01-01T00:00:00Z', 'ACTIVE', 'fallback-payment-term-a',
+            '2030-01-01T00:00:00.000Z', '2031-01-01T00:00:00.000Z', '2030-01-01T00:00:00.000Z',
+            '2031-01-01T00:00:00.000Z', 'ACTIVE', 'fallback-payment-term-a',
             ${actorId}::uuid, ${actorId}::uuid, 'Fallback payment term', 'FALLBACK_PAYMENT_TERM', 'term-a')`),
       );
       yield* Effect.flip(
@@ -521,8 +555,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
              applicable_from, applicable_to, lifecycle, idempotency_key, action_invocation_id,
              actor_principal_id, reason, rule_kind, payment_term_resource_id)
             values (gen_random_uuid(), ${tenantId}::uuid, ${legalEntityId}::uuid, 'SELLER',
-              '2030-06-01T00:00:00Z', '2030-07-01T00:00:00Z', '2030-06-01T00:00:00Z',
-              '2030-07-01T00:00:00Z', 'ACTIVE', 'fallback-payment-term-b',
+              '2030-06-01T00:00:00.000Z', '2030-07-01T00:00:00.000Z', '2030-06-01T00:00:00.000Z',
+              '2030-07-01T00:00:00.000Z', 'ACTIVE', 'fallback-payment-term-b',
               ${actorId}::uuid, ${actorId}::uuid, 'Conflicting fallback', 'FALLBACK_PAYMENT_TERM', 'term-b')`),
         ),
       );
@@ -536,8 +570,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
              applicable_from, applicable_to, lifecycle, idempotency_key, action_invocation_id,
              actor_principal_id, reason, rule_kind, payment_term_resource_id)
             values (gen_random_uuid(), ${tenantId}::uuid, ${legalEntityId}::uuid, 'SELLER',
-              '2030-06-01T00:00:00Z', '2030-07-01T00:00:00Z', '2030-06-01T00:00:00Z',
-              '2030-07-01T00:00:00Z', 'ACTIVE', ${idempotencyKey},
+              '2030-06-01T00:00:00.000Z', '2030-07-01T00:00:00.000Z', '2030-06-01T00:00:00.000Z',
+              '2030-07-01T00:00:00.000Z', 'ACTIVE', ${idempotencyKey},
               ${actorId}::uuid, ${actorId}::uuid, 'Applicable payment term',
               'APPLICABLE_PAYMENT_TERM_CONSTRAINT', ${paymentTermResourceId})`),
         );
@@ -554,7 +588,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
 
       const bootstrapPayload = {
         completeness: {
-          observedAt: '2029-01-01T00:00:00Z',
+          observedAt: '2029-01-01T00:00:00.000Z',
           ownerRevision: 'MARKET_BOOTSTRAP:1',
           scope: {
             kind: 'EXACT_PREDICATE',
@@ -572,7 +606,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
             {
               actionInvocationId: actorId,
               actorPrincipalId: actorId,
-              effectiveFrom: '2030-01-01T00:00:00Z',
+              effectiveFrom: '2030-01-01T00:00:00.000Z',
               effectiveTo: null,
               field: 'MARKET_BOOTSTRAP',
               idempotencyKey: 'bootstrap-1',
@@ -610,8 +644,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
             {
               actionInvocationId: actorId,
               actorPrincipalId: actorId,
-              effectiveFrom: '2031-03-01T00:00:00Z',
-              effectiveTo: '2031-09-01T00:00:00Z',
+              effectiveFrom: '2031-03-01T00:00:00.000Z',
+              effectiveTo: '2031-09-01T00:00:00.000Z',
               field: 'MARKET_BOOTSTRAP',
               idempotencyKey: 'bootstrap-dormant',
               lifecycle: 'SCHEDULED',
@@ -639,7 +673,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
             sql`select * from commerce_customer_context.load_current_market_bootstrap_policy_candidates(
               ${tenantId}::uuid,
               array[${legalEntityId}::uuid, ${legalEntityId}::uuid, ${emptyLegalEntityId}::uuid],
-              '2030-06-01T00:00:00Z'::timestamptz)`,
+              '2030-06-01T00:00:00.000Z'::timestamptz)`,
             'objects',
           )
           .pipe(Effect.map(one)),
@@ -675,7 +709,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
 
       const quantityRulePayload = {
         completeness: {
-          observedAt: '2029-01-01T00:00:00Z',
+          observedAt: '2029-01-01T00:00:00.000Z',
           ownerRevision: 'COMMERCE_QUANTITY_RULE:1',
           scope: {
             kind: 'EXACT_PREDICATE',
@@ -691,8 +725,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
             {
               actionInvocationId: actorId,
               actorPrincipalId: actorId,
-              effectiveFrom: '2030-01-01T00:00:00Z',
-              effectiveTo: '2040-01-01T00:00:00Z',
+              effectiveFrom: '2030-01-01T00:00:00.000Z',
+              effectiveTo: '2040-01-01T00:00:00.000Z',
               field: 'COMMERCE_QUANTITY_RULE',
               idempotencyKey: 'quantity-valid',
               lifecycle: 'ACTIVE',
@@ -701,6 +735,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
               scope: { channelId: 'web', kind: 'CHANNEL_SELLER', sellingLegalEntityId: legalEntityId },
               tenantId,
               value: {
+                audience: 'ASSIGNMENT_ONLY',
                 basis: {
                   targetDivisibilityRevision: 1,
                   targetRef: {
@@ -765,8 +800,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
         ),
       );
 
-      const firstAssignment = quantityAssignment(firstAssignmentId, '2030-01-01T00:00:00Z');
-      const replacementAssignment = quantityAssignment(replacementAssignmentId, '2032-01-01T00:00:00Z');
+      const firstAssignment = quantityAssignment(firstAssignmentId, '2030-01-01T00:00:00.000Z');
+      const replacementAssignment = quantityAssignment(replacementAssignmentId, '2032-01-01T00:00:00.000Z');
       const unassignment = quantityUnassignment('unassign-first');
       const persistAssignments = (expectedGeneration: number, payload: AssignmentPayload) =>
         scoped(runtime, (transaction) =>
@@ -780,6 +815,73 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
       yield* persistAssignments(0, assignmentPayload(1, [firstAssignment], []));
       yield* persistAssignments(1, assignmentPayload(2, [firstAssignment], [unassignment]));
       yield* persistAssignments(2, assignmentPayload(3, [firstAssignment, replacementAssignment], [unassignment]));
+
+      const originalQuantityRevision = one(quantityRulePayload.state.revisions);
+      const sharedRevisionId = 'd3320000-0000-4000-8000-000000000003';
+      const sharedRevision = {
+        ...originalQuantityRevision,
+        idempotencyKey: 'quantity-shared-purchase-unit',
+        revisionId: sharedRevisionId,
+        value: {
+          ...originalQuantityRevision.value,
+          audience: 'SHARED',
+          basis: { kind: 'PURCHASE_UNIT', unitRef: originalQuantityRevision.value.basis.unitRef },
+        },
+      };
+      const secondQuantityPayload = {
+        ...quantityRulePayload,
+        completeness: { ...quantityRulePayload.completeness, ownerRevision: 'COMMERCE_QUANTITY_RULE:2' },
+        state: {
+          ...quantityRulePayload.state,
+          commandReceipts: commandReceiptsThrough(2),
+          generation: 2,
+          revisions: [...quantityRulePayload.state.revisions, sharedRevision],
+        },
+      };
+      yield* scoped(runtime, (transaction) =>
+        transaction.execute(
+          sql`select * from
+        commerce_customer_context.persist_commerce_quantity_rule_state(
+          ${tenantId}::uuid, ${legalEntityId}::uuid, 1::bigint, ${JSON.stringify(secondQuantityPayload)}::jsonb)`,
+          'objects',
+        ),
+      );
+      const ownerScope = {
+        ...Schema.decodeUnknownSync(TrustedPrincipalContextSchema)({
+          authContextRef: 'job:commerce-policy-audit:run:postgres',
+          authMethod: 'system',
+          principalId: actorId,
+          tenantId,
+        }),
+        correlationId: 'quantity-policy-audit',
+        legalEntityId,
+      };
+      const currentPolicyAt = (at: string) =>
+        readPolicyAt(runtime, ownerScope, at, originalQuantityRevision.value, sharedRevision.value);
+      const beforeAssignmentExpiry = yield* currentPolicyAt('2034-12-31T23:59:59.999Z');
+      expect(beforeAssignmentExpiry.assignmentSet.assignments).toHaveLength(1);
+      const afterAssignmentExpiry = yield* currentPolicyAt('2035-01-01T00:00:00.000Z');
+      expect(afterAssignmentExpiry.assignmentSet.assignments).toHaveLength(0);
+      expect(afterAssignmentExpiry.ruleSet.candidates).toHaveLength(2);
+      expect(
+        afterAssignmentExpiry.ruleSet.candidates.find(({ policyRevisionId }) => policyRevisionId === quantityRevisionId)
+          ?.value.audience,
+      ).toBe('ASSIGNMENT_ONLY');
+      expect(
+        afterAssignmentExpiry.ruleSet.candidates.find(({ policyRevisionId }) => policyRevisionId === sharedRevisionId)
+          ?.value.audience,
+      ).toBe('SHARED');
+      const illegalSharedAssignment = {
+        ...quantityAssignment('d3340000-0000-4000-8000-000000000003', '2032-01-01T00:00:00.000Z'),
+        ruleRevisionRef: { ...firstAssignment.ruleRevisionRef, resourceId: sharedRevisionId },
+      };
+      yield* Effect.flip(
+        persistAssignments(
+          3,
+          assignmentPayload(4, [firstAssignment, replacementAssignment, illegalSharedAssignment], [unassignment]),
+        ),
+      );
+
       yield* Effect.flip(
         persistAssignments(
           3,
@@ -793,7 +895,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
       yield* Effect.flip(
         scoped(admin, (transaction) =>
           transaction.execute(sql`update commerce_customer_context.commerce_quantity_rule_assignments
-                                     set effective_to = '2034-01-01T00:00:00Z'
+                                     set effective_to = '2034-01-01T00:00:00.000Z'
                                    where quantity_rule_assignment_id = ${firstAssignmentId}::uuid`),
         ),
       );
@@ -806,8 +908,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
              quantity_target_tenant_id, quantity_target_divisibility_revision, quantity_unit_module_id,
              quantity_unit_resource_type, quantity_unit_resource_id, quantity_unit_tenant_id,
              quantity_unit_rule_revision, restriction_kind)
-            values (${tenantId}::uuid, ${legalEntityId}::uuid, 'SELLER', '2030-01-01T00:00:00Z',
-              '2030-01-01T00:00:00Z', 'ACTIVE', 'quantity-invalid-seller',
+            values (${tenantId}::uuid, ${legalEntityId}::uuid, 'SELLER', '2030-01-01T00:00:00.000Z',
+              '2030-01-01T00:00:00.000Z', 'ACTIVE', 'quantity-invalid-seller',
               ${actorId}::uuid, ${actorId}::uuid, 'Invalid seller',
               'ALL', 'REPLACEABLE_ENVELOPE', 'commerce.catalog', 'commerce.catalog.variant',
               '55555555-5555-4555-8555-555555555555'::uuid, ${tenantId}::uuid, 1, 'commerce.catalog',
@@ -824,8 +926,8 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
              idempotency_key, action_invocation_id,
              actor_principal_id, reason)
             values (${tenantId}::uuid, ${legalEntityId}::uuid, ${quantityRevisionId}::uuid,
-              'RETAIL', 'profile-1', '2029-01-01T00:00:00Z', '2031-01-01T00:00:00Z',
-              '2029-01-01T00:00:00Z', '2031-01-01T00:00:00Z', 'ACTIVE',
+              'RETAIL', 'profile-1', '2029-01-01T00:00:00.000Z', '2031-01-01T00:00:00.000Z',
+              '2029-01-01T00:00:00.000Z', '2031-01-01T00:00:00.000Z', 'ACTIVE',
               'assignment-outside-revision', ${actorId}::uuid, ${actorId}::uuid, 'Outside revision')`),
         ),
       );
@@ -837,10 +939,113 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
              idempotency_key, action_invocation_id,
              actor_principal_id, reason)
             values (${tenantId}::uuid, ${legalEntityId}::uuid, gen_random_uuid(), 'RETAIL', 'profile-1',
-              '2031-01-01T00:00:00Z', '2032-01-01T00:00:00Z',
-              '2031-01-01T00:00:00Z', '2032-01-01T00:00:00Z', 'ACTIVE', 'assignment-missing-rule',
+              '2031-01-01T00:00:00.000Z', '2032-01-01T00:00:00.000Z',
+              '2031-01-01T00:00:00.000Z', '2032-01-01T00:00:00.000Z', 'ACTIVE', 'assignment-missing-rule',
               ${actorId}::uuid, ${actorId}::uuid, 'Missing rule')`),
         ),
+      );
+
+      // Execute the real domain service and owner-local SQL on an otherwise empty seller partition.
+      const replacementScope = { ...ownerScope, legalEntityId: emptyLegalEntityId };
+      const replacementTrusted = Schema.decodeUnknownSync(CustomerCommercePolicyTrustedActionContextSchema)({
+        actionInvocationId: actorId,
+        actorPrincipalId: actorId,
+        sellingLegalEntityId: emptyLegalEntityId,
+        tenantId,
+      });
+      yield* scoped(
+        runtime,
+        (transaction) =>
+          Effect.gen(function* verifyUninitializedPolicyReads() {
+            const executor = yield* installOperationalScope(transaction, replacementScope);
+            const repository = yield* customerCommercePolicyRepositoryForScope(executor, replacementScope);
+            const reads = [
+              repository.loadMarketBootstrapPolicyState,
+              repository.loadPurchaseCurrencyPolicyState,
+              repository.loadPaymentTermPolicyState,
+              repository.loadCommerceQuantityRuleState,
+            ];
+            const states = yield* Effect.all(reads, { concurrency: 1 });
+            expect(states.map(({ generation, revisions }) => ({ count: revisions.length, generation }))).toEqual(
+              Array.from({ length: 4 }, () => ({ count: 0, generation: 0 })),
+            );
+            const assignments = yield* repository.loadCommerceQuantityRuleAssignments;
+            expect(assignments.generation).toBe(0);
+            expect(assignments.assignments).toHaveLength(0);
+          }),
+        tenantId,
+        emptyLegalEntityId,
+      );
+      const revisionIds = [
+        'd3390000-0000-4000-8000-000000000001',
+        'd3390000-0000-4000-8000-000000000002',
+        'd3390000-0000-4000-8000-000000000003',
+      ];
+      for (const [index, revisionId] of revisionIds.entries()) {
+        const revision = {
+          ...currencyRevision(revisionId, `${2030 + index}-01-01T00:00:00.000Z`, null),
+          scope: { kind: 'SELLER', sellingLegalEntityId: emptyLegalEntityId },
+          value: { currencyCode: 'CZK', kind: 'DEFAULT_CURRENCY' },
+        };
+        const payload = Schema.decodeUnknownSync(PurchaseCurrencyPolicyAdministrationPayloadSchema)(
+          index === 0
+            ? {
+                _tag: 'CREATE_REVISION',
+                expectedGeneration: index,
+                revision,
+              }
+            : {
+                _tag: 'REPLACE_REVISION',
+                expectedGeneration: index,
+                replacedRevisionId: revisionIds[index - 1],
+                replacement: revision,
+              },
+        );
+        yield* scoped(
+          runtime,
+          (transaction) =>
+            Effect.gen(function* replacePersistedPolicy() {
+              const service = yield* customerCommercePolicyAdministrationServiceFactory(
+                yield* installOperationalScope(transaction, replacementScope),
+                replacementScope,
+              );
+              const result = yield* service.administerPurchaseCurrencyPolicy(
+                toTrustedPurchaseCurrencyPolicyAdministrationCommand(
+                  payload,
+                  replacementTrusted,
+                  '2029-01-01T00:00:00.000Z',
+                ),
+              );
+              expect(result.generation).toBe(index + 1);
+            }),
+          tenantId,
+          emptyLegalEntityId,
+        );
+      }
+      yield* scoped(
+        runtime,
+        (transaction) =>
+          Effect.gen(function* verifyPersistedReplacements() {
+            const invoker = scopedRoutineInvokerFromTransaction(
+              (statement) => transaction.execute<Record<string, never>>(statement, 'objects'),
+              replacementScope,
+            );
+            const service = yield* customerCommercePolicyAdministrationServiceFactory(
+              yield* installOperationalScope(transaction, replacementScope),
+              replacementScope,
+            );
+            const repository = yield* customerCommercePolicyRepositoryForScope(invoker, replacementScope);
+            const retained = yield* repository.loadPurchaseCurrencyPolicyState;
+            expect(retained.revisions).toHaveLength(3);
+            expect(retained.revisions.every(({ effectiveTo }) => effectiveTo === null)).toBe(true);
+            expect(retained.lifecycleTransitions).toHaveLength(2);
+            for (const [index, revisionId] of revisionIds.entries()) {
+              const current = yield* service.readCurrentPurchaseCurrencyPolicy(`${2030 + index}-01-01T00:00:00.000Z`);
+              expect(current.candidates.map(({ policyRevisionId }) => policyRevisionId)).toEqual([revisionId]);
+            }
+          }),
+        tenantId,
+        emptyLegalEntityId,
       );
     }),
   ),
