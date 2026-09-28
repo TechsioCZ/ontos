@@ -1,27 +1,16 @@
 #!/usr/bin/env bash
 # Pushes planned stage units in order and keeps every public unit reachable on its Zerops subdomain.
 # Provider units come from the topology, so their service ids are looked up by the variable name the
-# topology implies instead of a hand-kept list that silently misses new units.
+# topology implies (publish-active-application-composition.mts stage-service-id) instead of a hand-kept
+# list that silently misses new units.
 #
 # Environment: UNITS_JSON (JSON array of zerops.yaml setups), STAGE_VARIABLES_JSON, ZEROPS_PROJECT_ID,
 # GITHUB_SHA, and ZEROPS_TOKEN for the subdomain check. Run from the repository root.
 set -euo pipefail
 
-service_id_variable() {
-  if [[ "$1" == 'shellsuperapp' ]]; then
-    printf 'ZEROPS_SHELL_SERVICE_ID'
-  else
-    printf 'ZEROPS_%s_SERVICE_ID' "$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]' | tr '-' '_')"
-  fi
-}
-
 while IFS= read -r unit; do
-  environment_key="$(service_id_variable "$unit")"
-  service_id="$(jq -r --arg key "$environment_key" '.[$key] // empty' <<<"$STAGE_VARIABLES_JSON")"
-  if [[ -z "$service_id" ]]; then
-    echo "Missing stage service variable $environment_key for planned unit $unit" >&2
-    exit 1
-  fi
+  # The publisher owns the setup-to-service-ID rule; it fails when the stage variable is missing.
+  service_id="$(cd app && mise exec -- pnpm --silent active-composition:publish stage-service-id --setup "$unit")"
   if ! zcli push \
     --working-dir . \
     --zerops-yaml-path app/zerops.yaml \

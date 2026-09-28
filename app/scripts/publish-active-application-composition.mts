@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Config, DateTime, Duration, Effect, FileSystem, Layer, Option, Path, Schedule, Schema } from 'effect';
+import { Config, Console, DateTime, Duration, Effect, FileSystem, Layer, Option, Path, Schedule, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import { parse as parseYaml } from 'yaml';
@@ -315,6 +315,11 @@ const ensurePublicAccessCommand = Command.make('ensure-public-access', { setup: 
   }),
 );
 
+/** The one service-ID lookup the deploy scripts use, so shell and TypeScript never map setups differently. */
+const stageServiceIdCommand = Command.make('stage-service-id', { setup: Flag.String('setup') }, ({ setup }) =>
+  stageServiceId(setup).pipe(Effect.flatMap(Console.log)),
+);
+
 const consumersCommand = Command.make('consumers', {}, () =>
   Effect.gen(function* consumers() {
     const json = yield* readConsumerSetups.pipe(Effect.flatMap(Schema.encodeEffect(SetupListJsonSchema)));
@@ -424,7 +429,13 @@ const proveBuildCommand = Command.make('prove-build', {}, () =>
 );
 
 const cli = Command.make('publish-active-application-composition').pipe(
-  Command.withSubcommands([publishCommand, ensurePublicAccessCommand, consumersCommand, proveBuildCommand]),
+  Command.withSubcommands([
+    publishCommand,
+    ensurePublicAccessCommand,
+    consumersCommand,
+    proveBuildCommand,
+    stageServiceIdCommand,
+  ]),
 );
 
 export const main = Command.run({ version: '1.0.0' })(cli);
