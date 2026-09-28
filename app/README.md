@@ -72,7 +72,7 @@ Do not cache current versions, vertical inventory, generated fields, or package-
 
 ## Private-first routes and public output
 
-Generated routes are private and non-indexable by default. Colocated `src/routes/**/route.meta.ts` files own route metadata; the scaffold derives `src/routes/ultramodern-route-metadata.ts` and public output from them. A route emits discovery output only when metadata explicitly marks it `public && indexable`. JSON-LD is explicit, never inferred, and uses the generated helpers for supported schema types. Dynamic public routes may provide a Node-safe `route.sitemap.mjs`. Generated public files belong in `dist/public` and `.output/public`, not hand-authored source directories.
+Generated routes are private and non-indexable by default. Colocated `src/routes/**/route.meta.ts` files own route metadata; `ultramodern-create ultramodern routes-generate` derives `src/routes/ultramodern-route-metadata.ts` from them, and the build derives public output. A route emits discovery output only when metadata explicitly marks it `public && indexable`. JSON-LD is explicit, never inferred, and uses the generated helpers for supported schema types. Dynamic public routes may provide a Node-safe `route.sitemap.mjs`. Generated public files belong in `dist/public` and `.output/public`, not hand-authored source directories.
 
 Use [Frontend Architecture](docs/frontend/FRONTEND.md) for user-facing behavior and [Module Entrypoints](docs/architecture/MODULE_ENTRYPOINTS.md) for governed page resolution, dynamic parameters, and lazy remote loading.
 

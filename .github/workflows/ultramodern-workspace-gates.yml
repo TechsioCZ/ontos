@@ -225,6 +225,21 @@ jobs:
           DROP ROLE ontos_runtime;
           SQL
 
+      - name: Run the assembled stage migrator artifact against the fresh database
+        working-directory: app
+        # Stage-shaped: the migrator ships only its zerops.yaml deployFiles, runs its real start entry
+        # point, bootstraps SpiceDB's database, and opts into the Commerce portal realm with its own
+        # provider runtime role that nothing pre-creates — exactly what the stage migrator receives.
+        env:
+          COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+          COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
+          MIGRATOR_PORT: "8080"
+          NODE_ENV: production
+          SPICEDB_DATABASE_URL: postgresql://spicedb:spicedb@localhost:5433/spicedb
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+          ULTRAMODERN_ZEROPS_SERVICE: migrator
+        run: mise exec -- sh scripts/prove-zerops-migrator-artifact.sh "$RUNNER_TEMP/zerops-migrator-artifact"
+
       - name: Apply and verify Core, Auth, and Contacts migrations, plus Party Registry
         working-directory: app
         # The Commerce portal authentication realm is optional and owns its own Drizzle

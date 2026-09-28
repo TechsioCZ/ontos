@@ -30,9 +30,12 @@ zerops:
         - 'app/tsconfig.base.json'
         - 'app/verticals/catalog'
         - 'app/verticals/commerce-customer-context'
+        - 'app/verticals/commerce-market-catalog'
         - 'app/verticals/party-registry'
         - 'app/verticals/payment-term-catalog'
         - 'app/verticals/price-group-catalog'
+        - 'app/verticals/pricing'
+        - 'app/verticals/storefront-registry'
     deploy:
       temporaryShutdown: false
       readinessCheck:
