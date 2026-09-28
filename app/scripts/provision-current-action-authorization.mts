@@ -30,7 +30,7 @@ import type {
   ActionAuthorizationProvisioningResult,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import { STAGE_CONTEXTS } from '../packages/core-runtime/src/install/stage-context-bootstrap.ts';
-import { spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/client.ts';
+import { spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';

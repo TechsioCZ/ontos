@@ -44,7 +44,7 @@ import {
   toLegalEntityAccessObjectId,
 } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
-import { spiceDbClientSecurity } from '../../packages/core-runtime/src/permissions/client.ts';
+import { spiceDbClientSecurity } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
 import {
   GatewayContextResponseSchema,

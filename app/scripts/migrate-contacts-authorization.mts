@@ -9,7 +9,8 @@ import { Argument, Command } from 'effect/unstable/cli';
 import { Reactivity } from 'effect/unstable/reactivity';
 
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
-import { fullyConsistent, spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/client.ts';
+import { fullyConsistent } from '../packages/core-runtime/src/permissions/client.ts';
+import { spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import {

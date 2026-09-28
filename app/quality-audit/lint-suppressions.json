@@ -93,7 +93,7 @@
     "typescript/no-unsafe-call": 1,
     "typescript/no-unsafe-return": 1,
     "typescript/no-unsafe-type-assertion": 26,
-    "typescript/promise-function-async": 12,
+    "typescript/promise-function-async": 10,
     "typescript/switch-exhaustiveness-check": 7,
     "unicorn/consistent-function-scoping": 3,
     "unicorn/no-array-method-this-argument": 4,

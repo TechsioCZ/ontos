@@ -1,10 +1,9 @@
-import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
-import { Cause, Data, Duration, Effect } from 'effect';
+import { v1 } from '@authzed/authzed-node';
+import { Data, Effect } from 'effect';
 import type { Scope } from 'effect';
 
-import { SpiceDbConfigError } from './config-error.ts';
-import { allowsInsecureSpiceDbTransport } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
+import { openSpiceDbGrpcRpc } from './spicedb-grpc-rpc.ts';
 
 export const SPICEDB_CHECK_TIMEOUT_MS = 2000;
 
@@ -39,47 +38,17 @@ export interface SpiceDbPermissionClient extends CloseableSpiceDbClient {
   ) => Effect.Effect<v1.CheckPermissionResponse, SpiceDbPermissionClientError>;
 }
 
-const permissionTimeout = Effect.timeoutOrElse({
-  duration: Duration.millis(SPICEDB_CHECK_TIMEOUT_MS),
-  orElse: () => Effect.fail(spiceDbPermissionClientError(new Cause.TimeoutError('SpiceDB client operation timed out'))),
-});
-
-export const spiceDbClientSecurity = (
-  configuration: Pick<SpiceDbConfigValue, 'deploymentEnvironment' | 'endpoint' | 'insecureLocal'>,
-): v1.ClientSecurity => {
-  if (!allowsInsecureSpiceDbTransport(configuration)) {
-    throw new SpiceDbConfigError({
-      reason: 'Insecure SpiceDB client credentials are not allowed for this endpoint',
-    });
-  }
-  return configuration.insecureLocal ? v1.ClientSecurity.INSECURE_PLAINTEXT_CREDENTIALS : v1.ClientSecurity.SECURE;
-};
-
 export const createSpiceDbPermissionClient = (
   configuration: SpiceDbConfigValue,
   timeoutMilliseconds: number,
 ): SpiceDbPermissionClient => {
-  const client = v1.NewClient(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    spiceDbClientSecurity(configuration),
-    undefined,
-    { interceptors: [deadlineInterceptor(timeoutMilliseconds)] },
-  );
+  const rpc = openSpiceDbGrpcRpc(configuration, timeoutMilliseconds);
   return {
     checkBulkPermissions: (request) =>
-      Effect.tryPromise({
-        catch: spiceDbPermissionClientError,
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign SDK Promise boundary.
-        try: () => client.promises.checkBulkPermissions(request),
-      }).pipe(permissionTimeout),
+      rpc.checkBulkPermissions(request).pipe(Effect.mapError(({ cause }) => spiceDbPermissionClientError(cause))),
     checkPermission: (request) =>
-      Effect.tryPromise({
-        catch: spiceDbPermissionClientError,
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign SDK Promise boundary.
-        try: () => client.promises.checkPermission(request),
-      }).pipe(permissionTimeout),
-    close: () => client.close(),
+      rpc.checkPermission(request).pipe(Effect.mapError(({ cause }) => spiceDbPermissionClientError(cause))),
+    close: rpc.close,
   };
 };
 

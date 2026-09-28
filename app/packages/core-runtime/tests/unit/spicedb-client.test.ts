@@ -1,7 +1,7 @@
 import { v1 } from '@authzed/authzed-node';
 import { expect, it } from 'effect-rstest';
 
-import { spiceDbClientSecurity } from '../../src/permissions/client.ts';
+import { spiceDbClientSecurity } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { SpiceDbConfigError } from '../../src/permissions/config-error.ts';
 
 it('uses authenticated plaintext credentials for an explicitly insecure transport', () => {

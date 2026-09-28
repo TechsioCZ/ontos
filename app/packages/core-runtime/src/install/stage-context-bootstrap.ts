@@ -9,7 +9,7 @@ import { makeCoreDatabase } from '../db/client.ts';
 import { parseDatabaseConfig } from '../db/config.ts';
 import { legalEntities, principalAuthBindings, principals, tenantModuleStates, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
-import { spiceDbClientSecurity } from '../permissions/client.ts';
+import { spiceDbClientSecurity } from '../permissions/spicedb-grpc-rpc.ts';
 import { parseSpiceDbConfig } from '../permissions/config.ts';
 import { toLegalEntityAccessObjectId, toModuleAccessObjectId } from '../permissions/context-access.ts';
 import {

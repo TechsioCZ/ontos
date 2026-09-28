@@ -1,9 +1,10 @@
-import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
-import { Cause, Duration, Effect } from 'effect';
+import { v1 } from '@authzed/authzed-node';
+import { Effect } from 'effect';
 import type { Scope } from 'effect';
 
-import { SPICEDB_CHECK_TIMEOUT_MS, acquireSpiceDbClientResource, spiceDbClientSecurity } from './client.ts';
+import { SPICEDB_CHECK_TIMEOUT_MS, acquireSpiceDbClientResource } from './client.ts';
 import type { SpiceDbConfigValue } from './config.ts';
+import { openSpiceDbGrpcRpc } from './spicedb-grpc-rpc.ts';
 import type { SpiceDbConfigError } from './config-error.ts';
 
 export interface PermissionRelationshipMutationClient<Failure> {
@@ -19,26 +20,11 @@ export const createPermissionRelationshipMutationClient = <Failure>(
   timeoutMilliseconds: number,
   unavailable: (cause?: unknown) => Failure,
 ): PermissionRelationshipMutationClient<Failure> => {
-  const client = v1.NewClient(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    spiceDbClientSecurity(configuration),
-    undefined,
-    { interceptors: [deadlineInterceptor(timeoutMilliseconds)] },
-  );
+  const rpc = openSpiceDbGrpcRpc(configuration, timeoutMilliseconds);
   return {
-    close: () => client.close(),
+    close: rpc.close,
     writeRelationships: (request) =>
-      Effect.tryPromise({
-        catch: unavailable,
-        // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this foreign SDK Promise boundary.
-        try: () => client.promises.writeRelationships(request),
-      }).pipe(
-        Effect.timeoutOrElse({
-          duration: Duration.millis(SPICEDB_CHECK_TIMEOUT_MS),
-          orElse: () => Effect.fail(unavailable(new Cause.TimeoutError('SpiceDB relationship mutation timed out'))),
-        }),
-      ),
+      rpc.writeRelationships(request).pipe(Effect.mapError(({ cause }) => unavailable(cause))),
   };
 };
 

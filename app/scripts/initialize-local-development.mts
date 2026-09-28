@@ -36,7 +36,7 @@ import {
   selectBootstrapPrincipals,
   selectBootstrapAuthBindings,
 } from '../packages/core-runtime/src/install/context-bootstrap-shared.ts';
-import { spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/client.ts';
+import { spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { parseSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import {
   toLegalEntityAccessObjectId,
