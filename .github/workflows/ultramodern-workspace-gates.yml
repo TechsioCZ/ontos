@@ -669,11 +669,12 @@ jobs:
             "${base_arguments[@]}" \
             --head "$GITHUB_SHA"
 
-      - name: Deploy planned edge units in dependency order
+      # Only Wrangler sees the account token. Building, verifying and proving a unit runs
+      # dependency code (bundlers, build plugins, the framework CLI), so those steps run without
+      # it. The build step runs each unit's `cloudflare:deploy` up to, but not including, Wrangler.
+      - name: Build and verify planned edge units
         working-directory: app
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
           # Worker public URLs and binding names are edge configuration: `stage-edge` environment
           # (or repository) variables, exported to the Cloudflare builds that read them.
@@ -690,6 +691,22 @@ jobs:
             echo 'stage-edge must set ULTRAMODERN_MF_DEV_ORIGIN to the stage Shell origin; no Worker was changed.' >&2
             exit 1
           fi
+          mapfile -t units < <(jq -r '.[] | [.id, .packageName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
+          for unit in "${units[@]}"; do
+            IFS=$'\t' read -r id package <<<"$unit"
+            mise exec -- pnpm --filter "$package" run cloudflare:build
+            mise exec -- pnpm --filter "$package" exec ultramodern-create ultramodern cloudflare-output-verify --app "$id" --require-public-urls
+          done
+
+      - name: Deploy planned edge units in dependency order
+        id: deploy
+        working-directory: app
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
+          EDGE_DEPLOY_STATE: ${{ runner.temp }}/edge-deploy-state.tsv
+        run: |
           active_version() {
             mise exec -- pnpm --filter "$1" exec wrangler deployments status --name "$2" --json \
               | jq -er '.versions | map(select(.percentage == 100)) | .[0].version_id'
@@ -712,48 +729,79 @@ jobs:
               exit 1
             fi
           done
-          deployed=()
-          # Worker versions are immutable. Each Worker this run deployed returns to its snapshotted
-          # state: the exact version that was active before, or no Worker at all when this run
-          # created it. A rollback counts only once that state is observed again; anything left on
-          # the candidate is reported and fails the job.
-          rollback() {
-            local unrestored=()
-            for deployment in "${deployed[@]}"; do
-              IFS=$'\t' read -r deployed_package deployed_worker previous_version <<<"$deployment"
-              if [[ -z "$previous_version" ]]; then
-                status_log="$RUNNER_TEMP/rollback-status-$deployed_worker.log"
-                if mise exec -- pnpm --filter "$deployed_package" exec wrangler delete --name "$deployed_worker" --force \
-                  && ! active_version "$deployed_package" "$deployed_worker" >/dev/null 2>"$status_log" \
-                  && grep -q 'code: 10007' "$status_log"; then
-                  echo "Removed $deployed_worker, which this run created"
-                else
-                  unrestored+=("$deployed_worker (created by this run and not removed)")
-                fi
-                continue
-              fi
-              if mise exec -- pnpm --filter "$deployed_package" exec wrangler rollback "$previous_version" --name "$deployed_worker" --message "Rollback of $GITHUB_SHA after a failed edge deploy" --yes \
-                && [[ "$(active_version "$deployed_package" "$deployed_worker")" == "$previous_version" ]]; then
-                echo "Restored $deployed_worker to $previous_version"
-              else
-                unrestored+=("$deployed_worker (expected $previous_version)")
-              fi
-            done
-            for worker_state in "${unrestored[@]}"; do
-              echo "::error title=Edge Worker not restored::$worker_state is still serving $GITHUB_SHA"
-            done
-          }
+          # Each Worker is recorded with its snapshot before its deploy starts, so the restore step
+          # covers a deploy that fails halfway.
+          : >"$EDGE_DEPLOY_STATE"
           for unit in "${units[@]}"; do
             IFS=$'\t' read -r package worker <<<"$unit"
-            deployed+=("$package"$'\t'"$worker"$'\t'"${previous_versions[$worker]}")
-            if ! mise exec -- pnpm --filter "$package" run cloudflare:deploy; then
-              echo "Cloudflare deploy failed for planned edge unit $package ($worker)" >&2
-              rollback
-              exit 1
+            printf '%s\t%s\t%s\n' "$package" "$worker" "${previous_versions[$worker]}" >>"$EDGE_DEPLOY_STATE"
+            mise exec -- pnpm --filter "$package" exec wrangler deploy --config .output/wrangler.json
+          done
+
+      - name: Prove the deployed edge units on their public URLs
+        working-directory: app
+        env:
+          CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
+          EDGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          while IFS=$'\t' read -r key value; do
+            export "$key=$value"
+          done < <(jq -r 'to_entries[] | select(.key | test("^(MODERN_|ULTRAMODERN_|VERTICAL_)")) | [.key, .value] | @tsv' <<<"$EDGE_VARIABLES_JSON")
+          mapfile -t packages < <(jq -r '.[].packageName' <<<"$CLOUDFLARE_UNITS_JSON")
+          for package in "${packages[@]}"; do
+            mise exec -- pnpm --filter "$package" run cloudflare:proof
+          done
+
+      # Worker versions are immutable. After a failed deploy or proof, each Worker this run
+      # deployed returns to its snapshotted state: the exact version that was active before, or no
+      # Worker at all when this run created it. A Worker counts as restored only once that state is
+      # observed; anything left on the candidate is reported.
+      - name: Restore the edge Workers this run deployed
+        if: failure() && steps.deploy.outcome != 'skipped'
+        working-directory: app
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          EDGE_DEPLOY_STATE: ${{ runner.temp }}/edge-deploy-state.tsv
+        run: |
+          active_version() {
+            mise exec -- pnpm --filter "$1" exec wrangler deployments status --name "$2" --json \
+              | jq -er '.versions | map(select(.percentage == 100)) | .[0].version_id'
+          }
+          absent() {
+            local status_log="$RUNNER_TEMP/restore-status-$2.log"
+            ! active_version "$1" "$2" >/dev/null 2>"$status_log" && grep -q 'code: 10007' "$status_log"
+          }
+          deployed=()
+          if [[ -f "$EDGE_DEPLOY_STATE" ]]; then
+            mapfile -t deployed <"$EDGE_DEPLOY_STATE"
+          fi
+          unrestored=()
+          for deployment in "${deployed[@]}"; do
+            IFS=$'\t' read -r deployed_package deployed_worker previous_version <<<"$deployment"
+            if [[ -z "$previous_version" ]]; then
+              if absent "$deployed_package" "$deployed_worker"; then
+                echo "$deployed_worker, which this run was creating, does not exist"
+              elif mise exec -- pnpm --filter "$deployed_package" exec wrangler delete --name "$deployed_worker" --force \
+                && absent "$deployed_package" "$deployed_worker"; then
+                echo "Removed $deployed_worker, which this run created"
+              else
+                unrestored+=("$deployed_worker (created by this run and not removed)")
+              fi
+              continue
             fi
-            if ! mise exec -- pnpm --filter "$package" run cloudflare:proof; then
-              echo "Public-URL proof failed for edge unit $package ($worker); rolling back this run's Workers" >&2
-              rollback
-              exit 1
+            if [[ "$(active_version "$deployed_package" "$deployed_worker" 2>/dev/null)" == "$previous_version" ]]; then
+              echo "$deployed_worker still serves $previous_version"
+            elif mise exec -- pnpm --filter "$deployed_package" exec wrangler rollback "$previous_version" --name "$deployed_worker" --message "Rollback of $GITHUB_SHA after a failed edge deploy" --yes \
+              && [[ "$(active_version "$deployed_package" "$deployed_worker")" == "$previous_version" ]]; then
+              echo "Restored $deployed_worker to $previous_version"
+            else
+              unrestored+=("$deployed_worker (expected $previous_version)")
             fi
           done
+          for worker_state in "${unrestored[@]}"; do
+            echo "::error title=Edge Worker not restored::$worker_state is still serving $GITHUB_SHA"
+          done
+          [[ ${#unrestored[@]} -eq 0 ]]

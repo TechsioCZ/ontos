@@ -219,10 +219,13 @@ placed, impacted units as `units.cloudflare` in dependency order (providers befo
 
 The `deploy-cloudflare` job runs after `deploy-stage` has migrated the database, in its own
 `stage-edge` environment. It resolves the last successful `stage-edge` deployment, plans the diff
-from there, and runs `cloudflare:deploy` and then `cloudflare:proof` per unit. A failed deploy or
-proof returns each Worker this run deployed to its state before the run: the recorded version, or
-no Worker at all when the run created it. The step verifies that state, and any Worker left on the
-candidate is reported and fails the job. A change to the edge workflow or the install action
+from there, and ships the planned units in three passes: build and verify every unit (each unit's
+`cloudflare:deploy` up to its final `wrangler deploy`), deploy them with Wrangler in plan order, then
+run each unit's `cloudflare:proof`. Only the Wrangler steps receive `CLOUDFLARE_API_TOKEN`; the
+build, verification and proof run dependency code and never see it. Every Worker's active version
+is recorded before the first deploy. A failed deploy or proof returns each Worker this run deployed
+to that state: the recorded version, or no Worker at all when the run created it. The restore step
+verifies that state, and any Worker left on the candidate is reported and fails the job. A change to the edge workflow or the install action
 replans every placed unit. Because the history is separate,
 a failed edge deploy is replanned by the next run even when Zerops succeeded for the same
 revision.

@@ -45,6 +45,7 @@ const expression = (body: string) => `\${{ ${body} }}`;
 const WorkflowStepSchema = Schema.Struct({
   env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   id: Schema.optional(Schema.String),
+  if: Schema.optional(Schema.String),
   name: Schema.String,
   run: Schema.optional(Schema.String),
 });
@@ -60,6 +61,10 @@ const EdgeDeployWorkflowSchema = Schema.Struct({
     'deploy-stage': Schema.Struct({ environment: Schema.String }),
   }),
 });
+
+/** Every `pnpm …` command line a workflow step runs. */
+const packageCommands = (step: typeof WorkflowStepSchema.Type) => (step.run ?? '').match(/pnpm [^\n]*/gu) ?? [];
+const WRANGLER_COMMAND = /^pnpm --filter "\$(?:[a-z_]+|\d)" exec wrangler /u;
 
 it('deploys planned edge units to Cloudflare after the stage migration, with their own deployment history', () => {
   const { jobs } = Schema.decodeUnknownSync(EdgeDeployWorkflowSchema)(
@@ -80,21 +85,36 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   const byName = new Map(edge.steps.map((step) => [step.name, step]));
   expect(byName.get('Resolve the last successful edge deployment')?.run).toContain('--environment stage-edge');
   expect(byName.get('Plan the impacted edge units')?.id).toBe('impact');
+  const build = byName.get('Build and verify planned edge units');
   const deploy = byName.get('Deploy planned edge units in dependency order');
-  expect(deploy?.env?.CLOUDFLARE_UNITS_JSON).toBe(expression('steps.impact.outputs.cloudflare'));
-  expect(deploy?.run).toContain('run cloudflare:deploy');
-  expect(deploy?.run).toContain('run cloudflare:proof');
-  // Rollback returns each Worker to the version recorded before its deploy and verifies it.
+  const proof = byName.get('Prove the deployed edge units on their public URLs');
+  const restore = byName.get('Restore the edge Workers this run deployed');
+  for (const step of [build, deploy, proof]) {
+    expect(step?.env?.CLOUDFLARE_UNITS_JSON).toBe(expression('steps.impact.outputs.cloudflare'));
+  }
+  // The build step is each unit's `cloudflare:deploy` without its final `wrangler deploy`.
+  expect(build?.run).toContain('run cloudflare:build');
+  expect(build?.run).toContain('cloudflare-output-verify --app "$id" --require-public-urls');
+  expect(deploy?.run).toContain('exec wrangler deploy --config .output/wrangler.json');
+  expect(proof?.run).toContain('run cloudflare:proof');
+  // The placed units' CORS allowlist needs the real Shell origin before any Worker is built.
+  const buildRun = build?.run ?? '';
+  expect(buildRun).toContain('ULTRAMODERN_MF_DEV_ORIGIN');
+  expect(buildRun.indexOf('ULTRAMODERN_MF_DEV_ORIGIN')).toBeLessThan(buildRun.indexOf('run cloudflare:build'));
+  // Every Worker is snapshotted before the first one changes, and restored to that snapshot after
+  // a failed deploy or proof: the recorded version, or no Worker when this run created it.
   expect(deploy?.run).toContain('wrangler deployments status');
-  expect(deploy?.run).toContain('wrangler rollback "$previous_version"');
-  expect(deploy?.run).not.toMatch(/wrangler rollback[^\n]*\|\| true/u);
-  // The placed units' CORS allowlist needs the real Shell origin before any Worker changes.
-  expect(deploy?.run).toContain('ULTRAMODERN_MF_DEV_ORIGIN');
-  const deployRun = deploy?.run ?? '';
-  expect(deployRun.indexOf('ULTRAMODERN_MF_DEV_ORIGIN')).toBeLessThan(deployRun.indexOf('mapfile'));
-  // A Worker this run created is removed again, so a failed first deploy leaves nothing public.
-  expect(deploy?.run).toContain('wrangler delete --name "$deployed_worker"');
-  // The account token reaches only the steps that use it.
-  const tokenSteps = edge.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined).map((step) => step.name);
-  expect(tokenSteps).toEqual(['Require the Cloudflare deploy token', 'Deploy planned edge units in dependency order']);
+  expect(restore?.run).toContain('wrangler rollback "$previous_version"');
+  expect(restore?.run).toContain('wrangler delete --name "$deployed_worker"');
+  expect(restore?.run).not.toMatch(/wrangler (?:rollback|delete)[^\n]*\|\| true/u);
+  expect(restore?.if).toBe("failure() && steps.deploy.outcome != 'skipped'");
+  // The account token reaches only the steps that use it, and those run nothing but Wrangler:
+  // building, verifying and proving a unit executes dependency code.
+  const tokenSteps = edge.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined);
+  expect(tokenSteps.map((step) => step.name)).toEqual([
+    'Require the Cloudflare deploy token',
+    'Deploy planned edge units in dependency order',
+    'Restore the edge Workers this run deployed',
+  ]);
+  expect(tokenSteps.flatMap(packageCommands).filter((command) => !WRANGLER_COMMAND.test(command))).toEqual([]);
 });
