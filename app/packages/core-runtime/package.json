@@ -15,6 +15,7 @@
     "./http/governed-read": "./src/http/governed-read.ts",
     "./http/principal-authentication": "./src/http/principal-authentication.ts",
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
+    "./module-entrypoint": "./src/modules/module-entrypoint.ts",
     "./operations/context": "./src/operations/context.ts",
     "./operations/external-authentication": "./src/operations/external-authentication.ts",
     "./outbox/core-identity-principal-binding-activated-v1": "./src/outbox/core-identity-principal-binding-activated-v1.ts",

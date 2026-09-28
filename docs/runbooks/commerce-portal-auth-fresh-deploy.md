@@ -66,20 +66,29 @@ deployment migrator runs end to end:
 5. Party Registry (`verticals/party-registry`: `prepare-contacts-migration.mts`, then
    `drizzle.contacts.config.ts`, then `drizzle.config.ts`)
 6. Payment Term Catalog (`verticals/payment-term-catalog`, `drizzle.config.ts`)
-7. Commerce (`verticals/commerce-customer-context`, `drizzle.config.ts` — the vertical's own
+7. Price Group Catalog (`verticals/price-group-catalog`, `drizzle.config.ts`)
+8. Commerce (`verticals/commerce-customer-context`, `drizzle.config.ts` — the vertical's own
    business schema, not the portal-auth one)
-8. `scripts/postgres/bootstrap-runtime-role.mts` (generic runtime role, second pass)
-9. **Only if `COMMERCE_PORTAL_AUTH_DATABASE_URL` + `_ADMIN_URL` are both configured**
+9. Commerce Market Catalog, Catalog, Pricing and Storefront Registry (each `verticals/<owner>`,
+   `drizzle.config.ts`, in that order)
+10. `scripts/postgres/bootstrap-runtime-role.mts` (generic runtime role, second pass)
+11. **Only if `COMMERCE_PORTAL_AUTH_DATABASE_URL` + `_ADMIN_URL` are both configured**
    (`loadOptionalCommercePortalAuthDatabaseConfig`):
    1. Commerce portal-auth migration (`verticals/commerce-customer-context`,
       `drizzle.portal-auth.config.ts` → the `commerce_auth` schema)
    2. `verticals/commerce-customer-context/scripts/bootstrap-portal-auth-runtime-role.mts` —
-      grants the runtime role exactly the privileges it needs on the `commerce_auth` tables, using
-      the admin connection
+      using the admin connection, creates (or re-asserts) the runtime role named by
+      `COMMERCE_PORTAL_AUTH_DATABASE_URL` as a restricted login role with that URL's password, then
+      grants it exactly the privileges it needs on the `commerce_auth` tables. Nothing has to be
+      pre-created by an operator.
    3. `verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts` — table
       catalog + runtime-role privilege proof
-10. `scripts/verify-application-db-schema.mts` — whole-deployment schema verification
-11. Serve the migrator's own `/ready` endpoint
+12. `scripts/verify-application-db-schema.mts` — whole-deployment schema verification
+13. Serve the migrator's own `/ready` endpoint
+
+`app/scripts/prove-zerops-migrator-artifact.sh` assembles the migrator from its `zerops.yaml`
+`deployFiles` and runs this entry point until `/ready`; the service-integration CI job runs it
+against a fresh database with the stage environment shape before anything merges.
 
 Locally, the same ordering (minus the standalone readiness server) is available as the composite
 root scripts:
@@ -91,7 +100,12 @@ pnpm --filter @app/core-runtime db:migrate
 pnpm --filter @app/shell-super-app db:migrate
 pnpm --filter @app/party-registry db:migrate
 pnpm --filter @app/payment-term-catalog db:migrate
+pnpm --filter @app/price-group-catalog db:migrate
 pnpm --filter @app/commerce-customer-context db:migrate
+pnpm --filter @app/commerce-market-catalog db:migrate
+pnpm --filter @app/catalog db:migrate
+pnpm --filter @app/pricing db:migrate
+pnpm --filter @app/storefront-registry db:migrate
 pnpm db:bootstrap-runtime-role
 pnpm db:portal-auth:migrate        # no-ops if the portal-auth database env is not configured
 ```

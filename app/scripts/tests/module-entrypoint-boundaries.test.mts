@@ -460,7 +460,7 @@ export const routeMeta = { ownerAppId: 'shell-super-app', entrypoint: defineSyst
   yield* write(
     root,
     'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
-    `export const routes = [{ entrypoint: { entrypointKey: 'shell-super-app.page.home' } }];`,
+    `import { routeMeta as route0 } from './home/route.meta';`,
   );
   yield* write(
     root,
@@ -486,7 +486,7 @@ export const routeMeta = { moduleId: 'inventory.stock', ownerAppId: 'inventory-s
   yield* write(
     root,
     'verticals/inventory-stock/src/routes/ultramodern-route-metadata.ts',
-    `export const routes = [{ entrypoint: { entrypointKey: 'inventory.stock.page.orders' } }];`,
+    `import { routeMeta as route0 } from './orders/route.meta';`,
   );
   yield* write(root, ACTION_FILE, validAction);
   yield* write(root, WORKER_FILE, validWorker);
@@ -2580,15 +2580,17 @@ it('keeps executable owner behavior out of published Outbox contracts', () => {
   ).toThrow(/must remain a generated schema-only Outbox contract/u);
 });
 
-it.live('rejects missing, orphaned, and cross-owner route manifest entries', () =>
+it.live('rejects route manifests that import missing or orphaned route metadata', () =>
   Effect.gen(function* testEffect8() {
     const root = yield* makeFixture();
     yield* write(
       root,
       'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
-      `export const routes = [{ entrypoint: { entrypointKey: 'inventory.stock.page.orders' } }];`,
+      `import { routeMeta as route0 } from './orders/route.meta';`,
     );
-    expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(/manifest is stale/u);
+    expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(
+      /manifest is stale \(missing: apps\/shell-super-app\/src\/routes\/home\/route\.meta\.ts; orphaned: apps\/shell-super-app\/src\/routes\/orders\/route\.meta\.ts\)/u,
+    );
   }),
 );
 

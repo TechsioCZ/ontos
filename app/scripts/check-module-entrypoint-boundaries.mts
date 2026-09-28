@@ -1119,39 +1119,52 @@ const validateProductionSource = (state: BoundaryCheckState, file: string, sourc
     yield* appendBusinessPermissionInventoryEntry(state, file, source);
   });
 
-const collectRouteSourceKeys = (state: BoundaryCheckState) =>
-  Effect.gen(function* collectRouteSourceKeysEffect() {
-    const routeSourceKeysByDeployment = new Map<string, Set<string>>();
+const collectRouteSourceFiles = (state: BoundaryCheckState) =>
+  Effect.gen(function* collectRouteSourceFilesEffect() {
+    const seenEntrypointKeys = new Set<string>();
+    const routeSourceFilesByDeployment = new Map<string, Set<string>>();
     for (const route of state.routeEntrypoints) {
-      const sourceKeys = routeSourceKeysByDeployment.get(route.deployment) ?? new Set<string>();
-      if (sourceKeys.has(route.entrypointKey)) {
+      if (seenEntrypointKeys.has(`${route.deployment}:${route.entrypointKey}`)) {
         yield* fail(route.file, `route entrypoint ${route.entrypointKey} is duplicated`);
       }
-      sourceKeys.add(route.entrypointKey);
-      routeSourceKeysByDeployment.set(route.deployment, sourceKeys);
+      seenEntrypointKeys.add(`${route.deployment}:${route.entrypointKey}`);
+      const sourceFiles = routeSourceFilesByDeployment.get(route.deployment) ?? new Set<string>();
+      sourceFiles.add(route.file);
+      routeSourceFilesByDeployment.set(route.deployment, sourceFiles);
     }
-    return routeSourceKeysByDeployment;
+    return routeSourceFilesByDeployment;
   });
 
-const validateManifestKeys = (state: BoundaryCheckState, normalizedFile: string, sourceKeys: ReadonlySet<string>) =>
-  Effect.gen(function* validateManifestKeysEffect() {
-    const manifestSource = sourceOrEmpty(state.sourceMap, normalizedFile);
-    const manifestKeys = readStringProperties(manifestSource, 'entrypointKey');
-    const missing = [...sourceKeys].filter((entrypointKey) => !manifestKeys.has(entrypointKey));
-    const stale = [...manifestKeys].filter((entrypointKey) => !sourceKeys.has(entrypointKey));
+// The framework manifest statically imports every route.meta.ts below its directory, so it is
+// current exactly when its relative imports name the deployment's route metadata files.
+const validateManifestImports = (
+  path: Path.Path,
+  state: BoundaryCheckState,
+  normalizedFile: string,
+  sourceFiles: ReadonlySet<string>,
+) =>
+  Effect.gen(function* validateManifestImportsEffect() {
+    const manifestDirectory = path.dirname(normalizedFile);
+    const manifestImports = new Set(
+      readImportedModuleSpecifiers(sourceOrEmpty(state.sourceMap, normalizedFile))
+        .filter((specifier) => specifier.startsWith('./'))
+        .map((specifier) => `${path.join(manifestDirectory, specifier).replaceAll('\\', '/')}.ts`),
+    );
+    const missing = [...sourceFiles].filter((file) => !manifestImports.has(file));
+    const stale = [...manifestImports].filter((file) => !sourceFiles.has(file));
     if (missing.length > 0 || stale.length > 0) {
       const missingLabel = missing.length === 0 ? 'none' : sortStrings(missing).join(', ');
       const staleLabel = stale.length === 0 ? 'none' : sortStrings(stale).join(', ');
       yield* fail(
         normalizedFile,
-        `generated route manifest is stale (missing: ${missingLabel}; orphaned: ${staleLabel}); rerun the route generator`,
+        `generated route manifest is stale (missing: ${missingLabel}; orphaned: ${staleLabel}); rerun ultramodern-create ultramodern routes-generate`,
       );
     }
   });
 
 const validateRouteManifests = (path: Path.Path, files: readonly string[], root: string, state: BoundaryCheckState) =>
   Effect.gen(function* validateRouteManifestsEffect() {
-    const routeSourceKeysByDeployment = yield* collectRouteSourceKeys(state);
+    const routeSourceFilesByDeployment = yield* collectRouteSourceFiles(state);
     const routeManifests = files.filter((file) => file.endsWith('/ultramodern-route-metadata.ts'));
     const seenManifestDeployments = new Set<string>();
     for (const manifestFile of routeManifests) {
@@ -1166,13 +1179,14 @@ const validateRouteManifests = (path: Path.Path, files: readonly string[], root:
         yield* fail(normalizedFile, `deployment ${deployment} has multiple generated route manifests`);
       }
       seenManifestDeployments.add(deployment);
-      yield* validateManifestKeys(
+      yield* validateManifestImports(
+        path,
         state,
         normalizedFile,
-        routeSourceKeysByDeployment.get(deployment) ?? new Set<string>(),
+        routeSourceFilesByDeployment.get(deployment) ?? new Set<string>(),
       );
     }
-    for (const deployment of routeSourceKeysByDeployment.keys()) {
+    for (const deployment of routeSourceFilesByDeployment.keys()) {
       if (!seenManifestDeployments.has(deployment)) {
         yield* fail('generated route manifests', `deployment ${deployment} is missing its route manifest`);
       }

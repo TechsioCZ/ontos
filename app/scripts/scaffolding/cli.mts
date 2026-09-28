@@ -281,12 +281,12 @@ const defineCommand = <Config extends GeneratorConfig, Result extends GeneratorR
 
 const defaultRouteRefresh = ({ appId, workspaceRoot }: RouteRefreshInput) =>
   Effect.gen(function* defaultRouteRefreshEffect() {
-    const script = path.join(workspaceRoot, 'scripts', 'generate-tanstack-routes.mts');
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const exitCode = yield* spawner
       .exitCode(
-        ChildProcess.make(process.execPath, [script, '--app', appId], {
+        ChildProcess.make('pnpm', ['exec', 'ultramodern-create', 'ultramodern', 'routes-generate', '--app', appId], {
           cwd: workspaceRoot,
+          shell: path.sep === '\\',
           stderr: 'inherit',
           stdin: 'inherit',
           stdout: 'inherit',
