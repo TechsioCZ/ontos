@@ -233,6 +233,22 @@ const transportParityProgram = Effect.gen(function* provesTransportParity() {
     ),
   ).toStrictEqual({ json: [{ relationship: v1.Relationship.toJson(membership(tenantId, memberId)) }], status: 'ok' });
 
+  // A read of an undefined resource type fails with the same status, whether the gateway rejects it
+  // before streaming or in an error frame.
+  expect(
+    yield* parity(
+      transports,
+      (rpc) =>
+        rpc.readRelationships(
+          v1.ReadRelationshipsRequest.create({
+            consistency: fullyConsistent,
+            relationshipFilter: v1.RelationshipFilter.create({ resourceType: 'not_a_definition' }),
+          }),
+        ),
+      (responses) => responses.length,
+    ),
+  ).toStrictEqual(failedWith(9));
+
   // CREATE of an existing relationship fails with ALREADY_EXISTS.
   expect(
     yield* parity(
@@ -275,14 +291,52 @@ const transportParityProgram = Effect.gen(function* provesTransportParity() {
     yield* parity(transports, (rpc) => rpc.checkPermission(checkAccess(tenantId, memberId)), checkJson),
   ).toStrictEqual(denied);
 
-  // A wrong preshared key is rejected with the same status.
+  // A wrong preshared key is rejected with PERMISSION_DENIED by every RPC through either transport.
+  const wrongKey = { grpc: transports.wrongKeyGrpc, http: transports.wrongKeyHttp };
+  const permissionDenied = failedWith(7);
+  expect(
+    yield* parity(wrongKey, (rpc) => rpc.checkPermission(checkAccess(tenantId, memberId)), checkJson),
+  ).toStrictEqual(permissionDenied);
   expect(
     yield* parity(
-      { grpc: transports.wrongKeyGrpc, http: transports.wrongKeyHttp },
-      (rpc) => rpc.checkPermission(checkAccess(tenantId, memberId)),
-      checkJson,
+      wrongKey,
+      (rpc) =>
+        rpc.checkBulkPermissions(
+          v1.CheckBulkPermissionsRequest.create({
+            consistency: fullyConsistent,
+            items: [bulkItem(tenantId, memberId, 'access')],
+          }),
+        ),
+      (response) => response.pairs.map(bulkPairResult),
     ),
-  ).toMatchObject({ status: 'failed' });
+  ).toStrictEqual(permissionDenied);
+  expect(
+    yield* parity(
+      wrongKey,
+      (rpc) => rpc.writeRelationships(update(v1.RelationshipUpdate_Operation.TOUCH, membership(tenantId, memberId))),
+      writeJson,
+    ),
+  ).toStrictEqual(permissionDenied);
+  expect(
+    yield* parity(
+      wrongKey,
+      (rpc) =>
+        rpc.readRelationships(
+          v1.ReadRelationshipsRequest.create({
+            consistency: fullyConsistent,
+            relationshipFilter: v1.RelationshipFilter.create({ optionalResourceId: tenantId, resourceType: 'tenant' }),
+          }),
+        ),
+      (responses) => responses.length,
+    ),
+  ).toStrictEqual(permissionDenied);
+  expect(
+    yield* parity(
+      wrongKey,
+      (rpc) => rpc.writeSchema(v1.WriteSchemaRequest.create({ schema: ONTOS_SPICEDB_SCHEMA })),
+      schemaJson,
+    ),
+  ).toStrictEqual(permissionDenied);
 });
 
 it.layer(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer), { excludeTestServices: true })(

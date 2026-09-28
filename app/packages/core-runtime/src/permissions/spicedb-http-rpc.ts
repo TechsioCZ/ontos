@@ -33,10 +33,17 @@ export type SpiceDbHttpRpc = {
 // Unknown fields are skipped, as a gRPC client skips unknown binary fields.
 const jsonReadOptions = { ignoreUnknownFields: true } as const;
 
-// The gateway's error body and stream error frames are a `google.rpc.Status`.
+// A unary error body is a `google.rpc.Status`. A streaming RPC that fails before its first frame
+// answers non-2xx with that status wrapped as an error frame, `{"error": Status}`, like a
+// mid-stream failure.
 const RpcStatusSchema = Schema.Struct({ code: Schema.Finite, message: Schema.String });
-const decodeRpcStatusText = Schema.decodeUnknownOption(Schema.fromJsonString(RpcStatusSchema));
 const decodeRpcStatus = Schema.decodeUnknownOption(RpcStatusSchema);
+const decodeUnaryError = Schema.decodeOption(Schema.fromJsonString(RpcStatusSchema));
+const decodeStreamError = Schema.decodeOption(Schema.fromJsonString(Schema.Struct({ error: RpcStatusSchema })));
+const decodeUnaryErrorCode = (text: string): Option.Option<number> =>
+  Option.map(decodeUnaryError(text), ({ code }) => code);
+const decodeStreamErrorCode = (text: string): Option.Option<number> =>
+  Option.map(decodeStreamError(text), ({ error }) => error.code);
 
 // Server streaming arrives as newline-delimited `{"result": …}` / `{"error": …}` frames.
 const decodeStreamFrame = Schema.decodeUnknownEffect(
@@ -108,14 +115,16 @@ const readBulkResponse = (text: string): Effect.Effect<v1.CheckBulkPermissionsRe
     Effect.flatMap((response) => readJsonMessage(v1.CheckBulkPermissionsResponse, response)),
   );
 
-const failWithStatus = (text: string): Effect.Effect<never, SpiceDbRpcError> =>
-  Effect.fail(new SpiceDbRpcError({ cause: text, code: Option.map(decodeRpcStatusText(text), ({ code }) => code) }));
-
 /** SpiceDB over its HTTP/JSON gateway, for runtimes without an HTTP/2 gRPC client. */
 export const spiceDbHttpRpc = (endpoint: SpiceDbHttpEndpoint): SpiceDbHttpRpc => {
   const deadline = spiceDbDeadline(endpoint.timeoutMilliseconds);
   // The whole exchange (request, status and body) shares one deadline, like a gRPC deadline.
-  const post = <Request>(path: string, type: JsonMessageType<Request>, request: Request) =>
+  const post = <Request>(
+    path: string,
+    type: JsonMessageType<Request>,
+    request: Request,
+    errorCode: (text: string) => Option.Option<number>,
+  ) =>
     HttpClient.execute(
       HttpClientRequest.post(new URL(path, endpoint.origin)).pipe(
         HttpClientRequest.bearerToken(endpoint.preSharedKey),
@@ -127,7 +136,7 @@ export const spiceDbHttpRpc = (endpoint: SpiceDbHttpEndpoint): SpiceDbHttpRpc =>
       Effect.mapError(transportFailure),
       Effect.filterOrElse(
         ({ status }) => status >= 200 && status < 300,
-        ({ text }) => failWithStatus(text),
+        ({ text }) => Effect.fail(new SpiceDbRpcError({ cause: text, code: errorCode(text) })),
       ),
       Effect.map(({ text }) => text),
       Effect.timeoutOrElse(deadline),
@@ -136,15 +145,21 @@ export const spiceDbHttpRpc = (endpoint: SpiceDbHttpEndpoint): SpiceDbHttpRpc =>
   const unary =
     <Request, Response>(path: string, requestType: JsonMessageType<Request>, responseType: JsonMessageType<Response>) =>
     (request: Request) =>
-      post(path, requestType, request).pipe(Effect.flatMap((text) => readMessage(responseType, text)));
+      post(path, requestType, request, decodeUnaryErrorCode).pipe(
+        Effect.flatMap((text) => readMessage(responseType, text)),
+      );
 
   return {
     checkBulkPermissions: (request) =>
-      post('/v1/permissions/checkbulk', v1.CheckBulkPermissionsRequest, request).pipe(Effect.flatMap(readBulkResponse)),
+      post('/v1/permissions/checkbulk', v1.CheckBulkPermissionsRequest, request, decodeUnaryErrorCode).pipe(
+        Effect.flatMap(readBulkResponse),
+      ),
     checkPermission: unary('/v1/permissions/check', v1.CheckPermissionRequest, v1.CheckPermissionResponse),
     // A failed stream fails the whole read, as a failed gRPC stream rejects `readRelationships`.
     readRelationships: (request) =>
-      post('/v1/relationships/read', v1.ReadRelationshipsRequest, request).pipe(Effect.flatMap(readFrames)),
+      post('/v1/relationships/read', v1.ReadRelationshipsRequest, request, decodeStreamErrorCode).pipe(
+        Effect.flatMap(readFrames),
+      ),
     writeRelationships: unary('/v1/relationships/write', v1.WriteRelationshipsRequest, v1.WriteRelationshipsResponse),
     writeSchema: unary('/v1/schema/write', v1.WriteSchemaRequest, v1.WriteSchemaResponse),
   };

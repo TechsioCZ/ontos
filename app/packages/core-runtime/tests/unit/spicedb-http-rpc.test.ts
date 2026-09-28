@@ -115,6 +115,19 @@ it.effect('an error frame in a relationship stream fails the whole read', () =>
   }),
 );
 
+it.effect('a relationship stream rejected before its first frame keeps the gRPC code', () =>
+  Effect.gen(function* checksStreamRejection() {
+    const { withGateway } = gateway(() =>
+      Response.json(
+        { error: { code: 9, details: [], message: 'object definition `nope` not found' } },
+        { status: 400 },
+      ),
+    );
+    const failure = yield* Effect.flip(rpc.readRelationships(v1.ReadRelationshipsRequest.create({})).pipe(withGateway));
+    expect(failure.code).toStrictEqual(Option.some(9));
+  }),
+);
+
 it.effect('bulk item errors keep their code and message', () =>
   Effect.gen(function* checksBulkItemError() {
     const { withGateway } = gateway(() =>
