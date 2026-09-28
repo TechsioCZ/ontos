@@ -13,9 +13,10 @@ import type { SpiceDbRpcError, SpiceDbTransport } from './spicedb-rpc.ts';
  * workerd has no HTTP/2 client for gRPC, so SpiceDB is reached through its HTTP gateway. This
  * module is the runtime's composition root for that client: the Effect `HttpClient` is the fetch
  * client bound to the `SPICEDB` Workers VPC binding, because workerd's global fetch cannot reach
- * private origins. `SPICEDB_ENDPOINT` is the gateway's host:port; plaintext is allowed only where
- * the gRPC transport allows it (explicit localhost or the stage-private `spicedb` host), because
- * the binding carries it through the tunnel.
+ * private origins. In a Worker, `SPICEDB_ENDPOINT` names the HTTP gateway's host:port (stage:
+ * `spicedb:8443`), not the gRPC port Node uses; each runtime has its own environment. Plaintext is
+ * allowed only where the gRPC transport allows it (explicit localhost or the stage-private
+ * `spicedb` host), because the binding carries it through the tunnel.
  */
 export const spiceDbTransport: SpiceDbTransport = Object.freeze<SpiceDbTransport>({
   open: (configuration, timeoutMilliseconds) => {
