@@ -7,6 +7,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   verified-source:
     if: github.ref == 'refs/heads/audit/334-repair-workbench'
@@ -35,10 +39,11 @@ jobs:
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
           egress-policy: audit
-      - name: Check out isolated workbench
+      - name: Check out isolated workbench and its comparison baseline
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Install repository toolchain
         uses: ./.github/actions/install-app
       - name: Apply repairs and generate append-only migration
@@ -50,8 +55,10 @@ jobs:
         run: |
           mkdir -p /tmp/issue-334-proof
           git add -- .
-          git diff --cached --name-only --diff-filter=ACM --relative dd4d0cfbbf8b68f8ed2a6e2cbe93fccdf293e166 | xargs -r mise exec -- pnpm exec oxlint --fix --no-error-on-unmatched-pattern
-          git diff --cached --name-only --diff-filter=ACM --relative dd4d0cfbbf8b68f8ed2a6e2cbe93fccdf293e166 | xargs -r mise exec -- pnpm exec oxfmt --no-error-on-unmatched-pattern
+          git diff --cached --name-only --diff-filter=ACM --relative dd4d0cfbbf8b68f8ed2a6e2cbe93fccdf293e166 > /tmp/issue-334-proof/changed-files.txt
+          xargs -r mise exec -- pnpm exec oxfmt --no-error-on-unmatched-pattern < /tmp/issue-334-proof/changed-files.txt
+          xargs -r mise exec -- pnpm exec oxlint --fix --no-error-on-unmatched-pattern < /tmp/issue-334-proof/changed-files.txt
+          xargs -r mise exec -- pnpm exec oxfmt --no-error-on-unmatched-pattern < /tmp/issue-334-proof/changed-files.txt
           git add -- .
       - name: Start isolated database services
         working-directory: app
@@ -68,13 +75,12 @@ jobs:
       - name: Verify focused regressions and owner contracts
         working-directory: app
         run: |
-          set -o pipefail
           mise exec -- pnpm --filter @app/commerce-customer-context exec rstest run --project unit tests/unit/price-group-currentness-regressions.test.ts 2>&1 | tee /tmp/issue-334-proof/commerce-regressions.log
           mise exec -- pnpm --filter @app/price-group-catalog exec rstest run --project integration tests/integration/price-group-currentness-regressions.test.ts tests/integration/governed-routine-behavior.test.ts 2>&1 | tee /tmp/issue-334-proof/catalog-regressions.log
           mise exec -- pnpm exec rstest run --project scripts scripts/tests/zerops-migrator-owner-coverage.test.mts 2>&1 | tee /tmp/issue-334-proof/deployment-regressions.log
           mise exec -- pnpm typecheck 2>&1 | tee /tmp/issue-334-proof/typecheck.log
           mise exec -- pnpm format:check 2>&1 | tee /tmp/issue-334-proof/format.log
-          git diff --cached --name-only --diff-filter=ACM --relative dd4d0cfbbf8b68f8ed2a6e2cbe93fccdf293e166 | xargs -r mise exec -- pnpm exec oxlint --no-error-on-unmatched-pattern 2>&1 | tee /tmp/issue-334-proof/changed-lint.log
+          xargs -r mise exec -- pnpm exec oxlint --no-error-on-unmatched-pattern < /tmp/issue-334-proof/changed-files.txt 2>&1 | tee /tmp/issue-334-proof/changed-lint.log
       - name: Export exact product source for connector publication
         if: always()
         run: |
