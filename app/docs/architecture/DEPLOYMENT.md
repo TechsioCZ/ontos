@@ -211,7 +211,10 @@ Do not report release success before all required smoke checks pass.
 ### Edge units on Cloudflare Workers
 
 `topology/cloudflare-placement.json` lists the delivery units CI also ships as Cloudflare Workers;
-each needs a `cloudflare.workerName` in the reference topology. The deployment planner emits the
+each needs a `cloudflare.workerName` in the reference topology, and its Worker configuration must be
+deployable on its own. The Shell is not placed yet: its Worker still binds the API-only units as
+Worker services, and those units stay on Zerops in the hybrid topology. Placing it goes with
+switching those bindings to `deploy.worker.vpcServices`. The deployment planner emits the
 placed, impacted units as `units.cloudflare` in dependency order (providers before Shell).
 
 The `deploy-cloudflare` job runs after `deploy-stage` has migrated the database, in its own
@@ -228,6 +231,10 @@ records nothing. With it, the `stage-edge` environment must hold the `CLOUDFLARE
 and the edge configuration the Worker builds read: `ULTRAMODERN_PUBLIC_URL_*` for every Worker (the
 output verifier requires them), plus any `VERTICAL_*_WORKER_BINDING` / `_WORKER_NAME` overrides.
 The job sees only `stage-edge` and repository variables, never the Zerops `stage` environment.
+Each Worker's runtime configuration is set once, outside CI, before its first deploy: secrets
+(`wrangler secret put`, for example `SPICEDB_PRESHARED_KEY` and `BETTER_AUTH_SECRET`) and the
+Hyperdrive and Workers VPC bindings its Worker configuration declares. The per-unit
+`cloudflare:proof` and the verified rollback catch a Worker whose configuration is incomplete.
 The first edge deploy has no previous edge deployment, so seed it with a full run:
 `gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`. Placement adds the Worker
 delivery; retiring a unit's Zerops service is a separate topology and `zerops.yaml` change.
