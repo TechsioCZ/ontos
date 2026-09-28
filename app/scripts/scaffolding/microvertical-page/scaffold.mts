@@ -515,7 +515,7 @@ const renderRouteMetadata = (
 ): string => {
   const keyRoot = `${vertical.namespace}.pages.${toCamelCase(page)}`;
   const localisedPaths = vertical.locales.map((locale) => `    ${locale}: '${route.canonicalPath}',`).join('\n');
-  return `import { defineTenantModuleEntrypoint } from '@app/core-runtime';
+  return `import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
 
 const routeMeta = {
   canonicalPath: '${route.canonicalPath}',
@@ -600,7 +600,7 @@ const renderShellConnectorMetadata = (
   config: Pick<PageScaffoldConfig, 'authorization' | 'permission'>,
 ): string => {
   const localisedPaths = vertical.locales.map((locale) => `    ${locale}: '${route.canonicalPath}',`).join('\n');
-  return `import { defineSystemModuleEntrypoint } from '@app/core-runtime';
+  return `import { defineSystemModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
 
 const routeMeta = {
   canonicalPath: '${route.canonicalPath}',

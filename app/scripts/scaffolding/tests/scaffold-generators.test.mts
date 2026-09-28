@@ -4532,7 +4532,7 @@ export default PurchaseOrdersPage;
             fixture.root,
             'verticals/inventory-stock/src/routes/[lang]/inventory-stock/purchase-orders/route.meta.ts',
           ),
-        ).toBe(`import { defineTenantModuleEntrypoint } from '@app/core-runtime';
+        ).toBe(`import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
 
 const routeMeta = {
   canonicalPath: '/inventory-stock/purchase-orders',

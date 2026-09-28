@@ -1,4 +1,4 @@
-import { defineSystemModuleEntrypoint } from '@app/core-runtime';
+import { defineSystemModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
 
 const routeMeta = {
   canonicalPath: '/contacts',

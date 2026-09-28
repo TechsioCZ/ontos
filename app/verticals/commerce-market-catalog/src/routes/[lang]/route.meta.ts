@@ -1,4 +1,4 @@
-import { defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineTenantModuleEntrypoint } from '@app/core-runtime/module-entrypoint';
 
 const routeMeta = {
   canonicalPath: '/',
