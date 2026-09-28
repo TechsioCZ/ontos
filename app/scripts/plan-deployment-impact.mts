@@ -56,6 +56,12 @@ export interface CloudflareDeployment {
   readonly workerName: string;
 }
 
+/** A Worker placement no longer names, deleted by the edge deploy through the Shell's Wrangler. */
+export interface CloudflareRetirement {
+  readonly packageName: string;
+  readonly workerName: string;
+}
+
 const CloudflareWorkerSchema = Schema.optional(Schema.Struct({ workerName: Schema.optional(Schema.String) }));
 
 const TopologyOwnerSchema = Schema.Struct({
@@ -106,11 +112,21 @@ type Ownership = typeof OwnershipSchema.Type;
 // (public URLs, Worker binding names, the Shell origin). Keeping it in the reviewed document makes
 // every change to it a topology change, which replans every unit, so no Worker keeps a stale build.
 const CLOUDFLARE_BUILD_VARIABLE_PATTERN = /^(?:MODERN|ULTRAMODERN|VERTICAL)_[A-Z0-9_]+$/u;
+// The deploy job sets these from the run itself; reviewed configuration must not override the
+// revision or environment a Worker build claims.
+const RESERVED_CLOUDFLARE_BUILD_VARIABLES: ReadonlySet<string> = new Set([
+  'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+  'ULTRAMODERN_SOURCE_REVISION',
+]);
 const CloudflarePlacementSchema = Schema.Struct({
   buildEnvironment: Schema.Record(Schema.String, Schema.String),
+  // Workers an earlier placement deployed and this one no longer names. Every edge deploy deletes
+  // them idempotently, and the planner refuses a placement that drops a Worker without listing it.
+  retiredWorkers: Schema.Array(Schema.String),
   schemaVersion: Schema.Literal(1),
   units: Schema.Array(Schema.String),
 });
+type CloudflarePlacement = typeof CloudflarePlacementSchema.Type;
 const CLOUDFLARE_PLACEMENT_PATH = 'topology/cloudflare-placement.json';
 // Repository-root inputs of the edge deploy itself: a change to how Workers are built or deployed
 // replans every placed unit, even when no unit's source changed.
@@ -152,6 +168,7 @@ export interface DeploymentImpactPlan {
   readonly schemaVersion: 1;
   readonly units: {
     readonly cloudflare: readonly CloudflareDeployment[];
+    readonly cloudflareRetirements: readonly CloudflareRetirement[];
     readonly migrator: boolean;
     readonly providers: readonly string[];
     readonly shell: boolean;
@@ -326,6 +343,7 @@ const DeploymentImpactPlanSchema = Schema.Struct({
     cloudflare: Schema.Array(
       Schema.Struct({ id: Schema.String, packageName: Schema.String, workerName: Schema.String }),
     ),
+    cloudflareRetirements: Schema.Array(Schema.Struct({ packageName: Schema.String, workerName: Schema.String })),
     migrator: Schema.Boolean,
     providers: Schema.Array(Schema.String),
     shell: Schema.Boolean,
@@ -701,7 +719,45 @@ const validateCloudflareBuildEnvironment = (buildEnvironment: Readonly<Record<st
         `${CLOUDFLARE_PLACEMENT_PATH} buildEnvironment key "${key}" must be a MODERN_, ULTRAMODERN_ or VERTICAL_ build variable`,
       );
     }
+    if (RESERVED_CLOUDFLARE_BUILD_VARIABLES.has(key)) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} buildEnvironment must not set "${key}"; the deploy job sets it from the run`);
+    }
   }
+};
+
+const placedWorkerNames = (units: readonly string[], topology: ReferenceTopology): ReadonlySet<string> => {
+  const workerNames = cloudflareWorkerNames(topology);
+  return new Set(units.flatMap((id) => workerNames.get(id) ?? []));
+};
+
+/**
+ * Workers placement retires. A Worker placed at the comparison base and no longer placed now must
+ * be listed in `retiredWorkers`, so a removal or rename never leaves the old Worker serving.
+ */
+const planCloudflareRetirements = (
+  placement: CloudflarePlacement,
+  topology: ReferenceTopology,
+  basePlacedWorkers: ReadonlySet<string>,
+  shellPackageName: string,
+): readonly CloudflareRetirement[] => {
+  const placedWorkers = placedWorkerNames(placement.units, topology);
+  const retired = new Set(placement.retiredWorkers);
+  for (const workerName of retired) {
+    if (placedWorkers.has(workerName)) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} retires "${workerName}", which a placed unit still deploys`);
+    }
+  }
+  for (const workerName of basePlacedWorkers) {
+    if (!placedWorkers.has(workerName) && !retired.has(workerName)) {
+      fail(
+        `${CLOUDFLARE_PLACEMENT_PATH} no longer places Worker "${workerName}"; list it in retiredWorkers so the edge deploy deletes it`,
+      );
+    }
+  }
+  return EffectArray.sort([...retired], Order.String).map((workerName) => ({
+    packageName: shellPackageName,
+    workerName,
+  }));
 };
 
 const planCloudflareDeployments = (
@@ -852,6 +908,51 @@ const requireComparableBase = (rootDirectory: string, baseRevision: string, head
       );
     }
     return yield* Effect.undefined;
+  });
+
+/** A JSON document at a revision, or none when the revision has no such file. */
+const readJsonAtRevision = <DocumentSchema extends Schema.ConstraintDecoder<unknown>>(
+  schema: DocumentSchema,
+  rootDirectory: string,
+  revision: string,
+  relativePath: string,
+) =>
+  Effect.gen(function* readJsonAtRevisionEffect() {
+    const objectName = `${revision}:./${relativePath}`;
+    if (!(yield* gitSucceeds(rootDirectory, ['cat-file', '-e', objectName]))) {
+      return Option.none();
+    }
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const source = yield* spawner.string(
+      ChildProcess.make(GIT_EXECUTABLE, ['show', objectName], { cwd: rootDirectory }),
+    );
+    return Option.some(yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(source));
+  });
+
+// Only the unit list and topology Worker names matter for the base: an older placement document
+// predating `buildEnvironment` or `retiredWorkers` still names what it deployed.
+const BasePlacementSchema = Schema.Struct({ units: Schema.Array(Schema.String) });
+
+const basePlacedWorkerNames = (rootDirectory: string, baseRevision: string | undefined) =>
+  Effect.gen(function* basePlacedWorkerNamesEffect() {
+    if (baseRevision === undefined) {
+      return new Set<string>();
+    }
+    const placement = yield* readJsonAtRevision(
+      BasePlacementSchema,
+      rootDirectory,
+      baseRevision,
+      CLOUDFLARE_PLACEMENT_PATH,
+    );
+    const topology = yield* readJsonAtRevision(
+      ReferenceTopologySchema,
+      rootDirectory,
+      baseRevision,
+      'topology/reference-topology.json',
+    );
+    return Option.isSome(placement) && Option.isSome(topology)
+      ? placedWorkerNames(placement.value.units, topology.value)
+      : new Set<string>();
   });
 
 const changedPathsFromGit = (rootDirectory: string, baseRevision: string, headRevision: string) =>
@@ -1182,6 +1283,12 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
           impacted,
           changedPaths,
         ),
+        cloudflareRetirements: planCloudflareRetirements(
+          cloudflarePlacement,
+          topology,
+          fullDeploy ? new Set() : yield* basePlacedWorkerNames(rootDirectory, baseRevision),
+          shell.packageName,
+        ),
         migrator,
         providers: phases.filter((phase) => phase.kind === 'provider').map((phase) => phase.id),
         shell: impacted.has(shell.id),
@@ -1233,6 +1340,9 @@ const loadAuthorizationPromotionGate = (
 const PlanJsonSchema = Schema.fromJsonString(DeploymentImpactPlanSchema);
 const ProvidersJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
 const CloudflareJsonSchema = Schema.fromJsonString(DeploymentImpactPlanSchema.fields.units.fields.cloudflare);
+const CloudflareRetirementsJsonSchema = Schema.fromJsonString(
+  DeploymentImpactPlanSchema.fields.units.fields.cloudflareRetirements,
+);
 
 const writeGitHubOutputs = (plan: DeploymentImpactPlan, outputPath: string) =>
   Effect.gen(function* writeGitHubOutputsEffect() {
@@ -1240,9 +1350,13 @@ const writeGitHubOutputs = (plan: DeploymentImpactPlan, outputPath: string) =>
     const planJson = yield* Schema.encodeEffect(PlanJsonSchema)(plan);
     const providersJson = yield* Schema.encodeEffect(ProvidersJsonSchema)(plan.units.providers);
     const cloudflareJson = yield* Schema.encodeEffect(CloudflareJsonSchema)(plan.units.cloudflare);
+    const cloudflareRetirementsJson = yield* Schema.encodeEffect(CloudflareRetirementsJsonSchema)(
+      plan.units.cloudflareRetirements,
+    );
     const output = [
       `any=${String(plan.any)}`,
       `cloudflare=${cloudflareJson}`,
+      `cloudflare_retirements=${cloudflareRetirementsJson}`,
       `migrator=${String(plan.units.migrator)}`,
       `plan=${planJson}`,
       `providers=${providersJson}`,

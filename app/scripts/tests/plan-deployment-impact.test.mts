@@ -32,6 +32,7 @@ const planningFailure = <A, E>(effect: Effect.Effect<A, E>) =>
 interface FixtureOptions {
   readonly cloudflareBuildEnvironment?: Readonly<Record<string, string>>;
   readonly cloudflarePlacement?: readonly string[];
+  readonly cloudflareRetiredWorkers?: readonly string[];
   readonly extraSharedPackages?: readonly FixtureOwner[];
   readonly includeContactOwner?: boolean;
   readonly includeWorker?: boolean;
@@ -75,6 +76,7 @@ interface FixtureTopology {
 
 interface FixtureCloudflarePlacement {
   readonly buildEnvironment: Readonly<Record<string, string>>;
+  readonly retiredWorkers: readonly string[];
   readonly schemaVersion: 1;
   readonly units: readonly string[];
 }
@@ -93,6 +95,8 @@ const SHARED_CONTRACTS_OWNER = {
 } as const satisfies FixtureOwner;
 const SHELL_ID = 'shell-super-app';
 const SHELL_PACKAGE = '@app/shell-super-app';
+const SHELL_WORKER = 'app-shell-super-app';
+const CONTACTS_WORKER = 'app-contacts';
 const SHELL_OWNER = {
   id: SHELL_ID,
   package: SHELL_PACKAGE,
@@ -143,7 +147,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
       schemaVersion: 1,
       sharedPackages: [CORE_RUNTIME_OWNER, SHARED_CONTRACTS_OWNER, ...(options.extraSharedPackages ?? [])],
       shell: {
-        cloudflare: { workerName: 'app-shell-super-app' },
+        cloudflare: { workerName: SHELL_WORKER },
         id: SHELL_ID,
         package: SHELL_PACKAGE,
         verticalRefs: options.shellVerticalRefs ?? [verticalId],
@@ -156,6 +160,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
     });
     yield* writeJson(root, CLOUDFLARE_PLACEMENT_PATH, {
       buildEnvironment: options.cloudflareBuildEnvironment ?? {},
+      retiredWorkers: options.cloudflareRetiredWorkers ?? [],
       schemaVersion: 1,
       units: options.cloudflarePlacement ?? [],
     });
@@ -270,6 +275,7 @@ it.live('plans current Contacts owner-local changes without a hard-coded owner r
         });
         expect(plan.units).toEqual({
           cloudflare: [],
+          cloudflareRetirements: [],
           migrator: false,
           providers: ['contacts'],
           shell: false,
@@ -368,8 +374,8 @@ it.live('deploys placed Cloudflare units that are impacted, providers before the
             rootDirectory: root,
           });
           expect(shared.units.cloudflare).toEqual([
-            { id: 'contacts', packageName: '@app/contacts', workerName: 'app-contacts' },
-            { id: SHELL_ID, packageName: SHELL_PACKAGE, workerName: 'app-shell-super-app' },
+            { id: 'contacts', packageName: '@app/contacts', workerName: CONTACTS_WORKER },
+            { id: SHELL_ID, packageName: SHELL_PACKAGE, workerName: SHELL_WORKER },
           ]);
           const shellOnly = yield* planDeploymentImpact({
             changedPaths: ['apps/shell-super-app/src/routes/page.tsx'],
@@ -444,6 +450,77 @@ it.live('fails closed for an edge build variable the Cloudflare builds do not re
           ).toMatch(/buildEnvironment key "CLOUDFLARE_API_TOKEN" must be a MODERN_, ULTRAMODERN_ or VERTICAL_ build/u);
         }),
       { cloudflareBuildEnvironment: { CLOUDFLARE_API_TOKEN: 'leaked' }, cloudflarePlacement: ['contacts'] },
+    );
+  }),
+);
+
+it.live('fails closed when edge build configuration overrides the run identity', () =>
+  Effect.gen(function* failsClosedForReservedBuildVariables() {
+    for (const key of ['ULTRAMODERN_SOURCE_REVISION', 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT']) {
+      yield* withFixture(
+        (root) =>
+          Effect.gen(function* failsClosedForReservedBuildVariableInFixture() {
+            expect(
+              yield* planningFailure(planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root })),
+            ).toContain(`buildEnvironment must not set "${key}"`);
+          }),
+        { cloudflareBuildEnvironment: { [key]: 'forged' }, cloudflarePlacement: ['contacts'] },
+      );
+    }
+  }),
+);
+
+const commitPlacement = (
+  root: string,
+  placement: readonly string[],
+  retiredWorkers: readonly string[],
+  message: string,
+) =>
+  Effect.gen(function* commitPlacementEffect() {
+    yield* writeJson(root, CLOUDFLARE_PLACEMENT_PATH, {
+      buildEnvironment: {},
+      retiredWorkers,
+      schemaVersion: 1,
+      units: placement,
+    });
+    runGit(root, ['add', '.']);
+    runGit(root, ['commit', '-m', message]);
+    return runGit(root, ['rev-parse', 'HEAD']);
+  });
+
+it.live('refuses to drop a deployed Worker from placement until it is listed for retirement', () =>
+  Effect.gen(function* retiresRemovedWorkers() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* retiresRemovedWorkersInFixture() {
+          runGit(root, ['init']);
+          runGit(root, ['add', '.']);
+          runGit(root, ['commit', '-m', 'contacts and Shell on the edge']);
+          const deployed = runGit(root, ['rev-parse', 'HEAD']);
+          const dropped = yield* commitPlacement(root, [SHELL_ID], [], 'drop contacts');
+          expect(
+            yield* planningFailure(
+              planDeploymentImpact({ baseRevision: deployed, headRevision: dropped, rootDirectory: root }),
+            ),
+          ).toContain('no longer places Worker "app-contacts"; list it in retiredWorkers');
+          const retired = yield* commitPlacement(root, [SHELL_ID], [CONTACTS_WORKER], 'retire contacts');
+          const plan = yield* planDeploymentImpact({
+            baseRevision: deployed,
+            headRevision: retired,
+            rootDirectory: root,
+          });
+          expect(plan.units.cloudflareRetirements).toEqual([
+            { packageName: SHELL_PACKAGE, workerName: CONTACTS_WORKER },
+          ]);
+          // A Worker still placed cannot also be retired.
+          const contradictory = yield* commitPlacement(root, [SHELL_ID], [SHELL_WORKER], 'retire the Shell');
+          expect(
+            yield* planningFailure(
+              planDeploymentImpact({ baseRevision: retired, headRevision: contradictory, rootDirectory: root }),
+            ),
+          ).toContain('retires "app-shell-super-app", which a placed unit still deploys');
+        }),
+      { cloudflarePlacement: [SHELL_ID, 'contacts'] },
     );
   }),
 );

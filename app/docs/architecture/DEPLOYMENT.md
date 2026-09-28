@@ -231,19 +231,30 @@ change to the edge workflow or the install action replans every placed unit, and
 planner itself replans every unit on Zerops and the edge. Because the history is separate, a failed
 edge deploy is replanned by the next run even when Zerops succeeded for the same revision.
 
+Build, deploy, proof and retirement steps each have a timeout that leaves the restore step its own
+budget inside the job deadline, so a hung deploy still ends with every changed Worker restored.
+
+Removing a unit from placement, or renaming its Worker, must list the old Worker in
+`retiredWorkers`. The planner compares placement with the last successful edge deployment and
+refuses a change that drops a deployed Worker without retiring it. After the proofs pass, the job
+deletes every retired Worker that still exists and confirms Cloudflare reports it absent. An entry
+can be removed from `retiredWorkers` once no successful edge deployment still places it.
+
 The job runs only when the repository is configured for Cloudflare: the `CLOUDFLARE_ACCOUNT_ID`
-variable and the `CLOUDFLARE_API_TOKEN` secret in the `stage-edge` environment. The
-`edge-deploy-readiness` job checks both from `stage-edge` without creating a deployment; if either is
-missing, `deploy-cloudflare` is skipped, records nothing, and CI stays green.
+variable, the `CLOUDFLARE_API_TOKEN` secret in the `stage-edge` environment, and a complete build
+environment (below). The `edge-deploy-readiness` job checks all three from `stage-edge` without
+creating a deployment. If any is missing, `deploy-cloudflare` is skipped, records nothing, a notice
+names what is missing, and CI stays green.
 
 The non-secret configuration the Worker builds read is reviewed source, the `buildEnvironment` of
-`topology/cloudflare-placement.json`: `ULTRAMODERN_PUBLIC_URL_*` for every Worker (the output
-verifier requires them), `ULTRAMODERN_MF_DEV_ORIGIN` set to the stage Shell origin (the placed
-units' API CORS allowlist; the job fails before changing any Worker without it), plus any
-`MODERN_ASSET_PREFIX` or `VERTICAL_*_WORKER_BINDING` / `_WORKER_NAME` overrides. Only `MODERN_`,
-`ULTRAMODERN_` and `VERTICAL_` keys are accepted. Because it is a topology document, changing a
-value replans every unit, so no Worker keeps a build of the old configuration. The job never reads
-the Zerops `stage` environment.
+`topology/cloudflare-placement.json`. It must hold `ULTRAMODERN_MF_DEV_ORIGIN`, the stage Shell
+origin (the placed units' API CORS allowlist), and `ULTRAMODERN_PUBLIC_URL_<UNIT>` for every placed
+unit (the output verifier requires them). It may add `MODERN_ASSET_PREFIX` or
+`VERTICAL_*_WORKER_BINDING` / `_WORKER_NAME` overrides. Only `MODERN_`, `ULTRAMODERN_` and
+`VERTICAL_` keys are accepted, and `ULTRAMODERN_SOURCE_REVISION` and
+`ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` are reserved for the run. Because it is a topology document,
+changing a value replans every unit, so no Worker keeps a build of the old configuration. The job
+never reads the Zerops `stage` environment.
 Each Worker's runtime configuration is set once, outside CI, before its first deploy: secrets
 (`wrangler secret put`, for example `SPICEDB_PRESHARED_KEY` and `BETTER_AUTH_SECRET`) and the
 Hyperdrive and Workers VPC bindings its Worker configuration declares. The per-unit

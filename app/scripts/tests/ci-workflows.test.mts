@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
@@ -48,6 +49,7 @@ const WorkflowStepSchema = Schema.Struct({
   if: Schema.optional(Schema.String),
   name: Schema.String,
   run: Schema.optional(Schema.String),
+  'timeout-minutes': Schema.optional(Schema.Number),
 });
 const EdgeDeployWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
@@ -57,6 +59,7 @@ const EdgeDeployWorkflowSchema = Schema.Struct({
       if: Schema.String,
       needs: Schema.Array(Schema.String),
       steps: Schema.Array(WorkflowStepSchema),
+      'timeout-minutes': Schema.Number,
     }),
     'deploy-stage': Schema.Struct({ environment: Schema.String }),
     'edge-deploy-readiness': Schema.Struct({
@@ -70,6 +73,17 @@ const EdgeDeployWorkflowSchema = Schema.Struct({
 
 /** Every `pnpm …` command line a workflow step runs. */
 const packageCommands = (step: typeof WorkflowStepSchema.Type) => (step.run ?? '').match(/pnpm [^\n]*/gu) ?? [];
+const DEPLOY_STEP = 'Deploy planned edge units in dependency order';
+const RESTORE_STEP = 'Restore the edge Workers this run deployed';
+const RETIRE_STEP = 'Retire Workers placement no longer deploys';
+const BUILD_STEP = 'Build and verify planned edge units';
+const PROOF_STEP = 'Prove the deployed edge units on their public URLs';
+
+interface PlacementBuildInputs {
+  readonly buildEnvironment: Readonly<Record<string, string>>;
+  readonly units: readonly string[];
+}
+
 const readEdgeDeployJobs = () =>
   Schema.decodeUnknownSync(EdgeDeployWorkflowSchema)(
     parse(
@@ -85,14 +99,42 @@ it('deploys to Cloudflare only when both the account and the deploy token are co
   expect(readiness.if).toContain("github.ref == 'refs/heads/main'");
   // Reading `stage-edge` secrets for the check must not add an entry to its deployment history.
   expect(readiness.environment).toEqual({ deployment: false, name: 'stage-edge' });
-  const [check] = readiness.steps;
-  expect(readiness.steps).toHaveLength(1);
+  const check = readiness.steps.find((step) => step.id === 'configuration');
+  expect(readiness.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined)).toEqual([check]);
   expect(check?.env).toEqual({
     CLOUDFLARE_ACCOUNT_ID: expression('vars.CLOUDFLARE_ACCOUNT_ID'),
     CLOUDFLARE_API_TOKEN: expression('secrets.CLOUDFLARE_API_TOKEN'),
   });
-  expect(check?.run).toContain('-n "$CLOUDFLARE_ACCOUNT_ID" && -n "$CLOUDFLARE_API_TOKEN"');
-  expect(readiness.outputs.configured).toBe(expression(`steps.${check?.id ?? ''}.outputs.configured`));
+  expect(check?.run).toContain('[[ -n "$CLOUDFLARE_ACCOUNT_ID" ]]');
+  expect(check?.run).toContain('[[ -n "$CLOUDFLARE_API_TOKEN" ]]');
+  expect(readiness.outputs.configured).toBe(expression('steps.configuration.outputs.configured'));
+  // An incomplete reviewed build environment is not configured either: the Shell origin and every
+  // placed Worker's public URL must be present before any Worker is built.
+  const filter = /jq -r '(?<filter>[^']+)' app\/topology\/cloudflare-placement\.json/u.exec(check?.run ?? '')?.groups
+    ?.filter;
+  const missingBuildVariables = (placement: PlacementBuildInputs) =>
+    execFileSync('/usr/bin/jq', ['-r', filter ?? 'error("missing filter")'], {
+      encoding: 'utf-8',
+      input: JSON.stringify(placement),
+    })
+      .split('\n')
+      .filter(Boolean);
+  expect(
+    missingBuildVariables({ buildEnvironment: {}, units: ['commerce-customer-context', 'shell-super-app'] }),
+  ).toEqual([
+    'ULTRAMODERN_MF_DEV_ORIGIN',
+    'ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT',
+    'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP',
+  ]);
+  expect(
+    missingBuildVariables({
+      buildEnvironment: {
+        ULTRAMODERN_MF_DEV_ORIGIN: 'https://stage.example.test',
+        ULTRAMODERN_PUBLIC_URL_PRICING: 'https://pricing.example.test',
+      },
+      units: ['pricing'],
+    }),
+  ).toEqual([]);
 });
 
 const WRANGLER_COMMAND = /^pnpm --filter "\$(?:[a-z_]+|\d)" exec wrangler /u;
@@ -110,10 +152,10 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   const byName = new Map(edge.steps.map((step) => [step.name, step]));
   expect(byName.get('Resolve the last successful edge deployment')?.run).toContain('--environment stage-edge');
   expect(byName.get('Plan the impacted edge units')?.id).toBe('impact');
-  const build = byName.get('Build and verify planned edge units');
-  const deploy = byName.get('Deploy planned edge units in dependency order');
-  const proof = byName.get('Prove the deployed edge units on their public URLs');
-  const restore = byName.get('Restore the edge Workers this run deployed');
+  const build = byName.get(BUILD_STEP);
+  const deploy = byName.get(DEPLOY_STEP);
+  const proof = byName.get(PROOF_STEP);
+  const restore = byName.get(RESTORE_STEP);
   for (const step of [build, deploy, proof]) {
     expect(step?.env?.CLOUDFLARE_UNITS_JSON).toBe(expression('steps.impact.outputs.cloudflare'));
   }
@@ -122,8 +164,6 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   expect(build?.run).toContain('cloudflare-output-verify --app "$id" --require-public-urls');
   expect(deploy?.run).toContain('exec wrangler deploy --config .output/wrangler.json');
   expect(proof?.run).toContain('run cloudflare:proof');
-  // The placed units' CORS allowlist needs the real Shell origin before any Worker is built.
-  const buildRun = build?.run ?? '';
   // Build configuration comes from the reviewed placement document, not from environment
   // variables a Git diff cannot see.
   for (const step of [build, proof]) {
@@ -132,8 +172,6 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
     );
     expect(JSON.stringify(step?.env)).not.toContain('vars');
   }
-  expect(buildRun).toContain('ULTRAMODERN_MF_DEV_ORIGIN');
-  expect(buildRun.indexOf('ULTRAMODERN_MF_DEV_ORIGIN')).toBeLessThan(buildRun.indexOf('run cloudflare:build'));
   // Every Worker is snapshotted before the first one changes, and restored to that snapshot after
   // a failed deploy or proof: the recorded version, or no Worker when this run created it.
   expect(deploy?.run).toContain('wrangler deployments status');
@@ -145,9 +183,22 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   // The account token reaches only the steps that use it, and those run nothing but Wrangler:
   // building, verifying and proving a unit executes dependency code.
   const tokenSteps = edge.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined);
-  expect(tokenSteps.map((step) => step.name)).toEqual([
-    'Deploy planned edge units in dependency order',
-    'Restore the edge Workers this run deployed',
-  ]);
+  expect(tokenSteps.map((step) => step.name)).toEqual([DEPLOY_STEP, RETIRE_STEP, RESTORE_STEP]);
   expect(tokenSteps.flatMap(packageCommands).filter((command) => !WRANGLER_COMMAND.test(command))).toEqual([]);
+});
+
+it('bounds every edge step that changes or proves Workers and verifies retirements', () => {
+  const edge = readEdgeDeployJobs()['deploy-cloudflare'];
+  const byName = new Map(edge.steps.map((step) => [step.name, step]));
+  const retire = byName.get(RETIRE_STEP);
+  // A hung build, deploy, proof or retirement times out as a step failure, leaving the restore
+  // step its own budget inside the job deadline.
+  const bounded = [BUILD_STEP, DEPLOY_STEP, PROOF_STEP, RETIRE_STEP, RESTORE_STEP].map(
+    (name) => byName.get(name)?.['timeout-minutes'] ?? Number.POSITIVE_INFINITY,
+  );
+  expect(bounded.every(Number.isFinite)).toBe(true);
+  expect(bounded.reduce((total, minutes) => total + minutes, 0)).toBeLessThanOrEqual(edge['timeout-minutes'] - 10);
+  // Placement-retired Workers are deleted and verified absent.
+  expect(retire?.env?.CLOUDFLARE_RETIREMENTS_JSON).toBe(expression('steps.impact.outputs.cloudflare_retirements'));
+  expect(retire?.run).toContain('wrangler delete --name "$worker" --force');
 });

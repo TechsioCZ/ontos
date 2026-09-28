@@ -600,7 +600,8 @@ jobs:
           --minimum-severity DEBUG
 
   # The edge deploy runs only when the repository is configured for Cloudflare: the
-  # CLOUDFLARE_ACCOUNT_ID variable and the `stage-edge` CLOUDFLARE_API_TOKEN secret. Environment
+  # CLOUDFLARE_ACCOUNT_ID variable, the `stage-edge` CLOUDFLARE_API_TOKEN secret, and a complete
+  # reviewed build environment (the Shell origin and every placed Worker's public URL). Environment
   # secrets are unreadable in a job-level `if`, so this job reads them from `stage-edge` without
   # creating a deployment (`deployment: false`); only a real edge deploy enters its history.
   edge-deploy-readiness:
@@ -611,21 +612,38 @@ jobs:
     environment:
       name: stage-edge
       deployment: false
-    permissions: {}
+    permissions:
+      contents: read
     outputs:
       configured: ${{ steps.configuration.outputs.configured }}
     steps:
-      - name: Check the Cloudflare account and deploy token
+      - name: Checkout the edge placement
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+          sparse-checkout: app/topology/cloudflare-placement.json
+          sparse-checkout-cone-mode: false
+
+      - name: Check the Cloudflare account, deploy token and edge build environment
         id: configuration
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          if [[ -n "$CLOUDFLARE_ACCOUNT_ID" && -n "$CLOUDFLARE_API_TOKEN" ]]; then
+          missing=()
+          [[ -n "$CLOUDFLARE_ACCOUNT_ID" ]] || missing+=('the CLOUDFLARE_ACCOUNT_ID variable')
+          [[ -n "$CLOUDFLARE_API_TOKEN" ]] || missing+=('the stage-edge CLOUDFLARE_API_TOKEN secret')
+          # The placed units bake the Shell origin into their API CORS allowlist, and the output
+          # verifier requires every Worker's public URL.
+          while IFS= read -r key; do
+            missing+=("buildEnvironment.$key")
+          done < <(jq -r '.buildEnvironment as $environment | (["ULTRAMODERN_MF_DEV_ORIGIN"] + [.units[] | "ULTRAMODERN_PUBLIC_URL_" + (ascii_upcase | gsub("-"; "_"))])[] | select(($environment[.] // "") == "")' app/topology/cloudflare-placement.json)
+          if [[ ${#missing[@]} -eq 0 ]]; then
             echo 'configured=true' >>"$GITHUB_OUTPUT"
           else
             echo 'configured=false' >>"$GITHUB_OUTPUT"
-            echo '::notice title=Edge deploy not configured::Set the CLOUDFLARE_ACCOUNT_ID variable and the stage-edge CLOUDFLARE_API_TOKEN secret to deploy edge units.'
+            joined="$(IFS=','; echo "${missing[*]}")"
+            echo "::notice title=Edge deploy not configured::Missing ${joined//,/, }; edge units were not deployed."
           fi
 
   # Edge units (topology/cloudflare-placement.json) ship as Cloudflare Workers after the Zerops
@@ -638,7 +656,9 @@ jobs:
     if: needs.edge-deploy-readiness.outputs.configured == 'true'
     needs: [deploy-stage, edge-deploy-readiness]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Step timeouts leave the restore step its own budget inside the job deadline, so a hung
+    # deploy or proof still ends with every changed Worker restored.
+    timeout-minutes: 90
     environment: stage-edge
     permissions:
       contents: read
@@ -692,6 +712,7 @@ jobs:
       # dependency code (bundlers, build plugins, the framework CLI), so those steps run without
       # it. The build step runs each unit's `cloudflare:deploy` up to, but not including, Wrangler.
       - name: Build and verify planned edge units
+        timeout-minutes: 25
         working-directory: app
         env:
           CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
@@ -704,12 +725,6 @@ jobs:
           while IFS=$'\t' read -r key value; do
             export "$key=$value"
           done < <(jq -r '.buildEnvironment | to_entries[] | [.key, .value] | @tsv' topology/cloudflare-placement.json)
-          # The placed units bake the Shell origin into their API CORS allowlist; without it they
-          # fall back to the local development origin and reject the real stage Shell.
-          if [[ -z "${ULTRAMODERN_MF_DEV_ORIGIN:-}" ]]; then
-            echo 'topology/cloudflare-placement.json must set buildEnvironment.ULTRAMODERN_MF_DEV_ORIGIN to the stage Shell origin; no Worker was changed.' >&2
-            exit 1
-          fi
           mapfile -t units < <(jq -r '.[] | [.id, .packageName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
           for unit in "${units[@]}"; do
             IFS=$'\t' read -r id package <<<"$unit"
@@ -719,6 +734,7 @@ jobs:
 
       - name: Deploy planned edge units in dependency order
         id: deploy
+        timeout-minutes: 15
         working-directory: app
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -758,6 +774,7 @@ jobs:
           done
 
       - name: Prove the deployed edge units on their public URLs
+        timeout-minutes: 15
         working-directory: app
         env:
           CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
@@ -772,6 +789,36 @@ jobs:
             mise exec -- pnpm --filter "$package" run cloudflare:proof
           done
 
+      # Placement lists the Workers it no longer deploys; each is deleted once the new topology is
+      # proven, and counts as retired only when Cloudflare reports it absent.
+      - name: Retire Workers placement no longer deploys
+        if: steps.impact.outputs.cloudflare_retirements != '[]'
+        timeout-minutes: 10
+        working-directory: app
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_RETIREMENTS_JSON: ${{ steps.impact.outputs.cloudflare_retirements }}
+        run: |
+          absent() {
+            local status_log="$RUNNER_TEMP/retire-status-$2.log"
+            ! mise exec -- pnpm --filter "$1" exec wrangler deployments status --name "$2" --json >/dev/null 2>"$status_log" \
+              && grep -q 'code: 10007' "$status_log"
+          }
+          mapfile -t retirements < <(jq -r '.[] | [.packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_RETIREMENTS_JSON")
+          for retirement in "${retirements[@]}"; do
+            IFS=$'\t' read -r package worker <<<"$retirement"
+            if absent "$package" "$worker"; then
+              echo "$worker is retired"
+            elif mise exec -- pnpm --filter "$package" exec wrangler delete --name "$worker" --force \
+              && absent "$package" "$worker"; then
+              echo "Deleted $worker, which placement retired"
+            else
+              echo "::error title=Edge Worker not retired::$worker is retired by placement but still exists"
+              exit 1
+            fi
+          done
+
       # Worker versions are immutable. After a failed deploy or proof, each Worker this run
       # deployed returns to its snapshotted state: the exact version that was active before, or no
       # Worker at all when this run created it. A Worker counts as restored only once that state is
@@ -779,6 +826,7 @@ jobs:
       # deploy may have stopped after some Workers changed.
       - name: Restore the edge Workers this run deployed
         if: (failure() || cancelled()) && steps.deploy.outcome != 'skipped'
+        timeout-minutes: 10
         working-directory: app
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
