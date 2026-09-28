@@ -296,3 +296,32 @@ describe('Product Configuration definition and identity', () => {
     ).toBe('INDETERMINATE');
   });
 });
+
+describe('Catalog audit signed configuration identity', () => {
+  it('F6 preserves the sign of nonzero fractional configurations', () => {
+    const measured = (amount: string): ProductConfiguration => ({
+      ...selected,
+      values: [
+        { choiceKey: 'mount', kind: 'SINGLE_CHOICE', optionKey: 'A' },
+        { amount, choiceKey: 'length', kind: 'MEASURED_VALUE', unitRef },
+      ],
+    });
+    for (const [left, right, same] of [
+      ['-0.5', '0.5', false],
+      ['-0.01', '0.01', false],
+      ['-0.500', '-0.5', true],
+      ['-0.000', '0', true],
+      ['-0', '0.000', true],
+      ['1.0', '1.000', true],
+      ['-1.0', '-1.000', true],
+    ] as const) {
+      expect(sameProductConfigurationSelection(measured(left), measured(right), definition)).toMatchObject({
+        same,
+        status: 'VALID',
+      });
+      expect(
+        sameProductConfigurationSelectionAcrossRevisions(measured(left), definition, measured(right), definition),
+      ).toMatchObject({ same, status: 'VALID' });
+    }
+  });
+});

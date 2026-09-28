@@ -123,7 +123,7 @@ const canonicalDecimal = (amount: string): string | null => {
   }
   const [whole = '', fraction = ''] = amount.split('.');
   const trimmed = fraction.replace(/0+$/u, '');
-  const normalizedWhole = whole === '-0' ? '0' : whole;
+  const normalizedWhole = whole === '-0' && trimmed.length === 0 ? '0' : whole;
   return normalizedWhole + (trimmed.length === 0 ? '' : `.${trimmed}`);
 };
 

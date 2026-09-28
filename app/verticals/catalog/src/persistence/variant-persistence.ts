@@ -593,6 +593,10 @@ export const variantPersistenceForScope = (
     if (row.currentRevision !== input.expectedVariantRevision) {
       return { _tag: 'revision_conflict', actualRevision: row.currentRevision };
     }
+    // Confirmation is not reactivation: retired forms must pass the separate Current-use assessment.
+    if (row.lifecycleState === 'RETIRED') {
+      return { _tag: 'lifecycle_conflict' };
+    }
 
     const axisReader = variantAxisPersistenceForScope(transaction, scope);
     const mapAxisBasisError = (

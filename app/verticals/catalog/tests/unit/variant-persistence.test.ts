@@ -574,3 +574,48 @@ describe('Variant persistence', () => {
     }),
   );
 });
+
+it.effect('F2 rejects retired combination confirmation before dependent reads or writes', () =>
+  Effect.gen(function* rejectRetiredConfirmation() {
+    const writes: string[] = [];
+    const reads: string[] = [];
+    const transaction = {
+      insert: () => {
+        writes.push('insert');
+        throw new Error('Retired confirmation must not append a revision');
+      },
+      select: () => ({
+        from: (table: typeof products | typeof productVariants) => {
+          if (table === products) {
+            reads.push('product');
+            return lockedRow({ ...row, lifecycleState: 'ACTIVE' });
+          }
+          expect(table).toBe(productVariants);
+          reads.push('variant');
+          return lockedRow({ ...row, lifecycleState: 'RETIRED' });
+        },
+      }),
+      update: () => {
+        writes.push('update');
+        throw new Error('Retired confirmation must not update a Variant');
+      },
+    };
+    // @ts-expect-error Only the owner reads permitted before lifecycle rejection are supplied.
+    const service = variantPersistenceForScope(transaction, scope);
+    const result = yield* service.confirm({
+      ...evidence,
+      expectedAxisRevision: 1,
+      expectedVariantRevision: 1,
+      productRef,
+      variantRef,
+    });
+    expect(
+      Match.value(result).pipe(
+        Match.tag('lifecycle_conflict', () => true),
+        Match.orElse(() => false),
+      ),
+    ).toBe(true);
+    expect(reads).toEqual(['product', 'variant']);
+    expect(writes).toEqual([]);
+  }),
+);
