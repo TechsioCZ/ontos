@@ -368,6 +368,13 @@ const InventoryLocaleSchema = Schema.Struct({
   }),
 });
 
+const CorePackageExportsSchema = Schema.Struct({
+  exports: Schema.Record(Schema.String, Schema.String),
+  name: Schema.String,
+});
+
+const decodeCorePackageExports = (source: string) =>
+  Schema.decodeUnknownEffect(CorePackageExportsSchema)(JSON.parse(source));
 const decodeFixturePackage = (source: string) => Schema.decodeUnknownEffect(FixturePackageSchema)(JSON.parse(source));
 const decodeInventoryLocale = (source: string) => Schema.decodeUnknownEffect(InventoryLocaleSchema)(JSON.parse(source));
 
@@ -5918,6 +5925,17 @@ it.live(
           ),
           { concurrency: 'unbounded' },
         );
+        // Map every @app/core-runtime export exactly as the package declares it, so the fixture cannot drift.
+        const coreRuntimeDirectory = path.join(appRoot, path.dirname(path.dirname(coreRuntimeIndexFile)));
+        const corePackage = yield* decodeCorePackageExports(
+          yield* Effect.promise(() => readFile(path.join(coreRuntimeDirectory, 'package.json'), 'utf-8')),
+        );
+        const coreRuntimePaths = Object.fromEntries(
+          Object.entries(corePackage.exports).map(([subpath, target]) => [
+            path.posix.join(corePackage.name, subpath),
+            [path.join(coreRuntimeDirectory, target)],
+          ]),
+        );
         const fixtureTsconfig = path.join(fixture.root, 'tsconfig.generated.json');
         yield* Effect.promise(() =>
           writeFile(
@@ -5930,29 +5948,7 @@ it.live(
                 moduleResolution: 'Bundler',
                 noEmit: true,
                 paths: {
-                  '@app/core-runtime': [path.join(appRoot, coreRuntimeIndexFile)],
-                  '@app/core-runtime/actions/principal-context': [
-                    path.join(appRoot, 'packages/core-runtime/src/actions/principal-context.ts'),
-                  ],
-                  '@app/core-runtime/actions/runtime-wiring': [
-                    path.join(appRoot, 'packages/core-runtime/src/actions/runtime-wiring.ts'),
-                  ],
-                  '@app/core-runtime/auth/gateway-assertion-redemption': [
-                    path.join(appRoot, 'packages/core-runtime/src/auth/gateway-assertion-redemption.ts'),
-                  ],
-                  '@app/core-runtime/http/action-runner': [
-                    path.join(appRoot, 'packages/core-runtime/src/http/http-instrumentation-seam.ts'),
-                  ],
-                  '@app/core-runtime/http/governed-read': [
-                    path.join(appRoot, 'packages/core-runtime/src/http/governed-read.ts'),
-                  ],
-                  '@app/core-runtime/http/principal-authentication': [
-                    path.join(appRoot, 'packages/core-runtime/src/http/principal-authentication.ts'),
-                  ],
-                  '@app/core-runtime/module-entrypoint': [path.join(appRoot, coreRuntimeModuleEntrypointFile)],
-                  '@app/core-runtime/outbox/worker': [
-                    path.join(appRoot, 'packages/core-runtime/src/outbox/worker-entrypoint.ts'),
-                  ],
+                  ...coreRuntimePaths,
                   '@app/gateway-principal-verifier/server': [
                     path.join(appRoot, 'packages/gateway-principal-verifier/src/server.ts'),
                   ],
