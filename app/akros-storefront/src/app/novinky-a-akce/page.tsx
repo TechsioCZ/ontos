@@ -3,15 +3,72 @@ import Image from "next/image";
 import NextLink from "next/link";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 
+import { NewsProductGrid, type NewsProductCardItem } from "@/components/news-product-grid";
 import { PrimaryLinkButton } from "@/components/primary-link-button";
 import { StorefrontWideShell } from "@/components/storefront-shell";
-import { formatPrice } from "@/lib/format";
-import { getFeaturedProducts } from "@/mock-storefront/catalog";
+import { getNewProducts, getPromotionItems } from "@/mock-storefront/catalog";
 
 export const metadata: Metadata = { title: "Novinky a akce" };
 
+const isGenericPromotionGroup = (name: string) => name.trim().toLocaleUpperCase("cs-CZ") === "AKCE";
+
 export default function NewsPage() {
-  const products = getFeaturedProducts();
+  const promotedItems = getPromotionItems()
+    .filter(({ product }) => !isGenericPromotionGroup(product.name))
+    .filter(({ product, variant }) => {
+      const priceMinor = variant?.priceMinor ?? product.priceMinor;
+      const minimumQuantity = variant?.minimumQuantity ?? product.minimumQuantity;
+      const stockCount = variant?.stockCount ?? product.stockCount;
+
+      return priceMinor > 0 && stockCount >= minimumQuantity;
+    })
+    .filter(
+      ({ product }, index, items) =>
+        items.findIndex((candidate) => candidate.product.id === product.id) === index,
+    )
+    .sort((left, right) => Number(right.kind === "sale") - Number(left.kind === "sale"))
+    .slice(0, 4);
+  const promotedProductIds = new Set(promotedItems.map(({ product }) => product.id));
+  const newProducts = getNewProducts()
+    .filter(
+      (product) => !promotedProductIds.has(product.id) && !isGenericPromotionGroup(product.name),
+    )
+    .slice(0, 4);
+  const newItems: NewsProductCardItem[] = newProducts.map((product) => ({
+    id: product.id,
+    productId: product.id,
+    slug: product.slug,
+    name: product.name,
+    productName: product.name,
+    sku: product.sku,
+    imageSrc: product.imageSrc,
+    imageAlt: product.imageAlt,
+    priceMinor: product.priceMinor,
+    currency: product.currency,
+    unit: product.unit,
+    stockCount: product.stockCount,
+    minimumQuantity: product.minimumQuantity,
+    kind: "new",
+  }));
+  const promotionItems: NewsProductCardItem[] = promotedItems.map(({ product, variant, kind }) => ({
+    id: `${product.id}-${variant?.id ?? "product"}`,
+    productId: product.id,
+    variantId: variant?.id,
+    slug: product.slug,
+    name: variant?.label ?? product.name,
+    productName: product.name,
+    sku: variant?.sku ?? product.sku,
+    imageSrc: variant?.imageSrc ?? product.imageSrc,
+    imageAlt: variant?.label ?? product.imageAlt,
+    priceMinor: variant?.priceMinor ?? product.priceMinor,
+    originalPriceMinor: variant?.originalPriceMinor ?? product.originalPriceMinor,
+    currency: product.currency,
+    unit: variant?.unit ?? product.unit,
+    stockCount: variant?.stockCount ?? product.stockCount,
+    minimumQuantity: variant?.minimumQuantity ?? product.minimumQuantity,
+    variantLabel: variant?.label,
+    kind,
+  }));
 
   return (
     <StorefrontWideShell>
@@ -28,83 +85,34 @@ export default function NewsPage() {
           <div className="akros-news-hero__overlay">
             <div>
               <Badge size="sm" variant="danger">
-                BLESKOVÁ AKCE V TÝDNU
+                NABÍDKA Z KATALOGU
               </Badge>
-              <h1>15% sleva na veškeré imbusové šrouby DIN 912</h1>
+              <h1>Novinky a akce</h1>
               <p>
-                Využijte výjimečné slevy na stavební a průmyslové nerezové šrouby s vnitřním
-                šestihranem. Akce platí pro třídy A2 i A4 do vyprodání zásob.
+                Prohlédněte si výběr novinek a produkty označené v katalogu jako akční. Zobrazené
+                prodejní ceny vycházejí z dodaného feedu.
               </p>
-              <PrimaryLinkButton href="/kategorie/srouby">Nakoupit v akci</PrimaryLinkButton>
+              <PrimaryLinkButton href="#action-products">Zobrazit akční nabídku</PrimaryLinkButton>
             </div>
-            <aside className="akros-countdown" aria-label="Časově omezená nabídka">
-              <strong>ČASOVĚ OMEZENÁ NABÍDKA</strong>
-              <div>
-                <span>
-                  <b>02</b>DNY
-                </span>
-                <span>
-                  <b>14</b>HOD
-                </span>
-                <span>
-                  <b>35</b>MIN
-                </span>
-              </div>
-              <p>Akce bude ukončena v neděli o půlnoci</p>
-            </aside>
           </div>
         </header>
         <section className="akros-news-section" aria-labelledby="new-products-title">
           <div className="akros-section__heading">
             <h2 id="new-products-title">Nové nerezové produkty v nabídce</h2>
-            <NextLink href="/vyhledavani?q=nerez">Zobrazit všechny novinky</NextLink>
+            <NextLink href="/vyhledavani?q=novinka">Zobrazit všechny novinky</NextLink>
           </div>
-          <div className="akros-news-grid">
-            {products.map((product) => (
-              <article key={product.id}>
-                <Image
-                  alt={product.imageAlt}
-                  height={360}
-                  loading="lazy"
-                  src={product.imageSrc}
-                  width={480}
-                />
-                <Badge size="sm" variant="primary">
-                  NOVINKA
-                </Badge>
-                <h3>{product.name}</h3>
-                <strong>od {formatPrice(product.priceMinor)}</strong>
-                <PrimaryLinkButton href={`/produkt/${product.slug}`} size="sm" uppercase={false}>
-                  Detail
-                </PrimaryLinkButton>
-              </article>
-            ))}
-          </div>
+          <NewsProductGrid items={newItems} />
         </section>
-        <section className="akros-news-section" aria-labelledby="sale-products-title">
+        <section
+          className="akros-news-section akros-news-section--sale"
+          id="action-products"
+          aria-labelledby="sale-products-title"
+        >
           <div className="akros-section__heading">
             <h2 id="sale-products-title">Akční nabídky a výprodej</h2>
             <NextLink href="/vyhledavani?q=akce">Zobrazit celou akční nabídku</NextLink>
           </div>
-          <div className="akros-news-grid">
-            {products.toReversed().map((product, index) => (
-              <article key={product.id}>
-                <Image
-                  alt={product.imageAlt}
-                  height={360}
-                  loading="lazy"
-                  src={product.imageSrc}
-                  width={480}
-                />
-                <span className="akros-discount">−{15 + index * 4}%</span>
-                <h3>{product.name}</h3>
-                <strong>{formatPrice(Math.round(product.priceMinor * 0.8))}</strong>
-                <PrimaryLinkButton href={`/produkt/${product.slug}`} size="sm" uppercase={false}>
-                  Do košíku
-                </PrimaryLinkButton>
-              </article>
-            ))}
-          </div>
+          <NewsProductGrid items={promotionItems} />
         </section>
       </article>
     </StorefrontWideShell>

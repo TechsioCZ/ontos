@@ -1,3 +1,6 @@
 :root {
+  --color-product-card-bg: var(--color-base);
+  --aspect-product-card-image: 6 / 5;
   --text-product-card-name-size: var(--text-sm);
+  --text-product-card-price-size: var(--text-md);
 }
