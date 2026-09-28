@@ -1,6 +1,7 @@
 export interface CatalogCategory {
   id: string;
   parentId: string | null;
+  hasChildren: boolean;
   slug: string;
   name: string;
   position: number;

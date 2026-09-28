@@ -1,5 +1,6 @@
 "use client";
 
+import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { VerticalNavigation } from "@techsio/ui-kit/molecules/vertical-navigation";
 import NextLink from "next/link";
 
@@ -30,6 +31,28 @@ function CategoryNavigationItem({
   const visualDepth = Math.min(depth, 4);
 
   if (children.length === 0) {
+    if (category.hasChildren) {
+      return (
+        <VerticalNavigation.Item>
+          <VerticalNavigation.Row data-akros-depth={visualDepth}>
+            <VerticalNavigation.Link
+              as={NextLink}
+              className="justify-between"
+              current={isCurrent}
+              href={href}
+            >
+              {category.name}
+              <Icon
+                data-akros-branch-indicator=""
+                icon="token-icon-vertical-navigation-chevron"
+                size="current"
+              />
+            </VerticalNavigation.Link>
+          </VerticalNavigation.Row>
+        </VerticalNavigation.Item>
+      );
+    }
+
     return (
       <VerticalNavigation.Item>
         <VerticalNavigation.Link

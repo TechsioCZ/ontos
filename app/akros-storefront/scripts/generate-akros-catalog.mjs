@@ -105,6 +105,12 @@ const categoryIds = new Set(categories.map((category) => category.id));
 for (const category of categories) {
   if (!category.parentId || !categoryIds.has(category.parentId)) category.parentId = null;
 }
+const categoryIdsWithChildren = new Set(
+  categories.map((category) => category.parentId).filter(Boolean),
+);
+for (const category of categories) {
+  category.hasChildren = categoryIdsWithChildren.has(category.id);
+}
 
 const archive = unzipSync(new Uint8Array(readFileSync(productSource)), {
   filter: (entry) => entry.name === "product.xml",

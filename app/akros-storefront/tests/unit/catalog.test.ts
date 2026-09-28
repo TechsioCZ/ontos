@@ -73,6 +73,11 @@ describe("mock catalog gateway", () => {
     expect(getCategoryBySlug("srouby")?.name).toBe("Šrouby");
   });
 
+  it("marks categories that have visible child categories", () => {
+    expect(getCategoryBySlug("koliky")?.hasChildren).toBe(true);
+    expect(getCategoryBySlug("a-2-141")?.hasChildren).toBe(false);
+  });
+
   it("resolves a source purchasing variant for the DIN 933 product", () => {
     const product = getProductBySlug("srouby-se-sestihrannou-hlavou-din-933-a2");
     const variant = getProductVariantById("product-16800", "item-1411");

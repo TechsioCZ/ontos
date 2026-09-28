@@ -14,18 +14,16 @@ describe("CatalogSidebar", () => {
       name: cs.catalog.title,
     });
     const currentLink = within(desktopNavigation).getByRole("link", { name: "A 2" });
+    const rootLink = desktopNavigation.querySelector<HTMLAnchorElement>(
+      'a[href="/kategorie/nerezovy-spojovaci-material"]',
+    );
     const expandedBranches = within(desktopNavigation)
       .getAllByRole("button")
       .filter((button) => button.getAttribute("aria-expanded") === "true");
 
     expect(currentLink.getAttribute("aria-current")).toBe("page");
     expect(currentLink.getAttribute("data-akros-depth")).toBe("4");
-    expect(
-      within(desktopNavigation)
-        .getByRole("link", { name: "Nerezový spojovací materiál" })
-        .closest('[data-part="row"]')
-        ?.getAttribute("data-akros-depth"),
-    ).toBe("0");
+    expect(rootLink?.closest('[data-part="row"]')?.getAttribute("data-akros-depth")).toBe("0");
     expect(expandedBranches).toHaveLength(4);
   });
 
@@ -36,9 +34,11 @@ describe("CatalogSidebar", () => {
     const [desktopNavigation] = within(container).getAllByRole("navigation", {
       name: cs.catalog.title,
     });
-    const trigger = within(desktopNavigation).getByRole("button", {
-      name: "Nerezový spojovací materiál",
-    });
+    const rootLink = desktopNavigation.querySelector<HTMLAnchorElement>(
+      'a[href="/kategorie/nerezovy-spojovaci-material"]',
+    );
+    const rootRow = rootLink?.closest('[data-part="row"]');
+    const trigger = within(rootRow as HTMLElement).getByRole("button");
 
     await user.click(trigger);
 
@@ -49,5 +49,20 @@ describe("CatalogSidebar", () => {
         ),
       ).not.toBeNull();
     });
+  });
+
+  it("shows that a collapsed category has children before its branch is loaded", () => {
+    render(<CatalogSidebar categories={getSidebarCategories()} />);
+
+    const [desktopNavigation] = screen.getAllByRole("navigation", {
+      name: cs.catalog.title,
+    });
+    const categoryLink = desktopNavigation.querySelector<HTMLAnchorElement>(
+      'a[href="/kategorie/koliky"]',
+    );
+    const categoryRow = categoryLink?.closest('[data-part="row"]');
+
+    expect(categoryRow).not.toBeNull();
+    expect(categoryRow?.querySelector("[data-akros-branch-indicator]")).not.toBeNull();
   });
 });
