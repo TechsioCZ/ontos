@@ -362,6 +362,19 @@ it.live('orders SpiceDB before all consumers for authorization runtime changes',
   }),
 );
 
+for (const changedPath of ['scripts/run-zerops-spicedb.sh', 'scripts/spicedb-datastore-uri.sh']) {
+  it.live(`redeploys SpiceDB and its consumers for the SpiceDB service script ${changedPath}`, () =>
+    Effect.gen(function* spiceDbServiceScriptEffect() {
+      yield* withFixture((root) =>
+        Effect.gen(function* spiceDbServiceScriptPlanEffect() {
+          const plan = yield* planDeploymentImpact({ changedPaths: [changedPath], rootDirectory: root });
+          expect(plan.phases.map((phase) => phase.id)).toEqual(['spicedb', 'contacts', SHELL_ID]);
+        }),
+      );
+    }),
+  );
+}
+
 for (const changedPath of [
   'scripts/postgres/bootstrap-spicedb-database.mts',
   'packages/core-runtime/src/install/spicedb-database-config.ts',

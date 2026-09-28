@@ -802,7 +802,8 @@ const isSpiceDbChange = (changedPath: string): boolean =>
   changedPath.startsWith('packages/core-runtime/src/permissions/') ||
   changedPath === 'packages/core-runtime/src/install/spicedb-database-config.ts' ||
   changedPath === 'scripts/postgres/bootstrap-spicedb-database.mts' ||
-  changedPath === 'scripts/run-zerops-spicedb.sh';
+  changedPath === 'scripts/run-zerops-spicedb.sh' ||
+  changedPath === 'scripts/spicedb-datastore-uri.sh';
 
 const isAuthorizationRolloutChange = (changedPath: string): boolean =>
   changedPath.startsWith('packages/core-runtime/src/authorization/') ||
