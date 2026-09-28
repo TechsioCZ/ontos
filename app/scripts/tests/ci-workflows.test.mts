@@ -42,46 +42,50 @@ it('skips the gate workflows for pushes and pull requests that change only repos
 /** A GitHub Actions `${{ … }}` expression, written without JavaScript template placeholders. */
 const expression = (body: string) => `\${{ ${body} }}`;
 
+const WorkflowStepSchema = Schema.Struct({
+  env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  id: Schema.optional(Schema.String),
+  name: Schema.String,
+  run: Schema.optional(Schema.String),
+});
 const EdgeDeployWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
     'deploy-cloudflare': Schema.Struct({
-      env: Schema.Record(Schema.String, Schema.String),
+      env: Schema.optional(Schema.Unknown),
+      environment: Schema.String,
       if: Schema.String,
       needs: Schema.Array(Schema.String),
-      steps: Schema.Array(
-        Schema.Struct({
-          id: Schema.optional(Schema.String),
-          if: Schema.optional(Schema.String),
-          run: Schema.optional(Schema.String),
-        }),
-      ),
+      steps: Schema.Array(WorkflowStepSchema),
     }),
-    'deploy-stage': Schema.Struct({ outputs: Schema.Record(Schema.String, Schema.String) }),
+    'deploy-stage': Schema.Struct({ environment: Schema.String }),
   }),
 });
 
-it('deploys planned edge units to Cloudflare only after the stage migration and only with stage credentials', () => {
+it('deploys planned edge units to Cloudflare after the stage migration, with their own deployment history', () => {
   const { jobs } = Schema.decodeUnknownSync(EdgeDeployWorkflowSchema)(
     parse(
       readFileSync(new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url), 'utf-8'),
     ),
   );
   const edge = jobs['deploy-cloudflare'];
-  expect(jobs['deploy-stage'].outputs.cloudflare).toBe(expression('steps.impact.outputs.cloudflare'));
+  // A separate environment keeps a failed or skipped edge deploy from hiding behind a successful
+  // Zerops deployment of the same revision.
+  expect(jobs['deploy-stage'].environment).toBe('stage');
+  expect(edge.environment).toBe('stage-edge');
   expect(edge.needs).toEqual(['deploy-stage']);
   expect(edge.if).toContain("github.ref == 'refs/heads/main'");
-  expect(edge.if).toContain("needs.deploy-stage.outputs.cloudflare != '[]'");
-  expect(edge.env).toEqual({
-    CLOUDFLARE_ACCOUNT_ID: expression('vars.CLOUDFLARE_ACCOUNT_ID'),
-    CLOUDFLARE_API_TOKEN: expression('secrets.CLOUDFLARE_API_TOKEN'),
-  });
-  const [, credentials, ...guarded] = edge.steps;
-  expect(credentials?.id).toBe('credentials');
-  for (const step of guarded) {
-    expect(step.if).toBe("steps.credentials.outputs.enabled == 'true'");
-  }
-  const deploy = guarded.at(-1)?.run ?? '';
-  expect(deploy).toContain('run cloudflare:deploy');
-  expect(deploy).toContain('run cloudflare:proof');
-  expect(deploy).toContain('wrangler rollback');
+  // Unconfigured repositories skip the job, so it records no deployment at all.
+  expect(edge.if).toContain("vars.CLOUDFLARE_ACCOUNT_ID != ''");
+  expect(edge.env).toBeUndefined();
+  const byName = new Map(edge.steps.map((step) => [step.name, step]));
+  expect(byName.get('Resolve the last successful edge deployment')?.run).toContain('--environment stage-edge');
+  expect(byName.get('Plan the impacted edge units')?.id).toBe('impact');
+  const deploy = byName.get('Deploy planned edge units in dependency order');
+  expect(deploy?.env?.CLOUDFLARE_UNITS_JSON).toBe(expression('steps.impact.outputs.cloudflare'));
+  expect(deploy?.run).toContain('run cloudflare:deploy');
+  expect(deploy?.run).toContain('run cloudflare:proof');
+  expect(deploy?.run).toContain('wrangler rollback');
+  // The account token reaches only the steps that use it.
+  const tokenSteps = edge.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined).map((step) => step.name);
+  expect(tokenSteps).toEqual(['Require the Cloudflare deploy token', 'Deploy planned edge units in dependency order']);
 });
