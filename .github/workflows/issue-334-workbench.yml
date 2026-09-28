@@ -1,0 +1,31 @@
+name: Issue 334 isolated repair workbench
+
+on:
+  push:
+    branches: [audit/334-repair-workbench]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    if: github.ref == 'refs/heads/audit/334-repair-workbench'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
+        with:
+          egress-policy: audit
+      - name: Check out the isolated workbench
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+      - name: Install the repository toolchain
+        uses: ./.github/actions/install-app
+      - name: Inspect pinned migration and test commands
+        working-directory: app
+        run: |
+          mise exec -- pnpm --filter @app/price-group-catalog exec drizzle-kit generate --help
+          mise exec -- pnpm --filter @app/price-group-catalog exec rstest --help
+          node -e 'for (const p of ["package.json", "verticals/price-group-catalog/package.json", "verticals/commerce-customer-context/package.json"]) { console.log(p); console.log(JSON.parse(require("node:fs").readFileSync(p, "utf8")).scripts); }'
