@@ -42,17 +42,16 @@ const RUN_PATH_PATTERN = /\/actions\/runs\/(?<runId>\d+)(?:\/|$)/u;
 /** Run id of a deployment status log URL, which may end at the run or continue into a job or attempt. */
 const runIdOf = (logUrl: string) => RUN_PATH_PATTERN.exec(URL.parse(logUrl)?.pathname ?? '')?.groups?.runId;
 
-export const resolveStageDeploymentBase = <E, R>(
+/** The comparison base, or none when the environment has no successful deployment yet. */
+export const findStageDeploymentBase = <E, R>(
   source: StageDeploymentSource<E, R>,
-  options: { readonly currentRunId: string; readonly environment: string },
+  options: { readonly currentRunId: string },
 ) =>
-  Effect.gen(function* resolveStageDeploymentBaseEffect() {
+  Effect.gen(function* findStageDeploymentBaseEffect() {
     for (let page = 1; ; page += 1) {
       const deployments = yield* source.page(page);
       if (deployments.length === 0) {
-        return yield* new StageDeploymentBaseError({
-          message: `no successful "${options.environment}" deployment exists outside run ${options.currentRunId}; ${FULL_PLAN_SEED_INSTRUCTION}`,
-        });
+        return Option.none<string>();
       }
       for (const deployment of deployments) {
         const statuses = yield* source.statuses(deployment.id);
@@ -61,11 +60,29 @@ export const resolveStageDeploymentBase = <E, R>(
           return status.state === 'success' && runId !== undefined && runId !== options.currentRunId;
         });
         if (deployedByAnotherRun) {
-          return deployment.sha;
+          return Option.some(deployment.sha);
         }
       }
     }
   });
+
+export const resolveStageDeploymentBase = <E, R>(
+  source: StageDeploymentSource<E, R>,
+  options: { readonly currentRunId: string; readonly environment: string },
+) =>
+  findStageDeploymentBase(source, options).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () =>
+          Effect.fail(
+            new StageDeploymentBaseError({
+              message: `no successful "${options.environment}" deployment exists outside run ${options.currentRunId}; ${FULL_PLAN_SEED_INSTRUCTION}`,
+            }),
+          ),
+        onSome: (sha) => Effect.succeed(sha),
+      }),
+    ),
+  );
 
 const DEPLOYMENTS_PAGE_SIZE = 100;
 const STATUSES_PAGE_SIZE = 100;
@@ -109,15 +126,20 @@ export const githubStageDeploymentSource = (
 
 const resolveStageDeploymentBaseCommand = Command.make(
   'resolve-stage-deployment-base',
-  { environment: Flag.String('environment') },
-  ({ environment }) =>
+  {
+    environment: Flag.String('environment'),
+    // A full plan still reconciles against the last deployment when one exists, and a first seed
+    // has none: `--optional` reports that as an empty base instead of failing.
+    optional: Flag.Boolean('optional').pipe(Flag.withDefault(false)),
+  },
+  ({ environment, optional }) =>
     Effect.gen(function* resolveStageDeploymentBaseCommandEffect() {
       const repository = yield* Config.String('GITHUB_REPOSITORY');
       const currentRunId = yield* Config.String('GITHUB_RUN_ID');
-      const base = yield* resolveStageDeploymentBase(githubStageDeploymentSource(repository, environment), {
-        currentRunId,
-        environment,
-      });
+      const source = githubStageDeploymentSource(repository, environment);
+      const base = optional
+        ? Option.getOrElse(yield* findStageDeploymentBase(source, { currentRunId }), () => '')
+        : yield* resolveStageDeploymentBase(source, { currentRunId, environment });
       yield* Console.log(base);
       const outputPath = yield* Config.option(Config.String('GITHUB_OUTPUT'));
       if (Option.isSome(outputPath)) {

@@ -235,14 +235,16 @@ change to the edge workflow or the install action replans every placed unit, and
 planner itself replans every unit on Zerops and the edge. Because the history is separate, a failed
 edge deploy is replanned by the next run even when Zerops succeeded for the same revision.
 
-Build, deploy, proof and retirement steps each have a timeout that leaves the restore step its own
-budget inside the job deadline, so a hung deploy still ends with every changed Worker restored.
+Build, deploy, proof and retirement-check steps each have a timeout that leaves the restore step
+its own budget inside the job deadline, so a hung deploy still ends with every changed Worker
+restored.
 
 Removing a unit from placement, or renaming its Worker, must list the old Worker in
-`retiredWorkers`. The planner compares placement with the last successful edge deployment and
-refuses a change that drops a deployed Worker without retiring it. After the proofs pass, the job
-deletes every retired Worker that still exists and confirms Cloudflare reports it absent. An entry
-can be removed from `retiredWorkers` once no successful edge deployment still places it.
+`retiredWorkers`. The planner compares placement with the last successful edge deployment, in full
+plans too, and refuses a change that drops a deployed Worker without retiring it. Deleting a Worker
+is irreversible, so CI never does it: before any Worker changes, the job checks that every retired
+Worker is absent and fails with the `wrangler delete --name <worker>` to run when one still
+exists. An entry can leave `retiredWorkers` once no successful edge deployment still places it.
 
 The job runs only when the repository is configured for Cloudflare: the `CLOUDFLARE_ACCOUNT_ID`
 variable, the `CLOUDFLARE_API_TOKEN` secret in the `stage-edge` environment, and a complete build

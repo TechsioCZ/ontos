@@ -56,7 +56,7 @@ export interface CloudflareDeployment {
   readonly workerName: string;
 }
 
-/** A Worker placement no longer names, deleted by the edge deploy through the Shell's Wrangler. */
+/** A Worker placement retired; the edge deploy verifies it is absent through the Shell's Wrangler. */
 export interface CloudflareRetirement {
   readonly packageName: string;
   readonly workerName: string;
@@ -120,8 +120,9 @@ const RESERVED_CLOUDFLARE_BUILD_VARIABLES: ReadonlySet<string> = new Set([
 ]);
 const CloudflarePlacementSchema = Schema.Struct({
   buildEnvironment: Schema.Record(Schema.String, Schema.String),
-  // Workers an earlier placement deployed and this one no longer names. Every edge deploy deletes
-  // them idempotently, and the planner refuses a placement that drops a Worker without listing it.
+  // Workers an earlier placement deployed and this one no longer names. The planner refuses a
+  // placement that drops a Worker without listing it, and every edge deploy verifies each listed
+  // Worker is absent before changing anything; deleting one is an explicit operator step.
   retiredWorkers: Schema.Array(Schema.String),
   schemaVersion: Schema.Literal(1),
   units: Schema.Array(Schema.String),
@@ -181,6 +182,11 @@ export interface PlanDeploymentImpactOptions {
   readonly baseRevision?: string;
   readonly changedPaths?: readonly string[];
   readonly headRevision?: string;
+  /**
+   * The last successful edge deployment, for retirement checks. Defaults to `baseRevision`; a full
+   * plan passes it on its own so removals are still reconciled.
+   */
+  readonly placementBaseRevision?: string;
   readonly rootDirectory?: string;
 }
 
@@ -731,8 +737,8 @@ const placedWorkerNames = (units: readonly string[], topology: ReferenceTopology
 };
 
 /**
- * Workers placement retires. A Worker placed at the comparison base and no longer placed now must
- * be listed in `retiredWorkers`, so a removal or rename never leaves the old Worker serving.
+ * Workers placement retires. A Worker placed at the last edge deployment and no longer placed now
+ * must be listed in `retiredWorkers`, so a removal or rename never leaves the old Worker serving.
  */
 const planCloudflareRetirements = (
   placement: CloudflarePlacement,
@@ -938,6 +944,11 @@ const basePlacedWorkerNames = (rootDirectory: string, baseRevision: string | und
     if (baseRevision === undefined) {
       return new Set<string>();
     }
+    if (!(yield* gitSucceeds(rootDirectory, ['cat-file', '-e', `${baseRevision}^{commit}`]))) {
+      return fail(
+        `placement base "${baseRevision}" is not a commit in this checkout; retired Workers cannot be checked`,
+      );
+    }
     const placement = yield* readJsonAtRevision(
       BasePlacementSchema,
       rootDirectory,
@@ -950,9 +961,15 @@ const basePlacedWorkerNames = (rootDirectory: string, baseRevision: string | und
       baseRevision,
       'topology/reference-topology.json',
     );
-    return Option.isSome(placement) && Option.isSome(topology)
-      ? placedWorkerNames(placement.value.units, topology.value)
-      : new Set<string>();
+    // A base before edge placement existed deployed no Worker. A placement without its topology
+    // cannot name its Workers, so it fails instead of hiding a dropped Worker.
+    if (Option.isNone(placement)) {
+      return new Set<string>();
+    }
+    if (Option.isNone(topology)) {
+      return fail(`placement base "${baseRevision}" has ${CLOUDFLARE_PLACEMENT_PATH} but no reference topology`);
+    }
+    return placedWorkerNames(placement.value.units, topology.value);
   });
 
 const changedPathsFromGit = (rootDirectory: string, baseRevision: string, headRevision: string) =>
@@ -1286,7 +1303,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
         cloudflareRetirements: planCloudflareRetirements(
           cloudflarePlacement,
           topology,
-          fullDeploy ? new Set() : yield* basePlacedWorkerNames(rootDirectory, baseRevision),
+          yield* basePlacedWorkerNames(rootDirectory, options.placementBaseRevision ?? baseRevision),
           shell.packageName,
         ),
         migrator,
@@ -1380,8 +1397,9 @@ const deploymentImpactCommand = Command.make(
     baseRevision: Flag.String('base').pipe(Flag.optional),
     changedPaths: Flag.String('changed-path').pipe(Flag.atLeast(0)),
     headRevision: Flag.String('head').pipe(Flag.optional),
+    placementBaseRevision: Flag.String('placement-base').pipe(Flag.optional),
   },
-  ({ authorizationEnvironment, authorizationNow, baseRevision, changedPaths, headRevision }) =>
+  ({ authorizationEnvironment, authorizationNow, baseRevision, changedPaths, headRevision, placementBaseRevision }) =>
     Effect.gen(function* deploymentImpactCommandEffect() {
       const rootDirectory = yield* Config.String('PWD').pipe(Effect.orElseSucceed(() => '.'));
       const environment = Option.getOrUndefined(authorizationEnvironment);
@@ -1396,6 +1414,7 @@ const deploymentImpactCommand = Command.make(
         baseRevision: Option.getOrUndefined(baseRevision),
         changedPaths: changedPaths.length === 0 ? undefined : changedPaths,
         headRevision: Option.getOrUndefined(headRevision),
+        placementBaseRevision: Option.getOrUndefined(placementBaseRevision),
         rootDirectory,
       };
       const plan =

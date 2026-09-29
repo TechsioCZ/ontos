@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
-import { Cause, Effect, Exit, Schema } from 'effect';
+import { Cause, Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { hashAuthorizationEvidence } from '../check-authorization-readiness.mts';
@@ -13,7 +13,11 @@ import {
   validateAuthorizationPromotionGate,
 } from '../plan-deployment-impact.mts';
 import type { AuthorizationPromotionGateInput, PlanDeploymentImpactOptions } from '../plan-deployment-impact.mts';
-import { resolveStageDeploymentBase, StatusPagesJsonSchema } from '../resolve-stage-deployment-base.mts';
+import {
+  findStageDeploymentBase,
+  resolveStageDeploymentBase,
+  StatusPagesJsonSchema,
+} from '../resolve-stage-deployment-base.mts';
 import type { StageDeploymentSource } from '../resolve-stage-deployment-base.mts';
 
 const planningFailure = <A, E>(effect: Effect.Effect<A, E>) =>
@@ -503,6 +507,12 @@ it.live('refuses to drop a deployed Worker from placement until it is listed for
               planDeploymentImpact({ baseRevision: deployed, headRevision: dropped, rootDirectory: root }),
             ),
           ).toContain('no longer places Worker "app-contacts"; list it in retiredWorkers');
+          // A full plan of the same head still reconciles against the last edge deployment.
+          expect(
+            yield* planningFailure(
+              planDeploymentImpact({ headRevision: dropped, placementBaseRevision: deployed, rootDirectory: root }),
+            ),
+          ).toContain('no longer places Worker "app-contacts"');
           const retired = yield* commitPlacement(root, [SHELL_ID], [CONTACTS_WORKER], 'retire contacts');
           const plan = yield* planDeploymentImpact({
             baseRevision: deployed,
@@ -521,6 +531,26 @@ it.live('refuses to drop a deployed Worker from placement until it is listed for
           ).toContain('retires "app-shell-super-app", which a placed unit still deploys');
         }),
       { cloudflarePlacement: [SHELL_ID, 'contacts'] },
+    );
+  }),
+);
+
+it.live('fails when the placement base names Workers it has no topology for', () =>
+  Effect.gen(function* failsForPlacementWithoutTopology() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* failsForPlacementWithoutTopologyInFixture() {
+          runGit(root, ['init']);
+          runGit(root, ['add', CLOUDFLARE_PLACEMENT_PATH]);
+          runGit(root, ['commit', '-m', 'placement without topology']);
+          const base = runGit(root, ['rev-parse', 'HEAD']);
+          runGit(root, ['add', '.']);
+          runGit(root, ['commit', '-m', 'everything']);
+          expect(
+            yield* planningFailure(planDeploymentImpact({ placementBaseRevision: base, rootDirectory: root })),
+          ).toContain(`has ${CLOUDFLARE_PLACEMENT_PATH} but no reference topology`);
+        }),
+      { cloudflarePlacement: ['contacts'] },
     );
   }),
 );
@@ -1022,6 +1052,16 @@ it.live('diffs from the last successful stage deployment so failed and cancelled
         expect(plan.units.providers).toContain('contacts');
       }),
     );
+  }),
+);
+
+it.live('reports no base, for a full plan, when the environment has no successful deployment yet', () =>
+  Effect.gen(function* testEffectNoBase() {
+    const base = yield* findStageDeploymentBase(
+      deploymentSource([{ runId: '7', sha: 'first-seed', states: ['failure', 'in_progress'] }]),
+      { currentRunId: '8' },
+    );
+    expect(Option.isNone(base)).toBe(true);
   }),
 );
 
