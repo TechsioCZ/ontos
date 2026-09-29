@@ -1,3 +1,5 @@
+/// <reference types="node" />
+
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -274,14 +276,36 @@ const PRIVATE_KEY = 'PRIVATE KEY';
 
 const sanEntry = (name: string) => (/^[\d.]+$/u.test(name) ? `IP:${name}` : `DNS:${name}`);
 
-let originCaDirectory: string | undefined;
 let signed = 0;
 
-/** A throwaway CA standing in for the Cloudflare Origin CA; its files live in a temporary directory. */
+/** Runs `work` with a fresh private directory and removes it afterwards, so no test key outlives its call. */
+const withScratchDirectory = <A,>(work: (directory: string) => A): A => {
+  const directory = mkdtempSync(nodePath.join(tmpdir(), 'fake-openssl-'));
+  try {
+    return work(directory);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+};
+
+/**
+ * Runs `openssl` with its new key and its output in files, and returns both. Linux OpenSSL cannot
+ * open `/dev/stdout` when it is a socket, as a Node child's standard output is.
+ */
+const opensslWithKey = (args: readonly string[]) =>
+  withScratchDirectory((directory) => {
+    const keyPath = nodePath.join(directory, 'key.pem');
+    const outputPath = nodePath.join(directory, 'output.pem');
+    openssl([...args, '-keyout', keyPath, '-out', outputPath]);
+    return { key: readFileSync(keyPath, 'utf-8'), output: readFileSync(outputPath, 'utf-8') };
+  });
+
+let originCa: { readonly certificate: string; readonly key: string } | undefined;
+
+/** A throwaway CA standing in for the Cloudflare Origin CA, kept in memory for the test process. */
 const fakeOriginCa = () => {
-  if (originCaDirectory === undefined) {
-    const directory = mkdtempSync(nodePath.join(tmpdir(), 'fake-origin-ca-'));
-    openssl([
+  originCa ??= (() => {
+    const { key, output } = opensslWithKey([
       'req',
       '-x509',
       ...EC_KEY,
@@ -289,53 +313,39 @@ const fakeOriginCa = () => {
       String(ORIGIN_VALIDITY_DAYS),
       '-subj',
       '/O=Fake Origin CA/CN=Fake Origin CA',
-      '-keyout',
-      nodePath.join(directory, 'ca.key'),
-      '-out',
-      nodePath.join(directory, 'ca.pem'),
     ]);
-    originCaDirectory = directory;
-  }
-  return originCaDirectory;
+    return { certificate: output, key };
+  })();
+  return originCa;
 };
 
 /** Signs `csr` for `hostnames` the way the Origin CA does: the hostnames become the certificate's SANs. */
 export const signWithFakeOriginCa = (csr: string, hostnames: readonly string[], days = ORIGIN_VALIDITY_DAYS) => {
-  const directory = fakeOriginCa();
+  const authority = fakeOriginCa();
   signed += 1;
-  const extensions = nodePath.join(directory, `san-${String(signed)}.cnf`);
-  const request = nodePath.join(directory, `request-${String(signed)}.csr`);
-  writeFileSync(extensions, `subjectAltName=${hostnames.map(sanEntry).join(',')}\n`);
-  writeFileSync(request, csr);
-  return openssl([
-    'x509',
-    '-req',
-    '-in',
-    request,
-    '-CA',
-    nodePath.join(directory, 'ca.pem'),
-    '-CAkey',
-    nodePath.join(directory, 'ca.key'),
-    '-set_serial',
-    String(signed),
-    '-days',
-    String(days),
-    '-extfile',
-    extensions,
-  ]);
-};
-
-/**
- * Runs `openssl` with its new key and its output in files, and returns both. Linux OpenSSL cannot
- * open `/dev/stdout` when it is a socket, as a Node child's standard output is.
- */
-const opensslWithKey = (args: readonly string[]) => {
-  signed += 1;
-  const directory = fakeOriginCa();
-  const keyPath = nodePath.join(directory, `key-${String(signed)}.pem`);
-  const outputPath = nodePath.join(directory, `output-${String(signed)}.pem`);
-  openssl([...args, '-keyout', keyPath, '-out', outputPath]);
-  return { key: readFileSync(keyPath, 'utf-8'), output: readFileSync(outputPath, 'utf-8') };
+  return withScratchDirectory((directory) => {
+    const file = (name: string, content: string) => {
+      const path = nodePath.join(directory, name);
+      writeFileSync(path, content);
+      return path;
+    };
+    return openssl([
+      'x509',
+      '-req',
+      '-in',
+      file('request.csr', csr),
+      '-CA',
+      file('ca.pem', authority.certificate),
+      '-CAkey',
+      file('ca.key', authority.key),
+      '-set_serial',
+      String(signed),
+      '-days',
+      String(days),
+      '-extfile',
+      file('san.cnf', `subjectAltName=${hostnames.map(sanEntry).join(',')}\n`),
+    ]);
+  });
 };
 
 const pemBlock = (text: string, label: string) => {
