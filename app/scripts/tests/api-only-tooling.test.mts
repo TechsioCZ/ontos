@@ -18,6 +18,7 @@ import type {
 import type { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { Cause, Effect, Predicate, Schema } from 'effect';
 import { describe, afterEach, expect, it, rs } from 'effect-rstest';
+import { createCloudflareDataPlaneBindings } from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { build as bundleSource, transform } from 'esbuild';
 
 import { MicroVerticalReadinessSchema } from '@modern-js/bff-effect/microvertical-api';
@@ -2488,6 +2489,8 @@ import * as nodePath from 'node:path';
 import * as nodeUrl from 'node:url';
 import { runInNewContext } from 'node:vm';
 const environment = {
+  ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
+  ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
   ULTRAMODERN_MF_DEV_ORIGIN: 'https://shell.example.test',
   ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
   ZE_CI_TOKEN: 'proof-token',
@@ -2577,6 +2580,26 @@ process.stdout.write(JSON.stringify(evidence, normalize));
 `,
   ]);
 });
+
+// OntOS's one intended extension of a generated UI vertical config: its Worker binds the private
+// data plane (Hyperdrive and the SpiceDB Workers VPC service), with the harness's placeholder IDs.
+const OntosEvaluatedConfigSchema = Schema.Struct({
+  deploy: Schema.Struct({ worker: Schema.Record(Schema.String, Schema.Json) }),
+});
+const withOntosWorkerDataPlane = (configuration: Schema.Json): Schema.Json => {
+  const { deploy } = Schema.decodeUnknownSync(OntosEvaluatedConfigSchema)(configuration);
+  const dataPlane = createCloudflareDataPlaneBindings(
+    (name) =>
+      ({
+        ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
+        ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
+      })[name],
+  );
+  return Schema.decodeUnknownSync(Schema.Json)({
+    ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(configuration),
+    deploy: { ...deploy, worker: { ...dataPlane, ...deploy.worker } },
+  });
+};
 
 it.live(
   'all published scaffold formats retain Party infrastructure behavior and source parity',
@@ -2685,7 +2708,9 @@ it.live(
                       );
                       const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
                       expect(
-                        decode(expected),
+                        cloudflare && fileName === modernConfigFile
+                          ? withOntosWorkerDataPlane(decode(expected))
+                          : decode(expected),
                         `${moduleFormat}: ${fileName} must preserve evaluated configuration, build identity and plugin behavior`,
                       ).toEqual(decode(evaluated));
                     }),

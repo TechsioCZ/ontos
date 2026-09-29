@@ -260,8 +260,12 @@ protection rules, so `stage-edge` must not have any.
 
 The non-secret configuration the Worker builds read is reviewed source, the `buildEnvironment` of
 `topology/cloudflare-placement.json`. It must hold `ULTRAMODERN_MF_DEV_ORIGIN`, the stage Shell
-origin (the placed units' API CORS allowlist), and `ULTRAMODERN_PUBLIC_URL_<UNIT>` for every placed
-unit (the output verifier requires them). It may add `MODERN_ASSET_PREFIX` or
+origin (the placed units' API CORS allowlist), `ULTRAMODERN_PUBLIC_URL_<UNIT>` for every placed
+unit (the output verifier requires them), and the private data plane every Worker binds:
+`ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID` (the `HYPERDRIVE` binding, from which Core's
+`#database-runtime` takes the runtime `DATABASE_URL`) and
+`ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID` (the `SPICEDB` Workers VPC binding Core's
+`#spicedb-transport` calls). A Worker build without either fails. It may add `MODERN_ASSET_PREFIX` or
 `VERTICAL_*_WORKER_BINDING` overrides. Only `MODERN_`, `ULTRAMODERN_` and `VERTICAL_` keys are
 accepted. `ULTRAMODERN_SOURCE_REVISION` and `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` are reserved for
 the run, and `VERTICAL_*_WORKER_NAME` is rejected because a Worker's name is its topology
@@ -269,8 +273,21 @@ the run, and `VERTICAL_*_WORKER_NAME` is rejected because a Worker's name is its
 changing a value replans every unit, so no Worker keeps a build of the old configuration. The job
 never reads the Zerops `stage` environment.
 Each Worker's runtime configuration is set once, outside CI, before its first deploy: secrets
-(`wrangler secret put`, for example `SPICEDB_PRESHARED_KEY` and `BETTER_AUTH_SECRET`) and the
-Hyperdrive and Workers VPC bindings its Worker configuration declares. The per-unit
+(`wrangler secret put`, for example `SPICEDB_PRESHARED_KEY` and `BETTER_AUTH_SECRET`); the
+Hyperdrive config and Workers VPC service the IDs above name are account objects.
+
+Inside the account the Workers reach each other only through service bindings: Workers on one
+account cannot fetch each other's public URLs. The Shell discovers each UI vertical's module
+contract through its `VERTICAL_<UNIT>_WORKER` binding (the reference topology's
+`workerDispatch.serviceBinding`), and Commerce calls Price Group Catalog through
+`VERTICAL_PRICE_GROUP_CATALOG_WORKER` (Core's `#unit-service-fetch`). On Node both keep their URLs.
+
+The `Cloudflare Workerd Artifact Proof` job runs the built Workers together before any deploy:
+`scripts/prove-cloudflare-local-topology.sh` starts each Worker in `wrangler dev` against the job's
+PostgreSQL (as the `HYPERDRIVE` local connection string) and SpiceDB (a local gateway Worker stands
+in for the `SPICEDB` VPC service), then proves repeated database requests, a SpiceDB-authorized
+Shell read, module discovery and a vertical API over service bindings, and SSR. Run it locally
+after `pnpm cloudflare:build`, `pnpm db:migrate` and `pnpm local:initialize`. The per-unit
 `cloudflare:proof` and the verified rollback catch a Worker whose configuration is incomplete.
 The first edge deploy has no previous edge deployment, so seed it with a full run:
 `gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`. Placement adds the Worker

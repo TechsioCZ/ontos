@@ -109,8 +109,9 @@ it('deploys to Cloudflare only when both the account and the deploy token are co
   expect(check?.run).toContain('[[ -n "$CLOUDFLARE_ACCOUNT_ID" ]]');
   expect(check?.run).toContain('[[ -n "$CLOUDFLARE_API_TOKEN" ]]');
   expect(readiness.outputs.configured).toBe(expression('steps.configuration.outputs.configured'));
-  // An incomplete reviewed build environment is not configured either: the Shell origin and every
-  // placed Worker's public URL must be present before any Worker is built.
+  // An incomplete reviewed build environment is not configured either: the Shell origin, every
+  // placed Worker's public URL and the data-plane binding IDs must be present before any Worker is
+  // built.
   const filter = /jq -r '(?<filter>[^']+)' app\/topology\/cloudflare-placement\.json/u.exec(check?.run ?? '')?.groups
     ?.filter;
   const missingBuildVariables = (placement: PlacementBuildInputs) =>
@@ -124,12 +125,16 @@ it('deploys to Cloudflare only when both the account and the deploy token are co
     missingBuildVariables({ buildEnvironment: {}, units: ['commerce-customer-context', 'shell-super-app'] }),
   ).toEqual([
     'ULTRAMODERN_MF_DEV_ORIGIN',
+    'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID',
+    'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID',
     'ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT',
     'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP',
   ]);
   expect(
     missingBuildVariables({
       buildEnvironment: {
+        ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
+        ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
         ULTRAMODERN_MF_DEV_ORIGIN: 'https://stage.example.test',
         ULTRAMODERN_PUBLIC_URL_PRICING: 'https://pricing.example.test',
       },

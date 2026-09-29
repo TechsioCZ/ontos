@@ -3,21 +3,33 @@ import { builtinModules, createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { getOrElse as getOptionOrElse, getOrUndefined as getOptionOrUndefined } from 'effect/Option';
+import { findFirst } from 'effect/Array';
+import {
+  getOrElse as getOptionOrElse,
+  getOrThrow as getOptionOrThrow,
+  getOrUndefined as getOptionOrUndefined,
+} from 'effect/Option';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
+  Array as SchemaArray,
   Boolean as BooleanSchema,
   Literal,
   Literals,
+  NonEmptyString,
   NumberFromString,
   OptionFromUndefinedOr,
+  Record as SchemaRecord,
+  String as SchemaString,
+  Struct,
   Trim,
   check,
   decodeTo,
   decodeUnknownResult,
+  fromJsonString,
   isBetween,
   isInt,
   isMinLength,
+  optionalKey,
 } from 'effect/Schema';
 import { transform } from 'effect/SchemaTransformation';
 
@@ -262,14 +274,95 @@ export const createCloudflareWorkerSecurity = () => ({
   },
 });
 
-const createCloudflareDeployment = (enabled: boolean, workerName: string) =>
-  enabled
+const requiredCloudflareBuildValue = (envValue: ModernBuildContext['envValue'], name: string): string =>
+  getResultOrThrow(
+    decodeUnknownResult(
+      Trim.pipe(check(isMinLength(1, { message: `${name} is required for a Cloudflare Worker build` }))),
+    )(envValue(name) ?? ''),
+  );
+
+/**
+ * Every OntOS Worker reaches the private data plane through two account objects: PostgreSQL through
+ * the `HYPERDRIVE` binding (Core's `#database-runtime`) and SpiceDB's HTTP gateway through the
+ * `SPICEDB` Workers VPC binding (Core's `#spicedb-transport`). Their IDs are reviewed build inputs.
+ */
+export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['envValue']) => ({
+  vpcServices: [
+    {
+      binding: 'SPICEDB',
+      serviceId: requiredCloudflareBuildValue(envValue, 'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID'),
+    },
+  ],
+  wrangler: {
+    hyperdrive: [
+      { binding: 'HYPERDRIVE', id: requiredCloudflareBuildValue(envValue, 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID') },
+    ],
+  },
+});
+
+/** A Worker service binding to another OntOS unit's Worker, named as in the reference topology. */
+export interface CloudflareUnitServiceBinding {
+  readonly binding: string;
+  readonly service: string;
+}
+
+const UnitServiceBindingTopologySchema = Struct({
+  verticals: SchemaArray(
+    Struct({
+      backendFederation: Struct({
+        executionSurfaces: Struct({
+          cloudflare: Struct({ workerDispatch: Struct({ serviceBinding: NonEmptyString }) }),
+        }),
+      }),
+      cloudflare: Struct({ workerName: NonEmptyString }),
+      id: NonEmptyString,
+    }),
+  ),
+});
+const UnitServiceBindingPlacementSchema = Struct({
+  unitServiceBindings: optionalKey(SchemaRecord(SchemaString, SchemaArray(SchemaString))),
+});
+const topologyDocumentUrl = (name: string) => new URL(`../../../topology/${name}`, import.meta.url);
+
+/**
+ * The service bindings a placed unit's Worker declares to the other units it calls, from the
+ * reviewed placement (`unitServiceBindings`) and each target's topology binding and Worker names.
+ * The deploy planner reads the same placement to deploy every target before its consumer.
+ */
+const readCloudflareUnitServiceBindings = (appId: string): readonly CloudflareUnitServiceBinding[] => {
+  const placement = getResultOrThrow(
+    decodeUnknownResult(fromJsonString(UnitServiceBindingPlacementSchema))(
+      readFileSync(topologyDocumentUrl('cloudflare-placement.json'), 'utf-8'),
+    ),
+  );
+  const topology = getResultOrThrow(
+    decodeUnknownResult(fromJsonString(UnitServiceBindingTopologySchema))(
+      readFileSync(topologyDocumentUrl('reference-topology.json'), 'utf-8'),
+    ),
+  );
+  return (placement.unitServiceBindings?.[appId] ?? []).map((target) => {
+    // The deploy planner rejects a binding to a unit that is not a placed vertical.
+    const vertical = getOptionOrThrow(findFirst(topology.verticals, ({ id }) => id === target));
+    return {
+      binding: vertical.backendFederation.executionSurfaces.cloudflare.workerDispatch.serviceBinding,
+      service: vertical.cloudflare.workerName,
+    };
+  });
+};
+
+const createCloudflareDeployment = (
+  build: ModernBuildContext,
+  worker: { readonly name: string; readonly unitServiceBindings: readonly CloudflareUnitServiceBinding[] },
+) =>
+  build.cloudflareDeployEnabled
     ? {
         deploy: {
           worker: {
+            ...createCloudflareDataPlaneBindings(build.envValue),
             compatibilityDate: '2026-06-02',
-            name: workerName,
+            name: worker.name,
             security: createCloudflareWorkerSecurity(),
+            services: worker.unitServiceBindings.map(({ binding, service }) => ({ binding, service })),
             ssr: true,
           },
         },
@@ -374,7 +467,10 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
     },
     // oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- This generic optional field retains the public factory's inferred return shape and its position in the emitted configuration.
     ...(builderPlugins === undefined ? {} : { builderPlugins }),
-    ...createCloudflareDeployment(build.cloudflareDeployEnabled, cloudflareWorkerName),
+    ...createCloudflareDeployment(build, {
+      name: cloudflareWorkerName,
+      unitServiceBindings: build.cloudflareDeployEnabled ? readCloudflareUnitServiceBindings(appId) : [],
+    }),
     dev: {
       // Remote dev manifests must publish an absolute publicPath so host
       // shells load remoteEntry.js and exposed chunks from this dev server.

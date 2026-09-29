@@ -335,6 +335,30 @@ jobs:
     name: Cloudflare Workerd Artifact Proof
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    # Development-only service values for the Worker topology proof (as in service-integration).
+    env:
+      DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
+      DATABASE_URL: postgresql://ontos_runtime:ontos_runtime@localhost:5433/ontos_ci
+      ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
+      POSTGRES_DB: ontos_ci
+      POSTGRES_PASSWORD: ontos_ci_admin
+      POSTGRES_PORT: "5433"
+      POSTGRES_USER: ontos_ci_admin
+      SPICEDB_ENDPOINT: localhost:50051
+      SPICEDB_GRPC_PORT: "50051"
+      SPICEDB_HTTP_PORT: "8443"
+      SPICEDB_INSECURE: "true"
+      SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
+      BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
+      BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
+      BETTER_AUTH_URL: http://localhost:3020
+      ONTOS_GATEWAY_ISSUER: http://localhost:3020
+      ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
+      ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
+      # Placeholder data-plane IDs: locally a Worker's HYPERDRIVE binding connects to the proof's
+      # PostgreSQL and its SPICEDB binding is served by a local gateway Worker.
+      ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 00000000000000000000000000000000
+      ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
@@ -363,6 +387,31 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm cloudflare:build
+
+      # The built Workers, run together in workerd against real PostgreSQL and SpiceDB, prove the
+      # Cloudflare topology end to end: Hyperdrive across requests, SpiceDB over HTTP, module
+      # discovery and API calls over service bindings, and SSR.
+      - name: Start fresh PostgreSQL and SpiceDB services for the Worker topology
+        working-directory: app
+        run: |
+          docker compose down --volumes --remove-orphans
+          docker compose up --detach --wait --wait-timeout 120
+
+      - name: Migrate and initialize the local tenant for the Worker topology
+        working-directory: app
+        run: |
+          mise exec -- pnpm db:migrate
+          mise exec -- pnpm local:initialize
+
+      - name: Prove the Worker topology against PostgreSQL and SpiceDB
+        working-directory: app
+        timeout-minutes: 10
+        run: mise exec -- bash scripts/prove-cloudflare-local-topology.sh
+
+      - name: Remove the Worker topology service containers and volumes
+        if: always()
+        working-directory: app
+        run: docker compose down --volumes --remove-orphans
 
       # The Commerce Cloudflare build once crashed parsing Catalog's root HttpApi chain because React
       # Compiler also compiled server code. Production imports only the quantity-preparation client;
@@ -633,11 +682,12 @@ jobs:
           missing=()
           [[ -n "$CLOUDFLARE_ACCOUNT_ID" ]] || missing+=('the CLOUDFLARE_ACCOUNT_ID variable')
           [[ -n "$CLOUDFLARE_API_TOKEN" ]] || missing+=('the stage-edge CLOUDFLARE_API_TOKEN secret')
-          # The placed units bake the Shell origin into their API CORS allowlist, and the output
-          # verifier requires every Worker's public URL.
+          # The placed units bake the Shell origin into their API CORS allowlist, the output
+          # verifier requires every Worker's public URL, and every Worker binds the private data
+          # plane: PostgreSQL through its Hyperdrive config, SpiceDB through its Workers VPC service.
           while IFS= read -r key; do
             missing+=("buildEnvironment.$key")
-          done < <(jq -r '.buildEnvironment as $environment | (["ULTRAMODERN_MF_DEV_ORIGIN"] + [.units[] | "ULTRAMODERN_PUBLIC_URL_" + (ascii_upcase | gsub("-"; "_"))])[] | select(($environment[.] // "") == "")' app/topology/cloudflare-placement.json)
+          done < <(jq -r '.buildEnvironment as $environment | (["ULTRAMODERN_MF_DEV_ORIGIN", "ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID"] + [.units[] | "ULTRAMODERN_PUBLIC_URL_" + (ascii_upcase | gsub("-"; "_"))])[] | select(($environment[.] // "") == "")' app/topology/cloudflare-placement.json)
           if [[ ${#missing[@]} -eq 0 ]]; then
             echo 'configured=true' >>"$GITHUB_OUTPUT"
           else
