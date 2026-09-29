@@ -376,6 +376,33 @@ it('refreshes well inside the validity window on the configured schedule', () =>
   expect(refreshCron).toMatch(/^\d+ \*\/6 \* \* \*$/u);
 });
 
+it('leaves the refresh to the stage deploy while the Outbox Workers drift from the deploy target', () => {
+  const workflow = Schema.decodeUnknownSync(
+    Schema.Struct({
+      jobs: Schema.Record(
+        Schema.String,
+        Schema.Struct({
+          steps: Schema.Array(
+            Schema.Struct({ id: Schema.optional(Schema.String), if: Schema.optional(Schema.String) }),
+          ),
+        }),
+      ),
+    }),
+  )(
+    parse(
+      readFileSync(
+        new URL('../../../.github/workflows/active-application-composition-refresh.yml', import.meta.url),
+        'utf-8',
+      ),
+    ),
+  );
+  const steps = Object.values(workflow.jobs).flatMap((job) => job.steps);
+  const gates = steps.flatMap((step) => (step.if?.includes('steps.worker-drift') === true ? [step.if] : []));
+  expect(steps.some((step) => step.id === 'worker-drift')).toBe(true);
+  const refreshes = "steps.worker-drift.outputs.drift != 'true'";
+  expect(gates).toEqual(["steps.worker-drift.outputs.drift == 'true'", refreshes, refreshes, refreshes]);
+});
+
 it('reads quoted Zerops env-file values', () => {
   const environment = parseZeropsEnvFile('catalog_zeropsSubdomain="https://catalog.example"\nPLAIN=value\ninvalid\n');
   expect(environment.get('catalog_zeropsSubdomain')).toBe('https://catalog.example');

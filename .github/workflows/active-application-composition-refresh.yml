@@ -58,9 +58,10 @@ jobs:
         run: mise exec -- pnpm deployment-base:resolve --environment stage
 
       # A DEPLOY_TARGET switch takes effect at the next stage deploy, which starts this target's Outbox Workers
-      # and stops the other target's. Until then the other target's workers still running is that pending
-      # switch, and restarting consumers would wake this target's stopped workers beside them.
-      - name: Detect Outbox Workers left running by the other deploy target
+      # and stops the other target's. Until then the workers drift from the target: the other target's still
+      # run, or this target's do not. Restarting consumers would wake this target's stopped workers on stale
+      # builds, or fail on a worker the stage never provisioned.
+      - name: Detect Outbox Workers that do not match the deploy target
         id: worker-drift
         working-directory: app
         env:
@@ -69,26 +70,26 @@ jobs:
         run: mise exec -- pnpm --silent active-composition:publish worker-target-drift
 
       - name: Leave the pending deploy target switch to the stage deploy
-        if: steps.worker-drift.outputs.other_target_running == 'true'
+        if: steps.worker-drift.outputs.drift == 'true'
         env:
           TARGET: ${{ env.DEPLOY_TARGET }}
         run: >-
-          echo "::warning title=Refresh skipped::DEPLOY_TARGET is $TARGET but the other target's Outbox Workers
-          are still running. Run the stage deploy to finish the switch; it re-publishes the composition."
+          echo "::warning title=Refresh skipped::DEPLOY_TARGET is $TARGET but the Outbox Workers still reflect
+          the other target. Run the stage deploy to finish the switch; it re-publishes the composition."
 
       # The publisher and topology of the deployed revision describe what stage actually runs.
       - name: Check out the deployed revision
-        if: steps.worker-drift.outputs.other_target_running != 'true'
+        if: steps.worker-drift.outputs.drift != 'true'
         env:
           DEPLOYED_SHA: ${{ steps.base.outputs.base }}
         run: git checkout --detach "$DEPLOYED_SHA"
 
       - name: Install the deployed revision's app workspace
-        if: steps.worker-drift.outputs.other_target_running != 'true'
+        if: steps.worker-drift.outputs.drift != 'true'
         uses: ./.github/actions/install-app
 
       - name: Re-observe live services and re-publish the active Application Composition
-        if: steps.worker-drift.outputs.other_target_running != 'true'
+        if: steps.worker-drift.outputs.drift != 'true'
         working-directory: app
         env:
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}

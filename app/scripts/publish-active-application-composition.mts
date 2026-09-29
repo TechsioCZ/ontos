@@ -452,7 +452,6 @@ const workerTargetDriftCommand = Command.make('worker-target-drift', {}, () =>
     if (!drift) {
       yield* Effect.logInfo(`Only the ${deployTarget} deploy target's Outbox Workers run`);
     }
-    yield* writeGitHubOutput(`other_target_running=${running.length > 0}`);
     return yield* writeGitHubOutput(`drift=${drift}`);
   }),
 );
