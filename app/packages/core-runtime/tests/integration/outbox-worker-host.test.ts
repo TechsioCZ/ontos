@@ -19,7 +19,7 @@ import type { CoreDatabaseExecutor } from '../../src/db/types.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineOutboxWorker, extractOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
 import { defineOutboxWorkerEntry, runOutboxWorkerHost } from '../../src/outbox/process.ts';
-import { OutboxRepositoryLive, makeOutboxRepository } from '../../src/outbox/repository.ts';
+import { OutboxRepositoryLive } from '../../src/outbox/repository.ts';
 import { OutboxRuntimeLive } from '../../src/outbox/runtime.ts';
 import { purgeFixtureRows } from '../support/fixture-cleanup.ts';
 
@@ -72,9 +72,19 @@ const recordingWorker = (consumerModuleKey: string, handled: Handled) => {
   );
 };
 
-const insertMessage = (database: CoreDatabaseExecutor, tenantId: string) =>
-  Effect.gen(function* insertMessageEffect() {
+/**
+ * Inserts one already-matched message with one pending delivery per owner. The test proves claiming, not
+ * matching: a one-shot matcher here would share the global unmatched queue with concurrently running
+ * integration files, whose matchers mark any unmatched message matched without this test's deliveries.
+ */
+const insertMatchedMessage = (
+  database: CoreDatabaseExecutor,
+  tenantId: string,
+  workers: readonly ReturnType<typeof recordingWorker>[],
+) =>
+  Effect.gen(function* insertMatchedMessageEffect() {
     const messageKey = randomUUID();
+    const now = yield* DateTime.nowAsDate;
     const [event] = yield* database
       .insert(domainEvents)
       .values({
@@ -88,13 +98,26 @@ const insertMessage = (database: CoreDatabaseExecutor, tenantId: string) =>
       })
       .returning({ domainEventId: domainEvents.domainEventId });
     const domainEventId = Option.getOrThrow(Option.fromNullishOr(event?.domainEventId));
-    yield* database.insert(outboxMessages).values({
-      domainEventId,
-      payloadJson: { messageKey },
-      producerModuleKey: 'producer',
-      tenantId,
-      topic: TOPIC,
-    });
+    const [message] = yield* database
+      .insert(outboxMessages)
+      .values({
+        domainEventId,
+        matchedAt: now,
+        payloadJson: { messageKey },
+        producerModuleKey: 'producer',
+        tenantId,
+        topic: TOPIC,
+      })
+      .returning({ messageId: outboxMessages.outboxMessageId });
+    const outboxMessageId = Option.getOrThrow(Option.fromNullishOr(message?.messageId));
+    yield* database.insert(outboxDeliveries).values(
+      workers.map(({ descriptor }) => ({
+        availableAt: now,
+        consumerModuleKey: descriptor.consumerModuleKey,
+        outboxMessageId,
+        workerKey: descriptor.workerKey,
+      })),
+    );
   });
 
 const cleanupTenant = (database: CoreDatabaseExecutor, tenantId: string) =>
@@ -149,16 +172,17 @@ it.live('two hosts each running both owners claim only their own deliveries unde
       { moduleKey: alphaModule, state: 'active', tenantId },
       { moduleKey: betaModule, state: 'active', tenantId },
     ]);
-    yield* Effect.forEach(Array.from({ length: MESSAGES_PER_TOPIC }), () => insertMessage(database, tenantId), {
-      discard: true,
-    });
-
     const handled: Handled = {
       all: yield* Deferred.make<null>(),
       deliveries: yield* Ref.make<readonly HandledDelivery[]>([]),
     };
     const alphaWorker = recordingWorker(alphaModule, handled);
     const betaWorker = recordingWorker(betaModule, handled);
+    yield* Effect.forEach(
+      Array.from({ length: MESSAGES_PER_TOPIC }),
+      () => insertMatchedMessage(database, tenantId, [alphaWorker, betaWorker]),
+      { discard: true },
+    );
     // Both owners subscribe to the same topic, so every message has one delivery per owner; each hosted
     // entry carries exactly its owner's registrations and deployed descriptor snapshot, as generated.
     const entries = [
@@ -190,11 +214,6 @@ it.live('two hosts each running both owners claim only their own deliveries unde
         ),
         Effect.forkChild,
       );
-    // The Shell matches the complete installed subscription catalog; hosted loops only claim.
-    yield* makeOutboxRepository(database).matchUnmatched(
-      [alphaWorker.descriptor, betaWorker.descriptor],
-      yield* DateTime.nowAsDate,
-    );
     const hosts = [yield* host('host-a'), yield* host('host-b')];
 
     // Every delivery handled once completes the proof; the integration test timeout bounds the wait.
