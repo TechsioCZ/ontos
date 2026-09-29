@@ -123,10 +123,12 @@ it.live('generates a separate supervised worker setup without changing owner con
     const [, worker] = generated.split("setup: 'ledger-worker'");
     expect(generated).toMatch(/setup: 'ledger-worker'/u);
     expect(generated).toMatch(/zerops:materialize .* --worker/u);
-    expect(generated).toMatch(/DATABASE_URL: \$\{ledger_DATABASE_URL\}/u);
+    expect(worker).toContain(`DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}`);
+    expect(generated).not.toContain('ledger_DATABASE_URL');
     expect(generated).toMatch(/OUTBOX_WORKER_HEALTH_PORT: '4110'/u);
     expect(worker?.match(/DATABASE_URL:/gu)).toHaveLength(1);
-    expect(worker).not.toMatch(/db18_password/u);
+    // Zerops expands only direct references, so the worker binds PostgreSQL itself, as the runtime role.
+    expect(worker).not.toMatch(/db18_(?:user|superUser)/u);
     expect(worker).not.toMatch(/ run build/u);
     expect(worker).not.toMatch(/(?:^|\s)&(?:\s|$)/u);
     expect(generated.match(/ONTOS_KEEP_ME: 'true'/gu)?.length).toBe(2);

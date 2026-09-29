@@ -68,7 +68,9 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
       if (port === undefined || port.length === 0 || port !== topologyPort) {
         return yield* Effect.fail(failure(`Owner port disagrees with topology for ${vertical.id}`));
       }
-      const ownerServiceHostname = vertical.id.replaceAll('-', '');
+      // The worker keeps its owner's generated PostgreSQL binding. Referencing the owner's variable instead
+      // (`${owner}_DATABASE_URL`) reaches the worker unresolved: Zerops does not expand the `${db18_*}`
+      // references nested inside another service's variable, so the worker exited on a malformed URL.
       const service = ownerSection
         .trimEnd()
         .replace(`setup: '${vertical.id}'`, `setup: '${delivery.id}'`)
@@ -76,10 +78,7 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
         .split('\n')
         .filter(
           (line) =>
-            !line.includes(' run build') &&
-            !line.includes("- cp 'app/topology/") &&
-            !line.includes('VERTICAL_') &&
-            !line.startsWith('        DATABASE_URL:'),
+            !line.includes(' run build') && !line.includes("- cp 'app/topology/") && !line.includes('VERTICAL_'),
         )
         .map((line) =>
           line.includes('run zerops:materialize')
@@ -90,10 +89,7 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
         .replace(/(?<command>run zerops:materialize[^\n]*)/u, '$<command> --worker')
         .replaceAll(`/${vertical.id}-api/${vertical.id}/readiness`, '/ready')
         .replace(`ULTRAMODERN_ZEROPS_SERVICE: ${vertical.id}`, `ULTRAMODERN_ZEROPS_SERVICE: ${delivery.id}`)
-        .replace(
-          `        PORT: '${port}'`,
-          `        PORT: '${port}'\n        OUTBOX_WORKER_HEALTH_PORT: '${port}'\n        DATABASE_URL: \${${ownerServiceHostname}_DATABASE_URL}`,
-        );
+        .replace(`        PORT: '${port}'`, `        PORT: '${port}'\n        OUTBOX_WORKER_HEALTH_PORT: '${port}'`);
       services.push(service);
     }
     if (services.length === 0) {

@@ -121,7 +121,7 @@ it('starts a dedicated Price Group worker that drains durable pending projection
     `zerops:materialize --app '${priceGroupCatalogSetup}' --package '@app/price-group-catalog' --package-dir 'verticals/price-group-catalog' --worker`,
   );
   expect(worker).toContain(`OUTBOX_WORKER_HEALTH_PORT: '4108'`);
-  expect(worker).toContain(`DATABASE_URL: \${pricegroupcatalog_DATABASE_URL}`);
+  expect(worker).toContain(runtimeDatabaseUrl);
   expect(worker).toContain(`path: '/ready'`);
   expect(worker).toContain(`exec npm run serve`);
 });
