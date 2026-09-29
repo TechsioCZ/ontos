@@ -157,6 +157,7 @@ it.effect('provisions production from nothing and wires the production environme
     expect(variables?.get(PROJECT_ID_VARIABLE)).toBe('project-2');
     expect(variables?.get('SPICEDB_ENDPOINT')).toBe(SPICEDB_ENDPOINT);
     expect(variables?.get('DEPLOY_TARGET')).toBe('zerops');
+    expect(variables?.get('OUTBOX_WORKER_MODE')).toBe('dedicated');
     expect(variables?.get(SHELL_VARIABLE)).toBe(stage.services.find(({ hostname }) => hostname === SHELL_HOSTNAME)?.id);
     expect(variables?.get('ZEROPS_MIGRATOR_SERVICE_ID')).toBeDefined();
     expect(variables?.get('ZEROPS_SPICEDB_SERVICE_ID')).toBeDefined();

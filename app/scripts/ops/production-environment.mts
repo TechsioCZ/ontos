@@ -12,6 +12,7 @@ import { readVaultSecrets } from './stage-zerops-services.mts';
 import {
   DEPLOY_TARGET_VARIABLE,
   ONTOS_REPOSITORY,
+  OUTBOX_WORKER_MODE_VARIABLE,
   OpsMode,
   STAGE_ZEROPS_PROJECT_ID,
   ZeropsImportEntrySchema,
@@ -39,8 +40,8 @@ import type { ZeropsImportEntry, ZeropsService } from './stage-operations.mts';
  * `provision` reads before it writes, so a re-run after a partial failure converges. It creates or
  * reuses the Serious-core project `ontos-production`, imports the services it lacks with their
  * secrets, and sets the production variables `ZEROPS_PROJECT_ID`, every `ZEROPS_*_SERVICE_ID`,
- * `SPICEDB_ENDPOINT` and `DEPLOY_TARGET=zerops`, plus the `ZEROPS_TOKEN` secret read from standard
- * input. It never deletes a service, variable or secret, and never touches stage.
+ * `SPICEDB_ENDPOINT`, `DEPLOY_TARGET=zerops` and `OUTBOX_WORKER_MODE=dedicated`, plus the
+ * `ZEROPS_TOKEN` secret read from standard input. It never deletes a service, variable or secret, and never touches stage.
  */
 export const PRODUCTION_ENVIRONMENT = 'production';
 export const PRODUCTION_PROJECT_NAME = 'ontos-production';
@@ -509,6 +510,7 @@ export const provision = (options: ProvisionOptions) =>
       ...planned.map(({ hostname, id, variable }) => [variable, id ?? `<new ${hostname} service id>`] as const),
       [SPICEDB_ENDPOINT_VARIABLE, options.spicedbEndpoint],
       [DEPLOY_TARGET_VARIABLE, 'zerops'],
+      [OUTBOX_WORKER_MODE_VARIABLE, 'dedicated'],
     ];
     for (const [name, value] of desired) {
       if (variables.get(name) !== value) {

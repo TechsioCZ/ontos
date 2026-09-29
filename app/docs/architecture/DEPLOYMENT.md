@@ -495,6 +495,7 @@ printf %s "$PRODUCTION_ZEROPS_TOKEN" | node scripts/ops/production-environment.m
    | `ZEROPS_<SETUP>_SERVICE_ID`                               | each vertical and each outbox worker, named after its `zerops.yaml` setup       |
    | `SPICEDB_ENDPOINT`                                        | `--spicedb-endpoint`, the `host:port` of production's TLS SpiceDB gRPC endpoint |
    | `DEPLOY_TARGET`                                           | `zerops`                                                                        |
+   | `OUTBOX_WORKER_MODE`                                      | `dedicated`, one worker service per owner                                       |
 
 5. Sets the `ZEROPS_TOKEN` secret from standard input when `--zerops-token-stdin` is given. Until
    `production` holds that secret, the flag is required and the run fails before changing anything.
