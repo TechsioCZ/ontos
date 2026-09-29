@@ -2,7 +2,8 @@ import { isBuiltin } from 'node:module';
 
 import { NodeServices } from '@effect/platform-node';
 import { Config, Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
-import { build, transform } from 'esbuild';
+import { build } from 'esbuild';
+import { parseSync } from 'oxc-parser';
 
 import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 
@@ -33,39 +34,38 @@ const MetafileInputsSchema = Schema.Struct({
 const WORKER_ENTRY = 'worker.mjs';
 const CORE_WORKER_ENTRYPOINT = 'packages/core-runtime/src/outbox/worker-entrypoint.ts';
 
+const CORE_WORKER_SPECIFIERS = new Set(['@app/core-runtime', '@app/core-runtime/outbox/worker']);
+
 /**
- * Value names compiled module code takes from `@app/core-runtime` or its `outbox/worker` subpath (both resolve
- * to the focused worker entrypoint). Callers pass esbuild output: it has no comments or type-only names, keeps
- * only imports used as values, and turns a re-export into an import plus a local export.
- * @param {string} source Compiled module code.
- * @returns {string[]} Imported (pre-alias) names.
+ * Value names a TypeScript module re-exports from `@app/core-runtime` or its `outbox/worker` subpath (both
+ * resolve to the focused worker entrypoint), read from the parsed module record so comments, strings, and
+ * type-only specifiers never count. Named imports need no check: esbuild already rejects a missing one.
+ * @param {string} filename Module path, which selects the TypeScript or TSX grammar.
+ * @param {string} source Module source.
+ * @returns {string[]} Re-exported entrypoint names.
  */
-export const coreRuntimeValueReExports = (source) =>
-  [
-    ...source.matchAll(
-      /(?:import|export)\s+\{(?<names>[^}]*)\}\s+from\s+(?<quote>['"])@app\/core-runtime(?:\/outbox\/worker)?\k<quote>/gu,
-    ),
-  ].flatMap((match) =>
-    (match.groups?.names ?? '')
-      .split(',')
-      .map((specifier) => specifier.trim())
-      .filter((specifier) => specifier !== '' && !specifier.startsWith('type '))
-      .map((specifier) => specifier.split(/\s+as\s+/u)[0] ?? specifier),
+export const coreRuntimeValueReExports = (filename, source) =>
+  parseSync(filename, source).module.staticExports.flatMap((statement) =>
+    statement.entries
+      .filter(
+        (entry) =>
+          !entry.isType &&
+          entry.importName.name !== null &&
+          entry.moduleRequest !== null &&
+          CORE_WORKER_SPECIFIERS.has(entry.moduleRequest.value),
+      )
+      .map((entry) => entry.importName.name ?? ''),
   );
 
 /**
- * Value names the focused Core worker entrypoint exports.
+ * Value names the focused Core worker entrypoint exports, read from its parsed module record.
  * @param {string} source Entrypoint source.
- * @returns {Set<string>} Exported names.
+ * @returns {Set<string>} Exported value names.
  */
 export const focusedEntrypointValueExports = (source) =>
   new Set(
-    [...source.matchAll(/export\s+\{(?<names>[^}]*)\}\s+from/gu)].flatMap((match) =>
-      (match.groups?.names ?? '')
-        .split(',')
-        .map((specifier) => specifier.trim())
-        .filter((specifier) => specifier !== '')
-        .map((specifier) => specifier.split(/\s+as\s+/u).at(-1) ?? specifier),
+    parseSync(CORE_WORKER_ENTRYPOINT, source).module.staticExports.flatMap((statement) =>
+      statement.entries.filter((entry) => !entry.isType).map((entry) => entry.exportName.name ?? ''),
     ),
   );
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
@@ -275,12 +275,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     for (const input of Object.keys(metafile.inputs)) {
       if (input.startsWith('verticals/') && /\.(?:ts|tsx|mts)$/u.test(input)) {
         const source = yield* fs.readFileString(path.join(workspaceRoot, input));
-        // Compile first so comments and type-only exports are gone before the re-exports are read.
-        const compiled = yield* Effect.tryPromise({
-          catch: () => failure(`Unable to read the exports of ${input}`),
-          try: async () => await transform(source, { format: 'esm', loader: input.endsWith('x') ? 'tsx' : 'ts' }),
-        });
-        coreReExports.push(...coreRuntimeValueReExports(compiled.code).map((name) => ({ input, name })));
+        coreReExports.push(...coreRuntimeValueReExports(input, source).map((name) => ({ input, name })));
       }
     }
     const entrypointExports =
@@ -289,7 +284,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
         : focusedEntrypointValueExports(yield* fs.readFileString(path.join(workspaceRoot, CORE_WORKER_ENTRYPOINT)));
     const missingReExports = coreReExports
       .filter(({ name }) => !entrypointExports.has(name))
-      .map(({ input, name }) => `${input} uses ${name}`);
+      .map(({ input, name }) => `${input} re-exports ${name}`);
     if (missingReExports.length > 0) {
       return yield* Effect.fail(
         failure(`The Outbox Worker Core entrypoint does not export: ${missingReExports.join('; ')}`),
