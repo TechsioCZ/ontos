@@ -12,7 +12,13 @@ import {
   tlsMaterialProblem,
 } from '../ops/spicedb-tls.mts';
 import { OpsMode } from '../ops/stage-operations.mts';
-import { fakeCloudflareAccount, fakeStage, fakeZeropsApi, spicedbTlsSecrets } from './stage-operations-fixture.mts';
+import {
+  fakeCloudflareAccount,
+  fakeFiles,
+  fakeStage,
+  fakeZeropsApi,
+  spicedbTlsSecrets,
+} from './stage-operations-fixture.mts';
 import type { FakeCloudflareAccount, FakeStage, FakeZeropsApi } from './stage-operations-fixture.mts';
 
 const PROJECT_ID = 'project-1';
@@ -49,6 +55,7 @@ const run = <A, E, R>(effect: Effect.Effect<A, E, R>, fakes: Fakes, dryRun = fal
         Layer.succeed(OpsMode, { dryRun }),
         fakes.stage.layer,
         fakes.zerops.layer,
+        fakeFiles().layer,
       ),
     ),
   );

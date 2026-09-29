@@ -1,7 +1,8 @@
-import { X509Certificate, createPrivateKey } from 'node:crypto';
+import { X509Certificate, sign, verify } from 'node:crypto';
 import { isIP } from 'node:net';
+import nodePath from 'node:path';
 
-import { Console, DateTime, Duration, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { Console, DateTime, Duration, Effect, FileSystem, Match, Option, Redacted, Schema } from 'effect';
 
 import { ZeropsPublicApi } from '../zerops-public-api.mts';
 import { CloudflareApi } from './cloudflare-api.mts';
@@ -72,6 +73,8 @@ export const pemBlocks = (text: string): ReadonlyMap<string, string> =>
     }),
   );
 
+const KEY_PAIR_PROBE = Buffer.from('ontos spicedb tls key pair probe');
+
 const attempt = <A,>(read: () => A): Option.Option<A> => {
   try {
     return Option.some(read());
@@ -95,12 +98,13 @@ export const tlsMaterialProblem = (
   if (Option.isNone(certificate)) {
     return Option.some('the certificate is not a PEM X.509 certificate');
   }
-  // oxlint-disable-next-line effect-native/no-per-request-key-material -- an operator step checks each stored key once per run; nothing here serves requests.
-  const privateKey = attempt(() => createPrivateKey(Redacted.value(material.privateKey)));
-  if (Option.isNone(privateKey)) {
+  // A signature over a fixed probe that the certificate's public key accepts proves the key pair.
+  const signature = attempt(() => sign('sha256', KEY_PAIR_PROBE, Redacted.value(material.privateKey)));
+  if (Option.isNone(signature)) {
     return Option.some('the private key is not a PEM private key');
   }
-  if (!certificate.value.checkPrivateKey(privateKey.value)) {
+  const matches = attempt(() => verify('sha256', KEY_PAIR_PROBE, certificate.value.publicKey, signature.value));
+  if (!Option.getOrElse(matches, () => false)) {
     return Option.some('the private key does not belong to the certificate');
   }
   if (expectation.signedByAnotherCa && certificate.value.checkIssued(certificate.value)) {
@@ -207,23 +211,34 @@ export const spicedbTlsState = (target: SpicedbTlsTarget) =>
 
 const OPENSSL = 'openssl';
 const EC_KEY_ARGS = ['-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes'];
-const STDOUT_ARGS = ['-keyout', '/dev/stdout', '-out', '/dev/stdout'];
 const CERTIFICATE_BLOCK = 'CERTIFICATE';
 
 const sanEntry = (name: string) => (isIP(name) === 0 ? `DNS:${name}` : `IP:${name}`);
 const subjectAltName = (names: readonly string[]) => `subjectAltName=${names.map(sanEntry).join(',')}`;
 
-/** Reads the private key and one other PEM block from OpenSSL's standard output. */
+/**
+ * Runs OpenSSL with its key and output in a private temporary directory, removed afterwards, and
+ * reads both back. Linux OpenSSL cannot open `/dev/stdout` when it is a socket, as Node's child
+ * standard output is, so the files are the portable path.
+ */
 const opensslOutput = (args: readonly string[], block: string) =>
-  runCommand({ args, command: OPENSSL }).pipe(
-    Effect.flatMap((output) => {
-      const blocks = pemBlocks(output);
-      const privateKey = blocks.get('PRIVATE KEY');
-      const other = blocks.get(block);
+  Effect.scoped(
+    Effect.gen(function* opensslOutputEffect() {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'spicedb-tls-' });
+      const keyPath = nodePath.join(directory, 'key.pem');
+      const outputPath = nodePath.join(directory, 'output.pem');
+      yield* runCommand({ args: [...args, '-keyout', keyPath, '-out', outputPath], command: OPENSSL });
+      const privateKey = pemBlocks(yield* fileSystem.readFileString(keyPath)).get('PRIVATE KEY');
+      const other = pemBlocks(yield* fileSystem.readFileString(outputPath)).get(block);
       return privateKey === undefined || other === undefined
-        ? Effect.fail(new StageOperationError({ message: `openssl did not print a private key and a ${block}` }))
-        : Effect.succeed({ other, privateKey: Redacted.make(privateKey) });
+        ? yield* new StageOperationError({ message: `openssl did not write a private key and a ${block}` })
+        : { other, privateKey: Redacted.make(privateKey) };
     }),
+  ).pipe(
+    Effect.catchTag('PlatformError', (cause) =>
+      Effect.fail(new StageOperationError({ cause, message: `openssl output could not be read (${cause.message})` })),
+    ),
   );
 
 /** A self-signed server certificate for the gRPC names, never marked as a CA. */
@@ -242,7 +257,6 @@ export const generateGrpcMaterial = opensslOutput(
     'basicConstraints=critical,CA:FALSE',
     '-addext',
     'extendedKeyUsage=serverAuth',
-    ...STDOUT_ARGS,
   ],
   CERTIFICATE_BLOCK,
 ).pipe(Effect.map(({ other, privateKey }): TlsMaterial => ({ certificate: other, privateKey })));
@@ -251,7 +265,7 @@ export const generateGrpcMaterial = opensslOutput(
 export const generateGatewayMaterial = (gatewayHostname: string) =>
   Effect.gen(function* generateGatewayMaterialEffect() {
     const { other: csr, privateKey } = yield* opensslOutput(
-      ['req', '-new', ...EC_KEY_ARGS, '-subj', `/CN=${gatewayHostname}`, ...STDOUT_ARGS],
+      ['req', '-new', ...EC_KEY_ARGS, '-subj', `/CN=${gatewayHostname}`],
       `${CERTIFICATE_BLOCK} REQUEST`,
     );
     const api = yield* CloudflareApi;

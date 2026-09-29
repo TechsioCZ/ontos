@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import nodePath from 'node:path';
 
@@ -43,6 +43,12 @@ export const fakeFiles = (overrides: Readonly<Record<string, string>> = {}): Fak
   const fileSystem = FileSystem.layerNoop({
     exists: (path) => Effect.sync(() => writes.has(path) || relative(path) in overrides || existsSync(path)),
     readFileString: (path) => Effect.sync(() => read(path)),
+    // Real, removed on scope close: the scripts hand these directories to real processes such as openssl.
+    makeTempDirectoryScoped: (options) =>
+      Effect.acquireRelease(
+        Effect.sync(() => mkdtempSync(nodePath.join(tmpdir(), options?.prefix ?? 'fake-files-'))),
+        (directory) => Effect.sync(() => rmSync(directory, { force: true, recursive: true })),
+      ),
     writeFileString: (path, data) =>
       Effect.sync(() => {
         writes.set(path, data);
@@ -262,7 +268,6 @@ export const openssl = (args: readonly string[], input?: string) =>
   execFileSync(OPENSSL, args, { encoding: 'utf-8', input, stdio: ['pipe', 'pipe', 'ignore'] });
 
 const EC_KEY = ['-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes'];
-const TO_STDOUT = ['-keyout', '/dev/stdout', '-out', '/dev/stdout'];
 const ORIGIN_VALIDITY_DAYS = 5475;
 const CERTIFICATE = 'CERTIFICATE';
 const PRIVATE_KEY = 'PRIVATE KEY';
@@ -299,26 +304,38 @@ export const signWithFakeOriginCa = (csr: string, hostnames: readonly string[], 
   const directory = fakeOriginCa();
   signed += 1;
   const extensions = nodePath.join(directory, `san-${String(signed)}.cnf`);
+  const request = nodePath.join(directory, `request-${String(signed)}.csr`);
   writeFileSync(extensions, `subjectAltName=${hostnames.map(sanEntry).join(',')}\n`);
-  return openssl(
-    [
-      'x509',
-      '-req',
-      '-in',
-      '/dev/stdin',
-      '-CA',
-      nodePath.join(directory, 'ca.pem'),
-      '-CAkey',
-      nodePath.join(directory, 'ca.key'),
-      '-set_serial',
-      String(signed),
-      '-days',
-      String(days),
-      '-extfile',
-      extensions,
-    ],
-    csr,
-  );
+  writeFileSync(request, csr);
+  return openssl([
+    'x509',
+    '-req',
+    '-in',
+    request,
+    '-CA',
+    nodePath.join(directory, 'ca.pem'),
+    '-CAkey',
+    nodePath.join(directory, 'ca.key'),
+    '-set_serial',
+    String(signed),
+    '-days',
+    String(days),
+    '-extfile',
+    extensions,
+  ]);
+};
+
+/**
+ * Runs `openssl` with its new key and its output in files, and returns both. Linux OpenSSL cannot
+ * open `/dev/stdout` when it is a socket, as a Node child's standard output is.
+ */
+const opensslWithKey = (args: readonly string[]) => {
+  signed += 1;
+  const directory = fakeOriginCa();
+  const keyPath = nodePath.join(directory, `key-${String(signed)}.pem`);
+  const outputPath = nodePath.join(directory, `output-${String(signed)}.pem`);
+  openssl([...args, '-keyout', keyPath, '-out', outputPath]);
+  return { key: readFileSync(keyPath, 'utf-8'), output: readFileSync(outputPath, 'utf-8') };
 };
 
 const pemBlock = (text: string, label: string) => {
@@ -338,7 +355,7 @@ export interface SpicedbTlsSecretOptions {
 /** Valid SpiceDB TLS secrets by their Zerops `spicedb_<KEY>` project names, as `spicedb-tls` stores them. */
 export const spicedbTlsSecrets = (options: SpicedbTlsSecretOptions) => {
   const names = options.grpcNames ?? ['spicedb', 'localhost', '127.0.0.1'];
-  const grpc = openssl([
+  const grpc = opensslWithKey([
     'req',
     '-x509',
     ...EC_KEY,
@@ -348,19 +365,18 @@ export const spicedbTlsSecrets = (options: SpicedbTlsSecretOptions) => {
     '/CN=spicedb',
     '-addext',
     `subjectAltName=${names.map(sanEntry).join(',')}`,
-    ...TO_STDOUT,
   ]);
-  const request = openssl(['req', '-new', ...EC_KEY, '-subj', `/CN=${options.gatewayHostname}`, ...TO_STDOUT]);
+  const request = opensslWithKey(['req', '-new', ...EC_KEY, '-subj', `/CN=${options.gatewayHostname}`]);
   const gatewayCertificate = signWithFakeOriginCa(
-    pemBlock(request, `${CERTIFICATE} REQUEST`),
+    pemBlock(request.output, `${CERTIFICATE} REQUEST`),
     [options.gatewayHostname],
     options.gatewayDays,
   );
   return {
-    [`spicedb_${SPICEDB_GRPC_TLS.certificateKey}`]: pemBlock(grpc, CERTIFICATE),
-    [`spicedb_${SPICEDB_GRPC_TLS.privateKeyKey}`]: pemBlock(grpc, PRIVATE_KEY),
+    [`spicedb_${SPICEDB_GRPC_TLS.certificateKey}`]: pemBlock(grpc.output, CERTIFICATE),
+    [`spicedb_${SPICEDB_GRPC_TLS.privateKeyKey}`]: pemBlock(grpc.key, PRIVATE_KEY),
     [`spicedb_${SPICEDB_HTTP_TLS.certificateKey}`]: gatewayCertificate,
-    [`spicedb_${SPICEDB_HTTP_TLS.privateKeyKey}`]: pemBlock(request, PRIVATE_KEY),
+    [`spicedb_${SPICEDB_HTTP_TLS.privateKeyKey}`]: pemBlock(request.key, PRIVATE_KEY),
   };
 };
 
