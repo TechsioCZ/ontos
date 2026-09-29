@@ -895,7 +895,7 @@ jobs:
   deploy-cloudflare:
     name: Deploy edge units to Cloudflare Workers after the stage migration
     if: needs.edge-deploy-readiness.outputs.configured == 'true'
-    needs: [deploy-zerops, edge-deploy-readiness]
+    needs: [deploy-target, deploy-zerops, edge-deploy-readiness]
     runs-on: ubuntu-latest
     # Step timeouts leave the restore step its own budget inside the job deadline, so a hung
     # deploy or proof still ends with every changed Worker restored.
@@ -960,6 +960,7 @@ jobs:
         env:
           BASE_SHA: ${{ steps.base.outputs.base }}
           FULL_PLAN: ${{ inputs.full }}
+          OUTBOX_WORKER_MODE: ${{ needs.deploy-target.outputs.outbox-worker-mode }}
         run: |
           base_arguments=()
           if [[ -n "$BASE_SHA" ]]; then
@@ -970,6 +971,7 @@ jobs:
           fi
           mise exec -- pnpm deployment-impact:plan \
             --authorization-environment stage \
+            --outbox-worker-mode "$OUTBOX_WORKER_MODE" \
             "${base_arguments[@]}" \
             --head "$GITHUB_SHA"
 

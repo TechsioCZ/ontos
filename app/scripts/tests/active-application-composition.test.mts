@@ -446,7 +446,7 @@ it('refreshes well inside the validity window on the configured schedule', () =>
   expect(refreshCron).toMatch(/^\d+ \*\/6 \* \* \*$/u);
 });
 
-it('leaves the refresh to the stage deploy while the Outbox Workers drift from the Outbox Worker mode', () => {
+it('leaves the refresh to the deploy while the Outbox Workers drift from the Outbox Worker mode', () => {
   const workflow = Schema.decodeUnknownSync(
     Schema.Struct({
       jobs: Schema.Record(
@@ -469,6 +469,11 @@ it('leaves the refresh to the stage deploy while the Outbox Workers drift from t
     refreshes,
     refreshes,
     `env.DEPLOY_TARGET == 'cloudflare' && ${refreshes}`,
+    // Production waits for its own deploy the same way.
+    "steps.worker-drift.outputs.drift == 'true'",
+    `steps.base.outputs.base != '' && ${refreshes}`,
+    `steps.base.outputs.base != '' && ${refreshes}`,
+    `steps.base.outputs.base != '' && ${refreshes}`,
   ]);
 });
 
@@ -498,8 +503,13 @@ it('refreshes the production composition on Zerops, in its own environment and c
   expect(runs).toContain('--environment production');
   expect(runs).not.toContain('--environment stage');
   // An unconfigured or never-deployed production has no snapshot, so the lane publishes nothing.
+  // A pending production mode switch is left to the production deploy, as on stage.
+  const drift = production.steps.find(
+    ({ run }) => run?.includes('active-composition:publish worker-mode-drift') === true,
+  );
+  expect(drift?.if).toBe("steps.base.outputs.base != ''");
   const publish = production.steps.find(({ run }) => run?.includes('active-composition:publish publish') === true);
-  expect(publish?.if).toBe("steps.base.outputs.base != ''");
+  expect(publish?.if).toBe("steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'");
 });
 
 it('reads quoted Zerops env-file values', () => {

@@ -226,19 +226,37 @@ jobs:
             echo '::notice title=Production not deployed::Production has no successful deployment, so there is no snapshot to refresh.'
           fi
 
+      # A production OUTBOX_WORKER_MODE switch, like stage's, takes effect at the next production deploy.
+      - name: Detect Outbox Workers that do not match the Outbox Worker mode
+        id: worker-drift
+        if: steps.base.outputs.base != ''
+        working-directory: app
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: mise exec -- pnpm --silent active-composition:publish worker-mode-drift
+
+      - name: Leave the pending Outbox Worker mode switch to the production deploy
+        if: steps.worker-drift.outputs.drift == 'true'
+        env:
+          MODE: ${{ env.OUTBOX_WORKER_MODE }}
+        run: >-
+          echo "::warning title=Refresh skipped::OUTBOX_WORKER_MODE is $MODE but the Outbox Workers still reflect
+          the other mode. Run the production deploy to finish the switch; it re-publishes the composition."
+
       # The publisher and topology of the deployed revision describe what production actually runs.
       - name: Check out the deployed revision
-        if: steps.base.outputs.base != ''
+        if: steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'
         env:
           DEPLOYED_SHA: ${{ steps.base.outputs.base }}
         run: git checkout --detach "$DEPLOYED_SHA"
 
       - name: Install the deployed revision's app workspace
-        if: steps.base.outputs.base != ''
+        if: steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'
         uses: ./.github/actions/install-app
 
       - name: Re-observe live services and re-publish the active Application Composition
-        if: steps.base.outputs.base != ''
+        if: steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'
         working-directory: app
         env:
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
