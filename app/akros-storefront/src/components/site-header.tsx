@@ -9,7 +9,7 @@ import { Link } from "@techsio/ui-kit/atoms/link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { SearchForm } from "@techsio/ui-kit/molecules/search-form";
 
-import { useCart } from "@/features/cart/cart-provider";
+import { MiniCart } from "@/features/cart/mini-cart";
 import { cs } from "@/i18n/cs";
 
 const utilityLinks = [
@@ -26,7 +26,6 @@ const utilityLinks = [
 ];
 
 export function SiteHeader() {
-  const { itemCount } = useCart();
   const router = useRouter();
 
   const handleSearch = (event: FormEvent<HTMLFormElement>) => {
@@ -91,20 +90,7 @@ export function SiteHeader() {
             <span>{cs.header.quickSelect}</span>
             <Icon icon="token-icon-accordion-chevron" size="md" aria-hidden="true" />
           </Link>
-          <NextLink
-            className="akros-header__cart"
-            href="/kosik"
-            aria-label={`${cs.header.cart}, ${itemCount}`}
-          >
-            <Icon icon="token-icon-cart-button" size="md" aria-hidden="true" />
-            <span className="akros-header__cart-copy">
-              <span className="akros-header__cart-label">{cs.header.cart} (</span>
-              <span className="akros-header__cart-count" aria-live="polite">
-                {itemCount}
-              </span>
-              <span className="akros-header__cart-label">)</span>
-            </span>
-          </NextLink>
+          <MiniCart />
         </div>
 
         <details className="akros-header__mobile-menu">

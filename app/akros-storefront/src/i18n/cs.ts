@@ -69,6 +69,13 @@ export const cs = {
   },
   cart: {
     title: "Nákupní košík",
+    miniCart: {
+      title: "Náhled nákupního košíku",
+      openCart: "Přejít do košíku",
+      itemSingular: "položka",
+      itemFew: "položky",
+      itemPlural: "položek",
+    },
     empty: "Košík je zatím prázdný.",
     quantity: "Množství",
     remove: "Odebrat",
