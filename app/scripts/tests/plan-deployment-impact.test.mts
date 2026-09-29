@@ -717,6 +717,7 @@ for (const changedPath of [
   'scripts/generate-outbox-worker-deployment.mjs',
   'scripts/materialize-outbox-worker.mjs',
   'scripts/materialize-zerops-runtime.mjs',
+  'scripts/locked-registry-overrides.mjs',
   'scripts/outbox-worker-delivery.mjs',
   'scripts/install-zerops-node.sh',
   'scripts/verify-zerops-workspace-install.mts',

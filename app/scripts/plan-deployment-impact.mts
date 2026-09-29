@@ -1087,6 +1087,7 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   'scripts/generate-outbox-worker-deployment.mjs',
   'scripts/materialize-outbox-worker.mjs',
   'scripts/materialize-zerops-runtime.mjs',
+  'scripts/locked-registry-overrides.mjs',
   'scripts/outbox-worker-delivery.mjs',
   'zerops.yaml',
 ]);

@@ -23,7 +23,8 @@ export const lockedRegistryOverrides = (lockfileText) => {
       const separator = key.lastIndexOf('@');
       const name = key.slice(0, separator);
       const version = key.slice(separator + 1);
-      if (separator > 0 && exactRegistryVersionPattern.test(version)) {
+      // Reject aliased keys such as `name@npm:other@1.0.0`, whose name part would not be a package name.
+      if (separator > 0 && !name.includes('@', 1) && exactRegistryVersionPattern.test(version)) {
         versionsByName.set(name, (versionsByName.get(name) ?? new Set()).add(version));
       }
     }

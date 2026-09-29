@@ -543,7 +543,11 @@ const installRuntimeDependencies = (runtimeManifest, appId, runtimeDir, workspac
     });
     const workspacePackages = yield* collectWorkspacePackages(workspaceRoot, pathService);
     const { installPackage, localDependencies } = removeWorkspaceDependencies(runtimeManifest, workspacePackages);
-    const lockfileText = yield* fileSystem.readFileString(pathService.join(workspaceRoot, 'pnpm-lock.yaml'));
+    const lockfilePath = pathService.join(workspaceRoot, 'pnpm-lock.yaml');
+    // Without the lockfile the install would float to the newest matching versions again, so fail loudly.
+    const lockfileText = yield* fileSystem
+      .readFileString(lockfilePath)
+      .pipe(Effect.mapError((cause) => new MaterializationError(`Unable to read ${lockfilePath}: ${String(cause)}`)));
     const directDependencies = new Set([
       ...Object.keys(installPackage.dependencies ?? {}),
       ...Object.keys(installPackage.optionalDependencies ?? {}),

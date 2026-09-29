@@ -73,6 +73,10 @@ const makeFixture = () =>
       }),
     );
     yield* Effect.tryPromise(() => mkdir(path.join(root, 'topology'), { recursive: true }));
+    // Runtime installs pin transitive versions to the workspace lockfile, so the fixture workspace has one.
+    yield* Effect.tryPromise(() =>
+      writeFile(path.join(root, 'pnpm-lock.yaml'), "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n"),
+    );
     yield* Effect.tryPromise(() =>
       writeFile(
         path.join(root, LEDGER_PATH, 'package.json'),

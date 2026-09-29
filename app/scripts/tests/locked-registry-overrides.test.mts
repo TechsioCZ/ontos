@@ -22,6 +22,9 @@ packages:
   effect@4.0.0-rc.117:
     resolution: {integrity: sha512-b}
 
+  aliased@npm:other@1.0.0:
+    resolution: {integrity: sha512-e}
+
   semver@6.3.1:
     resolution: {integrity: sha512-c}
 
