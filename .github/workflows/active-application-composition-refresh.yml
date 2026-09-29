@@ -54,12 +54,19 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
+      # On the Cloudflare target the Workers are what the snapshot observes, and a failed edge rollout leaves
+      # the last successful stage-edge revision live even after a newer stage deployment succeeded.
       - name: Resolve the last successful stage deployment
         id: base
         working-directory: app
         env:
           GH_TOKEN: ${{ github.token }}
-        run: mise exec -- pnpm deployment-base:resolve --environment stage
+        run: |
+          deployment_environment=stage
+          if [[ "$DEPLOY_TARGET" == cloudflare ]]; then
+            deployment_environment=stage-edge
+          fi
+          mise exec -- pnpm deployment-base:resolve --environment "$deployment_environment"
 
       # A DEPLOY_TARGET switch takes effect at the next stage deploy, which starts this target's Outbox Workers
       # and stops the other target's. Until then the workers drift from the target: the other target's still
