@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { Array as EffectArray, Order, Schema } from 'effect';
+import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 const appRoot = path.resolve(import.meta.dirname, '../..');
@@ -20,7 +20,6 @@ const topology = Schema.decodeUnknownSync(TopologyFromJson)(
 );
 const readConfig = (unitPath: string) => readFileSync(path.join(appRoot, unitPath, 'modern.config.ts'), 'utf-8');
 const WORKER_NAME_DECLARATION = /^const cloudflareWorkerName = '(?<name>[^']+)';$/mu;
-const SHELL_SERVICE_TARGET = /_WORKER_NAME'\)\s*\?\?\s*'(?<name>[^']+)'/gu;
 
 // CI deploys, snapshots and restores each placed unit under its topology `cloudflare.workerName`,
 // while Wrangler deploys the name its Modern config bakes into `.output/wrangler.json`. They must be
@@ -31,14 +30,14 @@ it('names every Worker in its Modern config exactly as the topology does', () =>
   }
 });
 
-it('binds the Shell to the Worker of every vertical and nothing else', () => {
-  const targets = [...readConfig(topology.shell.path).matchAll(SHELL_SERVICE_TARGET)].flatMap((match) =>
-    match.groups?.name === undefined ? [] : [match.groups.name],
+it('binds the Shell to the Worker of every vertical under its topology identity, with no overrides', () => {
+  const shellConfig = readConfig(topology.shell.path);
+  // The Shell derives one service per topology vertical: its Worker name, binding and BFF prefix.
+  expect(shellConfig).toContain('services: verticalServiceBindings,');
+  expect(shellConfig).toContain('service: cloudflare.workerName,');
+  expect(shellConfig).toContain(
+    'binding: backendFederation.executionSurfaces.cloudflare.workerDispatch.serviceBinding,',
   );
-  expect(EffectArray.sort(targets, Order.String)).toEqual(
-    EffectArray.sort(
-      topology.verticals.map((vertical) => vertical.cloudflare.workerName),
-      Order.String,
-    ),
-  );
+  // A build variable must not rename a bound Worker or binding away from the topology.
+  expect(shellConfig).not.toMatch(/_WORKER_(?:NAME|BINDING)'/u);
 });
