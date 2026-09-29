@@ -9,6 +9,7 @@ import type {
   InstalledDeploymentResolutionInput,
   InstalledModuleCatalog,
 } from '@app/core-runtime';
+import { unitServiceFetch } from '@app/core-runtime/unit-service-fetch';
 import { Cause, Chunk, Context, Duration, Effect, Function as Fn, Layer, Schema, Semaphore } from 'effect';
 
 import type { DeploymentAllowlist } from './deployment-allowlist.ts';
@@ -216,10 +217,17 @@ const fetchContract = Effect.fn('ShellInstalledModuleCatalog.fetchContract')(fun
   );
 });
 
+/**
+ * A unit's contract is reached through the unit's own transport: its Worker service binding on
+ * Cloudflare (Workers on one account cannot fetch each other's public URLs), its URL on Node.
+ */
+const unitContractFetch = (serviceBinding: string | undefined): ModuleContractFetch =>
+  serviceBinding === undefined ? globalThis.fetch : unitServiceFetch(serviceBinding);
+
 /** Creates one lazy cache for a fully healthy allowlist revision; degraded reads retry. */
 export const makeInstalledModuleCatalogLoader = (
   allowlist: DeploymentAllowlist,
-  ...[fetchContractDocument = globalThis.fetch, inputOptions = {}]: InstalledModuleCatalogLoaderArguments
+  ...[fetchContractDocument, inputOptions = {}]: InstalledModuleCatalogLoaderArguments
 ): Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError> => {
   const options = {
     maxBytes: inputOptions.maxBytes ?? ONTOS_MODULE_CONTRACT_MAX_BYTES,
@@ -230,7 +238,8 @@ export const makeInstalledModuleCatalogLoader = (
   let loading: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError> | undefined;
   const loadCatalog = Effect.forEach(
     allowlist.entries,
-    ({ appId, contractUrl }) => fetchContract(appId, contractUrl, fetchContractDocument, options),
+    ({ appId, contractUrl, serviceBinding }) =>
+      fetchContract(appId, contractUrl, fetchContractDocument ?? unitContractFetch(serviceBinding), options),
     { concurrency: 8 },
   ).pipe(
     Effect.flatMap((contracts) =>

@@ -36,9 +36,11 @@ class DeploymentAllowlistConfigurationError extends TaggedError<DeploymentAllowl
   },
 ) {}
 
-interface DeploymentAllowlistEntry {
+export interface DeploymentAllowlistEntry {
   readonly appId: OntosDeploymentAppId;
   readonly contractUrl: string;
+  /** The Worker service binding the Shell reaches this unit through on Cloudflare. */
+  readonly serviceBinding?: string;
 }
 
 export interface DeploymentAllowlist {
@@ -47,6 +49,15 @@ export interface DeploymentAllowlist {
 }
 
 const DeploymentAllowlistVerticalSchema = Struct({
+  backendFederation: optionalKey(
+    Struct({
+      executionSurfaces: Struct({
+        cloudflare: Struct({
+          workerDispatch: Struct({ serviceBinding: NonEmptyString }),
+        }),
+      }),
+    }),
+  ),
   cloudflare: optionalKey(
     Struct({
       publicUrlEnv: NonEmptyString,
@@ -176,6 +187,7 @@ const DeploymentAllowlistRevisionSchema = fromJsonString(
       Struct({
         appId: OntosDeploymentAppIdSchema,
         contractUrl: StringSchema,
+        serviceBinding: optionalKey(StringSchema),
       }),
     ),
     environment: NonEmptyString,
@@ -197,6 +209,12 @@ export const deriveDeploymentAllowlist = effectFn('DeploymentAllowlist.deriveDep
   function* deriveDeploymentAllowlist(input: DeploymentAllowlistInput) {
     const decoded = yield* decodeUnknownEffect(DeploymentAllowlistInputSchema)(input).pipe(mapError(invalid));
     const entries: DeploymentAllowlistEntry[] = [];
+    const serviceBindings = new Map(
+      decoded.topology.verticals.map(({ backendFederation, id }) => [
+        id,
+        backendFederation?.executionSurfaces.cloudflare.workerDispatch.serviceBinding,
+      ]),
+    );
     for (const appId of decoded.topology.verticals
       .flatMap(({ id, surfaceProfile }) => (surfaceProfile === 'api-only' ? [] : [id]))
       .toSorted()) {
@@ -208,7 +226,10 @@ export const deriveDeploymentAllowlist = effectFn('DeploymentAllowlist.deriveDep
       if (contractUrl === undefined) {
         return yield* invalid(`allowlist contains an invalid URL for ${appId}`);
       }
-      entries.push(Object.freeze({ appId, contractUrl }));
+      const serviceBinding = serviceBindings.get(appId);
+      entries.push(
+        Object.freeze(serviceBinding === undefined ? { appId, contractUrl } : { appId, contractUrl, serviceBinding }),
+      );
     }
     const revision = yield* encodeEffect(DeploymentAllowlistRevisionSchema)({
       entries,

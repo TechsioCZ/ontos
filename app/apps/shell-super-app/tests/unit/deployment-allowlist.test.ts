@@ -35,6 +35,35 @@ it.effect('derives an immutable, topology-authorized and deterministically order
   }),
 );
 
+const withServiceBinding = (id: string, serviceBinding: string) => ({
+  backendFederation: { executionSurfaces: { cloudflare: { workerDispatch: { serviceBinding } } } },
+  id,
+  kind: 'vertical',
+});
+
+it.effect("carries each vertical's Worker service binding so a Worker Shell discovers it over the binding", () =>
+  Effect.gen(function* testServiceBindings() {
+    const allowlist = yield* deriveDeploymentAllowlist({
+      environment: 'development',
+      overlay: overlay(validUrls),
+      topology: {
+        verticals: [
+          withServiceBinding('documents-center', 'VERTICAL_DOCUMENTS_CENTER_WORKER'),
+          { id: 'property-registry', kind: 'vertical' },
+        ],
+      },
+    });
+    expect(allowlist.entries).toEqual([
+      {
+        appId: 'documents-center',
+        contractUrl: validUrls['documents-center'],
+        serviceBinding: 'VERTICAL_DOCUMENTS_CENTER_WORKER',
+      },
+      { appId: 'property-registry', contractUrl: validUrls['property-registry'] },
+    ]);
+  }),
+);
+
 it.effect('excludes API-only verticals from Shell module discovery', () =>
   Effect.gen(function* testApiOnlyVertical() {
     const allowlist = yield* deriveDeploymentAllowlist({
