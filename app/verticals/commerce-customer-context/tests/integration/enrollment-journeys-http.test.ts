@@ -27,6 +27,7 @@ import {
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
+import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { toSpiceDbActionObjectId } from '../../../../packages/core-runtime/src/permissions/service.ts';
 import {
   commerceCustomerContextActionRuntimeAwaitingOwnerPreparation,
@@ -1881,11 +1882,7 @@ const seedGovernedStartAuthorization = Effect.fnUntraced(function* seedGovernedS
   actionKeys: readonly string[] = [START_ACTION_KEY, CLAIM_ACTION_KEY],
 ) {
   const configuration = yield* loadSpiceDbConfig();
-  const client = v1.NewClient(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    configuration.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
-  );
+  const client = newSpiceDbGrpcClient(configuration);
   const principalSubject = v1.SubjectReference.create({
     object: v1.ObjectReference.create({ objectId: subject.principalId, objectType: 'principal' }),
   });

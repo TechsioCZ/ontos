@@ -27,6 +27,7 @@ import { Array as EffectArray, ConfigProvider, Effect, Layer, Order, Redacted, S
 import { expect, it } from 'effect-rstest';
 
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
+import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
@@ -233,11 +234,11 @@ const installAssessmentPermission = Effect.fnUntraced(function* installAssessmen
     return yield* Effect.die('Could not encode the Customer Context module permission');
   }
   const configuration = yield* loadSpiceDbConfig();
-  const client = v1.NewClient(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    configuration.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
-  );
+  const { caCertificate } = configuration;
+  if (caCertificate === undefined) {
+    return yield* Effect.die('SPICEDB_CA_CERT is required to reach SpiceDB over TLS');
+  }
+  const client = newSpiceDbGrpcClient(configuration);
   const relationships = [
     relationship('module_access', moduleObjectId, 'legal_entity', 'legal_entity', legalEntityObjectId),
     relationship('module_access', moduleObjectId, 'accessor', 'principal', input.principalId),
@@ -275,7 +276,7 @@ const installAssessmentPermission = Effect.fnUntraced(function* installAssessmen
       Effect.orDie,
     ),
   );
-  return configuration;
+  return { caCertificate, endpoint: configuration.endpoint, preSharedKey: configuration.preSharedKey };
 });
 
 const configuredRuntime = (gateway: AcceptanceGatewayIssuer, environment: Readonly<Record<string, string>>) =>
@@ -395,8 +396,8 @@ it.live(
         const runtime = yield* configuredRuntime(gateway, {
           DATABASE_URL: connections.runtime.connectionString,
           ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON: compositionSnapshot(clock),
+          SPICEDB_CA_CERT: spiceDb.caCertificate,
           SPICEDB_ENDPOINT: spiceDb.endpoint,
-          SPICEDB_INSECURE: String(spiceDb.insecureLocal),
           SPICEDB_PRESHARED_KEY: spiceDb.preSharedKey,
         });
         const principal = {
@@ -541,8 +542,8 @@ it.live(
         };
         const commonEnvironment = {
           DATABASE_URL: connections.runtime.connectionString,
+          SPICEDB_CA_CERT: spiceDb.caCertificate,
           SPICEDB_ENDPOINT: spiceDb.endpoint,
-          SPICEDB_INSECURE: String(spiceDb.insecureLocal),
           SPICEDB_PRESHARED_KEY: spiceDb.preSharedKey,
         };
         const cases = [
@@ -639,8 +640,8 @@ it.live(
         const runtime = yield* configuredRuntime(gateway, {
           DATABASE_URL: connections.runtime.connectionString,
           ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON: compositionSnapshot(clock),
+          SPICEDB_CA_CERT: spiceDb.caCertificate,
           SPICEDB_ENDPOINT: spiceDb.endpoint,
-          SPICEDB_INSECURE: String(spiceDb.insecureLocal),
           SPICEDB_PRESHARED_KEY: spiceDb.preSharedKey,
         });
         const marketRef = {

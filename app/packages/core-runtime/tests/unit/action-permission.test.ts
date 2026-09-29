@@ -18,6 +18,7 @@ import {
   toSpiceDbActionObjectId,
 } from '../../src/permissions/service.ts';
 import type { PermissionCheckClient } from '../../src/permissions/service.ts';
+import { SPICEDB_TEST_CERTIFICATE } from '../support/spicedb-test-certificate.ts';
 
 const input = {
   actionKey: 'inventory.stock.reserve',
@@ -64,103 +65,61 @@ it.effect('loads the root SpiceDB environment independently of the invocation di
     expect(SPICEDB_ROOT_ENV_PATH.endsWith('/app/.env')).toBe(true);
     expect(configuration).toEqual({
       endpoint: 'localhost:50051',
-      insecureLocal: true,
       preSharedKey: 'ontos-local-development-key',
     });
   }),
 );
 
-it.effect('requires complete configuration and explicit secure or localhost-insecure transport', () =>
-  Effect.gen(function* requiresCompleteConfigurationAndExplicitSecureOrLocalhostinsecure() {
-    const validSecure = yield* parseSpiceDbConfig({
+it.effect('requires a complete configuration and accepts only a PEM certificate as SPICEDB_CA_CERT', () =>
+  Effect.gen(function* requiresACompleteConfigurationAndAPemCaCertificate() {
+    const valid = yield* parseSpiceDbConfig({
+      SPICEDB_CA_CERT: `\n${SPICEDB_TEST_CERTIFICATE}\n`,
+      SPICEDB_ENDPOINT: 'spicedb:50051',
+      SPICEDB_PRESHARED_KEY: 'test-key',
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
+    });
+    const withoutCertificate = yield* parseSpiceDbConfig({
+      SPICEDB_CA_CERT: '  ',
       SPICEDB_ENDPOINT: 'spicedb.internal.example:443',
-      SPICEDB_INSECURE: 'false',
       SPICEDB_PRESHARED_KEY: 'test-key',
     });
     const failures = yield* Effect.forEach(
       [
         {},
         {
-          SPICEDB_ENDPOINT: 'localhost:50051',
-          SPICEDB_PRESHARED_KEY: 'test-key',
-        },
-        {
-          SPICEDB_ENDPOINT: 'spicedb.internal.example:50051',
-          SPICEDB_INSECURE: 'true',
-          SPICEDB_PRESHARED_KEY: 'test-key',
-        },
-        {
           SPICEDB_ENDPOINT: 'https://spicedb.internal.example/path',
-          SPICEDB_INSECURE: 'false',
           SPICEDB_PRESHARED_KEY: 'test-key',
         },
         {
           SPICEDB_ENDPOINT: 'spicedb.internal.example:443?credential=test-key',
-          SPICEDB_INSECURE: 'false',
           SPICEDB_PRESHARED_KEY: 'test-key',
         },
         {
           SPICEDB_ENDPOINT: 'localhost:50051#fragment',
-          SPICEDB_INSECURE: 'true',
           SPICEDB_PRESHARED_KEY: 'test-key',
         },
         {
           SPICEDB_ENDPOINT: 'localhost:50051',
-          SPICEDB_INSECURE: 'true',
           SPICEDB_PRESHARED_KEY: '   ',
         },
-      ],
-      (environment) => Effect.flip(parseSpiceDbConfig(environment)),
-    );
-
-    expect(validSecure).toEqual({
-      endpoint: 'spicedb.internal.example:443',
-      insecureLocal: false,
-      preSharedKey: 'test-key',
-    });
-    expect(failures.every((failure) => Predicate.isTagged(failure, 'SpiceDbConfigError'))).toBe(true);
-    expect(failures.some((failure) => failure.reason.includes('test-key'))).toBe(false);
-  }),
-);
-
-it.effect('allows insecure transport only for the exact Zerops stage private endpoint', () =>
-  Effect.gen(function* allowsInsecureTransportOnlyForTheExactZerops() {
-    const stage = yield* parseSpiceDbConfig({
-      SPICEDB_ENDPOINT: 'spicedb:50051',
-      SPICEDB_INSECURE: 'true',
-      SPICEDB_PRESHARED_KEY: 'test-key',
-      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
-    });
-    const rejected = yield* Effect.forEach(
-      [
         {
-          SPICEDB_ENDPOINT: 'spicedb:50051',
-          SPICEDB_INSECURE: 'true',
+          SPICEDB_CA_CERT: 'not a certificate',
+          SPICEDB_ENDPOINT: 'localhost:50051',
           SPICEDB_PRESHARED_KEY: 'test-key',
-        },
-        {
-          SPICEDB_ENDPOINT: 'spicedb:50052',
-          SPICEDB_INSECURE: 'true',
-          SPICEDB_PRESHARED_KEY: 'test-key',
-          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
-        },
-        {
-          SPICEDB_ENDPOINT: 'spicedb:50051',
-          SPICEDB_INSECURE: 'true',
-          SPICEDB_PRESHARED_KEY: 'test-key',
-          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'production',
         },
       ],
       (environment) => Effect.flip(parseSpiceDbConfig(environment)),
     );
 
-    expect(stage).toEqual({
+    expect(valid).toEqual({
+      caCertificate: SPICEDB_TEST_CERTIFICATE,
       deploymentEnvironment: 'stage',
       endpoint: 'spicedb:50051',
-      insecureLocal: true,
       preSharedKey: 'test-key',
     });
-    expect(rejected.every((failure) => Predicate.isTagged(failure, 'SpiceDbConfigError'))).toBe(true);
+    expect(withoutCertificate).toEqual({ endpoint: 'spicedb.internal.example:443', preSharedKey: 'test-key' });
+    expect(failures.every((failure) => Predicate.isTagged(failure, 'SpiceDbConfigError'))).toBe(true);
+    expect(failures.some((failure) => failure.reason.includes('test-key'))).toBe(false);
   }),
 );
 
@@ -294,8 +253,8 @@ it.effect('constructs the live client with a bounded deadline and finalizes it w
     let finalized = false;
     let observedTimeout = 0;
     const configuration = {
+      caCertificate: SPICEDB_TEST_CERTIFICATE,
       endpoint: 'localhost:50051',
-      insecureLocal: true,
       preSharedKey: 'test-key',
     } as const;
 

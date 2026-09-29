@@ -4,14 +4,15 @@ import { expect, it, rstest } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import { createSpiceDbPermissionClient, SPICEDB_CHECK_TIMEOUT_MS } from '../../src/permissions/client.ts';
+import { SPICEDB_TEST_CERTIFICATE } from '../support/spicedb-test-certificate.ts';
 
 type PermissionRpcError = NonNullable<
   Parameters<NonNullable<Parameters<v1.PermissionsServiceClient['checkPermission']>[3]>>[0]
 >;
 
 const configuration = {
+  caCertificate: SPICEDB_TEST_CERTIFICATE,
   endpoint: 'localhost:50051',
-  insecureLocal: true,
   preSharedKey: 'test-key',
 } as const;
 

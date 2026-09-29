@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { pathToFileURL } from 'node:url';
 
-import { v1 } from '@authzed/authzed-node';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Array as EffectArray,
@@ -30,7 +29,7 @@ import type {
   ActionAuthorizationProvisioningResult,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import { STAGE_CONTEXTS } from '../packages/core-runtime/src/install/stage-context-bootstrap.ts';
-import { spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
+import { newSpiceDbGrpcClient } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
 import { deriveOntosModuleDeploymentContract } from './generate-ontos-module-contract.mts';
@@ -76,11 +75,7 @@ const failure = (
 const isLoopbackSpiceDb = (configuration: SpiceDbConfigValue): boolean => {
   try {
     const parsed = new URL(`http://${configuration.endpoint}`);
-    return (
-      configuration.insecureLocal &&
-      parsed.port.length > 0 &&
-      ['127.0.0.1', '[::1]', 'localhost'].includes(parsed.hostname)
-    );
+    return parsed.port.length > 0 && ['127.0.0.1', '[::1]', 'localhost'].includes(parsed.hostname);
   } catch {
     return false;
   }
@@ -104,11 +99,7 @@ export const selectActionAuthorizationProvisioningTarget = (
       environment: 'development',
     });
   }
-  if (
-    configuration.deploymentEnvironment === 'stage' &&
-    configuration.endpoint === 'spicedb:50051' &&
-    configuration.insecureLocal
-  ) {
+  if (configuration.deploymentEnvironment === 'stage' && configuration.endpoint === 'spicedb:50051') {
     const contexts = EffectArray.sortWith(
       [STAGE_CONTEXTS.techsio, STAGE_CONTEXTS.siampark].map(({ principalId, tenantId }) => ({
         principalId,
@@ -263,7 +254,7 @@ const callProvisioningClient = <Value,>(operation: () => PromiseLike<Value>) =>
   );
 
 const createProvisioningClient = (configuration: SpiceDbConfigValue): CloseableProvisioningClient => {
-  const client = v1.NewClient(configuration.preSharedKey, configuration.endpoint, spiceDbClientSecurity(configuration));
+  const client = newSpiceDbGrpcClient(configuration);
   return {
     checkPermission: (request) =>
       callProvisioningClient(client.promises.checkPermission.bind(client.promises, request)).pipe(

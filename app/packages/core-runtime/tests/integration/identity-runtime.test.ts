@@ -42,6 +42,7 @@ import { setSelfApiKeyBindingStatusAction } from '../../src/modules/actions/set-
 import { makeOperationalScopeRepository, makeOperationalScopeResolver } from '../../src/operations/context.ts';
 import { SPICEDB_CHECK_TIMEOUT_MS, createSpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
+import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { makeContextAccess } from '../../src/permissions/context-access.ts';
 import { makeActionPermissionService, toSpiceDbActionObjectId } from '../../src/permissions/service.ts';
 import { makeReadRuntime } from '../../src/reads/runtime.ts';
@@ -126,11 +127,7 @@ it.live('runs identity mutations and tenant-isolated administration through live
     const providerKeyId = `identity-runtime-key-${randomUUID()}`;
     const selfProviderKeyId = `identity-runtime-self-key-${randomUUID()}`;
     const supportTargetUserId = `identity-runtime-target-${randomUUID()}`;
-    const spiceDbClient = v1.NewClient(
-      spiceDbConfiguration.preSharedKey,
-      spiceDbConfiguration.endpoint,
-      spiceDbConfiguration.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
-    );
+    const spiceDbClient = newSpiceDbGrpcClient(spiceDbConfiguration);
     const permissionClient = createSpiceDbPermissionClient(spiceDbConfiguration, SPICEDB_CHECK_TIMEOUT_MS);
     const contextAccess = makeContextAccess(permissionClient);
     const actionPermission = makeActionPermissionService(permissionClient);

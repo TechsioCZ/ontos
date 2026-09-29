@@ -44,7 +44,7 @@ import {
   toLegalEntityAccessObjectId,
 } from '../../packages/core-runtime/src/permissions/context-access.ts';
 import { loadSpiceDbConfig } from '../../packages/core-runtime/src/permissions/config.ts';
-import { spiceDbClientSecurity } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
+import { newSpiceDbGrpcClient } from '../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
 import {
   GatewayContextResponseSchema,
@@ -240,13 +240,7 @@ it.live(
 
     const spiceDbConfiguration = yield* loadSpiceDbConfig();
     const spiceDbClient = yield* Effect.acquireRelease(
-      Effect.sync(() =>
-        v1.NewClient(
-          spiceDbConfiguration.preSharedKey,
-          spiceDbConfiguration.endpoint,
-          spiceDbClientSecurity(spiceDbConfiguration),
-        ),
-      ),
+      Effect.sync(() => newSpiceDbGrpcClient(spiceDbConfiguration)),
       (client) => Effect.sync(() => client.close()),
     );
     const legalEntityAccessObjectId = toLegalEntityAccessObjectId(tenantId, legalEntityId);

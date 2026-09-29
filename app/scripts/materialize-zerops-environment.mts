@@ -7,13 +7,12 @@ import { isSeq, parseDocument } from 'yaml';
 /**
  * `app/zerops.yaml` describes stage, the environment every push deploys. A deployment to another
  * environment pushes a copy that names that environment in every build and runtime, so its services
- * never run stage-only behaviour. Stage reaches the in-project SpiceDB over plaintext gRPC, which the
- * runtime allows only on stage, so production's copy also points every runtime at production's TLS
- * SpiceDB endpoint.
+ * never run stage-only behaviour. Every runtime reaches SpiceDB over TLS and pins the in-project
+ * `spicedb` service's gRPC certificate (`SPICEDB_CA_CERT`); production's copy also points every
+ * runtime at production's SpiceDB endpoint, which that certificate must name.
  */
 export const DEPLOYMENT_ENVIRONMENT_VARIABLE = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 export const SPICEDB_ENDPOINT_VARIABLE = 'SPICEDB_ENDPOINT';
-export const SPICEDB_INSECURE_VARIABLE = 'SPICEDB_INSECURE';
 
 export const DeploymentEnvironmentSchema = Schema.Literals(['production', 'stage']);
 export type DeploymentEnvironment = typeof DeploymentEnvironmentSchema.Type;
@@ -66,9 +65,6 @@ export const materializeZeropsEnvironment = (zeropsYamlText: string, target: Zer
       }
       for (const path of endpointPaths) {
         document.setIn(path, target.spiceDbEndpoint);
-      }
-      for (const path of variablePaths(document, setupCount, SPICEDB_INSECURE_VARIABLE)) {
-        document.setIn(path, 'false');
       }
     }
     return document.toString({ lineWidth: 0 });

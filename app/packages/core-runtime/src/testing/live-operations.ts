@@ -38,6 +38,7 @@ import {
   toResourceAccessObjectId,
 } from '../permissions/context-access.ts';
 import { makeActionPermissionLive } from '../permissions/service.ts';
+import { newSpiceDbGrpcClient } from '../permissions/spicedb-grpc-rpc.ts';
 import { ReadRuntime, makeReadRuntime } from '../reads/runtime.ts';
 
 const LIVE_FIXTURE_EXTERNAL_TIMEOUT = Duration.seconds(30);
@@ -381,7 +382,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
       Scope.provide(databaseScope),
       Effect.mapError((cause) => fixtureFailure('Unable to initialize fixture database', cause)),
     );
-    const spice = v1.NewClient(spiceDb.preSharedKey, spiceDb.endpoint, v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED);
+    const spice = newSpiceDbGrpcClient(spiceDb);
     const [tenantId, legalEntityId] = yield* Effect.all([makeFixtureId(), makeFixtureId()], {
       concurrency: 2,
     });

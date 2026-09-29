@@ -5,6 +5,7 @@ import { expect, it } from 'effect-rstest';
 
 import { SPICEDB_CHECK_TIMEOUT_MS, createSpiceDbPermissionClient } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
+import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import {
   makeContextAccess,
   toBusinessPermissionAccessKey,
@@ -147,11 +148,7 @@ const contextAccessProgram = Effect.gen(function* contextAccessIntegration() {
   ) {
     throw new Error('Expected valid SpiceDB object identifiers');
   }
-  const client = v1.NewClient(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    configuration.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
-  );
+  const client = newSpiceDbGrpcClient(configuration);
   const bootstrap = yield* fileSystem.readFileString(new URL('../../spicedb/bootstrap.yaml', import.meta.url).pathname);
   const bootstrapLines = bootstrap.split('\n');
   const schemaStart = bootstrapLines.indexOf('schema: |-') + 1;

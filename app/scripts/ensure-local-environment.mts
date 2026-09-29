@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-import { NodeFileSystem, NodePath } from '@effect/platform-node';
-import { Cause, Config, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema } from 'effect';
+import { Cause, Config, Effect, Exit, FileSystem, Option, Path, Redacted, Schema } from 'effect';
 
 import { APP_ENV_PATH } from '../packages/core-runtime/src/environment/workspace-environment.ts';
 import { localPublicClientValues, localSpiceDbValues } from './local-environment-values.mts';
+import { LocalSpicedbTlsLive, ensureLocalSpicedbTls } from './local-spicedb-tls.mts';
 
 const ShellIdSchema = Schema.String.pipe(Schema.brand('ShellId'));
 const TopologySchema = Schema.fromJsonString(
@@ -60,11 +60,12 @@ const main = Effect.gen(function* ensureLocalEnvironment() {
   const path = yield* Path.Path;
   const topologyPath = yield* path.fromFileUrl(new URL('../topology/reference-topology.json', import.meta.url));
   const overlayPath = yield* path.fromFileUrl(new URL('../topology/local-overlays/development.json', import.meta.url));
-  const [original, topologySource, overlaySource, overrides] = yield* Effect.all([
+  const [original, topologySource, overlaySource, overrides, certificate] = yield* Effect.all([
     fileSystem.readFileString(APP_ENV_PATH, 'utf-8'),
     fileSystem.readFileString(topologyPath, 'utf-8'),
     fileSystem.readFileString(overlayPath, 'utf-8'),
     LocalEnvironmentOverrides,
+    ensureLocalSpicedbTls,
   ]);
   const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
   const overlay = yield* Schema.decodeUnknownEffect(LocalOverlaySchema)(overlaySource);
@@ -79,11 +80,15 @@ const main = Effect.gen(function* ensureLocalEnvironment() {
   const remaining = new Map(
     Object.entries({
       ...localPublicClientValues(lines, publicClientTopology),
-      ...localSpiceDbValues(lines, {
-        grpcPort: nonEmptyValue(overrides.grpcPort),
-        httpPort: nonEmptyValue(overrides.httpPort),
-        preSharedKey: nonEmptyRedactedValue(overrides.preSharedKey),
-      }),
+      ...localSpiceDbValues(
+        lines,
+        {
+          grpcPort: nonEmptyValue(overrides.grpcPort),
+          httpPort: nonEmptyValue(overrides.httpPort),
+          preSharedKey: nonEmptyRedactedValue(overrides.preSharedKey),
+        },
+        certificate,
+      ),
     }),
   );
   const updated = lines.map((line) => {
@@ -115,11 +120,10 @@ const main = Effect.gen(function* ensureLocalEnvironment() {
   console.log(`Updated the canonical local environment at ${APP_ENV_PATH}`);
 });
 
-const NodeServicesLive = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 const exit = await Effect.runPromiseExit(
   main.pipe(
     Effect.tapCause((cause) => Effect.logError(Cause.pretty(cause))),
-    Effect.provide(NodeServicesLive),
+    Effect.provide(LocalSpicedbTlsLive),
   ),
 );
 if (Exit.isFailure(exit)) {

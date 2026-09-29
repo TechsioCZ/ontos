@@ -265,14 +265,12 @@ const currentActions = currentActionKeys.map((actionKey) => ({
 const developmentConfiguration: SpiceDbConfigValue = {
   deploymentEnvironment: 'development',
   endpoint: 'localhost:50051',
-  insecureLocal: true,
   preSharedKey: testPreSharedKey,
 };
 
 const stageConfiguration: SpiceDbConfigValue = {
   deploymentEnvironment: 'stage',
   endpoint: 'spicedb:50051',
-  insecureLocal: true,
   preSharedKey: testPreSharedKey,
 };
 
@@ -327,12 +325,11 @@ it.effect(
         {
           ...developmentConfiguration,
           endpoint: 'spicedb.example.com:50051',
-          insecureLocal: false,
         },
         { ...withoutEnvironment, endpoint: 'spicedb.example.com:50051' },
         { ...withoutEnvironment, endpoint: 'spicedb:50051' },
         { ...stageConfiguration, endpoint: 'localhost:50051' },
-        { ...stageConfiguration, insecureLocal: false },
+        { ...stageConfiguration, endpoint: 'spicedb:50052' },
       ].map((configuration) =>
         Effect.gen(function* testEffect3() {
           const error = yield* failureOf(selectActionAuthorizationProvisioningTarget(configuration));

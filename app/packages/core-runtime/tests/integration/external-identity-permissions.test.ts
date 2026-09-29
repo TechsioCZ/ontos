@@ -12,6 +12,7 @@ import {
   fullyConsistent,
 } from '../../src/permissions/client.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
+import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { makeContextAccess, toIdentityNamespaceAccessObjectId } from '../../src/permissions/context-access.ts';
 
 const ResourceIdSchema = Schema.String.pipe(Schema.brand('ResourceId'));
@@ -160,11 +161,7 @@ const externalIdentityPermissionIntegration = Effect.gen(function* externalIdent
     ...materialize(assertion),
     expected: assertion.expected,
   }));
-  const adminClient = v1.NewClient(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    configuration.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
-  );
+  const adminClient = newSpiceDbGrpcClient(configuration);
   const permissionClient = createSpiceDbPermissionClient(configuration, SPICEDB_CHECK_TIMEOUT_MS);
   const cleanup = Effect.forEach(
     relationships,

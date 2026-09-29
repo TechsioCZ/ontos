@@ -20,6 +20,7 @@ import {
 } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
+import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { PrincipalEligibility } from '../../../../packages/core-runtime/src/permissions/principal-ref.ts';
 import type { PrincipalEligibilityService } from '../../../../packages/core-runtime/src/permissions/principal-ref.ts';
 import { toSpiceDbActionObjectId } from '../../../../packages/core-runtime/src/permissions/service.ts';
@@ -99,11 +100,7 @@ const seedSpiceDbRelationships = Effect.fnUntraced(function* seedSpiceDbRelation
   specs: readonly SpiceDbRelationshipSpec[],
 ) {
   const configuration = yield* loadSpiceDbConfig();
-  const client = v1.NewClient(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    configuration.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
-  );
+  const client = newSpiceDbGrpcClient(configuration);
   const relationships = specs.map(relationshipFor);
   const write = (operation: v1.RelationshipUpdate_Operation) =>
     Effect.promise(

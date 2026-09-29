@@ -12,7 +12,6 @@ const validEnvironment = {
   BETTER_AUTH_URL: 'https://shell.stage.example.test',
   DATABASE_ADMIN_URL: 'postgresql://db:password@db:5432/db',
   SPICEDB_ENDPOINT: 'spicedb:50051',
-  SPICEDB_INSECURE: 'true',
   SPICEDB_PRESHARED_KEY: 'stage-spicedb-key',
   STAGE_DEMO_PASSWORD: 'test-only-bootstrap-password',
   STAGE_SIAMPARK_PASSWORD: 'test-only-siampark-password',

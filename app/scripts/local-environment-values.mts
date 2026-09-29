@@ -12,6 +12,15 @@ const existingValues = (lines: readonly string[]): Readonly<Record<string, strin
     }),
   );
 
+/** A dotenv double-quoted value; the loader expands `\n`, so a PEM keeps its line breaks. */
+const dotenvQuoted = (value: string) => {
+  const escaped = value
+    .trim()
+    .replaceAll('\r\n', '\n')
+    .replaceAll('\n', String.raw`\n`);
+  return `"${escaped}"`;
+};
+
 export interface LocalEnvironmentOverrides {
   readonly grpcPort?: string | undefined;
   readonly httpPort?: string | undefined;
@@ -36,7 +45,11 @@ export const localPublicClientValues = (lines: readonly string[], topology: Loca
   };
 };
 
-export const localSpiceDbValues = (lines: readonly string[], overrides: LocalEnvironmentOverrides) => {
+export const localSpiceDbValues = (
+  lines: readonly string[],
+  overrides: LocalEnvironmentOverrides,
+  certificate: string,
+) => {
   const existing = existingValues(lines);
   const grpcPort = overrides.grpcPort ?? existing.SPICEDB_GRPC_PORT ?? '50051';
   const httpPort = overrides.httpPort ?? existing.SPICEDB_HTTP_PORT ?? '8443';
@@ -47,13 +60,14 @@ export const localSpiceDbValues = (lines: readonly string[], overrides: LocalEnv
   const preSharedKey = resolvePreSharedKey();
 
   return {
+    // The local certificate is the source of truth; it replaces any earlier value.
+    SPICEDB_CA_CERT: dotenvQuoted(certificate),
     SPICEDB_ENDPOINT:
       overrides.grpcPort === undefined && existing.SPICEDB_ENDPOINT !== undefined
         ? existing.SPICEDB_ENDPOINT
         : `localhost:${grpcPort}`,
     SPICEDB_GRPC_PORT: grpcPort,
     SPICEDB_HTTP_PORT: httpPort,
-    SPICEDB_INSECURE: existing.SPICEDB_INSECURE ?? 'true',
     SPICEDB_PRESHARED_KEY: preSharedKey,
   };
 };

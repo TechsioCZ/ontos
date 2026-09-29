@@ -10,7 +10,7 @@ import { Reactivity } from 'effect/unstable/reactivity';
 
 import { loadDatabaseConnectionPair } from '../packages/core-runtime/src/db/config.ts';
 import { fullyConsistent } from '../packages/core-runtime/src/permissions/client.ts';
-import { spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
+import { newSpiceDbGrpcClient } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import {
@@ -431,7 +431,7 @@ const acquireSpiceDbClient = (configuration: SpiceDbConfigValue) =>
   Effect.acquireRelease(
     Effect.try({
       catch: () => migrationFailure('The authorization migration SpiceDB client could not open'),
-      try: () => v1.NewClient(configuration.preSharedKey, configuration.endpoint, spiceDbClientSecurity(configuration)),
+      try: () => newSpiceDbGrpcClient(configuration),
     }),
     (client) => Effect.sync(() => client.close()),
   );

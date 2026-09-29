@@ -519,8 +519,10 @@ const VpcServiceBodySchema = Schema.Struct({
   app_protocol: Schema.optionalKey(Schema.String),
   host: Schema.Struct({ hostname: Schema.String, resolver_network: Schema.Struct({ tunnel_id: Schema.String }) }),
   http_port: Schema.optionalKey(Schema.Number),
+  https_port: Schema.optionalKey(Schema.Number),
   name: Schema.String,
   tcp_port: Schema.optionalKey(Schema.Number),
+  tls_settings: Schema.optionalKey(Schema.Struct({ cert_verification_mode: Schema.String })),
   type: Schema.String,
 });
 const VpcServiceSchema = Schema.Struct({ ...VpcServiceBodySchema.fields, service_id: Schema.String });

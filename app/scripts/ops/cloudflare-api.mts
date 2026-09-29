@@ -43,9 +43,11 @@ const VpcServiceSchema = Schema.Struct({
     resolver_network: optional(Schema.Struct({ tunnel_id: Schema.String })),
   }),
   http_port: optional(Schema.Number),
+  https_port: optional(Schema.Number),
   name: Schema.String,
   service_id: Schema.NonEmptyString,
   tcp_port: optional(Schema.Number),
+  tls_settings: optional(Schema.Struct({ cert_verification_mode: optional(Schema.String) })),
   type: Schema.String,
 });
 export type CloudflareVpcService = typeof VpcServiceSchema.Type;
@@ -215,7 +217,11 @@ const WORKERS_USAGE_QUERY = `query WorkersUsage($accountTag: string!, $since: Ti
 }`;
 const WorkerSecretSchema = Schema.Struct({ name: Schema.String });
 
-/** A Workers VPC service reached by hostname through the tunnel's resolver network. */
+/**
+ * A Workers VPC service reached by hostname through the tunnel's resolver network. An `http`
+ * service is only ever reached over HTTPS on `port`, verifying the origin certificate in full
+ * against the fetch URL's hostname.
+ */
 export interface VpcServiceSpec {
   readonly hostname: string;
   readonly name: string;
@@ -256,11 +262,15 @@ interface TunnelCreateBody {
 interface VpcServiceBody {
   readonly app_protocol?: 'postgresql';
   readonly host: { readonly hostname: string; readonly resolver_network: { readonly tunnel_id: string } };
-  readonly http_port?: number;
+  readonly https_port?: number;
   readonly name: string;
   readonly tcp_port?: number;
+  readonly tls_settings?: { readonly cert_verification_mode: typeof VPC_CERT_VERIFICATION_MODE };
   readonly type: 'http' | 'tcp';
 }
+
+/** Workers VPC checks the origin certificate's chain and that it names the fetch URL's hostname. */
+export const VPC_CERT_VERIFICATION_MODE = 'verify_full';
 
 /** The body Wrangler sends for `hyperdrive create --service-id … --caching-disabled`; secrets are revealed only here. */
 const hyperdriveBody = (spec: HyperdriveSpec) => ({
@@ -408,12 +418,18 @@ export interface CloudflareApiService {
 
 export const CloudflareApi = Context.Service<CloudflareApiService>('@app/scripts/ops/cloudflare-api/CloudflareApi');
 
-/** The request body Wrangler sends for `vpc service create --hostname … --tunnel-id …`. */
+/** The request body Wrangler sends for `vpc service create --hostname … --tunnel-id …` (with `--https-port` for HTTP). */
 export const vpcServiceBody = (spec: VpcServiceSpec): VpcServiceBody => {
   const host = { hostname: spec.hostname, resolver_network: { tunnel_id: spec.tunnelId } };
   return spec.type === 'tcp'
     ? { app_protocol: 'postgresql', host, name: spec.name, tcp_port: spec.port, type: 'tcp' }
-    : { host, http_port: spec.port, name: spec.name, type: 'http' };
+    : {
+        host,
+        https_port: spec.port,
+        name: spec.name,
+        tls_settings: { cert_verification_mode: VPC_CERT_VERIFICATION_MODE },
+        type: 'http',
+      };
 };
 
 const describeErrors = (errors: Option.Option<readonly { readonly code: number; readonly message: string }[]>) =>

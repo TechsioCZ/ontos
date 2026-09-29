@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { v1 } from '@authzed/authzed-node';
 import { NodeServices } from '@effect/platform-node';
 import { betterAuth } from 'better-auth';
 import { verifyPassword } from 'better-auth/crypto';
@@ -36,7 +35,7 @@ import {
   selectBootstrapPrincipals,
   selectBootstrapAuthBindings,
 } from '../packages/core-runtime/src/install/context-bootstrap-shared.ts';
-import { spiceDbClientSecurity } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
+import { newSpiceDbGrpcClient } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { parseSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import {
   toLegalEntityAccessObjectId,
@@ -49,8 +48,8 @@ export interface LocalDevelopmentEnvironment {
   readonly BETTER_AUTH_URL?: string;
   readonly DATABASE_ADMIN_URL?: string;
   readonly DATABASE_URL?: string;
+  readonly SPICEDB_CA_CERT?: string;
   readonly SPICEDB_ENDPOINT?: string;
-  readonly SPICEDB_INSECURE?: string;
   readonly SPICEDB_PRESHARED_KEY?: string;
   readonly ULTRAMODERN_DEPLOYMENT_ENVIRONMENT?: string;
 }
@@ -94,8 +93,8 @@ export interface LocalDevelopmentConfiguration {
   readonly email: string;
   readonly password: Redacted.Redacted;
   readonly principalDisplayName: string;
+  readonly spiceDbCaCertificate: string;
   readonly spiceDbEndpoint: string;
-  readonly spiceDbInsecureLocal: boolean;
   readonly spiceDbPreSharedKey: Redacted.Redacted;
 }
 
@@ -217,8 +216,8 @@ const localDevelopmentConfigSource = Config.all({
   deploymentEnvironment: Config.schema(Schema.Trim, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
     Config.withDefault('development'),
   ),
+  spiceDbCaCertificate: Config.schema(TrimmedNonEmptyString, 'SPICEDB_CA_CERT'),
   spiceDbEndpoint: Config.schema(TrimmedNonEmptyString, 'SPICEDB_ENDPOINT'),
-  spiceDbInsecure: Config.schema(Schema.Trim, 'SPICEDB_INSECURE'),
   spiceDbPreSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY'),
 });
 
@@ -250,18 +249,14 @@ const parseLocalDevelopmentConfigurationFromProvider = (provider: ConfigProvider
     }
     const spiceDbPreSharedKey = Redacted.make(Redacted.value(source.spiceDbPreSharedKey).trim());
     const spiceDb = yield* parseSpiceDbConfig({
+      SPICEDB_CA_CERT: source.spiceDbCaCertificate,
       SPICEDB_ENDPOINT: source.spiceDbEndpoint,
-      SPICEDB_INSECURE: source.spiceDbInsecure,
       SPICEDB_PRESHARED_KEY: Redacted.value(spiceDbPreSharedKey),
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: source.deploymentEnvironment,
     }).pipe(Effect.mapError((error) => failure('local_configuration_invalid', error.reason)));
     const parsedSpiceDbEndpoint = URL.parse(`http://${spiceDb.endpoint}`);
-    if (
-      parsedSpiceDbEndpoint === null ||
-      !loopbackHosts.has(parsedSpiceDbEndpoint.hostname) ||
-      !spiceDb.insecureLocal
-    ) {
-      return yield* failure('local_configuration_invalid', 'SpiceDB must use insecure transport on a local endpoint');
+    if (parsedSpiceDbEndpoint === null || !loopbackHosts.has(parsedSpiceDbEndpoint.hostname)) {
+      return yield* failure('local_configuration_invalid', 'SpiceDB must be a local endpoint');
     }
     const authBaseUrl = yield* validateLoopbackHttpOrigin(source.authBaseUrl);
     return {
@@ -271,8 +266,8 @@ const parseLocalDevelopmentConfigurationFromProvider = (provider: ConfigProvider
       email: LOCAL_DEVELOPMENT_CONTEXT.email,
       password: LOCAL_DEVELOPMENT_CONTEXT.password,
       principalDisplayName: LOCAL_DEVELOPMENT_CONTEXT.principalDisplayName,
+      spiceDbCaCertificate: source.spiceDbCaCertificate,
       spiceDbEndpoint: spiceDb.endpoint,
-      spiceDbInsecureLocal: spiceDb.insecureLocal,
       spiceDbPreSharedKey,
     };
   });
@@ -674,17 +669,12 @@ const acquireSpiceDbClient = (configuration: LocalDevelopmentConfiguration) =>
   Effect.acquireRelease(
     Effect.try({
       catch: () => failure('local_persistence_failed', 'The local authorization client could not be created'),
-      try: () => {
-        const preSharedKey = Redacted.value(configuration.spiceDbPreSharedKey);
-        return v1.NewClient(
-          preSharedKey,
-          configuration.spiceDbEndpoint,
-          spiceDbClientSecurity({
-            endpoint: configuration.spiceDbEndpoint,
-            insecureLocal: configuration.spiceDbInsecureLocal,
-          }),
-        );
-      },
+      try: () =>
+        newSpiceDbGrpcClient({
+          caCertificate: configuration.spiceDbCaCertificate,
+          endpoint: configuration.spiceDbEndpoint,
+          preSharedKey: Redacted.value(configuration.spiceDbPreSharedKey),
+        }),
     }),
     (client) => Effect.sync(() => client.close()),
   );

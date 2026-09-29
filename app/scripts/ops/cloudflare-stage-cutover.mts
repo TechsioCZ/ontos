@@ -22,7 +22,12 @@ import { FetchHttpClient } from 'effect/unstable/http';
 import { ACTIVE_APPLICATION_COMPOSITION_POLICY } from '../active-application-composition.mts';
 import { readEdgeConsumers, serviceIdVariable } from '../publish-active-application-composition.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
-import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from './cloudflare-api.mts';
+import {
+  CloudflareApi,
+  CloudflareApiLive,
+  CloudflareCredentials,
+  VPC_CERT_VERIFICATION_MODE,
+} from './cloudflare-api.mts';
 import type { CloudflareHyperdrive, CloudflareVpcService, VpcServiceSpec } from './cloudflare-api.mts';
 import { costGuardChecks, ensureCostGuards, setKillSwitch } from './cloudflare-stage-cost-guard.mts';
 import type { CostGuardPlan } from './cloudflare-stage-cost-guard.mts';
@@ -216,6 +221,10 @@ const verticalSecrets = (unit: EdgeUnit, origins: StageOrigins, sources: WorkerS
   return secrets;
 };
 
+/** The TLS server name of the SpiceDB HTTP gateway; Workers VPC verifies it, and it needs no DNS record. */
+export const spicedbGatewayHostname = ({ stageZone }: StageOrigins) =>
+  `${STAGE_VPC_SERVICES.spicedb.name}.${stageZone}`;
+
 /**
  * The runtime secrets of every placed Worker (runbook A7). Workers read PostgreSQL through their
  * `HYPERDRIVE` binding, so no Worker receives a DATABASE_URL.
@@ -229,14 +238,12 @@ export const workerSecretPlan = (
     units.map((unit) => {
       const common = new Map([
         ['ONTOS_GATEWAY_ISSUER', Redacted.make(shellOrigin(origins))],
-        [
-          'SPICEDB_ENDPOINT',
-          Redacted.make(`${STAGE_VPC_SERVICES.spicedb.hostname}:${String(STAGE_VPC_SERVICES.spicedb.port)}`),
-        ],
-        ['SPICEDB_INSECURE', Redacted.make('true')],
+        // The Worker fetches the HTTP gateway by its TLS server name; the SPICEDB VPC binding routes
+        // the request to the spicedb service and verifies the gateway certificate for that name.
+        ['SPICEDB_ENDPOINT', Redacted.make(spicedbGatewayHostname(origins))],
         ['SPICEDB_PRESHARED_KEY', sources.spicedbPresharedKey],
-        // Core accepts the insecure private SpiceDB endpoint only on stage. The Worker build's
-        // environment never reaches the Worker's runtime bindings, so the Worker needs its own.
+        // The Worker build's environment never reaches the Worker's runtime bindings, so the Worker
+        // names its deployment environment itself.
         [DEPLOYMENT_ENVIRONMENT_BINDING, Redacted.make('stage')],
       ]);
       const own = unit.kind === 'shell' ? shellSecrets(origins, sources) : verticalSecrets(unit, origins, sources);
@@ -365,7 +372,13 @@ const differences = (items: readonly (string | false)[]): Option.Option<string> 
 
 /** Why an existing VPC service does not match its spec, if it does not. */
 export const vpcServiceDrift = (service: CloudflareVpcService, spec: VpcServiceSpec): Option.Option<string> => {
-  const port = Option.getOrUndefined(spec.type === 'tcp' ? service.tcp_port : service.http_port);
+  const port = Option.getOrUndefined(spec.type === 'tcp' ? service.tcp_port : service.https_port);
+  const plaintextPort = spec.type === 'http' ? Option.getOrUndefined(service.http_port) : undefined;
+  // Cloudflare verifies in full when a service names no mode.
+  const verification = service.tls_settings.pipe(
+    Option.flatMap((settings) => settings.cert_verification_mode),
+    Option.getOrElse(() => VPC_CERT_VERIFICATION_MODE),
+  );
   const hostname = Option.getOrUndefined(service.host.hostname);
   const tunnelId = service.host.resolver_network.pipe(
     Option.map((network) => network.tunnel_id),
@@ -374,6 +387,8 @@ export const vpcServiceDrift = (service: CloudflareVpcService, spec: VpcServiceS
   return differences([
     service.type !== spec.type && `type ${service.type}`,
     port !== spec.port && `port ${String(port)}`,
+    plaintextPort !== undefined && `plaintext port ${String(plaintextPort)}`,
+    spec.type === 'http' && verification !== VPC_CERT_VERIFICATION_MODE && `certificate verification ${verification}`,
     hostname !== spec.hostname && `hostname ${String(hostname)}`,
     tunnelId !== spec.tunnelId && 'another tunnel',
   ]);
@@ -622,10 +637,6 @@ export const configureStageEdge = Effect.gen(function* configureStageEdgeEffect(
 
 // ---------------------------------------------------------------------------------------------
 // SpiceDB TLS
-
-/** The TLS server name of the SpiceDB HTTP gateway; Workers VPC verifies it, and it needs no DNS record. */
-export const spicedbGatewayHostname = ({ stageZone }: StageOrigins) =>
-  `${STAGE_VPC_SERVICES.spicedb.name}.${stageZone}`;
 
 const spicedbTlsTarget = Effect.gen(function* spicedbTlsTargetEffect() {
   const settings = yield* CutoverConfiguration;

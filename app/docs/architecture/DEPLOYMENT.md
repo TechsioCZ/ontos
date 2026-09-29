@@ -257,10 +257,11 @@ Create `production` once, outside CI, before the first dispatch, with the operat
 `zerops.yaml` describes stage. Before any push, `deploy-zerops` writes a copy that sets
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` to the deploying environment in every build and runtime that
 names it (`pnpm zerops:materialize-environment`), and every `zcli push` reads that copy. Production
-therefore never runs stage-only behaviour. Stage's runtimes reach the in-project SpiceDB over
-plaintext gRPC (`SPICEDB_INSECURE=true`), which Core accepts only on stage, so production's copy also
-sets every `SPICEDB_ENDPOINT` to production's `SPICEDB_ENDPOINT` variable and `SPICEDB_INSECURE` to
-`false`. A production deploy without that variable fails before it pushes anything. The
+therefore never runs stage-only behaviour. Every runtime reaches SpiceDB over TLS gRPC and pins
+`SPICEDB_CA_CERT`, which `zerops.yaml` takes from the `spicedb` service's `SPICEDB_GRPC_TLS_CERT`
+secret; there is no plaintext mode. Production's copy sets every `SPICEDB_ENDPOINT` to production's
+`SPICEDB_ENDPOINT` variable, so production's SpiceDB gRPC certificate must name that host. A
+production deploy without that variable fails before it pushes anything. The
 scheduled composition refresh has a `refresh-production` lane beside `refresh-stage`, in production's
 own environment and `zerops-production` concurrency group; it publishes nothing until production is
 configured and has deployed once.
@@ -403,14 +404,15 @@ Certificates: Edit" for the Origin CA.
   `ontos-stage`. It imports `cloudflared` from `zerops-import.yaml`, with the tunnel connector token
   as its `TUNNEL_TOKEN` secret, and imports `outboxworkerhost`. It records their `ZEROPS_*_SERVICE_ID`
   stage variables and deploys `cloudflared`, then waits until the tunnel is healthy. Next it creates
-  the Workers VPC services `ontos-stage-db18` (tcp `db18:5432`) and `ontos-stage-spicedb` (http
-  `spicedb:8443`), and Hyperdrive `ontos-stage-runtime`: role `ontos_runtime`, caching disabled,
+  the Workers VPC services `ontos-stage-db18` (tcp `db18:5432`) and `ontos-stage-spicedb` (HTTPS
+  `spicedb:8443`, certificate verification `verify_full`), and Hyperdrive `ontos-stage-runtime`: role `ontos_runtime`, caching disabled,
   origin connection limit 40, and the password read from Zerops `db18_password`. It writes the IDs
   and stage origins into this placement's `buildEnvironment` for a reviewed PR. It sets the
   `stage-edge` variable `CLOUDFLARE_ACCOUNT_ID` and secret `CLOUDFLARE_API_TOKEN`. Last, it sets every
   placed Worker's secrets with `wrangler secret bulk`, from the Zerops values the Node services use
-  today, plus `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`: the Worker build's environment never reaches
-  the Worker's runtime, and Core accepts the private plaintext SpiceDB endpoint only on stage. An existing object that differs from the runbook fails the step instead of being reused.
+  today, plus `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`, because the Worker build's environment never
+  reaches the Worker's runtime. A Worker's `SPICEDB_ENDPOINT` is the gateway name
+  `ontos-stage-spicedb.<STAGE_ZONE>`, which the VPC service verifies. An existing object that differs from the runbook fails the step instead of being reused.
 - `cost-guards` repeats only the cost-guard step, which `provision` runs after the `stage-edge`
   settings (see [Stage cost guards](#stage-cost-guards)).
 - `resume` turns the cost kill switch off again.

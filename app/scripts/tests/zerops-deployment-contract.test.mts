@@ -8,7 +8,6 @@ import {
   DEPLOYMENT_ENVIRONMENT_VARIABLE,
   materializeZeropsEnvironment,
   SPICEDB_ENDPOINT_VARIABLE,
-  SPICEDB_INSECURE_VARIABLE,
 } from '../materialize-zerops-environment.mts';
 import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
 
@@ -325,18 +324,18 @@ it.effect('pushes every Zerops setup with the deploying environment named in its
     });
     const stageEndpointLine = `${SPICEDB_ENDPOINT_VARIABLE}: 'spicedb:50051'`;
     const productionEndpointLine = `${SPICEDB_ENDPOINT_VARIABLE}: '${productionEndpoint}'`;
-    const stageInsecureLine = `${SPICEDB_INSECURE_VARIABLE}: 'true'`;
-    const productionInsecureLine = `${SPICEDB_INSECURE_VARIABLE}: 'false'`;
+    const certificateLine = `SPICEDB_CA_CERT: \${spicedb_SPICEDB_GRPC_TLS_CERT}`;
     expect(production.includes(stageLine)).toBe(false);
     expect(production.includes(stageEndpointLine)).toBe(false);
-    expect(production.includes(stageInsecureLine)).toBe(false);
+    // Every runtime keeps pinning the gRPC certificate; nothing reaches SpiceDB in plaintext.
+    expect(production.split(certificateLine).length - 1).toBe(zeropsYaml.split(stageEndpointLine).length - 1);
+    expect(production.includes('SPICEDB_INSECURE')).toBe(false);
     expect(production.split(`${DEPLOYMENT_ENVIRONMENT_VARIABLE}: production`).length - 1).toBe(stageCount);
     expect(production.split(productionEndpointLine).length - 1).toBe(zeropsYaml.split(stageEndpointLine).length - 1);
     expect(
       production
         .replaceAll(`${DEPLOYMENT_ENVIRONMENT_VARIABLE}: production`, stageLine)
-        .replaceAll(productionEndpointLine, stageEndpointLine)
-        .replaceAll(productionInsecureLine, stageInsecureLine),
+        .replaceAll(productionEndpointLine, stageEndpointLine),
     ).toBe(zeropsYaml);
     const missing = yield* Effect.flip(
       materializeZeropsEnvironment('zerops:\n  - setup: api\n', { environment: 'stage' }),

@@ -2,21 +2,33 @@ import { deadlineInterceptor, v1 } from '@authzed/authzed-node';
 import { Effect, Option, Predicate } from 'effect';
 
 import { SpiceDbConfigError } from './config-error.ts';
-import { allowsInsecureSpiceDbTransport } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import { SpiceDbRpcError, spiceDbDeadline } from './spicedb-rpc.ts';
 import type { SpiceDbRpc } from './spicedb-rpc.ts';
 
-export const spiceDbClientSecurity = (
-  configuration: Pick<SpiceDbConfigValue, 'deploymentEnvironment' | 'endpoint' | 'insecureLocal'>,
-): v1.ClientSecurity => {
-  if (!allowsInsecureSpiceDbTransport(configuration)) {
-    throw new SpiceDbConfigError({
-      reason: 'Insecure SpiceDB client credentials are not allowed for this endpoint',
-    });
+/**
+ * The gRPC channel's only trusted CA: `SPICEDB_CA_CERT`, the certificate SpiceDB serves on its
+ * gRPC port. There is no plaintext or system-trust mode.
+ */
+export const spiceDbCaCertificate = (configuration: Pick<SpiceDbConfigValue, 'caCertificate'>): Buffer => {
+  if (configuration.caCertificate === undefined) {
+    throw new SpiceDbConfigError({ reason: 'SPICEDB_CA_CERT is required for the SpiceDB gRPC client' });
   }
-  return configuration.insecureLocal ? v1.ClientSecurity.INSECURE_PLAINTEXT_CREDENTIALS : v1.ClientSecurity.SECURE;
+  return Buffer.from(configuration.caCertificate);
 };
+
+/** An authzed-node gRPC client that trusts only `SPICEDB_CA_CERT`. Every Node caller opens SpiceDB through it. */
+export const newSpiceDbGrpcClient = (
+  configuration: Pick<SpiceDbConfigValue, 'caCertificate' | 'endpoint' | 'preSharedKey'>,
+  options?: Parameters<typeof v1.NewClientWithCustomCert>[4],
+): v1.ZedClientInterface =>
+  v1.NewClientWithCustomCert(
+    configuration.preSharedKey,
+    configuration.endpoint,
+    spiceDbCaCertificate(configuration),
+    undefined,
+    options,
+  );
 
 const rpcFailure = (cause: unknown): SpiceDbRpcError =>
   new SpiceDbRpcError({
@@ -27,13 +39,7 @@ const rpcFailure = (cause: unknown): SpiceDbRpcError =>
 
 /** SpiceDB over gRPC through the official authzed-node client (HTTP/2, Node only). */
 export const openSpiceDbGrpcRpc = (configuration: SpiceDbConfigValue, timeoutMilliseconds: number): SpiceDbRpc => {
-  const client = v1.NewClient(
-    configuration.preSharedKey,
-    configuration.endpoint,
-    spiceDbClientSecurity(configuration),
-    undefined,
-    { interceptors: [deadlineInterceptor(timeoutMilliseconds)] },
-  );
+  const client = newSpiceDbGrpcClient(configuration, { interceptors: [deadlineInterceptor(timeoutMilliseconds)] });
   const deadline = spiceDbDeadline(timeoutMilliseconds);
   const call =
     <Request, Response>(rpc: (request: Request) => Promise<Response>) =>

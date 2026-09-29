@@ -16,6 +16,7 @@ import {
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
+import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import {
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
@@ -73,15 +74,7 @@ const provisionContactsAccess = Effect.fn('provisionContactsAccess')(function* p
     );
   }
   const client = yield* Effect.acquireRelease(
-    Effect.sync(() =>
-      v1.NewClient(
-        configuration.preSharedKey,
-        configuration.endpoint,
-        configuration.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
-        undefined,
-        { interceptors: [deadlineInterceptor(5000)] },
-      ),
-    ),
+    Effect.sync(() => newSpiceDbGrpcClient(configuration, { interceptors: [deadlineInterceptor(5000)] })),
     (acquired) => Effect.sync(() => acquired.close()),
   );
   const relationships = yield* Effect.forEach(

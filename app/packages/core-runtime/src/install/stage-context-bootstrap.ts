@@ -1,4 +1,3 @@
-import { v1 } from '@authzed/authzed-node';
 import { and, eq, or } from 'drizzle-orm';
 import { Config, Effect, Option, Redacted, Schema } from 'effect';
 import { isSqlError } from 'effect/unstable/sql/SqlError';
@@ -9,7 +8,7 @@ import { makeCoreDatabase } from '../db/client.ts';
 import { parseDatabaseConfig } from '../db/config.ts';
 import { legalEntities, principalAuthBindings, principals, tenantModuleStates, tenants } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
-import { spiceDbClientSecurity } from '../permissions/spicedb-grpc-rpc.ts';
+import { newSpiceDbGrpcClient } from '../permissions/spicedb-grpc-rpc.ts';
 import { parseSpiceDbConfig } from '../permissions/config.ts';
 import { toLegalEntityAccessObjectId, toModuleAccessObjectId } from '../permissions/context-access.ts';
 import {
@@ -61,9 +60,9 @@ type StageContext = (typeof STAGE_CONTEXTS)[StageContextKey];
 
 interface StageContextBootstrapConfiguration {
   readonly databaseAdminUrl: Redacted.Redacted;
+  readonly spiceDbCaCertificate: string;
   readonly spiceDbEndpoint: string;
   readonly spiceDbPreSharedKey: Redacted.Redacted;
-  readonly spiceDbSecurity: v1.ClientSecurity;
 }
 
 interface StageContextBootstrapRelationship {
@@ -140,11 +139,11 @@ const loadConfiguration = (): Effect.Effect<StageContextBootstrapConfiguration, 
         deploymentEnvironment: Config.schema(StageEnvironmentSchema, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT').pipe(
           Effect.mapError((cause) => failure('The Core installation bootstrap can run only in stage', cause)),
         ),
+        spiceDbCaCertificate: Config.schema(TrimmedNonEmptyString, 'SPICEDB_CA_CERT').pipe(
+          Effect.mapError((cause) => failure('SPICEDB_CA_CERT is required', cause)),
+        ),
         spiceDbEndpoint: Config.schema(TrimmedNonEmptyString, 'SPICEDB_ENDPOINT').pipe(
           Effect.mapError((cause) => failure('SPICEDB_ENDPOINT is required', cause)),
-        ),
-        spiceDbInsecure: Config.schema(Schema.Trim, 'SPICEDB_INSECURE').pipe(
-          Effect.mapError((cause) => failure('SPICEDB_INSECURE must be explicitly true or false', cause)),
         ),
         spiceDbPreSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY').pipe(
           Effect.mapError((cause) => failure('SPICEDB_PRESHARED_KEY is required', cause)),
@@ -156,19 +155,19 @@ const loadConfiguration = (): Effect.Effect<StageContextBootstrapConfiguration, 
       DATABASE_URL: Redacted.value(source.databaseAdminUrl),
     }).pipe(Effect.mapError((error) => failure(error.reason, error)));
     const spiceDb = yield* parseSpiceDbConfig({
+      SPICEDB_CA_CERT: source.spiceDbCaCertificate,
       SPICEDB_ENDPOINT: source.spiceDbEndpoint,
-      SPICEDB_INSECURE: source.spiceDbInsecure,
       SPICEDB_PRESHARED_KEY: Redacted.value(source.spiceDbPreSharedKey),
       ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: source.deploymentEnvironment,
     }).pipe(Effect.mapError((error) => failure(error.reason, error)));
-    if (spiceDb.endpoint !== 'spicedb:50051' || !spiceDb.insecureLocal) {
+    if (spiceDb.endpoint !== 'spicedb:50051') {
       return yield* failure('The Core installation bootstrap requires stage-private SpiceDB');
     }
     return {
       databaseAdminUrl: source.databaseAdminUrl,
+      spiceDbCaCertificate: source.spiceDbCaCertificate,
       spiceDbEndpoint: spiceDb.endpoint,
       spiceDbPreSharedKey: Redacted.make(spiceDb.preSharedKey),
-      spiceDbSecurity: spiceDbClientSecurity(spiceDb),
     };
   });
 
@@ -388,11 +387,11 @@ const touchRelationships = Effect.fn('StageContextBootstrap.touchRelationships')
       Effect.try({
         catch: bootstrapFailureFromCause,
         try: () =>
-          v1.NewClient(
-            Redacted.value(configuration.spiceDbPreSharedKey),
-            configuration.spiceDbEndpoint,
-            configuration.spiceDbSecurity,
-          ),
+          newSpiceDbGrpcClient({
+            caCertificate: configuration.spiceDbCaCertificate,
+            endpoint: configuration.spiceDbEndpoint,
+            preSharedKey: Redacted.value(configuration.spiceDbPreSharedKey),
+          }),
       }),
       (client) =>
         tryBootstrapPromise(client.promises.writeRelationships.bind(client.promises, request)).pipe(Effect.asVoid),

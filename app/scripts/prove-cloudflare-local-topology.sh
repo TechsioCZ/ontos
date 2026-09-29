@@ -11,11 +11,13 @@
 # Each Worker runs in its own `wrangler dev` session (so each serves its own static assets) and
 # the sessions reach each other through a private dev registry. Workers VPC services have no local
 # mode, so the SPICEDB binding points at a tiny local gateway Worker that forwards to SpiceDB's
-# HTTP port, which is what the tunnel does in the account.
+# HTTPS gateway port, which is what the tunnel does in the account. workerd trusts the local
+# SpiceDB certificate (`pnpm spicedb:tls:local`) through NODE_EXTRA_CA_CERTS.
 #
 # Usage: bash scripts/prove-cloudflare-local-topology.sh
 # Needs: `pnpm cloudflare:build` outputs, a migrated database with `pnpm local:initialize` data,
-# SpiceDB serving HTTP, and the environment named below (the service-integration job's values).
+# SpiceDB serving its HTTPS gateway with the local certificate, and the environment named below
+# (the service-integration job's values).
 set -euo pipefail
 
 app_directory="$(cd "$(dirname "$0")/.." && pwd)"
@@ -31,6 +33,8 @@ shell_port="${CLOUDFLARE_LOCAL_SHELL_PORT:-8787}"
 first_vertical_port="${CLOUDFLARE_LOCAL_FIRST_PORT:-8790}"
 demo_email="${CLOUDFLARE_LOCAL_DEMO_EMAIL:-demo@test.com}"
 demo_password="${CLOUDFLARE_LOCAL_DEMO_PASSWORD:-password1234}"
+spicedb_certificate="$app_directory/.spicedb-tls/cert.pem"
+[ -f "$spicedb_certificate" ] || { echo "$spicedb_certificate is missing; run pnpm spicedb:tls:local" >&2; exit 1; }
 # The gateway issuer accepts plain HTTP only for localhost.
 shell_origin="http://localhost:${shell_port}"
 
@@ -87,11 +91,12 @@ cat > "$work/spicedb-gateway/wrangler.json" <<EOF
   "name": "ontos-local-spicedb-gateway",
   "main": "index.mjs",
   "compatibility_date": "2026-06-02",
-  "vars": { "SPICEDB_GATEWAY_ORIGIN": "http://127.0.0.1:${SPICEDB_HTTP_PORT}" }
+  "vars": { "SPICEDB_GATEWAY_ORIGIN": "https://localhost:${SPICEDB_HTTP_PORT}" }
 }
 EOF
 
 export WRANGLER_REGISTRY_PATH="$work/registry"
+export NODE_EXTRA_CA_CERTS="$spicedb_certificate"
 export CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="$DATABASE_URL"
 wrangler="$app_directory/apps/shell-super-app/node_modules/.bin/wrangler"
 ready_logs=()
@@ -120,7 +125,6 @@ write_dev_vars() {
     printf 'ONTOS_GATEWAY_PRIVATE_JWK=%s\n' "$ONTOS_GATEWAY_PRIVATE_JWK"
     printf 'ONTOS_GATEWAY_PUBLIC_JWKS=%s\n' "$ONTOS_GATEWAY_PUBLIC_JWKS"
     printf 'SPICEDB_ENDPOINT=localhost:%s\n' "$SPICEDB_HTTP_PORT"
-    printf 'SPICEDB_INSECURE=true\n'
     printf 'SPICEDB_PRESHARED_KEY=%s\n' "$SPICEDB_PRESHARED_KEY"
   } >|"$1/.dev.vars"
 }
@@ -196,7 +200,8 @@ read -r tenant_id legal_entity_id < <(node -e '
 #    with it (the grant the e2e fixture writes for its principals).
 spicedb() { # <path> <json body>
   curl --silent --show-error --fail --max-time 10 -H "authorization: Bearer $SPICEDB_PRESHARED_KEY" \
-    -H 'content-type: application/json' --data "$2" "http://127.0.0.1:${SPICEDB_HTTP_PORT}$1"
+    -H 'content-type: application/json' --cacert "$spicedb_certificate" --data "$2" \
+    "https://localhost:${SPICEDB_HTTP_PORT}$1"
 }
 context_id() { printf 'ctx_%s' "$(printf '%s' "$1" | base64 | tr '+/' '-_' | tr -d '=\n')"; }
 shell_access="$(context_id "[\"$tenant_id\",\"$legal_entity_id\",\"core.shell\"]")"

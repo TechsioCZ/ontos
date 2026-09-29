@@ -199,7 +199,6 @@ jobs:
       SPICEDB_ENDPOINT: localhost:50051
       SPICEDB_GRPC_PORT: "50051"
       SPICEDB_HTTP_PORT: "8443"
-      SPICEDB_INSECURE: "true"
       SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
     steps:
       - name: Harden Runner
@@ -217,6 +216,17 @@ jobs:
         uses: ./.github/actions/install-app
         with:
           save-store: "true"
+
+      - name: Create the local SpiceDB TLS certificate
+        working-directory: app
+        # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
+        run: |
+          mise exec -- pnpm spicedb:tls:local
+          {
+            echo 'SPICEDB_CA_CERT<<SPICEDB_CA_CERT_EOF'
+            cat .spicedb-tls/cert.pem
+            echo 'SPICEDB_CA_CERT_EOF'
+          } >> "$GITHUB_ENV"
 
       - name: Start fresh PostgreSQL and SpiceDB services
         working-directory: app
@@ -361,7 +371,6 @@ jobs:
       SPICEDB_ENDPOINT: localhost:50051
       SPICEDB_GRPC_PORT: "50051"
       SPICEDB_HTTP_PORT: "8443"
-      SPICEDB_INSECURE: "true"
       SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
       BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
       BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
@@ -405,6 +414,17 @@ jobs:
       # The built Workers, run together in workerd against real PostgreSQL and SpiceDB, prove the
       # Cloudflare topology end to end: Hyperdrive across requests, SpiceDB over HTTP, module
       # discovery and API calls over service bindings, and SSR.
+      - name: Create the local SpiceDB TLS certificate
+        working-directory: app
+        # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
+        run: |
+          mise exec -- pnpm spicedb:tls:local
+          {
+            echo 'SPICEDB_CA_CERT<<SPICEDB_CA_CERT_EOF'
+            cat .spicedb-tls/cert.pem
+            echo 'SPICEDB_CA_CERT_EOF'
+          } >> "$GITHUB_ENV"
+
       - name: Start fresh PostgreSQL and SpiceDB services for the Worker topology
         working-directory: app
         run: |
@@ -416,7 +436,9 @@ jobs:
         # The migrations and local initialization read the app .env; write it from this job's
         # development-only service values so every tool sees the same database and SpiceDB.
         run: |
-          printenv | grep -E '^(BETTER_AUTH_|DATABASE_|ONTOS_|POSTGRES_|SPICEDB_)' > .env
+          # SPICEDB_CA_CERT spans lines, so it goes in as one double-quoted dotenv value.
+          printenv | grep -E '^(BETTER_AUTH_|DATABASE_|ONTOS_|POSTGRES_|SPICEDB_)' | grep -v '^SPICEDB_CA_CERT=' > .env
+          awk 'BEGIN { printf "SPICEDB_CA_CERT=\"" } NF { printf "%s\\n", $0 } END { print "\"" }' .spicedb-tls/cert.pem >> .env
           mise exec -- pnpm db:migrate
           mise exec -- pnpm local:initialize
 

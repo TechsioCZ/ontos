@@ -7,34 +7,38 @@ import { SpiceDbConfigError } from './config-error.ts';
 export const SPICEDB_ROOT_ENV_PATH = APP_ENV_PATH;
 
 const makeSpiceDbConfigValue = (settings: {
+  readonly caCertificate: string | undefined;
   readonly deploymentEnvironment: string | undefined;
   readonly endpoint: string;
-  readonly insecureLocal: boolean;
   readonly preSharedKey: Redacted.Redacted;
 }) => {
   const base = {
     endpoint: settings.endpoint,
-    insecureLocal: settings.insecureLocal,
     get preSharedKey(): string {
       return Redacted.value(settings.preSharedKey);
     },
   };
-  return settings.deploymentEnvironment === undefined
-    ? Object.freeze(base)
-    : Object.freeze(
-        Object.assign(base, {
-          deploymentEnvironment: settings.deploymentEnvironment,
-        }),
-      );
+  return Object.freeze(
+    Object.assign(
+      base,
+      settings.caCertificate === undefined ? {} : { caCertificate: settings.caCertificate },
+      settings.deploymentEnvironment === undefined ? {} : { deploymentEnvironment: settings.deploymentEnvironment },
+    ),
+  );
 };
 
+/**
+ * SpiceDB is always reached over TLS. `caCertificate` (`SPICEDB_CA_CERT`) is the PEM certificate
+ * the Node gRPC client pins as its only trusted CA; Workers reach the HTTP gateway through their
+ * Workers VPC binding, which verifies the gateway certificate itself.
+ */
 export type SpiceDbConfigValue = ReturnType<typeof makeSpiceDbConfigValue> &
-  Partial<Record<'deploymentEnvironment', string>>;
+  Partial<Record<'caCertificate' | 'deploymentEnvironment', string>>;
 
 export type SpiceDbEnvironment = Readonly<
   Partial<
     Record<
-      'SPICEDB_ENDPOINT' | 'SPICEDB_INSECURE' | 'SPICEDB_PRESHARED_KEY' | 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+      'SPICEDB_CA_CERT' | 'SPICEDB_ENDPOINT' | 'SPICEDB_PRESHARED_KEY' | 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
       string
     >
   >
@@ -49,36 +53,7 @@ const configFailure = (reason: string) => new SpiceDbConfigError({ reason });
 
 const configFailureWithCause = (reason: string, cause: unknown) => new SpiceDbConfigError({ cause, reason });
 
-const isLocalhostEndpoint = (endpoint: string): boolean => {
-  try {
-    const parsed = new URL(`http://${endpoint}`);
-    return (
-      parsed.hostname === 'localhost' &&
-      parsed.port.length > 0 &&
-      parsed.username.length === 0 &&
-      parsed.password.length === 0 &&
-      parsed.pathname === '/' &&
-      parsed.search.length === 0 &&
-      parsed.hash.length === 0
-    );
-  } catch {
-    return false;
-  }
-};
-
-// The stage-private SpiceDB service: gRPC on 50051 for Node, the HTTP gateway on 8443 for workerd
-// (reached only through the Workers VPC binding and the tunnel).
-const STAGE_PRIVATE_SPICEDB_ENDPOINTS: ReadonlySet<string> = new Set(['spicedb:50051', 'spicedb:8443']);
-
-const isStagePrivateEndpoint = (endpoint: string, deploymentEnvironment?: string): boolean =>
-  deploymentEnvironment === 'stage' && STAGE_PRIVATE_SPICEDB_ENDPOINTS.has(endpoint);
-
-export const allowsInsecureSpiceDbTransport = (
-  configuration: Pick<SpiceDbConfigValue, 'deploymentEnvironment' | 'endpoint' | 'insecureLocal'>,
-): boolean =>
-  !configuration.insecureLocal ||
-  isLocalhostEndpoint(configuration.endpoint) ||
-  isStagePrivateEndpoint(configuration.endpoint, configuration.deploymentEnvironment);
+const PEM_CERTIFICATE = /^-----BEGIN CERTIFICATE-----\r?\n[\s\S]+\r?\n-----END CERTIFICATE-----$/u;
 
 const isValidEndpoint = (endpoint: string): boolean => {
   try {
@@ -99,8 +74,12 @@ const isValidEndpoint = (endpoint: string): boolean => {
 const parseSpiceDbConfigWith = Effect.fn('Config.parseSpiceDbConfigWith')(function* parseConfig(
   provider: ConfigProvider.ConfigProvider,
 ) {
-  const { deploymentEnvironment, endpoint, insecureFlag, preSharedKey } = yield* Effect.all(
+  const { caCertificate, deploymentEnvironment, endpoint, preSharedKey } = yield* Effect.all(
     {
+      caCertificate: Config.schema(Schema.Trim, 'SPICEDB_CA_CERT')
+        .pipe(Config.option, Config.map(Option.getOrUndefined))
+        .parse(provider)
+        .pipe(Effect.mapError((error) => configFailureWithCause('SPICEDB_CA_CERT must be a string', error))),
       deploymentEnvironment: Config.schema(Schema.Trim, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')
         .pipe(Config.option, Config.map(Option.getOrUndefined))
         .parse(provider)
@@ -112,14 +91,6 @@ const parseSpiceDbConfigWith = Effect.fn('Config.parseSpiceDbConfigWith')(functi
       endpoint: Config.schema(Schema.Trim, 'SPICEDB_ENDPOINT')
         .parse(provider)
         .pipe(Effect.mapError((error) => configFailureWithCause('SPICEDB_ENDPOINT is required', error))),
-      insecureFlag: Config.schema(Schema.Trim, 'SPICEDB_INSECURE')
-        .pipe(Config.map((value) => value.toLowerCase()))
-        .parse(provider)
-        .pipe(
-          Effect.mapError((error) =>
-            configFailureWithCause('SPICEDB_INSECURE must be explicitly true or false', error),
-          ),
-        ),
       preSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY')
         .pipe(Config.map((value) => Redacted.make(Redacted.value(value).trim())))
         .parse(provider)
@@ -137,22 +108,15 @@ const parseSpiceDbConfigWith = Effect.fn('Config.parseSpiceDbConfigWith')(functi
   if (Redacted.value(preSharedKey).length === 0) {
     return yield* configFailure('SPICEDB_PRESHARED_KEY is required');
   }
-  if (insecureFlag !== 'true' && insecureFlag !== 'false') {
-    return yield* configFailure('SPICEDB_INSECURE must be explicitly true or false');
+  if (caCertificate !== undefined && caCertificate.length > 0 && !PEM_CERTIFICATE.test(caCertificate)) {
+    return yield* configFailure('SPICEDB_CA_CERT must be a PEM certificate');
   }
-  const configuration = makeSpiceDbConfigValue({
+  return makeSpiceDbConfigValue({
+    caCertificate: caCertificate === undefined || caCertificate.length === 0 ? undefined : caCertificate,
     deploymentEnvironment,
     endpoint,
-    insecureLocal: insecureFlag === 'true',
     preSharedKey,
   });
-  if (!allowsInsecureSpiceDbTransport(configuration)) {
-    return yield* configFailure(
-      'Insecure SpiceDB transport is allowed only for an explicit localhost port or the stage private endpoint',
-    );
-  }
-
-  return configuration;
 });
 
 export const parseSpiceDbConfig = (

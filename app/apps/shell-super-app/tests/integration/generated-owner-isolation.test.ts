@@ -67,6 +67,7 @@ import {
   makeActionPermissionService,
   toSpiceDbActionObjectId,
 } from '../../../../packages/core-runtime/src/permissions/service.ts';
+import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { injectStatementFaults } from '../../../../packages/core-runtime/tests/support/database-faults.ts';
 import { makeTestPgClient } from '../../../../packages/core-runtime/tests/support/database.ts';
@@ -95,15 +96,15 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 const TestSpiceDbConfig = Config.all({
+  caCertificate: Config.String('SPICEDB_CA_CERT'),
   endpoint: Config.String('SPICEDB_ENDPOINT').pipe(Config.withDefault('localhost:50051')),
-  insecureLocal: Config.Boolean('SPICEDB_INSECURE').pipe(Config.withDefault(true)),
   preSharedKey: Config.Redacted('SPICEDB_PRESHARED_KEY').pipe(
     Config.withDefault(Redacted.make('ontos-local-development-key')),
   ),
 }).pipe(
-  Effect.map(({ endpoint, insecureLocal, preSharedKey }) => ({
+  Effect.map(({ caCertificate, endpoint, preSharedKey }) => ({
+    caCertificate,
     endpoint,
-    insecureLocal,
     preSharedKey: Redacted.value(preSharedKey),
   })),
 );
@@ -557,11 +558,7 @@ it.live(
     const capturedLogs: string[] = [];
     const loggerLayer = capturedLoggerLayer(capturedLogs);
     const testSpiceDb = yield* TestSpiceDbConfig;
-    const spiceAdmin = v1.NewClient(
-      testSpiceDb.preSharedKey,
-      testSpiceDb.endpoint,
-      testSpiceDb.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
-    );
+    const spiceAdmin = newSpiceDbGrpcClient(testSpiceDb);
     const permissionClient = createSpiceDbPermissionClient(testSpiceDb, SPICEDB_CHECK_TIMEOUT_MS);
     const contextAccess = makeContextAccess(permissionClient);
     const moduleStates = makeTenantModuleStateService(runtimeDatabase);

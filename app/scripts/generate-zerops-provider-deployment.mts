@@ -106,8 +106,8 @@ const renderProvider = (
         DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}
         NODE_ENV: production${dependencyEnvironment}
         PORT: '${port}'
+        SPICEDB_CA_CERT: \${spicedb_SPICEDB_GRPC_TLS_CERT}
         SPICEDB_ENDPOINT: 'spicedb:50051'
-        SPICEDB_INSECURE: 'true'
         SPICEDB_PRESHARED_KEY: \${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
         ULTRAMODERN_ZEROPS_SERVICE: ${id}

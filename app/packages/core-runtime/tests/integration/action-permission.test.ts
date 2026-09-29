@@ -39,6 +39,7 @@ import { OperationAuthenticationRequired, OperationContextUnavailable } from '..
 import { defineSystemModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import type { SpiceDbConfigValue } from '../../src/permissions/config.ts';
 import { loadSpiceDbConfig } from '../../src/permissions/config.ts';
+import { newSpiceDbGrpcClient } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 import {
   SPICEDB_CHECK_TIMEOUT_MS,
@@ -279,11 +280,7 @@ const PermissionFixture = Layer.effect(
   PermissionAdmin,
   Effect.gen(function* integrationProgram1() {
     const spiceDbConfig = yield* loadSpiceDbConfig();
-    const adminClient = v1.NewClient(
-      spiceDbConfig.preSharedKey,
-      spiceDbConfig.endpoint,
-      spiceDbConfig.insecureLocal ? v1.ClientSecurity.INSECURE_LOCALHOST_ALLOWED : v1.ClientSecurity.SECURE,
-    );
+    const adminClient = newSpiceDbGrpcClient(spiceDbConfig);
 
     const prepare = Effect.gen(function* preparePermissionFixture() {
       yield* Effect.promise(() =>

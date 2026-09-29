@@ -4,14 +4,17 @@ import { Array as Arr, Effect, Layer, Option, Order, Redacted, Schema } from 'ef
 import { expect, it } from 'effect-rstest';
 
 import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from '../ops/cloudflare-api.mts';
+import type { CloudflareVpcService } from '../ops/cloudflare-api.mts';
 import {
   CutoverConfiguration,
   activate,
   provision,
   spicedbGatewayHostname,
   publicOrigin,
+  STAGE_VPC_SERVICES,
   stageBuildEnvironment,
   verifyCutover,
+  vpcServiceDrift,
   workerSecretPlan,
 } from '../ops/cloudflare-stage-cutover.mts';
 import type { CutoverSettings } from '../ops/cloudflare-stage-cutover.mts';
@@ -195,8 +198,9 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
         '/connectivity/directory/services',
         {
           host: { hostname: 'spicedb', resolver_network: { tunnel_id: 'tunnel-1' } },
-          http_port: 8443,
+          https_port: 8443,
           name: 'ontos-stage-spicedb',
+          tls_settings: { cert_verification_mode: 'verify_full' },
           type: 'http',
         },
       ],
@@ -276,8 +280,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
       [DEPLOYMENT_ENVIRONMENT]: 'stage',
       ONTOS_GATEWAY_ISSUER: SHELL_ORIGIN,
       ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK,
-      SPICEDB_ENDPOINT: 'spicedb:8443',
-      SPICEDB_INSECURE: 'true',
+      SPICEDB_ENDPOINT: GATEWAY_HOSTNAME,
       SPICEDB_PRESHARED_KEY: SPICEDB_KEY,
     });
     expectNoSecretInArguments(stage, account);
@@ -367,6 +370,36 @@ it.effect('reuses every existing object on a re-run and creates nothing twice', 
     expect(stage.commands.filter(({ args }) => args.includes('push'))).toHaveLength(1);
   }),
 );
+
+it('accepts the SpiceDB VPC service only over HTTPS with full certificate verification', () => {
+  const spec = { ...STAGE_VPC_SERVICES.spicedb, tunnelId: 'tunnel-1' };
+  const service = (fields: {
+    readonly http_port?: number;
+    readonly https_port?: number;
+    readonly mode?: string;
+  }): CloudflareVpcService => ({
+    host: {
+      hostname: Option.some('spicedb'),
+      resolver_network: Option.some({ tunnel_id: 'tunnel-1' }),
+    },
+    http_port: Option.fromNullishOr(fields.http_port),
+    https_port: Option.fromNullishOr(fields.https_port),
+    name: spec.name,
+    service_id: 'vpc-2',
+    tcp_port: Option.none(),
+    tls_settings: Option.some({ cert_verification_mode: Option.fromNullishOr(fields.mode) }),
+    type: 'http',
+  });
+
+  expect(vpcServiceDrift(service({ https_port: 8443, mode: 'verify_full' }), spec)).toStrictEqual(Option.none());
+  expect(vpcServiceDrift(service({ https_port: 8443 }), spec)).toStrictEqual(Option.none());
+  expect(vpcServiceDrift(service({ http_port: 8443 }), spec)).toStrictEqual(
+    Option.some('port undefined, plaintext port 8443'),
+  );
+  expect(vpcServiceDrift(service({ https_port: 8443, mode: 'disabled' }), spec)).toStrictEqual(
+    Option.some('certificate verification disabled'),
+  );
+});
 
 it.effect('refuses to reuse a Hyperdrive config that caches tenant reads', () =>
   Effect.gen(function* refusesCachingHyperdrive() {
@@ -533,7 +566,7 @@ const provisionedAccount = (
         },
         {
           host: { hostname: 'spicedb', resolver_network: { tunnel_id: 'tunnel-1' } },
-          http_port: 8443,
+          https_port: 8443,
           name: 'ontos-stage-spicedb',
           service_id: 'vpc-2',
           type: 'http',
@@ -761,7 +794,6 @@ it.effect('gives every vertical the Shell key and the callers their stage depend
       'ONTOS_GATEWAY_ISSUER',
       'ONTOS_GATEWAY_PUBLIC_JWKS',
       'SPICEDB_ENDPOINT',
-      'SPICEDB_INSECURE',
       'SPICEDB_PRESHARED_KEY',
       DEPLOYMENT_ENVIRONMENT,
     ]);

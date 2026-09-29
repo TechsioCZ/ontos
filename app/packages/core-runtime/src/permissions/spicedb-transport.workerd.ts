@@ -4,7 +4,6 @@ import { FetchHttpClient } from 'effect/unstable/http';
 import type { HttpClient } from 'effect/unstable/http';
 
 import { SpiceDbConfigError } from './config-error.ts';
-import { allowsInsecureSpiceDbTransport } from './config.ts';
 import { spiceDbHttpRpc } from './spicedb-http-rpc.ts';
 import type { SpiceDbRpcError, SpiceDbTransport } from './spicedb-rpc.ts';
 
@@ -12,18 +11,13 @@ import type { SpiceDbRpcError, SpiceDbTransport } from './spicedb-rpc.ts';
  * workerd has no HTTP/2 client for gRPC, so SpiceDB is reached through its HTTP gateway. This
  * module is the runtime's composition root for that client: the Effect `HttpClient` is the fetch
  * client bound to the `SPICEDB` Workers VPC binding, because workerd's global fetch cannot reach
- * private origins. In a Worker, `SPICEDB_ENDPOINT` names the HTTP gateway's host:port (stage:
- * `spicedb:8443`), not the gRPC port Node uses; each runtime has its own environment. Plaintext is
- * allowed only where the gRPC transport allows it (explicit localhost or the stage-private
- * `spicedb` host), because the binding carries it through the tunnel.
+ * private origins. In a Worker, `SPICEDB_ENDPOINT` names the HTTP gateway's TLS server name (stage:
+ * `ontos-stage-spicedb.<zone>`), not the gRPC endpoint Node uses; each runtime has its own
+ * environment. The request is always HTTPS: the Workers VPC service sends it to the gateway's TLS
+ * port and verifies the gateway certificate for that name.
  */
 export const spiceDbTransport: SpiceDbTransport = Object.freeze<SpiceDbTransport>({
   open: (configuration, timeoutMilliseconds) => {
-    if (!allowsInsecureSpiceDbTransport(configuration)) {
-      throw new SpiceDbConfigError({
-        reason: 'Insecure SpiceDB client credentials are not allowed for this endpoint',
-      });
-    }
     const binding = env.SPICEDB;
     if (binding === undefined) {
       throw new SpiceDbConfigError({ reason: 'The SPICEDB Worker binding is required' });
@@ -38,7 +32,7 @@ export const spiceDbTransport: SpiceDbTransport = Object.freeze<SpiceDbTransport
         Effect.provideService(FetchHttpClient.Fetch, vpcFetch),
       );
     const rpc = spiceDbHttpRpc({
-      origin: new URL(`${configuration.insecureLocal ? 'http' : 'https'}://${configuration.endpoint}`),
+      origin: new URL(`https://${configuration.endpoint}`),
       preSharedKey: Redacted.make(configuration.preSharedKey),
       timeoutMilliseconds,
     });
