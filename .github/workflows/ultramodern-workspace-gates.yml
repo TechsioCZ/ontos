@@ -763,36 +763,6 @@ jobs:
             fi
           done
 
-      # Placement lists the Workers it no longer deploys. Deleting a Worker is irreversible, so it
-      # is an explicit operator step (`wrangler delete`); this read-only check fails before any
-      # Worker changes while a retired Worker still exists.
-      - name: Verify retired Workers are absent
-        if: steps.impact.outputs.cloudflare_retirements != '[]'
-        timeout-minutes: 5
-        working-directory: app
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_RETIREMENTS_JSON: ${{ steps.impact.outputs.cloudflare_retirements }}
-        run: |
-          mapfile -t retirements < <(jq -r '.[] | [.packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_RETIREMENTS_JSON")
-          remaining=()
-          for retirement in "${retirements[@]}"; do
-            IFS=$'\t' read -r package worker <<<"$retirement"
-            status_log="$RUNNER_TEMP/retired-status-$worker.log"
-            if mise exec -- pnpm --filter "$package" exec wrangler deployments status --name "$worker" --json >/dev/null 2>"$status_log"; then
-              remaining+=("$worker")
-            elif ! grep -q 'code: 10007' "$status_log"; then
-              cat "$status_log" >&2
-              echo "Could not confirm that retired $worker is absent; no Worker was changed." >&2
-              exit 1
-            fi
-          done
-          for worker in "${remaining[@]}"; do
-            echo "::error title=Retired edge Worker still exists::Delete $worker (wrangler delete --name $worker), then rerun; no Worker was changed."
-          done
-          [[ ${#remaining[@]} -eq 0 ]]
-
       - name: Deploy planned edge units in dependency order
         id: deploy
         timeout-minutes: 15
@@ -848,6 +818,32 @@ jobs:
           mapfile -t packages < <(jq -r '.[].packageName' <<<"$CLOUDFLARE_UNITS_JSON")
           for package in "${packages[@]}"; do
             mise exec -- pnpm --filter "$package" run cloudflare:proof
+          done
+
+      # Retirement is two-phase. The deploy that drops a Worker from placement leaves it running, so
+      # a rollback of its dependents still finds it. Once this run has proven the new topology, each
+      # retired Worker that still exists is reported for an operator to delete
+      # (`wrangler delete`); CI never deletes a Worker. The check is read-only and never fails the run.
+      - name: Report retired Workers that still exist
+        if: steps.impact.outputs.cloudflare_retirements != '[]'
+        timeout-minutes: 5
+        working-directory: app
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_RETIREMENTS_JSON: ${{ steps.impact.outputs.cloudflare_retirements }}
+        run: |
+          mapfile -t retirements < <(jq -r '.[] | [.packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_RETIREMENTS_JSON")
+          for retirement in "${retirements[@]}"; do
+            IFS=$'\t' read -r package worker <<<"$retirement"
+            status_log="$RUNNER_TEMP/retired-status-$worker.log"
+            if mise exec -- pnpm --filter "$package" exec wrangler deployments status --name "$worker" --json >/dev/null 2>"$status_log"; then
+              echo "::warning title=Retired edge Worker still exists::No placed unit deploys $worker any more; delete it (wrangler delete --name $worker)."
+            elif grep -q 'code: 10007' "$status_log"; then
+              echo "$worker is retired"
+            else
+              echo "::warning title=Retired edge Worker not checked::Could not read $worker; check it is deleted."
+            fi
           done
 
       # Worker versions are immutable. After a failed deploy or proof, each Worker this run

@@ -76,7 +76,7 @@ const packageCommands = (step: typeof WorkflowStepSchema.Type) => (step.run ?? '
 const PLAN_STEP = 'Plan the impacted edge units';
 const DEPLOY_STEP = 'Deploy planned edge units in dependency order';
 const RESTORE_STEP = 'Restore the edge Workers this run deployed';
-const RETIRE_STEP = 'Verify retired Workers are absent';
+const RETIRE_STEP = 'Report retired Workers that still exist';
 const BUILD_STEP = 'Build and verify planned edge units';
 const PROOF_STEP = 'Prove the deployed edge units on their public URLs';
 
@@ -187,11 +187,11 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   // The account token reaches only the steps that use it, and those run nothing but Wrangler:
   // building, verifying and proving a unit executes dependency code.
   const tokenSteps = edge.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined);
-  expect(tokenSteps.map((step) => step.name)).toEqual([RETIRE_STEP, DEPLOY_STEP, RESTORE_STEP]);
+  expect(tokenSteps.map((step) => step.name)).toEqual([DEPLOY_STEP, RETIRE_STEP, RESTORE_STEP]);
   expect(tokenSteps.flatMap(packageCommands).filter((command) => !WRANGLER_COMMAND.test(command))).toEqual([]);
 });
 
-it('bounds every edge step that changes or proves Workers and checks retirements read-only', () => {
+it('bounds every edge step that changes or proves Workers and reports retirements read-only', () => {
   const edge = readEdgeDeployJobs()['deploy-cloudflare'];
   const byName = new Map(edge.steps.map((step) => [step.name, step]));
   const retire = byName.get(RETIRE_STEP);
@@ -202,12 +202,14 @@ it('bounds every edge step that changes or proves Workers and checks retirements
   );
   expect(bounded.every(Number.isFinite)).toBe(true);
   expect(bounded.reduce((total, minutes) => total + minutes, 0)).toBeLessThanOrEqual(edge['timeout-minutes'] - 10);
-  // Retired Workers must be absent before any Worker changes; CI never deletes one itself.
+  // Retirement is two-phase: the retired Worker survives the deploy that drops it, so a rollback
+  // still finds it; after the proofs it is reported, read-only, until an operator deletes it.
   expect(retire?.env?.CLOUDFLARE_RETIREMENTS_JSON).toBe(expression('steps.impact.outputs.cloudflare_retirements'));
   expect(retire?.run).toContain('wrangler deployments status --name "$worker"');
   expect(retire?.run).not.toMatch(/exec wrangler (?:delete|rollback|deploy)\b/u);
   const names = edge.steps.map((step) => step.name);
-  expect(names.indexOf(RETIRE_STEP)).toBeLessThan(names.indexOf(DEPLOY_STEP));
+  expect(names.indexOf(RETIRE_STEP)).toBeGreaterThan(names.indexOf(PROOF_STEP));
+  expect(retire?.run).not.toContain('exit 1');
   // Full plans still reconcile retirements against the last edge deployment.
   const resolve = byName.get('Resolve the last successful edge deployment');
   expect(resolve?.if).toBeUndefined();

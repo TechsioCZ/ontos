@@ -56,7 +56,7 @@ export interface CloudflareDeployment {
   readonly workerName: string;
 }
 
-/** A Worker placement retired; the edge deploy verifies it is absent through the Shell's Wrangler. */
+/** A Worker placement retired; the edge deploy reports it, through the Shell's Wrangler, until deleted. */
 export interface CloudflareRetirement {
   readonly packageName: string;
   readonly workerName: string;
@@ -123,8 +123,9 @@ const RESERVED_CLOUDFLARE_BUILD_VARIABLES: ReadonlySet<string> = new Set([
 const CloudflarePlacementSchema = Schema.Struct({
   buildEnvironment: Schema.Record(Schema.String, Schema.String),
   // Workers an earlier placement deployed and this one no longer names. The planner refuses a
-  // placement that drops a Worker without listing it, and every edge deploy verifies each listed
-  // Worker is absent before changing anything; deleting one is an explicit operator step.
+  // placement that drops a Worker without listing it. Retirement is two-phase: the Worker keeps
+  // running through the deploy that drops it, so rollbacks still find it, and each later successful
+  // edge deploy reports it until an operator deletes it.
   retiredWorkers: Schema.Array(Schema.String),
   schemaVersion: Schema.Literal(1),
   units: Schema.Array(Schema.String),
@@ -794,6 +795,17 @@ const planCloudflareDeployments = (
       fail(`${CLOUDFLARE_PLACEMENT_PATH} places "${id}", whose topology entry names no Cloudflare workerName`);
     }
     placed.add(id);
+  }
+  // Two placed units under one Worker name would overwrite each other and be proven and restored
+  // as one resource.
+  const placedByWorker = new Map<string, string>();
+  for (const id of placed) {
+    const workerName = requireString(workerNames.get(id), `topology ${id} cloudflare.workerName`);
+    const other = placedByWorker.get(workerName);
+    if (other !== undefined) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} places "${other}" and "${id}" under the same Worker "${workerName}"`);
+    }
+    placedByWorker.set(workerName, id);
   }
   // The Shell Worker binds every vertical Worker as a service, beyond its Module Federation
   // remotes, so its targets must exist first: providers deploy before the Shell.

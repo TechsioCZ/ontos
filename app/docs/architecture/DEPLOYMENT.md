@@ -241,10 +241,13 @@ restored.
 
 Removing a unit from placement, or renaming its Worker, must list the old Worker in
 `retiredWorkers`. The planner compares placement with the last successful edge deployment, in full
-plans too, and refuses a change that drops a deployed Worker without retiring it. Deleting a Worker
-is irreversible, so CI never does it: before any Worker changes, the job checks that every retired
-Worker is absent and fails with the `wrangler delete --name <worker>` to run when one still
-exists. An entry can leave `retiredWorkers` once no successful edge deployment still places it.
+plans too, and refuses a change that drops a deployed Worker without retiring it. Placed units must
+also have distinct Worker names. Retirement has two phases, and CI never deletes a Worker. The
+deploy that drops a Worker leaves it running, so a rollback of the Shell or another dependent still
+finds its binding target. After the proofs pass, every successful edge deploy reports each retired
+Worker that still exists as a warning, until an operator deletes it with
+`wrangler delete --name <worker>`. An entry can leave `retiredWorkers` once no successful edge
+deployment still places it.
 
 The job runs only when the repository is configured for Cloudflare: the `CLOUDFLARE_ACCOUNT_ID`
 variable, the `CLOUDFLARE_API_TOKEN` secret in the `stage-edge` environment, and a complete build

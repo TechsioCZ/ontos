@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { access, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -555,6 +555,29 @@ it.live('fails when the placement base names Workers it has no topology for', ()
           ).toContain(`has ${CLOUDFLARE_PLACEMENT_PATH} but no reference topology`);
         }),
       { cloudflarePlacement: ['contacts'] },
+    );
+  }),
+);
+
+it.live('fails closed when two placed units share a Worker name', () =>
+  Effect.gen(function* failsClosedForSharedWorkerName() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* failsClosedForSharedWorkerNameInFixture() {
+          const topologyPath = path.join(root, 'topology/reference-topology.json');
+          const topology = yield* Effect.tryPromise(() => readFile(topologyPath, 'utf-8'));
+          yield* Effect.tryPromise(() =>
+            writeFile(
+              topologyPath,
+              topology.replace(`"workerName": "${CONTACTS_WORKER}"`, `"workerName": "${SHELL_WORKER}"`),
+              'utf-8',
+            ),
+          );
+          expect(
+            yield* planningFailure(planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root })),
+          ).toContain(`under the same Worker "${SHELL_WORKER}"`);
+        }),
+      { cloudflarePlacement: [SHELL_ID, 'contacts'] },
     );
   }),
 );
