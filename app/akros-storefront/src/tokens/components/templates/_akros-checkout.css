@@ -1,0 +1,33 @@
+/* Scoped mappings for the checkout's existing UI-kit components. */
+[data-akros-checkout] {
+  --color-button-bg-secondary-base: var(--color-base-dark);
+  --color-button-bg-secondary-hover: var(--color-neutral-800);
+  --color-button-bg-secondary-active: var(--color-base-dark);
+  --color-button-fg-secondary: var(--color-base-light);
+  --color-button-border-secondary: var(--color-base-dark);
+  --color-button-fg-outlined-secondary: var(--color-fg-primary);
+  --color-button-bg-outlined-secondary-hover: var(--color-fill-hover);
+  --color-button-bg-outlined-secondary-active: var(--color-fill-active);
+  --height-form-control-sm: var(--dimension-44);
+  --height-numeric-input-sm: var(--height-form-control-sm);
+  --width-phone-input-trigger: max-content;
+  --size-icon-control-md: var(--dimension-44);
+  --color-table-bg: var(--color-base);
+  --color-table-header-bg: var(--color-base);
+  --color-data-table-bg: var(--color-table-bg);
+  --color-data-table-header-bg: var(--color-table-header-bg);
+  --radius-checkbox: var(--dimension-2);
+  --size-checkbox: var(--dimension-20);
+  --color-checkbox-border-base: var(--color-fg-primary);
+  --color-checkbox-border-checked: var(--color-fg-primary);
+  --color-checkbox-bg-checked: var(--color-fg-primary);
+  --border-width-data-table: 0px;
+  --radius-data-table: 0px;
+  --color-radio-group-item-border-outline-checked: var(--color-fg-primary);
+  --color-radio-group-item-border-outline-checked-hover: var(--color-fg-primary);
+  --color-radio-group-item-indicator-outline: var(--color-fg-primary);
+  --color-radio-group-item-border-base: var(--color-fg-primary);
+  --size-radio-group-control-sm: var(--dimension-20);
+  --text-radio-group-item-description-sm: var(--text-xs);
+  --text-numeric-input-sm: var(--text-sm);
+}

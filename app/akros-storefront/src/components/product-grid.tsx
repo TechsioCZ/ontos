@@ -25,12 +25,20 @@ const stockLabels = {
 export function ProductGrid({
   products,
   action = "purchase",
+  columns = "catalog",
 }: {
   products: ProductGridItem[];
   action?: "purchase" | "detail";
+  columns?: "catalog" | "checkout";
 }) {
   return (
-    <div className="akros-product-grid">
+    <div
+      className={
+        columns === "checkout"
+          ? "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+          : "akros-product-grid"
+      }
+    >
       {products.map((product, index) => {
         const detailHref = product.detailHref ?? `/produkt/${product.slug}`;
         const canAddToCart =
@@ -130,6 +138,7 @@ export function ProductGrid({
                       minimumQuantity: product.stock.minimumQuantity,
                       stockCount: product.stock.stockCount,
                       priceMinor: product.priceMinor,
+                      priceExcludingVatMinor: product.priceExcludingVatMinor,
                     }}
                     quantity={product.stock.minimumQuantity}
                   />

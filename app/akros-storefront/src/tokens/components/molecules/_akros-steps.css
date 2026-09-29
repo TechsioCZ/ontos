@@ -1,0 +1,24 @@
+/* Checkout uses numbered, neutral steps; other Steps consumers retain kit defaults. */
+[data-akros-checkout] {
+  --color-steps-indicator-bg: var(--color-neutral-400);
+  --color-steps-indicator-bg-current: var(--color-base-dark);
+  --color-steps-indicator-bg-complete: var(--color-base-dark);
+  --color-steps-indicator-bg-hover: var(--color-neutral-500);
+  --color-steps-indicator-fg: var(--color-base-light);
+  --color-steps-indicator-fg-current: var(--color-base-light);
+  --color-steps-indicator-fg-complete: var(--color-base-light);
+  --border-width-steps-indicator: 0px;
+  --size-steps-indicator-md: var(--dimension-40);
+  --text-steps-number-md: var(--text-sm);
+  --text-steps-title-md: var(--text-sm);
+  --color-steps-title-fg: var(--color-fg-disabled);
+  --color-steps-title-fg-current: var(--color-fg-primary);
+  --color-steps-title-fg-complete: var(--color-fg-primary);
+  --color-steps-separator-bg: var(--color-border-primary);
+  --color-steps-separator-bg-current: var(--color-border-primary);
+  --color-steps-separator-bg-complete: var(--color-base-dark);
+  --border-width-steps-content: 0px;
+  --color-steps-content-bg: transparent;
+  --spacing-steps-content-padding-md: 0px;
+  --text-steps-content-md: var(--text-sm);
+}

@@ -67,6 +67,10 @@ const parseStoredCart = (value: string | null): CartState => {
           typeof line.priceMinor !== "number" ||
           typeof line.stockCount !== "number" ||
           typeof line.minimumQuantity !== "number" ||
+          !Number.isSafeInteger(line.priceMinor) ||
+          line.priceMinor < 0 ||
+          !Number.isFinite(line.stockCount) ||
+          line.stockCount < 0 ||
           !Number.isFinite(line.minimumQuantity) ||
           line.minimumQuantity <= 0 ||
           !Number.isFinite(line.quantity) ||
@@ -86,6 +90,11 @@ const parseStoredCart = (value: string | null): CartState => {
           unit: line.unit,
           minimumQuantity: line.minimumQuantity,
           priceMinor: line.priceMinor,
+          ...(Number.isSafeInteger(line.priceExcludingVatMinor) &&
+          (line.priceExcludingVatMinor ?? -1) >= 0 &&
+          (line.priceExcludingVatMinor ?? Infinity) <= line.priceMinor
+            ? { priceExcludingVatMinor: line.priceExcludingVatMinor }
+            : {}),
           stockCount: line.stockCount,
           ...(typeof line.variantLabel === "string" ? { variantLabel: line.variantLabel } : {}),
         };

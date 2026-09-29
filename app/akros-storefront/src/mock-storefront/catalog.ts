@@ -112,6 +112,9 @@ export const toProductSummary = (product: CatalogProduct): CatalogProductSummary
   sku: product.sku,
   description: product.description,
   priceMinor: product.priceMinor,
+  priceExcludingVatMinor: product.detail.priceTiers.find(
+    (tier) => tier.priceMinor === product.priceMinor,
+  )?.priceExcludingVatMinor,
   originalPriceMinor: product.originalPriceMinor,
   currency: product.currency,
   imageSrc: product.imageSrc,

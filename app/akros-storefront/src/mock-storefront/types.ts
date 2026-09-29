@@ -108,6 +108,7 @@ export type CatalogProductSummary = Omit<
   CatalogProduct,
   "detail" | "minimumQuantity" | "packageQuantity" | "secondaryImageSrc" | "stockCount" | "unit"
 > & {
+  priceExcludingVatMinor?: number;
   hasVariants: boolean;
   priceIsFrom: boolean;
   stock: CatalogProductSummaryStock;

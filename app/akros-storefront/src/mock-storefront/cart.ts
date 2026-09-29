@@ -10,6 +10,7 @@ export interface CartItemSnapshot {
   minimumQuantity: number;
   stockCount: number;
   priceMinor: number;
+  priceExcludingVatMinor?: number;
   variantLabel?: string;
 }
 
@@ -118,7 +119,9 @@ export const cartReducer = (state: CartState, action: CartAction): CartState => 
 export const getCartItemCount = (cart: CartState): number => cart.lines.length;
 
 export const getCartSubtotal = (cart: CartState): number =>
-  cart.lines.reduce((total, line) => total + line.priceMinor * line.quantity, 0);
+  cart.lines.reduce((total, line) => total + getLineTotal(line), 0);
+
+export const getLineTotal = (line: CartLine): number => Math.round(line.priceMinor * line.quantity);
 
 export const formatQuantity = (quantity: number): string =>
   quantity.toLocaleString("cs-CZ", { maximumFractionDigits: 6 });

@@ -4,10 +4,12 @@
 @import "../tokens/components/molecules/_akros-accordion.css";
 @import "../tokens/components/molecules/_akros-breadcrumb.css";
 @import "../tokens/components/molecules/_akros-product-card.css";
+@import "../tokens/components/molecules/_akros-steps.css";
 @import "../tokens/components/molecules/_akros-vertical-navigation.css";
 @import "../tokens/components/organisms/_akros-data-table.css";
 @import "../tokens/components/organisms/_akros-footer.css";
 @import "../tokens/components/templates/_akros-product-detail.css";
+@import "../tokens/components/templates/_akros-checkout.css";
 @import "../styles/content-pages.css";
 @import "../styles/account-checkout.css";
 @source "../../node_modules/@techsio/ui-kit/dist";

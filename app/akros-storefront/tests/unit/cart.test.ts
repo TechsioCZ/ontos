@@ -110,6 +110,17 @@ describe("local demo cart", () => {
     expect(getCartSubtotal(halfMetre)).toBe(500);
   });
 
+  it("rounds each decimal-quantity line to whole minor currency units", () => {
+    const cart = {
+      version: 3 as const,
+      lines: [
+        { ...screw, priceMinor: 101, quantity: 0.5 },
+        { ...variant("second", 101), quantity: 0.5 },
+      ],
+    };
+    expect(getCartSubtotal(cart)).toBe(102);
+  });
+
   it("keeps cart quantities on the feed minimum and within available stock", () => {
     const profile = {
       ...screw,

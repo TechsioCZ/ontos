@@ -11,7 +11,7 @@ import { useCart } from "./cart-provider";
 
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
-import { formatQuantity, getCartSubtotal } from "@/mock-storefront/cart";
+import { formatQuantity, getCartSubtotal, getLineTotal } from "@/mock-storefront/cart";
 
 const getItemCountLabel = (count: number) => {
   const lastDigit = count % 10;
@@ -186,7 +186,7 @@ export function MiniCart() {
                       )}
                     </span>
                     <strong className="whitespace-nowrap max-md:col-start-2">
-                      {formatPrice(line.priceMinor * line.quantity)}
+                      {formatPrice(getLineTotal(line))}
                     </strong>
                   </span>
                 ))}

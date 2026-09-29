@@ -1,142 +1,49 @@
 "use client";
-
-import Image from "next/image";
 import NextLink from "next/link";
-import { Button } from "@techsio/ui-kit/atoms/button";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
-import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
-
-import { useCart } from "@/features/cart/cart-provider";
-import { cs } from "@/i18n/cs";
-import { formatPrice } from "@/lib/format";
-import { getCartSubtotal, getMaximumOrderQuantity } from "@/mock-storefront/cart";
-
-const shippingMinor = 11_900;
+import { useCart } from "./cart-provider";
+import { CartItemsTable } from "@/features/checkout/cart-items-table";
 
 export function CartContent() {
-  const { cart, dispatch, ready } = useCart();
-  const subtotal = getCartSubtotal(cart);
-  const shipping = cart.lines.length > 0 ? shippingMinor : 0;
-
-  if (!ready) return <p className="akros-empty-state">{cs.cart.loading}</p>;
-
-  if (cart.lines.length === 0) {
+  const { cart, ready } = useCart();
+  if (!ready) return <output>Načítám košík…</output>;
+  if (!cart.lines.length)
     return (
-      <div className="akros-empty-state akros-empty-state--cart">
-        <p>{cs.cart.empty}</p>
+      <section className="grid justify-items-center gap-6 rounded-sm bg-(--color-base) px-6 py-12 text-center">
+        <h1 className="text-lg font-medium">Nákupní košík</h1>
+        <p>Košík je zatím prázdný.</p>
         <LinkButton
           as={NextLink}
           href="/kategorie/nerezovy-spojovaci-material"
-          size="md"
+          size="sm"
           variant="primary"
         >
-          {cs.actions.backToCatalog}
+          Zpět do katalogu
+        </LinkButton>
+      </section>
+    );
+  return (
+    <>
+      <section className="rounded-sm bg-(--color-base) p-4 md:p-6" aria-labelledby="cart-title">
+        <h1 id="cart-title" className="mb-4 text-md font-medium">
+          Obsah košíku
+        </h1>
+        <CartItemsTable />
+      </section>
+      <div className="mt-6 flex flex-wrap justify-between gap-4">
+        <LinkButton as={NextLink} href="/" variant="secondary" size="sm" uppercase>
+          Zpět do obchodu
+        </LinkButton>
+        <LinkButton
+          as={NextLink}
+          href="/kosik/doprava-platba"
+          variant="primary"
+          size="sm"
+          uppercase
+        >
+          Vybrat dopravu a platbu
         </LinkButton>
       </div>
-    );
-  }
-
-  return (
-    <div className="akros-cart-layout">
-      <section className="akros-cart-card" aria-label={cs.cart.title}>
-        <div className="akros-cart-table-heading" aria-hidden="true">
-          <span>{cs.cart.product}</span>
-          <span>{cs.cart.quantity}</span>
-          <span>{cs.cart.unitPrice}</span>
-          <span>{cs.cart.total}</span>
-          <span />
-        </div>
-        <div className="akros-cart-lines">
-          {cart.lines.map((line) => (
-            <article
-              className="akros-cart-line"
-              key={`${line.productId}:${line.variantId ?? "base"}`}
-            >
-              <Image
-                alt={line.imageAlt}
-                height={80}
-                loading="lazy"
-                src={line.imageSrc}
-                width={80}
-              />
-              <div className="akros-cart-line__details">
-                <NextLink href={`/produkt/${line.slug}`}>{line.name}</NextLink>
-                <small>
-                  {line.variantLabel && <>{line.variantLabel} · </>}
-                  {cs.product.sku}: {line.sku} · {cs.product.inStock}:{" "}
-                  {line.stockCount.toLocaleString("cs-CZ")} {line.unit}
-                </small>
-              </div>
-              <NumericInput
-                aria-label={`${cs.cart.quantity}: ${line.name}`}
-                locale="cs-CZ"
-                min={line.minimumQuantity}
-                max={getMaximumOrderQuantity(line)}
-                onChange={(quantity) =>
-                  dispatch({
-                    type: "set-quantity",
-                    productId: line.productId,
-                    variantId: line.variantId,
-                    quantity,
-                  })
-                }
-                size="sm"
-                step={line.minimumQuantity}
-                value={line.quantity}
-              >
-                <NumericInput.Control>
-                  <NumericInput.Input />
-                  <NumericInput.TriggerContainer>
-                    <NumericInput.IncrementTrigger />
-                    <NumericInput.DecrementTrigger />
-                  </NumericInput.TriggerContainer>
-                </NumericInput.Control>
-              </NumericInput>
-              <span className="akros-cart-line__unit-price">{formatPrice(line.priceMinor)}</span>
-              <strong className="akros-cart-line__total">
-                {formatPrice(line.priceMinor * line.quantity)}
-              </strong>
-              <Button
-                aria-label={`${cs.actions.remove} ${line.name.split(" ").slice(0, 2).join(" ")}`}
-                onClick={() =>
-                  dispatch({
-                    type: "remove",
-                    productId: line.productId,
-                    variantId: line.variantId,
-                  })
-                }
-                size="sm"
-                theme="borderless"
-                variant="danger"
-              >
-                ×
-              </Button>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <aside className="akros-cart-summary" aria-labelledby="cart-summary-title">
-        <h2 id="cart-summary-title">{cs.cart.summary}</h2>
-        <dl>
-          <div>
-            <dt>{cs.cart.subtotal}</dt>
-            <dd>{formatPrice(subtotal)}</dd>
-          </div>
-          <div>
-            <dt>{cs.cart.shipping}</dt>
-            <dd>{formatPrice(shipping)}</dd>
-          </div>
-          <div className="akros-cart-summary__total">
-            <dt>{cs.cart.totalWithVat}</dt>
-            <dd>{formatPrice(subtotal + shipping)}</dd>
-          </div>
-        </dl>
-        <LinkButton as={NextLink} block href="/pokladna" size="md" variant="primary">
-          {cs.actions.proceedToCheckout}
-        </LinkButton>
-        <p>Pokladna pracuje pouze s lokálními mock daty a neprovádí skutečnou platbu.</p>
-      </aside>
-    </div>
+    </>
   );
 }

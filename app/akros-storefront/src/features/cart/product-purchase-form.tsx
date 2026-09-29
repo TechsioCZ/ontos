@@ -113,6 +113,8 @@ const getVariantCartItem = (product: CatalogProduct, variant: CatalogProductVari
   minimumQuantity: variant.minimumQuantity,
   stockCount: variant.stockCount,
   priceMinor: variant.priceMinor,
+  priceExcludingVatMinor: variant.priceTiers.find((tier) => tier.priceMinor === variant.priceMinor)
+    ?.priceExcludingVatMinor,
   variantLabel: formatVariantLabel(variant),
 });
 
@@ -418,6 +420,9 @@ export function ProductPurchaseForm({
       minimumQuantity: purchaseItem.minimumQuantity,
       stockCount: purchaseItem.stockCount,
       priceMinor: purchaseItem.priceMinor,
+      priceExcludingVatMinor: (variant?.priceTiers ?? product.detail.priceTiers).find(
+        (tier) => tier.priceMinor === purchaseItem.priceMinor,
+      )?.priceExcludingVatMinor,
       variantLabel: variant ? formatVariantLabel(variant) : undefined,
     };
     const maximumQuantity = getMaximumOrderQuantity(productCartItem);
