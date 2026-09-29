@@ -67,6 +67,8 @@ export const FAKE_REVISION = '0123456789abcdef';
 export interface FakeStage {
   readonly commands: OpsCommand[];
   readonly deployments: { id: number; sha: string; state: string }[];
+  /** Repository paths `git status --porcelain` reports as changed. */
+  readonly dirtyPaths: Set<string>;
   readonly environments: Set<string>;
   /** Hostnames a service import accepts but Zerops does not list (a partial or delayed creation). */
   readonly hiddenOnImport: Set<string>;
@@ -199,6 +201,16 @@ const ghAnswer = (stage: FakeStage, command: OpsCommand) => {
   return group === 'api' ? githubApiAnswer(stage, command) : unexpected(command);
 };
 
+const gitAnswer = (stage: FakeStage, { args }: OpsCommand) =>
+  args[0] === 'status'
+    ? Effect.succeed(
+        args
+          .filter((path) => stage.dirtyPaths.has(path))
+          .map((path) => ` M ${path}\n`)
+          .join(''),
+      )
+    : Effect.succeed(`${FAKE_REVISION}\n`);
+
 const respond = (stage: FakeStage, command: OpsCommand, nextId: () => string) => {
   stage.commands.push(command);
   if (command.stdin !== undefined) {
@@ -207,7 +219,7 @@ const respond = (stage: FakeStage, command: OpsCommand, nextId: () => string) =>
   return Match.value(command.command).pipe(
     Match.when('zcli', () => zcliAnswer(stage, command, nextId)),
     Match.when('gh', () => ghAnswer(stage, command)),
-    Match.when('git', () => Effect.succeed(`${FAKE_REVISION}\n`)),
+    Match.when('git', () => gitAnswer(stage, command)),
     Match.when('pnpm', () => Effect.succeed('')),
     Match.orElse(() => unexpected(command)),
   );
@@ -222,6 +234,7 @@ export const fakeStage = (initial: FakeStageInitial): FakeStage => {
   const state: Omit<FakeStage, 'layer'> = {
     commands: [],
     deployments: [...(initial.deployments ?? [])],
+    dirtyPaths: new Set(),
     environments: new Set(initial.environments ?? ['stage']),
     hiddenOnImport: new Set(),
     inputs: [],

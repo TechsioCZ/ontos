@@ -691,15 +691,23 @@ const latestStageEdgeState = Effect.gen(function* latestStageEdgeStateEffect() {
     return Option.some(`deployment ${String(deployment.id)} is ${status?.state ?? 'without a status'}`);
   }
   // An older successful deployment does not prove the current placement and bindings are live.
-  const revision = (yield* runCommand({
-    args: ['rev-parse', 'HEAD'],
+  const cwd = yield* repositoryDirectory;
+  const revision = (yield* runCommand({ args: ['rev-parse', 'HEAD'], command: 'git', cwd })).trim();
+  if (deployment.sha !== revision) {
+    return Option.some(
+      `deployment ${String(deployment.id)} deployed ${deployment.sha}, not the checked-out revision ${revision}; pull main or wait for its stage-edge deployment`,
+    );
+  }
+  // `provision` rewrites the placement in the working tree; the deployed Workers bind only the committed IDs.
+  const placementChanges = (yield* runCommand({
+    args: ['status', '--porcelain', '--', `app/${PLACEMENT_LABEL}`],
     command: 'git',
-    cwd: yield* repositoryDirectory,
+    cwd,
   })).trim();
-  return deployment.sha === revision
+  return placementChanges === ''
     ? Option.none<string>()
     : Option.some(
-        `deployment ${String(deployment.id)} deployed ${deployment.sha}, not the checked-out revision ${revision}; pull main or wait for its stage-edge deployment`,
+        `${PLACEMENT_LABEL} has uncommitted changes that deployment ${String(deployment.id)} did not deploy; merge the build-environment PR and verify from main`,
       );
 });
 

@@ -511,6 +511,22 @@ it.effect('leaves DEPLOY_TARGET unset while the latest stage-edge deployment is 
   }),
 );
 
+it.effect('leaves DEPLOY_TARGET unset while the placement has uncommitted changes', () =>
+  Effect.gen(function* refusesDirtyPlacement() {
+    const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] });
+    stage.dirtyPaths.add('app/topology/cloudflare-placement.json');
+
+    const error = yield* run(activate, {
+      account: yield* provisionedAccount('healthy'),
+      files: yield* reviewedPlacementFiles,
+      stage,
+    }).pipe(Effect.flip);
+
+    expect(error.message).toContain('topology/cloudflare-placement.json has uncommitted changes');
+    expect(stage.variables.get('stage')?.has('DEPLOY_TARGET')).not.toBe(true);
+  }),
+);
+
 it.effect('leaves DEPLOY_TARGET unset while the reviewed placement names other data-plane IDs', () =>
   Effect.gen(function* refusesUnreviewedIds() {
     const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] });
