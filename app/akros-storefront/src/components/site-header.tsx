@@ -73,11 +73,15 @@ export function SiteHeader() {
 
         <div className="akros-header__actions">
           <div className="akros-header__search">
-            <SearchForm action="/vyhledavani" gapped method="get" onSubmit={handleSearch} size="md">
+            <SearchForm action="/vyhledavani" method="get" onSubmit={handleSearch} size="md">
               <SearchForm.Label className="sr-only">{cs.search.label}</SearchForm.Label>
               <SearchForm.Control>
-                <SearchForm.Input name="q" placeholder={cs.search.placeholder} />
-                <SearchForm.Button>{cs.actions.search}</SearchForm.Button>
+                <SearchForm.Input
+                  aria-label={cs.search.label}
+                  name="q"
+                  placeholder={cs.search.placeholder}
+                />
+                <SearchForm.Button aria-label={cs.actions.search} showSearchIcon />
               </SearchForm.Control>
             </SearchForm>
           </div>

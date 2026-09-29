@@ -28,9 +28,6 @@
   --akros-sidebar-width: 280px;
   --akros-radius-lg: 16px;
   --akros-radius-md: 8px;
-  --akros-featured-product-card-height: 410px;
-  --akros-featured-product-image-height: 240px;
-  --akros-featured-product-action-width: 106px;
   --akros-hero-aspect-ratio: 25 / 8;
   --akros-header-height: 160px;
   --akros-header-search-width: 660px;
@@ -342,30 +339,6 @@ body {
 
 .akros-catalog-product-card__stock {
   margin-block-start: auto;
-}
-
-.akros-featured-product-card {
-  height: var(--akros-featured-product-card-height);
-  grid-template-rows: var(--akros-featured-product-image-height) auto auto 1fr;
-}
-
-.akros-featured-product-card__image-link {
-  min-height: 0;
-}
-
-.akros-featured-product-card__image {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.akros-featured-product-card > :last-child {
-  align-self: start;
-}
-
-.akros-featured-product-card > :last-child > a {
-  width: var(--akros-featured-product-action-width);
-  justify-content: center;
 }
 
 .akros-category-heading {
