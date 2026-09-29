@@ -399,9 +399,10 @@ jobs:
 
       - name: Migrate and initialize the local tenant for the Worker topology
         working-directory: app
-        # Local initialization reads the app .env; the job environment overrides every value it uses.
+        # The migrations and local initialization read the app .env; write it from this job's
+        # development-only service values so every tool sees the same database and SpiceDB.
         run: |
-          cp .env.example .env
+          printenv | grep -E '^(BETTER_AUTH_|DATABASE_|ONTOS_|POSTGRES_|SPICEDB_)' > .env
           mise exec -- pnpm db:migrate
           mise exec -- pnpm local:initialize
 
