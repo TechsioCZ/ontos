@@ -223,6 +223,11 @@ const publishOnce = Effect.fn('ActiveApplicationComposition.publishOnce')(functi
   // Project variables are listed through Zerops search, which reflects a finished write only eventually.
   const published = yield* api.projectEnvs(projectId).pipe(
     Effect.map((envs) => envs.find((env) => env.key === key)?.content),
+    // A search that has not indexed the project yet is the same lag as a stale value: poll again.
+    Effect.catchIf(
+      (error) => error.reason === 'project_not_indexed',
+      () => Effect.void,
+    ),
     Effect.repeat({
       schedule: Schedule.spaced(PUBLICATION_READBACK_POLL),
       until: (content) => content === encoded,

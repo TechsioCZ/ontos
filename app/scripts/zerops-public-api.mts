@@ -156,7 +156,10 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     );
     const [project] = search.items;
     if (project === undefined) {
-      return yield* new ZeropsApiError({ message: 'Zerops project search did not return the project' });
+      return yield* new ZeropsApiError({
+        message: 'Zerops project search did not return the project',
+        reason: 'project_not_indexed',
+      });
     }
     return project.envList;
   });
