@@ -26,7 +26,8 @@ import type {
   AuthorizationReadinessEvidence,
 } from './check-authorization-readiness.mts';
 import { hashAuthorizationEvidence } from './check-authorization-readiness.mts';
-import { OUTBOX_WORKER_HOST, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+import { DeployTargetSchema, OUTBOX_WORKER_HOST, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+import type { DeployTarget } from './outbox-worker-delivery.mjs';
 import type { AuthorizationImpactReport } from './report-fail-closed-authorization-impact.mts';
 
 export const DeploymentPhaseKindSchema = Schema.Literals(['infrastructure', 'provider', 'shell']);
@@ -186,14 +187,6 @@ export interface DeploymentImpactPlan {
     readonly stoppedWorkers: readonly string[];
   };
 }
-
-/**
- * Where the deploying environment runs. On `zerops` every owner's Outbox Worker has its own service;
- * on `cloudflare` the delivery units run as Workers and one Zerops service, the Outbox Worker host,
- * runs every owner's worker entry in place of the dedicated services.
- */
-export const DeployTargetSchema = Schema.Literals(['cloudflare', 'zerops']);
-export type DeployTarget = typeof DeployTargetSchema.Type;
 
 export interface PlanDeploymentImpactOptions {
   readonly authorizationPromotion?: AuthorizationPromotionGateInput;

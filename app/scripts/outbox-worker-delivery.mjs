@@ -24,6 +24,14 @@ export const OUTBOX_WORKER_HOST = Object.freeze({
   stageSetup: 'outbox-worker-host',
 });
 
+/**
+ * Where the deploying environment runs. On `zerops` every owner's Outbox Worker has its own service;
+ * on `cloudflare` the delivery units run as Workers and one Zerops service, the Outbox Worker host,
+ * runs every owner's worker entry in place of the dedicated services.
+ */
+export const DeployTargetSchema = Schema.Literals(['cloudflare', 'zerops']);
+/** @typedef {typeof DeployTargetSchema.Type} DeployTarget */
+
 const OwnerPackageSchema = Schema.Struct({
   exports: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
   name: Schema.optional(Schema.String),

@@ -21,9 +21,8 @@ import {
   encodeActiveApplicationCompositionSnapshot,
 } from './active-application-composition.mts';
 import type { ObservedArtifact, ObservedModuleDeployment } from './active-application-composition.mts';
-import { OUTBOX_WORKER_HOST, dedicatedOutboxWorkerSetup } from './outbox-worker-delivery.mjs';
-import { DeployTargetSchema } from './plan-deployment-impact.mts';
-import type { DeployTarget } from './plan-deployment-impact.mts';
+import { DeployTargetSchema, OUTBOX_WORKER_HOST, dedicatedOutboxWorkerSetup } from './outbox-worker-delivery.mjs';
+import type { DeployTarget } from './outbox-worker-delivery.mjs';
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from './zerops-public-api.mts';
 
