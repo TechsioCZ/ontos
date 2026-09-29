@@ -15,6 +15,7 @@ import {
   getPromotionItems,
   getRecommendedProducts,
   getSaleProducts,
+  getSidebarCategories,
   searchCatalog,
   searchProducts,
   toProductSummary,
@@ -44,6 +45,55 @@ describe("mock catalog gateway", () => {
     expect(
       product && getCategoryTrail(getCategoryBySlug("a-2-141")!).map((category) => category.slug),
     ).toEqual(["nerezovy-spojovaci-material", "vruty", "vruty-do-dreva", "din-7997", "a-2-141"]);
+  });
+
+  it("returns the published sidebar categories in the live navigation order", () => {
+    const categories = getSidebarCategories();
+    const roots = categories.filter((category) => category.parentId === null);
+    const fasteners = roots.find((category) => category.slug === "nerezovy-spojovaci-material");
+    const steel = roots.find((category) => category.slug === "nerezovy-hutni-material");
+
+    expect(roots.map((category) => category.slug)).toEqual([
+      "nerezovy-spojovaci-material",
+      "nerezovy-hutni-material",
+    ]);
+    expect(
+      categories.filter((category) => category.parentId === fasteners?.id).map(({ slug }) => slug),
+    ).toEqual([
+      "srouby",
+      "matice",
+      "podlozky",
+      "zavitove-tyce-a-svorniky",
+      "vruty",
+      "koliky",
+      "nyty",
+      "bezpecnostni-srouby-a-vruty",
+      "ostatni-spojovaci-material",
+      "lanaretezypantyjachtdopln",
+      "kotevni-technikalepidla",
+      "naradi-a-prislusenstvi",
+      "maziva",
+      "solar-system",
+      "nerez-cerny-design",
+    ]);
+    expect(
+      categories.filter((category) => category.parentId === steel?.id).map(({ slug }) => slug),
+    ).toEqual([
+      "plechy",
+      "trubky",
+      "profily",
+      "tyce",
+      "kolena",
+      "priruby",
+      "armatury-1",
+      "potravinarske-armatury",
+      "prislusenstvi",
+      "mazaci-hlavice",
+      "matice-km-a-podlozky-mb",
+    ]);
+    expect(categories.some((category) => category.slug === "specialni-spojovaci-material")).toBe(
+      false,
+    );
   });
 
   it("returns the generated homepage selection in its configured display order", () => {

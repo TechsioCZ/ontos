@@ -30,6 +30,45 @@ const productsBySlug = new Map(
   catalogData.products.map((product) => [product.slug, product] as const),
 );
 
+const sidebarCategoryOrder = [
+  {
+    slug: "nerezovy-spojovaci-material",
+    children: [
+      "srouby",
+      "matice",
+      "podlozky",
+      "zavitove-tyce-a-svorniky",
+      "vruty",
+      "koliky",
+      "nyty",
+      "bezpecnostni-srouby-a-vruty",
+      "ostatni-spojovaci-material",
+      "lanaretezypantyjachtdopln",
+      "kotevni-technikalepidla",
+      "naradi-a-prislusenstvi",
+      "maziva",
+      "solar-system",
+      "nerez-cerny-design",
+    ],
+  },
+  {
+    slug: "nerezovy-hutni-material",
+    children: [
+      "plechy",
+      "trubky",
+      "profily",
+      "tyce",
+      "kolena",
+      "priruby",
+      "armatury-1",
+      "potravinarske-armatury",
+      "prislusenstvi",
+      "mazaci-hlavice",
+      "matice-km-a-podlozky-mb",
+    ],
+  },
+] as const;
+
 const getVariantGroupStockStatus = (
   variants: CatalogProduct["detail"]["variants"],
 ): ProductStockStatus => {
@@ -116,24 +155,37 @@ export const getChildCategories = (parentId: string): CatalogCategory[] =>
   getCategories().filter((category) => category.parentId === parentId);
 
 export const getSidebarCategories = (activeSlug?: string): CatalogCategory[] => {
-  const preferredRootIds = new Set(["26", "1223", "1369"]);
-  const preferredRoots = getTopCategories().filter((category) => preferredRootIds.has(category.id));
-  const topCategories = preferredRoots.length > 0 ? preferredRoots : getTopCategories();
-  const includedIds = new Set(topCategories.map((category) => category.id));
+  const categories: CatalogCategory[] = [];
+  const includedIds = new Set<string>();
+  const appendCategory = (category: CatalogCategory | undefined) => {
+    if (!category || includedIds.has(category.id)) return;
+    includedIds.add(category.id);
+    categories.push(category);
+  };
 
-  for (const category of topCategories) {
-    for (const child of getChildCategories(category.id)) includedIds.add(child.id);
+  for (const section of sidebarCategoryOrder) {
+    const rootCategory = getCategoryBySlug(section.slug);
+    appendCategory(rootCategory);
+    if (!rootCategory) continue;
+
+    for (const childSlug of section.children) {
+      const child = getCategoryBySlug(childSlug);
+      if (child?.parentId === rootCategory.id) appendCategory(child);
+    }
   }
 
   const activeCategory = activeSlug ? getCategoryBySlug(activeSlug) : undefined;
   if (activeCategory) {
-    for (const category of getCategoryTrail(activeCategory)) {
-      includedIds.add(category.id);
-      for (const child of getChildCategories(category.id)) includedIds.add(child.id);
+    const activeTrail = getCategoryTrail(activeCategory);
+    if (activeTrail[0] && includedIds.has(activeTrail[0].id)) {
+      for (const category of activeTrail.slice(1)) {
+        appendCategory(category);
+        for (const child of getChildCategories(category.id)) appendCategory(child);
+      }
     }
   }
 
-  return getCategories().filter((category) => includedIds.has(category.id));
+  return categories;
 };
 
 export const getCategoryBySlug = (slug: string): CatalogCategory | undefined =>

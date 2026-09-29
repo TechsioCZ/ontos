@@ -16,6 +16,30 @@ interface CategoryNavigationItemProps {
   categories: CatalogCategory[];
 }
 
+const akrosProductionUrl = "https://www.akroscz.cz/";
+
+function SpecialCategoriesNavigation({ navigationId }: { navigationId: string }) {
+  return (
+    <VerticalNavigation.Branch defaultOpen id={`${navigationId}-special-categories`}>
+      <VerticalNavigation.Row data-akros-depth={0}>
+        <VerticalNavigation.Link as="span">{cs.catalog.specialCategories}</VerticalNavigation.Link>
+        <VerticalNavigation.BranchTrigger aria-label={cs.catalog.specialCategories}>
+          <VerticalNavigation.BranchIndicator />
+        </VerticalNavigation.BranchTrigger>
+      </VerticalNavigation.Row>
+      <VerticalNavigation.BranchContent indent>
+        <VerticalNavigation.List>
+          <VerticalNavigation.Item>
+            <VerticalNavigation.Link href={akrosProductionUrl}>
+              {cs.catalog.production}
+            </VerticalNavigation.Link>
+          </VerticalNavigation.Item>
+        </VerticalNavigation.List>
+      </VerticalNavigation.BranchContent>
+    </VerticalNavigation.Branch>
+  );
+}
+
 function CategoryNavigationItem({
   activeIds,
   category,
@@ -70,7 +94,7 @@ function CategoryNavigationItem({
   return (
     <VerticalNavigation.Branch
       containsCurrent={isOnCurrentPath}
-      defaultOpen={isOnCurrentPath}
+      defaultOpen={depth === 0 || isOnCurrentPath}
       id={`${navigationId}-${category.id}`}
     >
       <VerticalNavigation.Row data-akros-depth={visualDepth}>
@@ -131,6 +155,7 @@ export function CatalogSidebar({
     >
       <VerticalNavigation.Group tone="plain">
         <VerticalNavigation.List>
+          <SpecialCategoriesNavigation navigationId={navigationId} />
           {topCategories.map((category) => (
             <CategoryNavigationItem
               activeIds={activeIds}
