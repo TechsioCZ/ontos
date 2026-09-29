@@ -796,6 +796,16 @@ const planCloudflareDeployments = (
     }
     placed.add(id);
   }
+  // The Shell Worker binds every vertical Worker as a service, so a placed Shell needs every
+  // vertical placed: retiring one would leave the Shell bound to a Worker nobody deploys.
+  const shellUnit = orderedUnits.find((unit) => unit.kind === 'shell');
+  if (shellUnit !== undefined && placed.has(shellUnit.id)) {
+    for (const unit of orderedUnits) {
+      if (unit.kind === 'provider' && !placed.has(unit.id)) {
+        fail(`${CLOUDFLARE_PLACEMENT_PATH} places the Shell, which binds every vertical, but not "${unit.id}"`);
+      }
+    }
+  }
   // Two placed units under one Worker name would overwrite each other and be proven and restored
   // as one resource.
   const placedByWorker = new Map<string, string>();

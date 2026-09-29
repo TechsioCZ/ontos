@@ -505,34 +505,44 @@ it.live('refuses to drop a deployed Worker from placement until it is listed for
           runGit(root, ['add', '.']);
           runGit(root, ['commit', '-m', 'contacts and Shell on the edge']);
           const deployed = runGit(root, ['rev-parse', 'HEAD']);
-          const dropped = yield* commitPlacement(root, [SHELL_ID], [], 'drop contacts');
+          const dropped = yield* commitPlacement(root, ['contacts'], [], 'drop the Shell');
           expect(
             yield* planningFailure(
               planDeploymentImpact({ baseRevision: deployed, headRevision: dropped, rootDirectory: root }),
             ),
-          ).toContain('no longer places Worker "app-contacts"; list it in retiredWorkers');
+          ).toContain(`no longer places Worker "${SHELL_WORKER}"; list it in retiredWorkers`);
           // A full plan of the same head still reconciles against the last edge deployment.
           expect(
             yield* planningFailure(
               planDeploymentImpact({ headRevision: dropped, placementBaseRevision: deployed, rootDirectory: root }),
             ),
-          ).toContain('no longer places Worker "app-contacts"');
-          const retired = yield* commitPlacement(root, [SHELL_ID], [CONTACTS_WORKER], 'retire contacts');
+          ).toContain(`no longer places Worker "${SHELL_WORKER}"`);
+          const retired = yield* commitPlacement(root, ['contacts'], [SHELL_WORKER], 'retire the Shell');
           const plan = yield* planDeploymentImpact({
             baseRevision: deployed,
             headRevision: retired,
             rootDirectory: root,
           });
-          expect(plan.units.cloudflareRetirements).toEqual([
-            { packageName: SHELL_PACKAGE, workerName: CONTACTS_WORKER },
-          ]);
+          expect(plan.units.cloudflareRetirements).toEqual([{ packageName: SHELL_PACKAGE, workerName: SHELL_WORKER }]);
           // A Worker still placed cannot also be retired.
-          const contradictory = yield* commitPlacement(root, [SHELL_ID], [SHELL_WORKER], 'retire the Shell');
+          const contradictory = yield* commitPlacement(root, ['contacts'], [CONTACTS_WORKER], 'retire contacts');
           expect(
             yield* planningFailure(
               planDeploymentImpact({ baseRevision: retired, headRevision: contradictory, rootDirectory: root }),
             ),
-          ).toContain('retires "app-shell-super-app", which a placed unit still deploys');
+          ).toContain(`retires "${CONTACTS_WORKER}", which a placed unit still deploys`);
+          // The placed Shell binds every vertical, so no vertical can leave placement while it stays.
+          const orphaning = yield* commitPlacement(
+            root,
+            [SHELL_ID],
+            [CONTACTS_WORKER],
+            'drop contacts under the Shell',
+          );
+          expect(
+            yield* planningFailure(
+              planDeploymentImpact({ baseRevision: deployed, headRevision: orphaning, rootDirectory: root }),
+            ),
+          ).toContain('places the Shell, which binds every vertical, but not "contacts"');
         }),
       { cloudflarePlacement: [SHELL_ID, 'contacts'] },
     );
