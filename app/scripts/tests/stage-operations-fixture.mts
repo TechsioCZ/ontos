@@ -1,4 +1,7 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import nodePath from 'node:path';
 
 import { Effect, FileSystem, Layer, Match, Option, Path, Redacted, Schema } from 'effect';
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
@@ -8,12 +11,15 @@ import { parse as parseYaml } from 'yaml';
 import { OpsCommandError } from '../ops/ops-command-error.mts';
 import { OpsShell, renderCommand } from '../ops/ops-shell.mts';
 import type { OpsCommand, OpsShellService } from '../ops/ops-shell.mts';
+import { SPICEDB_GRPC_TLS, SPICEDB_HTTP_TLS, pemBlocks } from '../ops/spicedb-tls.mts';
 import type { ZeropsService } from '../ops/stage-operations.mts';
+import { ZeropsPublicApi } from '../zerops-public-api.mts';
 
 /**
  * In-memory stand-ins for everything the stage operations touch: Zerops and GitHub behind the
- * `OpsShell` seam, the Cloudflare account behind the Effect `HttpClient` seam, and repository files
- * behind `FileSystem`. Each records what the scripts asked for, so tests assert exact mutations.
+ * `OpsShell` seam, the Cloudflare account behind the Effect `HttpClient` seam, the Zerops REST API
+ * behind `ZeropsPublicApi`, and repository files behind `FileSystem`. Each records what the scripts
+ * asked for, so tests assert exact mutations. `openssl` runs for real, so certificates are real.
  */
 export const APP_DIRECTORY = new URL('../../', import.meta.url).pathname.replace(/\/$/u, '');
 
@@ -245,6 +251,119 @@ const gitAnswer = (stage: FakeStage, { args }: OpsCommand) =>
       )
     : Effect.succeed(`${FAKE_REVISION}\n`);
 
+// ---------------------------------------------------------------------------------------------
+// Real OpenSSL, and a stand-in for the Cloudflare Origin CA
+
+/** The system OpenSSL (LibreSSL on macOS) accepts every invocation the scripts make. */
+const OPENSSL = '/usr/bin/openssl';
+
+/** Runs the system `openssl`; key material stays in memory, never in arguments. */
+export const openssl = (args: readonly string[], input?: string) =>
+  execFileSync(OPENSSL, args, { encoding: 'utf-8', input, stdio: ['pipe', 'pipe', 'ignore'] });
+
+const EC_KEY = ['-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:prime256v1', '-nodes'];
+const TO_STDOUT = ['-keyout', '/dev/stdout', '-out', '/dev/stdout'];
+const ORIGIN_VALIDITY_DAYS = 5475;
+const CERTIFICATE = 'CERTIFICATE';
+const PRIVATE_KEY = 'PRIVATE KEY';
+
+const sanEntry = (name: string) => (/^[\d.]+$/u.test(name) ? `IP:${name}` : `DNS:${name}`);
+
+let originCaDirectory: string | undefined;
+let signed = 0;
+
+/** A throwaway CA standing in for the Cloudflare Origin CA; its files live in a temporary directory. */
+const fakeOriginCa = () => {
+  if (originCaDirectory === undefined) {
+    const directory = mkdtempSync(nodePath.join(tmpdir(), 'fake-origin-ca-'));
+    openssl([
+      'req',
+      '-x509',
+      ...EC_KEY,
+      '-days',
+      String(ORIGIN_VALIDITY_DAYS),
+      '-subj',
+      '/O=Fake Origin CA/CN=Fake Origin CA',
+      '-keyout',
+      nodePath.join(directory, 'ca.key'),
+      '-out',
+      nodePath.join(directory, 'ca.pem'),
+    ]);
+    originCaDirectory = directory;
+  }
+  return originCaDirectory;
+};
+
+/** Signs `csr` for `hostnames` the way the Origin CA does: the hostnames become the certificate's SANs. */
+export const signWithFakeOriginCa = (csr: string, hostnames: readonly string[], days = ORIGIN_VALIDITY_DAYS) => {
+  const directory = fakeOriginCa();
+  signed += 1;
+  const extensions = nodePath.join(directory, `san-${String(signed)}.cnf`);
+  writeFileSync(extensions, `subjectAltName=${hostnames.map(sanEntry).join(',')}\n`);
+  return openssl(
+    [
+      'x509',
+      '-req',
+      '-in',
+      '/dev/stdin',
+      '-CA',
+      nodePath.join(directory, 'ca.pem'),
+      '-CAkey',
+      nodePath.join(directory, 'ca.key'),
+      '-set_serial',
+      String(signed),
+      '-days',
+      String(days),
+      '-extfile',
+      extensions,
+    ],
+    csr,
+  );
+};
+
+const pemBlock = (text: string, label: string) => {
+  const block = pemBlocks(text).get(label);
+  if (block === undefined) {
+    throw new Error(`openssl printed no ${label}`);
+  }
+  return block;
+};
+
+export interface SpicedbTlsSecretOptions {
+  readonly gatewayDays?: number;
+  readonly gatewayHostname: string;
+  readonly grpcNames?: readonly string[];
+}
+
+/** Valid SpiceDB TLS secrets by their Zerops `spicedb_<KEY>` project names, as `spicedb-tls` stores them. */
+export const spicedbTlsSecrets = (options: SpicedbTlsSecretOptions) => {
+  const names = options.grpcNames ?? ['spicedb', 'localhost', '127.0.0.1'];
+  const grpc = openssl([
+    'req',
+    '-x509',
+    ...EC_KEY,
+    '-days',
+    '3650',
+    '-subj',
+    '/CN=spicedb',
+    '-addext',
+    `subjectAltName=${names.map(sanEntry).join(',')}`,
+    ...TO_STDOUT,
+  ]);
+  const request = openssl(['req', '-new', ...EC_KEY, '-subj', `/CN=${options.gatewayHostname}`, ...TO_STDOUT]);
+  const gatewayCertificate = signWithFakeOriginCa(
+    pemBlock(request, `${CERTIFICATE} REQUEST`),
+    [options.gatewayHostname],
+    options.gatewayDays,
+  );
+  return {
+    [`spicedb_${SPICEDB_GRPC_TLS.certificateKey}`]: pemBlock(grpc, CERTIFICATE),
+    [`spicedb_${SPICEDB_GRPC_TLS.privateKeyKey}`]: pemBlock(grpc, PRIVATE_KEY),
+    [`spicedb_${SPICEDB_HTTP_TLS.certificateKey}`]: gatewayCertificate,
+    [`spicedb_${SPICEDB_HTTP_TLS.privateKeyKey}`]: pemBlock(request, PRIVATE_KEY),
+  };
+};
+
 const respond = (stage: FakeStage, command: OpsCommand, nextId: () => string) => {
   stage.commands.push(command);
   if (command.stdin !== undefined) {
@@ -255,6 +374,7 @@ const respond = (stage: FakeStage, command: OpsCommand, nextId: () => string) =>
     Match.when('gh', () => ghAnswer(stage, command)),
     Match.when('git', () => gitAnswer(stage, command)),
     Match.when('pnpm', () => Effect.succeed('')),
+    Match.when('openssl', () => Effect.sync(() => openssl(command.args))),
     Match.orElse(() => unexpected(command)),
   );
 };
@@ -308,6 +428,47 @@ export const mutatingCommands = (commands: readonly OpsCommand[]) =>
   });
 
 // ---------------------------------------------------------------------------------------------
+// Zerops REST API
+
+export interface FakeServiceSecret {
+  readonly content: string;
+  readonly key: string;
+  readonly serviceId: string;
+}
+
+export interface FakeZeropsApi {
+  readonly layer: Layer.Layer<ZeropsPublicApi>;
+  readonly serviceSecrets: FakeServiceSecret[];
+}
+
+const notFaked = (operation: string) => () => Effect.die(new Error(`the fake Zerops API has no ${operation}`));
+
+/** A service secret becomes visible to `zcli project env` as `<hostname>_<KEY>`, as on Zerops. */
+export const fakeZeropsApi = (stage: FakeStage): FakeZeropsApi => {
+  const serviceSecrets: FakeServiceSecret[] = [];
+  const layer = Layer.succeed(
+    ZeropsPublicApi,
+    ZeropsPublicApi.of({
+      createServiceSecret: (serviceId, key, content) =>
+        Effect.sync(() => {
+          serviceSecrets.push({ content, key, serviceId });
+          const hostname = stage.services.find(({ id }) => id === serviceId)?.hostname ?? serviceId;
+          stage.projectUserKeys.push(`${hostname}_${key}`);
+          stage.projectValues.set(`${hostname}_${key}`, content);
+        }),
+      enableSubdomainAccess: notFaked('enableSubdomainAccess'),
+      projectEnvFile: notFaked('projectEnvFile'),
+      projectEnvs: notFaked('projectEnvs'),
+      restartService: notFaked('restartService'),
+      serviceStack: notFaked('serviceStack'),
+      stopService: notFaked('stopService'),
+      upsertProjectEnv: notFaked('upsertProjectEnv'),
+    }),
+  );
+  return { layer, serviceSecrets };
+};
+
+// ---------------------------------------------------------------------------------------------
 // Cloudflare account through the HttpClient
 
 const TunnelSchema = Schema.Struct({ id: Schema.String, name: Schema.String, status: Schema.String });
@@ -336,6 +497,13 @@ const HyperdriveBodySchema = Schema.Struct({
   origin_connection_limit: Schema.Number,
 });
 const HyperdriveSchema = Schema.Struct({ ...HyperdriveBodySchema.fields, id: Schema.String });
+
+const OriginCertificateBodySchema = Schema.Struct({
+  csr: Schema.String,
+  hostnames: Schema.Array(Schema.String),
+  request_type: Schema.Literal('origin-ecc'),
+  requested_validity: Schema.Number,
+});
 export type FakeHyperdrive = typeof HyperdriveSchema.Type;
 
 export interface FakeCloudflareRequest {
@@ -417,6 +585,11 @@ export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloud
     vpcServices: [...(initial.vpcServices ?? [])],
   };
   const answer = (method: string, url: URL, body: Option.Option<Json>): Response => {
+    if (url.pathname === '/client/v4/certificates' && method === 'POST') {
+      const { csr, hostnames, requested_validity } = decodeBody(OriginCertificateBodySchema, body);
+      const certificate = signWithFakeOriginCa(csr, hostnames, requested_validity);
+      return envelope({ certificate, expires_on: '2041-01-01 00:00:00 +0000 UTC', hostnames, id: 'origin-cert-1' });
+    }
     const path = url.pathname.replace(/^\/client\/v4\/accounts\/[^/]+/u, '');
     if (path.startsWith('/cfd_tunnel')) {
       return tunnelAnswer(account, initial, method, url, path) ?? noRoute();

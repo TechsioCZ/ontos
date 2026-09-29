@@ -376,8 +376,17 @@ appear in a command line or in the output.
 `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `STAGE_ZONE` and `STAGE_SHELL_HOSTNAME` from the
 environment, or else from the dotenv file `~/.cloudflare-ontos-stage-token`. The optional
 `CLOUDFLARE_STAGE_EDGE_API_TOKEN` is the narrower token CI receives. Without it, CI receives
-`CLOUDFLARE_API_TOKEN`.
+`CLOUDFLARE_API_TOKEN`. The SpiceDB TLS step also needs `ZEROPS_TOKEN`, because `zcli` cannot set
+service secrets, and a `CLOUDFLARE_API_TOKEN` with the stage zone permission "SSL and
+Certificates: Edit" for the Origin CA.
 
+- `spicedb-tls` creates the SpiceDB TLS material as sensitive secrets on the Zerops `spicedb` service,
+  and `provision` runs it first. The gRPC pair `SPICEDB_GRPC_TLS_CERT`/`SPICEDB_GRPC_TLS_KEY` is a
+  self-signed certificate for `spicedb`, `localhost` and `127.0.0.1` that Node clients pin. The HTTP
+  gateway pair `SPICEDB_HTTP_TLS_CERT`/`SPICEDB_HTTP_TLS_KEY` is a Cloudflare Origin CA certificate
+  for `ontos-stage-spicedb.<STAGE_ZONE>`, the server name Workers VPC verifies; it needs no DNS record.
+  A pair that exists and holds is kept. A partial pair, a wrong name, a mismatched key or a
+  certificate expiring within 30 days fails with the pair to remove, instead of rotating silently.
 - `provision` runs every step in dependency order. It creates or reuses the remotely managed Tunnel
   `ontos-stage`. It imports `cloudflared` from `zerops-import.yaml`, with the tunnel connector token
   as its `TUNNEL_TOKEN` secret, and imports `outboxworkerhost`. It records their `ZEROPS_*_SERVICE_ID`
@@ -391,7 +400,8 @@ environment, or else from the dotenv file `~/.cloudflare-ontos-stage-token`. The
   today, plus `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`: the Worker build's environment never reaches
   the Worker's runtime, and Core accepts the private plaintext SpiceDB endpoint only on stage. An existing object that differs from the runbook fails the step instead of being reused.
 - `worker-secrets` repeats only the Worker secrets step.
-- `verify` runs the cut-over checklist and changes nothing. The tunnel must be healthy. Both VPC
+- `verify` runs the cut-over checklist and changes nothing. The tunnel must be healthy, and both
+  SpiceDB TLS pairs must exist and hold. Both VPC
   services and Hyperdrive must match the runbook, and the reviewed `buildEnvironment` must name
   them. Every placed Worker must exist and hold each runtime secret `provision` plans for it, and the latest `stage-edge` deployment, which includes
   `cloudflare:proof`, must have succeeded for the checked-out revision. Once `stage` targets

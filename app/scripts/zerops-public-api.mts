@@ -77,6 +77,12 @@ export const parseZeropsEnvFile = (envFile: string): ReadonlyMap<string, string>
   );
 
 export interface ZeropsPublicApiService {
+  /** Creates a sensitive secret on one service (a Zerops service "user data" entry) and waits until Zerops applied it. */
+  readonly createServiceSecret: (
+    serviceId: string,
+    key: string,
+    content: string,
+  ) => Effect.Effect<void, ZeropsApiError>;
   readonly enableSubdomainAccess: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
   readonly projectEnvFile: (projectId: string) => Effect.Effect<ReadonlyMap<string, string>, ZeropsApiError>;
   readonly projectEnvs: (projectId: string) => Effect.Effect<readonly ZeropsProjectEnv[], ZeropsApiError>;
@@ -196,6 +202,20 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     yield* awaitProcess(process, `project variable ${key}`);
   });
 
+  const createServiceSecret = Effect.fn('ZeropsPublicApi.createServiceSecret')(function* writeServiceSecret(
+    serviceId: string,
+    key: string,
+    content: string,
+  ) {
+    const process = yield* withJson(
+      HttpClientRequest.post(`${ZEROPS_PUBLIC_API_URL}/service-stack/${serviceId}/user-data`),
+      { content, key, sensitive: true },
+      ProcessSchema,
+      'service secret create',
+    );
+    yield* awaitProcess(process, `service secret ${key}`);
+  });
+
   const serviceAction = Effect.fn('ZeropsPublicApi.serviceAction')(function* runServiceAction(
     serviceId: string,
     action: 'enable-subdomain-access' | 'restart' | 'stop',
@@ -209,6 +229,7 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
   });
 
   return ZeropsPublicApi.of({
+    createServiceSecret,
     enableSubdomainAccess: (serviceId) => serviceAction(serviceId, 'enable-subdomain-access'),
     projectEnvFile: (projectId) =>
       get(`/project/${projectId}/env-file?${PROJECT_ENV_FILE_QUERY}`, EnvFileSchema, 'project env file').pipe(

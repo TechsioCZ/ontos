@@ -21,10 +21,12 @@ import { FetchHttpClient } from 'effect/unstable/http';
 
 import { ACTIVE_APPLICATION_COMPOSITION_POLICY } from '../active-application-composition.mts';
 import { readEdgeConsumers, serviceIdVariable } from '../publish-active-application-composition.mts';
+import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from './cloudflare-api.mts';
 import type { CloudflareHyperdrive, CloudflareVpcService, VpcServiceSpec } from './cloudflare-api.mts';
 import { OpsShellLive, runCommand } from './ops-shell.mts';
 import type { SecretValues } from './ops-shell.mts';
+import { ensureSpicedbTls, spicedbTlsState } from './spicedb-tls.mts';
 import { StageOperationError } from './stage-operation-error.mts';
 import {
   DEPLOY_TARGET_VARIABLE,
@@ -60,8 +62,8 @@ import type { ServiceImport, ZeropsService } from './stage-operations.mts';
  * Settings come from the environment, else from the dotenv file `--env-file` names (default
  * `~/.cloudflare-ontos-stage-token`): CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, STAGE_ZONE,
  * STAGE_SHELL_HOSTNAME and, optionally, CLOUDFLARE_STAGE_EDGE_API_TOKEN (the narrower CI token;
- * without it CI receives CLOUDFLARE_API_TOKEN). Secret values are read from Zerops with the locally
- * authenticated `zcli` and never printed.
+ * without it CI receives CLOUDFLARE_API_TOKEN), plus ZEROPS_TOKEN for the SpiceDB TLS secrets. Secret
+ * values are read from Zerops with the locally authenticated `zcli` and never printed.
  */
 export const STAGE_TUNNEL_NAME = 'ontos-stage';
 export const STAGE_HYPERDRIVE_NAME = 'ontos-stage-runtime';
@@ -652,10 +654,26 @@ export const configureStageEdge = Effect.gen(function* configureStageEdgeEffect(
 });
 
 // ---------------------------------------------------------------------------------------------
+// SpiceDB TLS
+
+/** The TLS server name of the SpiceDB HTTP gateway; Workers VPC verifies it, and it needs no DNS record. */
+export const spicedbGatewayHostname = ({ stageZone }: StageOrigins) =>
+  `${STAGE_VPC_SERVICES.spicedb.name}.${stageZone}`;
+
+const spicedbTlsTarget = Effect.gen(function* spicedbTlsTargetEffect() {
+  const settings = yield* CutoverConfiguration;
+  return { gatewayHostname: spicedbGatewayHostname(settings), projectId: settings.projectId };
+});
+
+/** Creates the SpiceDB gRPC and HTTP gateway TLS secrets on the Zerops `spicedb` service when they are missing. */
+export const ensureStageSpicedbTls = spicedbTlsTarget.pipe(Effect.flatMap(ensureSpicedbTls));
+
+// ---------------------------------------------------------------------------------------------
 // Provisioning and verification
 
 /** Every provisioning step, in dependency order. Activation is separate and runs only after verification. */
 export const provision = Effect.gen(function* provisionEffect() {
+  yield* ensureStageSpicedbTls;
   const tunnel = yield* ensureTunnel;
   yield* ensureZeropsDataLayer(tunnel);
   yield* awaitTunnelHealthy(tunnel.id);
@@ -787,6 +805,11 @@ export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
     `Tunnel ${STAGE_TUNNEL_NAME} is ${TUNNEL_HEALTHY}`,
     tunnel.value.status === TUNNEL_HEALTHY ? Option.none() : Option.some(`status ${tunnel.value.status}`),
   );
+  const tlsTarget = yield* spicedbTlsTarget;
+  yield* check(
+    `the Zerops spicedb service holds valid gRPC and ${tlsTarget.gatewayHostname} gateway TLS secrets`,
+    yield* spicedbTlsState(tlsTarget),
+  );
   const vpcServices = yield* api.vpcServices;
   const vpcIds = new Map<string, string>();
   for (const service of Object.values(STAGE_VPC_SERVICES)) {
@@ -905,10 +928,12 @@ const cutoverLayer = ({ dryRun, envFile }: { readonly dryRun: boolean; readonly 
       return { accountId, apiToken };
     }),
   );
-  return Layer.mergeAll(CloudflareApiLive.pipe(Layer.provide(credentials)), Layer.succeed(OpsMode, { dryRun })).pipe(
-    Layer.provideMerge(configuration),
-    Layer.provide(ConfigProvider.layerAdd(settingsFileProvider(envFile))),
-  );
+  // The settings file stays in the steps' context: the Zerops API reads ZEROPS_TOKEN per request.
+  return Layer.mergeAll(
+    CloudflareApiLive.pipe(Layer.provide(credentials)),
+    ZeropsPublicApiLive,
+    Layer.succeed(OpsMode, { dryRun }),
+  ).pipe(Layer.provideMerge(configuration), Layer.provideMerge(ConfigProvider.layerAdd(settingsFileProvider(envFile))));
 };
 
 const stepCommand = <A, E, R>(name: string, description: string, step: Effect.Effect<A, E, R>) =>
@@ -925,8 +950,13 @@ const cli = Command.make('cloudflare-stage-cutover').pipe(
   Command.withSubcommands([
     stepCommand(
       'provision',
-      'Create or reuse the Tunnel, cloudflared and outbox-worker-host, VPC services, Hyperdrive, build environment, stage-edge and Worker secrets',
+      'Create or reuse the SpiceDB TLS secrets, the Tunnel, cloudflared and outbox-worker-host, VPC services, Hyperdrive, build environment, stage-edge and Worker secrets',
       provision,
+    ),
+    stepCommand(
+      'spicedb-tls',
+      'Create the SpiceDB gRPC and HTTP gateway TLS certificates as Zerops spicedb service secrets when missing',
+      ensureStageSpicedbTls,
     ),
     stepCommand('worker-secrets', "Set every placed Worker's runtime secrets from Zerops", setWorkerSecrets),
     stepCommand('verify', 'Run the cut-over verification checklist without changing anything', verifyCutover),

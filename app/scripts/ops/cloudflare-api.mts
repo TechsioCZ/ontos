@@ -6,7 +6,8 @@ import { CloudflareApiError } from './cloudflare-api-error.mts';
 /**
  * Minimal adapter over the Cloudflare v4 REST API for the stage account objects the cut-over owns:
  * the remotely managed Tunnel, the Workers VPC services behind it, the Hyperdrive config and the
- * Worker script inventory. Paths and bodies follow what Wrangler 4 sends for the same objects
+ * Worker script inventory, plus the zone-level Origin CA certificates the tunnel's private origins
+ * present. Paths and bodies follow what Wrangler 4 sends for the same objects
  * (`wrangler vpc service create`, `wrangler hyperdrive create`). Responses are decoded, never logged;
  * the tunnel connector token and the origin password stay redacted until the request body is built.
  */
@@ -62,6 +63,13 @@ const HyperdriveSchema = Schema.Struct({
 });
 export type CloudflareHyperdrive = typeof HyperdriveSchema.Type;
 
+const OriginCertificateSchema = Schema.Struct({
+  certificate: Schema.NonEmptyString,
+  expires_on: Schema.String,
+  id: Schema.NonEmptyString,
+});
+export type CloudflareOriginCertificate = typeof OriginCertificateSchema.Type;
+
 const WorkerScriptSchema = Schema.Struct({ id: Schema.String });
 const WorkerSecretSchema = Schema.Struct({ name: Schema.String });
 
@@ -81,6 +89,21 @@ export interface HyperdriveSpec {
   readonly password: Redacted.Redacted;
   readonly serviceId: string;
   readonly user: string;
+}
+
+/** An ECC certificate the Cloudflare Origin CA signs for the CSR's key, valid for 15 years. */
+export interface OriginCertificateSpec {
+  readonly csr: string;
+  readonly hostnames: readonly string[];
+}
+
+export const ORIGIN_CERTIFICATE_VALIDITY_DAYS = 5475;
+
+interface OriginCertificateBody {
+  readonly csr: string;
+  readonly hostnames: readonly string[];
+  readonly request_type: 'origin-ecc';
+  readonly requested_validity: number;
 }
 
 interface TunnelCreateBody {
@@ -114,6 +137,10 @@ type HyperdriveBody = ReturnType<typeof hyperdriveBody>;
 
 export interface CloudflareApiService {
   readonly createHyperdrive: (spec: HyperdriveSpec) => Effect.Effect<CloudflareHyperdrive, CloudflareApiError>;
+  /** Needs the zone permission "SSL and Certificates: Edit"; the Origin CA API is not account-scoped. */
+  readonly createOriginCertificate: (
+    spec: OriginCertificateSpec,
+  ) => Effect.Effect<CloudflareOriginCertificate, CloudflareApiError>;
   readonly createTunnel: (name: string) => Effect.Effect<CloudflareTunnel, CloudflareApiError>;
   readonly createVpcService: (spec: VpcServiceSpec) => Effect.Effect<CloudflareVpcService, CloudflareApiError>;
   readonly findTunnel: (name: string) => Effect.Effect<Option.Option<CloudflareTunnel>, CloudflareApiError>;
@@ -169,12 +196,19 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
       }),
     );
 
+  const postTo = <A, I>(
+    url: URL,
+    body: HyperdriveBody | OriginCertificateBody | TunnelCreateBody | VpcServiceBody,
+    schema: Schema.Codec<A, I>,
+    label: string,
+  ) => call(HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(url), body), schema, label);
+
   const post = <A, I>(
     path: string,
     body: HyperdriveBody | TunnelCreateBody | VpcServiceBody,
     schema: Schema.Codec<A, I>,
     label: string,
-  ) => call(HttpClientRequest.bodyJsonUnsafe(HttpClientRequest.post(accountUrl(path)), body), schema, label);
+  ) => postTo(accountUrl(path), body, schema, label);
 
   /** Reads every page of a list endpoint; a short page ends the listing. */
   const list = <A, I>(path: string, schema: Schema.Codec<A, I>, label: string) =>
@@ -202,6 +236,18 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
   return {
     createHyperdrive: (spec) =>
       post('/hyperdrive/configs', hyperdriveBody(spec), HyperdriveSchema, 'Hyperdrive create'),
+    createOriginCertificate: ({ csr, hostnames }) =>
+      postTo(
+        new URL(`${CLOUDFLARE_API_URL}/certificates`),
+        {
+          csr,
+          hostnames,
+          request_type: 'origin-ecc',
+          requested_validity: ORIGIN_CERTIFICATE_VALIDITY_DAYS,
+        },
+        OriginCertificateSchema,
+        'Origin CA certificate create',
+      ),
     createTunnel: (name) => post('/cfd_tunnel', { config_src: 'cloudflare', name }, TunnelSchema, 'Tunnel create'),
     createVpcService: (spec) =>
       post('/connectivity/directory/services', vpcServiceBody(spec), VpcServiceSchema, 'Workers VPC service create'),
