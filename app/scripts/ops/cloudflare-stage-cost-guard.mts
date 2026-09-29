@@ -64,8 +64,8 @@ export const USAGE_ALERT_NAME = 'ontos-stage-workers-requests';
 /** Half the included 10M requests: an early warning, well before the kill switch threshold. */
 export const USAGE_ALERT_REQUESTS = 5_000_000;
 /** 80% of the included allowance, which leaves room for the analytics delay and the hourly cadence. */
-export const DEFAULT_REQUEST_LIMIT = 8_000_000;
-export const DEFAULT_CPU_MS_LIMIT = 24_000_000;
+const DEFAULT_REQUEST_LIMIT = 8_000_000;
+const DEFAULT_CPU_MS_LIMIT = 24_000_000;
 
 const NOT_FOUND = 'it does not exist; run provision';
 /** Cloudflare's `errors[].message` while the account has no Zero Trust organization. */
@@ -540,7 +540,7 @@ export const checkUsage = (now: DateTime.Utc) =>
 
 const BillingCycleDay = Config.Int('STAGE_BILLING_CYCLE_DAY').pipe(Config.withDefault(1));
 
-export const loadUsageLimits = Effect.gen(function* loadUsageLimitsEffect() {
+const loadUsageLimits = Effect.gen(function* loadUsageLimitsEffect() {
   const limits: UsageLimits = {
     billingCycleDay: yield* BillingCycleDay,
     cpuMsLimit: yield* Config.Int('STAGE_WORKERS_CPU_MS_LIMIT').pipe(Config.withDefault(DEFAULT_CPU_MS_LIMIT)),
@@ -583,7 +583,7 @@ const cli = Command.make('cloudflare-stage-cost-guard').pipe(
   ]),
 );
 
-export const main = Command.run({ version: '1.0.0' })(cli);
+const main = Command.run({ version: '1.0.0' })(cli);
 
 if (import.meta.main) {
   NodeRuntime.runMain(
