@@ -519,6 +519,9 @@ const pushCloudflared = (service: ZeropsService) =>
           '.',
           '--zerops-yaml-path',
           'app/zerops.yaml',
+          // Like CI: deploy the committed revision, never local edits (A2 writes the placement file).
+          '--workspace-state',
+          'clean',
           '--project-id',
           projectId,
           '--service-id',

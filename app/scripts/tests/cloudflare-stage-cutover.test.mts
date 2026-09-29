@@ -195,9 +195,22 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
         ['ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID', 'imported-2'],
       ]),
     );
-    expect(stage.commands.some(({ args }) => args.join(' ').includes('push') && args.includes('cloudflared'))).toBe(
-      true,
-    );
+    // Like CI, the push deploys the committed revision, never the placement file A2 just edited.
+    expect(stage.commands.find(({ args, command }) => command === 'zcli' && args[0] === 'push')?.args).toStrictEqual([
+      'push',
+      '--working-dir',
+      '.',
+      '--zerops-yaml-path',
+      'app/zerops.yaml',
+      '--workspace-state',
+      'clean',
+      '--project-id',
+      STAGE_ZEROPS_PROJECT_ID,
+      '--service-id',
+      'imported-1',
+      '--setup',
+      'cloudflared',
+    ]);
 
     // The reviewed build environment names the new data-plane IDs; stage-edge gets the account and the CI token.
     const placement = Schema.decodeUnknownSync(PlacementJson)(files.writes.get(PLACEMENT));
