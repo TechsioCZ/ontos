@@ -147,31 +147,6 @@ it.effect('requires HTTPS outside loopback development', () =>
   }),
 );
 
-const dispatch = (serviceBinding: string) => ({
-  executionSurfaces: {
-    cloudflare: { workerDispatch: { serviceBinding, serviceBindingEnv: `${serviceBinding}_BINDING` } },
-  },
-});
-
-it('discovers each vertical over the service binding its build configures', () => {
-  const configured = createModuleDeploymentAllowlistBuildInput({
-    cloudflareDeployEnabled: false,
-    developmentOverlay: overlay(validUrls),
-    readEnvironment: (name) => (name === 'VERTICAL_DOCUMENTS_CENTER_WORKER_BINDING' ? ' DOCUMENTS_V2 ' : undefined),
-    topology: {
-      verticals: [
-        { backendFederation: dispatch('VERTICAL_DOCUMENTS_CENTER_WORKER'), id: 'documents-center', kind: 'vertical' },
-        { backendFederation: dispatch('VERTICAL_PROPERTY_REGISTRY_WORKER'), id: 'property-registry', kind: 'vertical' },
-      ],
-    },
-  });
-  expect(
-    configured.topology.verticals.map(
-      ({ backendFederation }) => backendFederation?.executionSurfaces.cloudflare.workerDispatch.serviceBinding,
-    ),
-  ).toEqual(['DOCUMENTS_V2', 'VERTICAL_PROPERTY_REGISTRY_WORKER']);
-});
-
 it('builds production discovery from deployment URL configuration, never the development overlay', () => {
   const productionTopology = {
     verticals: [

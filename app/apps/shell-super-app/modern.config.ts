@@ -11,13 +11,18 @@ import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
+import { sortWith } from 'effect/Array';
 import { getOrElse as getOptionOrElse, getOrUndefined as getOptionOrUndefined } from 'effect/Option';
+import { String as StringOrder } from 'effect/Order';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
+  Array as SchemaArray,
   Boolean as BooleanSchema,
   Literals,
+  NonEmptyString,
   NumberFromString,
   OptionFromUndefinedOr,
+  Struct,
   Trim,
   check,
   decodeTo,
@@ -108,6 +113,35 @@ const referenceTopologyPath = fileURLToPath(new URL('../../topology/reference-to
 const referenceTopology = getResultOrThrow(
   decodeUnknownResult(fromJsonString(DeploymentAllowlistTopologySchema))(readFileSync(referenceTopologyPath, 'utf-8')),
 );
+// The Shell binds every vertical Worker under the vertical's topology identity: its Worker name, its
+// `workerDispatch.serviceBinding` and its BFF prefix. Module discovery and the deploy planner read the
+// same topology, so a renamed binding changes every caller at once.
+const ShellServiceBindingTopologySchema = Struct({
+  verticals: SchemaArray(
+    Struct({
+      api: Struct({ bff: Struct({ prefix: NonEmptyString }) }),
+      backendFederation: Struct({
+        executionSurfaces: Struct({
+          cloudflare: Struct({ workerDispatch: Struct({ serviceBinding: NonEmptyString }) }),
+        }),
+      }),
+      cloudflare: Struct({ workerName: NonEmptyString }),
+    }),
+  ),
+});
+const verticalServiceBindings = sortWith(
+  getResultOrThrow(
+    decodeUnknownResult(fromJsonString(ShellServiceBindingTopologySchema))(
+      readFileSync(referenceTopologyPath, 'utf-8'),
+    ),
+  ).verticals.map(({ api, backendFederation, cloudflare }) => ({
+    binding: backendFederation.executionSurfaces.cloudflare.workerDispatch.serviceBinding,
+    prefix: api.bff.prefix,
+    service: cloudflare.workerName,
+  })),
+  ({ prefix }) => prefix,
+  StringOrder,
+);
 const developmentOverlayPath = fileURLToPath(
   new URL('../../topology/local-overlays/development.json', import.meta.url),
 );
@@ -186,63 +220,7 @@ export default defineConfig(
           compatibilityDate: '2026-06-02',
           name: cloudflareWorkerName,
           security: createCloudflareWorkerSecurity(),
-          services: [
-            {
-              binding: getOptionalBuildConfig('VERTICAL_CATALOG_WORKER_BINDING') ?? 'VERTICAL_CATALOG_WORKER',
-              prefix: '/catalog-api',
-              service: getOptionalBuildConfig('VERTICAL_CATALOG_WORKER_NAME') ?? 'app-catalog',
-            },
-            {
-              binding:
-                getOptionalBuildConfig('VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER_BINDING') ??
-                'VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER',
-              prefix: '/commerce-customer-context-api',
-              service:
-                getOptionalBuildConfig('VERTICAL_COMMERCE_CUSTOMER_CONTEXT_WORKER_NAME') ??
-                'app-commerce-customer-context',
-            },
-            {
-              binding:
-                getOptionalBuildConfig('VERTICAL_COMMERCE_MARKET_CATALOG_WORKER_BINDING') ??
-                'VERTICAL_COMMERCE_MARKET_CATALOG_WORKER',
-              prefix: '/commerce-market-catalog-api',
-              service:
-                getOptionalBuildConfig('VERTICAL_COMMERCE_MARKET_CATALOG_WORKER_NAME') ?? 'app-commerce-market-catalog',
-            },
-            {
-              binding:
-                getOptionalBuildConfig('VERTICAL_PARTY_REGISTRY_WORKER_BINDING') ?? 'VERTICAL_PARTY_REGISTRY_WORKER',
-              prefix: '/party-registry-api',
-              service: getOptionalBuildConfig('VERTICAL_PARTY_REGISTRY_WORKER_NAME') ?? 'app-party-registry',
-            },
-            {
-              binding:
-                getOptionalBuildConfig('VERTICAL_PAYMENT_TERM_CATALOG_WORKER_BINDING') ??
-                'VERTICAL_PAYMENT_TERM_CATALOG_WORKER',
-              prefix: '/payment-term-catalog-api',
-              service:
-                getOptionalBuildConfig('VERTICAL_PAYMENT_TERM_CATALOG_WORKER_NAME') ?? 'app-payment-term-catalog',
-            },
-            {
-              binding:
-                getOptionalBuildConfig('VERTICAL_PRICE_GROUP_CATALOG_WORKER_BINDING') ??
-                'VERTICAL_PRICE_GROUP_CATALOG_WORKER',
-              prefix: '/price-group-catalog-api',
-              service: getOptionalBuildConfig('VERTICAL_PRICE_GROUP_CATALOG_WORKER_NAME') ?? 'app-price-group-catalog',
-            },
-            {
-              binding: getOptionalBuildConfig('VERTICAL_PRICING_WORKER_BINDING') ?? 'VERTICAL_PRICING_WORKER',
-              prefix: '/pricing-api',
-              service: getOptionalBuildConfig('VERTICAL_PRICING_WORKER_NAME') ?? 'app-pricing',
-            },
-            {
-              binding:
-                getOptionalBuildConfig('VERTICAL_STOREFRONT_REGISTRY_WORKER_BINDING') ??
-                'VERTICAL_STOREFRONT_REGISTRY_WORKER',
-              prefix: '/storefront-registry-api',
-              service: getOptionalBuildConfig('VERTICAL_STOREFRONT_REGISTRY_WORKER_NAME') ?? 'app-storefront-registry',
-            },
-          ],
+          services: verticalServiceBindings,
           ssr: true,
         },
       } satisfies NonNullable<AppToolsUserConfig['deploy']>,
