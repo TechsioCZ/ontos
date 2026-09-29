@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
@@ -66,7 +67,6 @@ const subjectEvidence = [
     statement: 'Reviewed a concrete external organization in its document',
   },
 ];
-const testAuthenticationNamespaceId = 'test.party.better-auth.v1';
 const rawSubject = {
   datumAktualizace: '2026-09-01',
   datumVzniku: '2020-01-01',
@@ -101,7 +101,8 @@ it.live(
             resolveDuplicateCandidateCreateAction,
             updatePartyAction,
           ].map(({ descriptor }) => descriptor.actionKey),
-          authenticationNamespaceId: testAuthenticationNamespaceId,
+          // The runtime's action boundary registers the staff namespace Shell-issued assertions name.
+          authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         }).pipe(Effect.orDie),
         (resource) => resource.close().pipe(Effect.orDie),
