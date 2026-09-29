@@ -55,7 +55,8 @@ for deploy_file in $deploy_files; do
 done
 
 # The Zerops build ships its own Node in the runtime's node/; this proof runs the start command with
-# the pinned workspace Node on PATH instead. The start preflight only checks that Zerops delivered the
+# the pinned workspace Node on PATH instead, exec'd so SIGTERM reaches the start command's own shell
+# exactly as the platform delivers it (dash does not exec the last command of `sh -c` itself). The start preflight only checks that Zerops delivered the
 # published snapshot variable; no hosted worker reads it.
 log="$artifact/outbox-worker-host.log"
 (
@@ -66,7 +67,7 @@ log="$artifact/outbox-worker-host.log"
     OUTBOX_WORKER_POLL_INTERVAL_MS=250 \
     ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON="${ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON:-proof}" \
     ULTRAMODERN_ZEROPS_SERVICE="$setup" \
-    sh -c "$start"
+    sh -c "exec $start"
 ) >"$log" 2>&1 &
 host=$!
 stop_host() {
