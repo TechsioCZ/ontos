@@ -1,4 +1,3 @@
-// @effect-diagnostics strictEffectProvide:off -- Composition root that binds the Workers VPC fetcher to the Effect HttpClient for SpiceDB; expires: 2027-03-31.
 import { env } from 'cloudflare:workers';
 import { Effect, Redacted } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
@@ -33,7 +32,11 @@ export const spiceDbTransport: SpiceDbTransport = Object.freeze<SpiceDbTransport
     const overVpc = <Response>(
       call: Effect.Effect<Response, SpiceDbRpcError, HttpClient.HttpClient>,
     ): Effect.Effect<Response, SpiceDbRpcError> =>
-      call.pipe(Effect.provide(FetchHttpClient.layer), Effect.provideService(FetchHttpClient.Fetch, vpcFetch));
+      call.pipe(
+        // @effect-diagnostics-next-line strictEffectProvide:off -- The SPICEDB binding's fetch backs the gateway HttpClient here until Worker roots provide it; owner: BleedingDev; tracking: TechsioCZ/ontos#1000; remove-when: the Worker API roots provide the SpiceDB HttpClient.
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FetchHttpClient.Fetch, vpcFetch),
+      );
     const rpc = spiceDbHttpRpc({
       origin: new URL(`${configuration.insecureLocal ? 'http' : 'https'}://${configuration.endpoint}`),
       preSharedKey: Redacted.make(configuration.preSharedKey),
