@@ -9,7 +9,6 @@ import {
   Option,
   Random,
   References,
-  Result,
   Schema,
   Tracer,
 } from 'effect';
@@ -118,15 +117,18 @@ export const runOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegis
   );
 
 /**
- * Name the failure by its tag only. A raw cause can carry database diagnostics or credentials,
- * and Outbox telemetry excludes raw causes, stacks, and messages.
+ * Name every failure reason by its tag only, so a defect raised beside a typed failure (for example
+ * by a finalizer) stays visible. A raw cause can carry database diagnostics or credentials, and
+ * Outbox telemetry excludes raw causes, stacks, and messages.
  */
 const describeWorkerFailure = <E extends { readonly _tag: string }>(cause: Cause.Cause<E>): string => {
-  const error = Cause.findError(cause);
-  if (Result.isSuccess(error)) {
-    return error.success._tag;
-  }
-  return Cause.hasDies(cause) ? 'Defect' : 'Interrupted';
+  const names = cause.reasons.map((reason) => {
+    if (Cause.isFailReason(reason)) {
+      return reason.error._tag;
+    }
+    return Cause.isDieReason(reason) ? 'Defect' : 'Interrupted';
+  });
+  return [...new Set(names)].join(', ');
 };
 
 export const startOutboxWorkerProcess = <
