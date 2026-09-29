@@ -29,10 +29,19 @@ export function ProductGrid({
         const detailHref = product.detailHref ?? `/produkt/${product.slug}`;
 
         return (
-          <ProductCard key={product.id} className="akros-product-card" layout="column">
-            <NextLink href={detailHref} aria-label={product.name}>
+          <ProductCard
+            key={product.id}
+            className="akros-product-card akros-catalog-product-card"
+            layout="column"
+          >
+            <NextLink
+              className="akros-catalog-product-card__image-link"
+              href={detailHref}
+              aria-label={product.name}
+            >
               <ProductCard.Image
                 as={Image}
+                className="akros-catalog-product-card__image"
                 alt={product.imageAlt}
                 height={480}
                 loading={index < 4 ? "eager" : "lazy"}
@@ -41,7 +50,7 @@ export function ProductGrid({
                 width={480}
               />
             </NextLink>
-            <ProductCard.Name>
+            <ProductCard.Name className="akros-catalog-product-card__name">
               <NextLink className="akros-product-card__name-link" href={detailHref}>
                 {product.name}
               </NextLink>
@@ -56,7 +65,10 @@ export function ProductGrid({
                   : "Cena na dotaz"}
               </ProductCard.Price>
             )}
-            <ProductCard.Stock status={getProductStockStatus(product)}>
+            <ProductCard.Stock
+              className="akros-catalog-product-card__stock"
+              status={getProductStockStatus(product)}
+            >
               {cs.product.inStock}: {product.stockCount.toLocaleString("cs-CZ")} {product.unit}
             </ProductCard.Stock>
             <ProductCard.Actions>

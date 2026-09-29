@@ -321,6 +321,34 @@ body {
   width: 100%;
 }
 
+.akros-catalog-product-card {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+}
+
+.akros-catalog-product-card__image-link {
+  display: block;
+  overflow: hidden;
+  aspect-ratio: var(--aspect-product-card-image);
+  border-radius: var(--radius-product-card-image);
+}
+
+.akros-catalog-product-card__image {
+  inline-size: 100%;
+  block-size: 100%;
+  object-fit: cover;
+}
+
+.akros-catalog-product-card__name {
+  min-block-size: 2.4em;
+  line-height: 1.2;
+}
+
+.akros-catalog-product-card__stock {
+  margin-block-start: auto;
+}
+
 .akros-featured-product-card {
   height: var(--akros-featured-product-card-height);
   grid-template-rows: var(--akros-featured-product-image-height) auto auto 1fr;
