@@ -31,6 +31,37 @@ const MetafileInputsSchema = Schema.Struct({
 });
 
 const WORKER_ENTRY = 'worker.mjs';
+const CORE_WORKER_ENTRYPOINT = 'packages/core-runtime/src/outbox/worker-entrypoint.ts';
+
+/**
+ * Value names a module re-exports from `@app/core-runtime`, skipping `export type` blocks and `type` specifiers.
+ * @param {string} source Module source.
+ * @returns {string[]} Imported (pre-alias) names.
+ */
+export const coreRuntimeValueReExports = (source) =>
+  [...source.matchAll(/export\s+\{(?<names>[^}]*)\}\s+from\s+'@app\/core-runtime'/gu)].flatMap((match) =>
+    (match.groups?.names ?? '')
+      .split(',')
+      .map((specifier) => specifier.trim())
+      .filter((specifier) => specifier !== '' && !specifier.startsWith('type '))
+      .map((specifier) => specifier.split(/\s+as\s+/u)[0] ?? specifier),
+  );
+
+/**
+ * Value names the focused Core worker entrypoint exports.
+ * @param {string} source Entrypoint source.
+ * @returns {Set<string>} Exported names.
+ */
+export const focusedEntrypointValueExports = (source) =>
+  new Set(
+    [...source.matchAll(/export\s+\{(?<names>[^}]*)\}\s+from/gu)].flatMap((match) =>
+      (match.groups?.names ?? '')
+        .split(',')
+        .map((specifier) => specifier.trim())
+        .filter((specifier) => specifier !== '')
+        .map((specifier) => specifier.split(/\s+as\s+/u).at(-1) ?? specifier),
+    ),
+  );
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
 const ServiceIdSchema = Schema.String.pipe(Schema.brand('ServiceId'));
 
@@ -109,7 +140,7 @@ const makeProductionDependenciesPlugin = ({ packages, path, workspaceRoot }) => 
       const name = args.path.startsWith('@') ? args.path.split('/').slice(0, 2).join('/') : args.path.split('/').at(0);
       if (args.path === '@app/core-runtime') {
         return {
-          path: path.join(workspaceRoot, 'packages/core-runtime/src/outbox/worker-entrypoint.ts'),
+          path: path.join(workspaceRoot, CORE_WORKER_ENTRYPOINT),
         };
       }
       if (name !== undefined && packages.has(name)) {
@@ -232,6 +263,27 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
         ),
     });
     const { metafile } = result;
+    // esbuild rejects a missing named import from the focused Core entrypoint, but a TypeScript re-export of a
+    // missing name may be a type, so it bundles as undefined and the worker crashes at start. Reject it here.
+    const coreReExports = [];
+    for (const input of Object.keys(metafile.inputs)) {
+      if (input.startsWith('verticals/') && /\.(?:ts|tsx|mts)$/u.test(input)) {
+        const source = yield* fs.readFileString(path.join(workspaceRoot, input));
+        coreReExports.push(...coreRuntimeValueReExports(source).map((name) => ({ input, name })));
+      }
+    }
+    const entrypointExports =
+      coreReExports.length === 0
+        ? new Set()
+        : focusedEntrypointValueExports(yield* fs.readFileString(path.join(workspaceRoot, CORE_WORKER_ENTRYPOINT)));
+    const missingReExports = coreReExports
+      .filter(({ name }) => !entrypointExports.has(name))
+      .map(({ input, name }) => `${input} re-exports ${name}`);
+    if (missingReExports.length > 0) {
+      return yield* Effect.fail(
+        failure(`The Outbox Worker Core entrypoint does not export: ${missingReExports.join('; ')}`),
+      );
+    }
     const externalImports = Object.values(metafile.outputs).flatMap((output) =>
       output.imports.filter((item) => item.external === true),
     );
