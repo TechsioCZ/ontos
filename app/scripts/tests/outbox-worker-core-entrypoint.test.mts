@@ -9,11 +9,14 @@ it('reads value re-exports from Core and skips type-only ones', () => {
     "export { ContextAccessLive as outboxWorkerContextAccessLive } from '@app/core-runtime';",
     "export { type OutboxRuntime, BusinessPermissionRelationshipMutationLive } from '@app/core-runtime';",
     "export type { AnyOutboxWorkerRegistration } from '@app/core-runtime';",
+    "export { defineOutboxWorkerCompletion as completion } from '@app/core-runtime/outbox/worker';",
+    "export { other } from '@app/core-runtime/testing/actions';",
     "export { local } from './local.ts';",
   ].join('\n');
   expect(coreRuntimeValueReExports(source)).toEqual([
     'ContextAccessLive',
     'BusinessPermissionRelationshipMutationLive',
+    'defineOutboxWorkerCompletion',
   ]);
 });
 

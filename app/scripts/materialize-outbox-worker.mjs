@@ -34,17 +34,19 @@ const WORKER_ENTRY = 'worker.mjs';
 const CORE_WORKER_ENTRYPOINT = 'packages/core-runtime/src/outbox/worker-entrypoint.ts';
 
 /**
- * Value names a module re-exports from `@app/core-runtime`, skipping `export type` blocks and `type` specifiers.
+ * Value names a module re-exports from `@app/core-runtime` or its `outbox/worker` subpath (both resolve to the
+ * focused worker entrypoint), skipping `export type` blocks and `type` specifiers.
  * @param {string} source Module source.
  * @returns {string[]} Imported (pre-alias) names.
  */
 export const coreRuntimeValueReExports = (source) =>
-  [...source.matchAll(/export\s+\{(?<names>[^}]*)\}\s+from\s+'@app\/core-runtime'/gu)].flatMap((match) =>
-    (match.groups?.names ?? '')
-      .split(',')
-      .map((specifier) => specifier.trim())
-      .filter((specifier) => specifier !== '' && !specifier.startsWith('type '))
-      .map((specifier) => specifier.split(/\s+as\s+/u)[0] ?? specifier),
+  [...source.matchAll(/export\s+\{(?<names>[^}]*)\}\s+from\s+'@app\/core-runtime(?:\/outbox\/worker)?'/gu)].flatMap(
+    (match) =>
+      (match.groups?.names ?? '')
+        .split(',')
+        .map((specifier) => specifier.trim())
+        .filter((specifier) => specifier !== '' && !specifier.startsWith('type '))
+        .map((specifier) => specifier.split(/\s+as\s+/u)[0] ?? specifier),
   );
 
 /**
