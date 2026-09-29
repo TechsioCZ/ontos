@@ -30,7 +30,11 @@ it.layer(NodeFileSystem.layer)(
         expect(entry).toContain('defineOutboxWorkerEntry');
         expect(entry).toContain('extractOutboxWorkerSubscriptions(outboxWorkers)');
         expect(entry).toContain('registrations: outboxWorkers');
-        expect(host).toContain('verticals/price-group-catalog/src/worker-host/entry.ts');
+        // The host reaches the entry only through the package export, never the vertical's private src.
+        expect(host).toContain("from '@app/price-group-catalog/outbox-worker-host'");
+        expect(yield* readRelative('../../package.json')).toContain(
+          '"./outbox-worker-host": "./src/worker-host/entry.ts"',
+        );
         expect(host).toContain('health: true');
         expect(layer).toContain('OutboxWorkerTenantScopeLive');
         expect(layer).toContain('ResourceContainmentRelationshipMutationLive');
