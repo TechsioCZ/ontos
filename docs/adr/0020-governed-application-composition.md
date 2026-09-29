@@ -60,9 +60,10 @@ composition authority and portable contracts contain no provider metadata or cre
 ## Current deployment adapter
 
 The stage adapter (`app/scripts/publish-active-application-composition.mts`) observes each deployed
-service's served contract, Module Federation manifest, and the Shell runtime contract with bounded
-fetches, derives the candidate, validates it, and publishes one snapshot `{ composition, observedAt,
-validUntil }` as the Zerops project variable `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON`.
+unit at its public origin on the environment's deploy target (its Zerops subdomain, or on the
+Cloudflare target the Worker URL from the reviewed placement), reading the served contract, Module
+Federation manifest, and the Shell runtime contract with bounded fetches, derives the candidate,
+validates it, and publishes one snapshot `{ composition, observedAt, validUntil }` as the Zerops project variable `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON`.
 The revision is the SHA-256 of the canonical composition with its revision zeroed, and publication
 rejects different content under an already-published revision. Consumers read the variable at process
 start, so every publication restarts them. Because consumers refuse to start without a snapshot, a
@@ -71,6 +72,8 @@ and publishes the complete inventory. A scheduled workflow re-observes and re-pu
 `validUntil`; the validity window (24 hours) and refresh cadence (every 6 hours) live only in
 `ACTIVE_APPLICATION_COMPOSITION_POLICY`. Binding revisions to immutable executable release records for
 rollback remains a follow-up in [TechsioCZ/ontos#374](https://github.com/TechsioCZ/ontos/issues/374).
+On the Cloudflare target only the consumers left on Zerops restart, and the snapshot is published
+again after the edge deploy replaces the Workers.
 
 ## Consequences
 

@@ -12,7 +12,11 @@ import {
   planDeploymentImpact as planDeploymentImpactEffect,
   validateAuthorizationPromotionGate,
 } from '../plan-deployment-impact.mts';
-import type { AuthorizationPromotionGateInput, PlanDeploymentImpactOptions } from '../plan-deployment-impact.mts';
+import type {
+  AuthorizationPromotionGateInput,
+  DeploymentImpactPlan,
+  PlanDeploymentImpactOptions,
+} from '../plan-deployment-impact.mts';
 import {
   findStageDeploymentBase,
   resolveStageDeploymentBase,
@@ -22,8 +26,8 @@ import type { StageDeploymentSource } from '../resolve-stage-deployment-base.mts
 
 const CONTACTS_WORKER_SOURCE = 'verticals/contacts/src/workers/project-contact.worker.ts';
 const CONTACTS_WORKER_SETUP = 'contacts-worker';
+const SHELL_FRAME_SOURCE = 'apps/shell-super-app/src/routes/shell-frame.tsx';
 const OUTBOX_WORKER_HOST_SETUP = 'outbox-worker-host';
-const SHELL_ROUTE_SOURCE = 'apps/shell-super-app/src/routes/shell-frame.tsx';
 
 const planningFailure = <A, E>(effect: Effect.Effect<A, E>) =>
   effect.pipe(
@@ -292,7 +296,9 @@ it.live('deploys a generated owner worker immediately after its provider', () =>
             rootDirectory: root,
           });
           expect(plan.units.providers).toEqual(['contacts', CONTACTS_WORKER_SETUP]);
+          expect(plan.units.workers).toEqual([CONTACTS_WORKER_SETUP]);
           expect(plan.phases.map((phase) => phase.id)).toEqual(['contacts', CONTACTS_WORKER_SETUP]);
+          expect(plan.phases[1]?.kind).toBe('worker');
           expect(plan.phases[1]?.serviceIdEnv).toBe('ZEROPS_CONTACTS_WORKER_SERVICE_ID');
           // A former Cloudflare target leaves the host running; this run stops it once the dedicated worker is up.
           expect(plan.units.stoppedWorkers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
@@ -315,7 +321,7 @@ it.live('deploys the one Outbox Worker host instead of dedicated workers on the 
           expect(workerChange.units.providers).toEqual(['contacts', OUTBOX_WORKER_HOST_SETUP]);
           expect(workerChange.phases[1]).toEqual({
             id: OUTBOX_WORKER_HOST_SETUP,
-            kind: 'provider',
+            kind: 'worker',
             serviceIdEnv: 'ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID',
             stageSetup: OUTBOX_WORKER_HOST_SETUP,
           });
@@ -323,7 +329,7 @@ it.live('deploys the one Outbox Worker host instead of dedicated workers on the 
           expect(workerChange.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP]);
           // No hosted owner is impacted, so the host keeps running its current artifact.
           const shellChange = yield* planDeploymentImpact({
-            changedPaths: [SHELL_ROUTE_SOURCE],
+            changedPaths: [SHELL_FRAME_SOURCE],
             deployTarget: 'cloudflare',
             rootDirectory: root,
           });
@@ -349,7 +355,7 @@ it.live('reconciles every worker of the deploy target after a switch, whatever t
     yield* withFixture(
       (root) =>
         Effect.gen(function* planReconciliation() {
-          const shellChange = [SHELL_ROUTE_SOURCE];
+          const shellChange = [SHELL_FRAME_SOURCE];
           // Back on Zerops, the host ran every owner, so each dedicated worker deploys and the host stops.
           const toZerops = yield* planDeploymentImpact({
             changedPaths: shellChange,
@@ -394,6 +400,58 @@ it.live('fails closed when a generated worker has no Outbox Worker host setup', 
   }),
 );
 
+/**
+ * Each deploy target's plan, as the workflow reads it: `zerops` pushes every provider (with its outbox
+ * worker) and the Shell to Zerops; `cloudflare` ships the placed units as Workers and keeps only the
+ * Outbox Worker host on Zerops. Infrastructure deploys on Zerops for both.
+ */
+const deployTargets = (zeropsPlan: DeploymentImpactPlan, cloudflarePlan: DeploymentImpactPlan) => ({
+  cloudflare: {
+    edge: cloudflarePlan.units.cloudflare.map(({ id }) => id),
+    zerops: [
+      ...cloudflarePlan.phases.filter(({ kind }) => kind === 'infrastructure').map(({ id }) => id),
+      ...cloudflarePlan.units.workers,
+    ],
+  },
+  zerops: zeropsPlan.phases.map(({ id }) => id),
+});
+
+for (const [scenario, changedPaths, expected] of [
+  [
+    'a full deployment',
+    undefined,
+    {
+      cloudflare: { edge: ['contacts', SHELL_ID], zerops: ['migrator', 'spicedb', OUTBOX_WORKER_HOST_SETUP] },
+      zerops: ['migrator', 'spicedb', 'contacts', CONTACTS_WORKER_SETUP, SHELL_ID],
+    },
+  ],
+  [
+    'a shared-package change',
+    [SHARED_CONTRACT_PATH],
+    {
+      cloudflare: { edge: ['contacts', SHELL_ID], zerops: [OUTBOX_WORKER_HOST_SETUP] },
+      zerops: ['contacts', CONTACTS_WORKER_SETUP, SHELL_ID],
+    },
+  ],
+  ['a Shell-only change', [SHELL_FRAME_SOURCE], { cloudflare: { edge: [SHELL_ID], zerops: [] }, zerops: [SHELL_ID] }],
+] as const) {
+  it.live(`plans both deploy targets from one topology for ${scenario}`, () =>
+    Effect.gen(function* plansBothTargets() {
+      yield* withFixture(
+        (root) =>
+          Effect.gen(function* plansBothTargetsInFixture() {
+            const options =
+              changedPaths === undefined ? { rootDirectory: root } : { changedPaths, rootDirectory: root };
+            const zeropsPlan = yield* planDeploymentImpact(options);
+            const cloudflarePlan = yield* planDeploymentImpact({ ...options, deployTarget: 'cloudflare' });
+            expect(deployTargets(zeropsPlan, cloudflarePlan)).toEqual(expected);
+          }),
+        { cloudflarePlacement: [SHELL_ID, 'contacts'], includeWorker: true },
+      );
+    }),
+  );
+}
+
 const runGit = (root: string, argumentsList: readonly string[]): string =>
   execFileSync(
     '/usr/bin/git',
@@ -420,6 +478,7 @@ it.live('plans current Contacts owner-local changes without a hard-coded owner r
           shell: false,
           spicedb: false,
           stoppedWorkers: [],
+          workers: [],
         });
         expect(plan.phases.map((phase) => phase.id)).toEqual(['contacts']);
       }),
@@ -446,7 +505,7 @@ it.live('plans Shell-only changes for the topology-derived Shell owner', () =>
     yield* withFixture((root) =>
       Effect.gen(function* testEffect11() {
         const plan = yield* planDeploymentImpact({
-          changedPaths: [SHELL_ROUTE_SOURCE],
+          changedPaths: [SHELL_FRAME_SOURCE],
           rootDirectory: root,
         });
         expect(plan.phases.map((phase) => phase.id)).toEqual([SHELL_ID]);

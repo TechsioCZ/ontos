@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { Schema } from 'effect';
@@ -14,6 +15,8 @@ const readWorkflow = (name: string) =>
     parse(readFileSync(new URL(`../../../.github/workflows/${name}`, import.meta.url), 'utf-8')),
   );
 
+/** The GitHub environment that holds the Cloudflare account token. */
+const EDGE_ENVIRONMENT = 'stage-edge';
 const gateWorkflows = ['ultramodern-workspace-gates.yml', 'quality-audit.yml'];
 
 const skipsGates = (changedPaths: readonly string[], ignored: readonly string[]) =>
@@ -61,7 +64,7 @@ const EdgeDeployWorkflowSchema = Schema.Struct({
       steps: Schema.Array(WorkflowStepSchema),
       'timeout-minutes': Schema.Number,
     }),
-    'deploy-stage': Schema.Struct({ environment: Schema.String }),
+    'deploy-zerops': Schema.Struct({ environment: Schema.String }),
     'edge-deploy-readiness': Schema.Struct({
       environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
       if: Schema.String,
@@ -85,6 +88,30 @@ interface PlacementBuildInputs {
   readonly units: readonly string[];
 }
 
+const EDGE_READINESS_JOB = 'edge-deploy-readiness';
+const DEPLOY_TARGET_JOB = 'deploy-target';
+
+const runStep = (script: string, environment: Readonly<Record<string, string>>) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-workflow-step-'));
+  const outputPath = path.join(directory, 'output');
+  try {
+    execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', script], {
+      env: { GITHUB_OUTPUT: outputPath, PATH: '/usr/bin:/bin', ...environment },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return Object.fromEntries(
+      readFileSync(outputPath, 'utf-8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+    );
+  } catch {
+    return 'failed';
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+};
+
 const readEdgeDeployJobs = () =>
   Schema.decodeUnknownSync(EdgeDeployWorkflowSchema)(
     parse(
@@ -97,15 +124,21 @@ it('deploys to Cloudflare only when both the account and the deploy token are co
   // The job runs only with both the account and the token; an unconfigured repository skips it,
   // so it records no deployment at all and CI stays green.
   const readiness = jobs['edge-deploy-readiness'];
-  expect(readiness.if).toContain("github.ref == 'refs/heads/main'");
+  // Only stage can target Cloudflare, so only a stage deploy checks the edge.
+  expect(readiness.if).toBe("needs.deploy-target.outputs.environment == 'stage'");
   // Reading `stage-edge` secrets for the check must not add an entry to its deployment history.
-  expect(readiness.environment).toEqual({ deployment: false, name: 'stage-edge' });
+  expect(readiness.environment).toEqual({ deployment: false, name: EDGE_ENVIRONMENT });
   const check = readiness.steps.find((step) => step.id === 'configuration');
   expect(readiness.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined)).toEqual([check]);
   expect(check?.env).toEqual({
     CLOUDFLARE_ACCOUNT_ID: expression('vars.CLOUDFLARE_ACCOUNT_ID'),
     CLOUDFLARE_API_TOKEN: expression('secrets.CLOUDFLARE_API_TOKEN'),
+    DEPLOY_TARGET: expression('needs.deploy-target.outputs.target'),
   });
+  // A stage that deploys to Zerops only skips the edge; one that targets Cloudflare fails before any
+  // Zerops change, since deploy-zerops would otherwise migrate and swap workers beside the old Workers.
+  expect(runStep(check?.run ?? 'exit 1', { DEPLOY_TARGET: 'zerops' })).toEqual({ configured: 'false' });
+  expect(runStep(check?.run ?? 'exit 1', { DEPLOY_TARGET: 'cloudflare' })).toBe('failed');
   expect(check?.run).toContain('[[ -n "$CLOUDFLARE_ACCOUNT_ID" ]]');
   expect(check?.run).toContain('[[ -n "$CLOUDFLARE_API_TOKEN" ]]');
   expect(readiness.outputs.configured).toBe(expression('steps.configuration.outputs.configured'));
@@ -150,9 +183,9 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   const edge = jobs['deploy-cloudflare'];
   // A separate environment keeps a failed or skipped edge deploy from hiding behind a successful
   // Zerops deployment of the same revision.
-  expect(jobs['deploy-stage'].environment).toBe('stage');
-  expect(edge.environment).toBe('stage-edge');
-  expect(edge.needs).toEqual(['deploy-stage', 'edge-deploy-readiness']);
+  expect(jobs['deploy-zerops'].environment).toBe(expression('needs.deploy-target.outputs.environment'));
+  expect(edge.environment).toBe(EDGE_ENVIRONMENT);
+  expect(edge.needs).toEqual(['deploy-zerops', EDGE_READINESS_JOB]);
   expect(edge.if).toBe("needs.edge-deploy-readiness.outputs.configured == 'true'");
   expect(edge.env).toBeUndefined();
   const byName = new Map(edge.steps.map((step) => [step.name, step]));
@@ -224,4 +257,193 @@ it('bounds every edge step that changes or proves Workers and reports retirement
   const fetchBase = byName.get('Fetch the last edge deployment commit');
   expect(fetchBase?.run).toContain('fetch --no-tags --depth=1 origin "$BASE_SHA"');
   expect(names.indexOf('Fetch the last edge deployment commit')).toBeLessThan(names.indexOf(PLAN_STEP));
+});
+
+const TargetWorkflowSchema = Schema.Struct({
+  jobs: Schema.Struct({
+    'deploy-cloudflare': Schema.Struct({ needs: Schema.Array(Schema.String) }),
+    'deploy-target': Schema.Struct({
+      environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
+      if: Schema.String,
+      outputs: Schema.Record(Schema.String, Schema.String),
+      steps: Schema.Array(WorkflowStepSchema),
+    }),
+    'deploy-zerops': Schema.Struct({
+      concurrency: Schema.Struct({ group: Schema.String }),
+      env: Schema.Record(Schema.String, Schema.String),
+      environment: Schema.String,
+      if: Schema.String,
+      needs: Schema.Array(Schema.String),
+      steps: Schema.Array(WorkflowStepSchema),
+    }),
+    'edge-deploy-readiness': Schema.Struct({ if: Schema.String }),
+    'publish-edge-composition': Schema.Struct({
+      env: Schema.Record(Schema.String, Schema.String),
+      environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
+      if: Schema.String,
+      needs: Schema.Array(Schema.String),
+      steps: Schema.Array(WorkflowStepSchema),
+    }),
+    'sync-edge-composition': Schema.Struct({
+      environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
+      if: Schema.String,
+      needs: Schema.Array(Schema.String),
+      steps: Schema.Array(WorkflowStepSchema),
+    }),
+  }),
+  on: Schema.Struct({
+    workflow_dispatch: Schema.Struct({
+      inputs: Schema.Struct({
+        environment: Schema.Struct({ default: Schema.String, options: Schema.Array(Schema.String) }),
+      }),
+    }),
+  }),
+});
+
+const readTargetWorkflow = () =>
+  Schema.decodeUnknownSync(TargetWorkflowSchema)(
+    parse(
+      readFileSync(new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url), 'utf-8'),
+    ),
+  );
+
+/** Runs a workflow step's script as Actions would and returns its GitHub outputs, or its failure. */
+/** The deploying environment: the dispatched one, or stage for a push to main. */
+const DEPLOY_ENVIRONMENT_EXPRESSION = expression("inputs.environment || 'stage'");
+
+const CONFIGURED = { ZEROPS_PROJECT_ID: 'project', ZEROPS_TOKEN: 'token' } as const;
+
+it('selects each environment deploy target from its DEPLOY_TARGET variable, Zerops when unset', () => {
+  const workflow = readTargetWorkflow();
+  const { 'deploy-target': target } = workflow.jobs;
+  // Pushes deploy stage; production deploys only on an explicit dispatch.
+  expect(workflow.on.workflow_dispatch.inputs.environment).toEqual({
+    default: 'stage',
+    options: ['stage', 'production'],
+  });
+  expect(target.if).toContain("github.ref == 'refs/heads/main'");
+  // Reading the environment's variables must not add an entry to its deployment history.
+  expect(target.environment).toEqual({ deployment: false, name: DEPLOY_ENVIRONMENT_EXPRESSION });
+  const step = target.steps.find(({ id }) => id === 'target');
+  expect(step?.env).toEqual({
+    DEPLOY_ENVIRONMENT: DEPLOY_ENVIRONMENT_EXPRESSION,
+    DEPLOY_TARGET: expression('vars.DEPLOY_TARGET'),
+    ZEROPS_PROJECT_ID: expression('vars.ZEROPS_PROJECT_ID'),
+    ZEROPS_TOKEN: expression('secrets.ZEROPS_TOKEN'),
+  });
+  const resolve = (environment: Readonly<Record<string, string>>) => runStep(step?.run ?? 'exit 1', environment);
+  // An unset target keeps today's all-Zerops stage without any new variable.
+  expect(resolve({ ...CONFIGURED, DEPLOY_ENVIRONMENT: 'stage', DEPLOY_TARGET: '' })).toEqual({
+    configured: 'true',
+    environment: 'stage',
+    target: 'zerops',
+  });
+  expect(resolve({ ...CONFIGURED, DEPLOY_ENVIRONMENT: 'stage', DEPLOY_TARGET: 'cloudflare' })).toEqual({
+    configured: 'true',
+    environment: 'stage',
+    target: 'cloudflare',
+  });
+  expect(resolve({ ...CONFIGURED, DEPLOY_ENVIRONMENT: 'production', DEPLOY_TARGET: 'zerops' })).toEqual({
+    configured: 'true',
+    environment: 'production',
+    target: 'zerops',
+  });
+  // An environment without its Zerops project and token deploys nothing.
+  expect(resolve({ DEPLOY_ENVIRONMENT: 'production', DEPLOY_TARGET: '' })).toEqual({
+    configured: 'false',
+    environment: 'production',
+    target: 'zerops',
+  });
+  // Only stage has an edge deploy history and build environment; unknown targets fail closed.
+  expect(resolve({ ...CONFIGURED, DEPLOY_ENVIRONMENT: 'production', DEPLOY_TARGET: 'cloudflare' })).toBe('failed');
+  expect(resolve({ ...CONFIGURED, DEPLOY_ENVIRONMENT: 'stage', DEPLOY_TARGET: 'workers' })).toBe('failed');
+});
+
+it('deploys the whole topology to Zerops, or only its infrastructure and outbox workers beside the edge', () => {
+  const { jobs } = readTargetWorkflow();
+  const zerops = jobs['deploy-zerops'];
+  expect(zerops.if).toContain("needs.deploy-target.outputs.configured == 'true'");
+  // A skipped edge check (production) must not skip the job, so every gate is checked by name.
+  expect(zerops.if).toMatch(/^!cancelled\(\)/u);
+  for (const need of zerops.needs.filter((name) => ![DEPLOY_TARGET_JOB, EDGE_READINESS_JOB].includes(name))) {
+    expect(zerops.if).toContain(`needs.${need}.result == 'success'`);
+  }
+  // The Cloudflare target mutates Zerops only once the edge deploy is configured.
+  expect(zerops.if).toContain(
+    "(needs.deploy-target.outputs.target == 'zerops' || needs.edge-deploy-readiness.outputs.configured == 'true')",
+  );
+  expect(zerops.needs).toContain(DEPLOY_TARGET_JOB);
+  expect(zerops.needs).toContain(EDGE_READINESS_JOB);
+  expect(zerops.concurrency.group).toBe(`zerops-${DEPLOY_ENVIRONMENT_EXPRESSION}`);
+  expect(zerops.env.DEPLOY_TARGET).toBe(expression('needs.deploy-target.outputs.target'));
+  // Every service ID comes from the deploying environment's own variables.
+  for (const [name, value] of Object.entries(zerops.env).filter(([key]) => key.startsWith('ZEROPS_'))) {
+    expect(value).toBe(expression(`vars.${name}`));
+  }
+  const byName = new Map(zerops.steps.map((step) => [step.name, step]));
+  expect(byName.get("Resolve the environment's last successful deployment")?.run).toContain(
+    '--environment "$DEPLOY_ENVIRONMENT"',
+  );
+  expect(byName.get('Generate topology-driven deployment impact plan')?.run).toContain(
+    '--authorization-environment "$DEPLOY_ENVIRONMENT"',
+  );
+  const select = byName.get('Select the Zerops units of the deploy target');
+  const plan = {
+    MIGRATOR: 'false',
+    PROVIDERS_JSON: '["contacts","contacts-worker"]',
+    SHELL: 'true',
+    SPICEDB: 'false',
+    WORKERS_JSON: '["contacts-worker"]',
+  };
+  const units = (environment: Readonly<Record<string, string>>) => runStep(select?.run ?? 'exit 1', environment);
+  expect(units({ ...plan, DEPLOY_TARGET: 'zerops' })).toEqual({
+    any: 'true',
+    providers: plan.PROVIDERS_JSON,
+    shell: 'true',
+  });
+  expect(units({ ...plan, DEPLOY_TARGET: 'cloudflare' })).toEqual({
+    any: 'true',
+    providers: plan.WORKERS_JSON,
+    shell: 'false',
+  });
+  expect(units({ ...plan, DEPLOY_TARGET: 'cloudflare', WORKERS_JSON: '[]' })).toEqual({
+    any: 'false',
+    providers: '[]',
+    shell: 'false',
+  });
+  // Every Zerops push and publication after the selection follows the selected units.
+  const selectedIndex = select === undefined ? -1 : zerops.steps.indexOf(select);
+  expect(selectedIndex).toBeGreaterThan(0);
+  for (const step of zerops.steps.slice(selectedIndex + 1)) {
+    expect(`${step.if ?? ''}${JSON.stringify(step.env ?? {})}`).not.toMatch(
+      /steps\.impact\.outputs\.(?:any|providers|shell)/u,
+    );
+    expect(step.run ?? '').not.toContain('--environment stage');
+  }
+  // Only stage deploys to the edge, after its Zerops services.
+  expect(jobs['edge-deploy-readiness'].if).toBe("needs.deploy-target.outputs.environment == 'stage'");
+  expect(jobs['deploy-cloudflare'].needs).toEqual(['deploy-zerops', EDGE_READINESS_JOB]);
+  // On Cloudflare the snapshot is published again from the new Workers, outside the deploy history.
+  const publish = jobs['publish-edge-composition'];
+  expect(publish.if).toBe("needs.deploy-target.outputs.target == 'cloudflare'");
+  expect(publish.needs).toEqual(['deploy-target', 'deploy-cloudflare']);
+  expect(publish.environment).toEqual({ deployment: false, name: 'stage' });
+  expect(publish.env.DEPLOY_TARGET).toBe('cloudflare');
+  const edgePublication = publish.steps.find(
+    ({ name }) => name === 'Publish the observed Workers and restart the Zerops consumers',
+  );
+  expect(edgePublication?.run).toContain('publish --environment stage --restart-consumers');
+  expect(edgePublication?.run).toContain('--snapshot-file "$SNAPSHOT_FILE"');
+  // A new Worker is unobservable before deploy-cloudflare ships it, so deploy-zerops leaves publication to it.
+  expect(byName.get('Publish the complete active Application Composition and restart its consumers')?.if).toContain(
+    "env.DEPLOY_TARGET == 'zerops'",
+  );
+  expect(byName.get('Publish the active Application Composition before its consumers deploy')?.run).toContain(
+    'if [[ "$DEPLOY_TARGET" == cloudflare ]]; then',
+  );
+  // Placed Worker consumers get each publication as their Worker secret, from the one environment with the token.
+  const sync = jobs['sync-edge-composition'];
+  expect(sync.needs).toEqual(['publish-edge-composition']);
+  expect(sync.environment).toEqual({ deployment: false, name: EDGE_ENVIRONMENT });
+  expect(sync.steps.at(-1)?.run).toBe('app/scripts/put-edge-composition-snapshot.sh');
 });

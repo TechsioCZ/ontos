@@ -1,9 +1,10 @@
 import { readFileSync } from 'node:fs';
 
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
+import { DEPLOYMENT_ENVIRONMENT_VARIABLE, materializeZeropsEnvironment } from '../materialize-zerops-environment.mts';
 import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
 
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
@@ -26,7 +27,7 @@ const ZeropsImportSchema = Schema.Struct({
 });
 const DeployWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
-    'deploy-stage': Schema.Struct({
+    'deploy-zerops': Schema.Struct({
       steps: Schema.Array(
         Schema.Struct({
           'continue-on-error': Schema.optional(Schema.Boolean),
@@ -118,23 +119,20 @@ it('declares Price Group Cloudflare proof variables and resolves every provider 
 
 it("stops the other deploy target's Outbox Workers after this target's workers deploy", () => {
   const workflow = Schema.decodeUnknownSync(DeployWorkflowSchema)(parse(readFileSync(workflowPath, 'utf-8')));
-  const steps = workflow.jobs['deploy-stage'].steps.map((step) => step.name);
-  const stop = workflow.jobs['deploy-stage'].steps.find(
-    (step) => step.name === "Stop the other deploy target's Outbox Workers",
-  );
+  const deployZerops = workflow.jobs['deploy-zerops'];
+  const steps = deployZerops.steps.map((step) => step.name);
+  const stop = deployZerops.steps.find((step) => step.name === "Stop the other deploy target's Outbox Workers");
 
   expect(stop?.run).toContain('active-composition:publish stop-service --setup "$setup"');
   // A target switch changes no source, so running workers of the other target make the plan reconcile.
-  const drift = workflow.jobs['deploy-stage'].steps.find(
+  const drift = deployZerops.steps.find(
     (step) => step.name === 'Detect Outbox Workers that do not match the deploy target',
   );
   expect(drift?.run).toContain('active-composition:publish worker-target-drift');
   expect(steps.indexOf('Detect Outbox Workers that do not match the deploy target')).toBeLessThan(
     steps.indexOf('Generate topology-driven deployment impact plan'),
   );
-  const plan = workflow.jobs['deploy-stage'].steps.find(
-    (step) => step.name === 'Generate topology-driven deployment impact plan',
-  );
+  const plan = deployZerops.steps.find((step) => step.name === 'Generate topology-driven deployment impact plan');
   expect(plan?.run).toContain('plan_arguments+=(--reconcile-workers)');
   expect(steps.indexOf("Stop the other deploy target's Outbox Workers")).toBeGreaterThan(
     steps.indexOf('Publish the complete active Application Composition and restart its consumers'),
@@ -256,7 +254,7 @@ it('declares a public subdomain at service creation for every non-worker unit an
 
 it('lets stage deploy failures fail the job, tolerating only best-effort log collection', () => {
   const { steps } = Schema.decodeUnknownSync(DeployWorkflowSchema)(parse(readFileSync(workflowPath, 'utf-8'))).jobs[
-    'deploy-stage'
+    'deploy-zerops'
   ];
 
   for (const step of steps) {
@@ -292,3 +290,28 @@ it('binds every browser MicroVertical origin into the Shell build from its Zerop
     expect(shellBuild).toContain(`${cloudflare.publicUrlEnv}: \${${id.replaceAll('-', '')}_zeropsSubdomain}`);
   }
 });
+
+it.effect('pushes every Zerops setup with the deploying environment named in its builds and runtimes', () =>
+  Effect.gen(function* materializedEnvironment() {
+    const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+    const stageLine = `${DEPLOYMENT_ENVIRONMENT_VARIABLE}: stage`;
+    const stageCount = zeropsYaml.split(stageLine).length - 1;
+    expect(stageCount).toBeGreaterThan(0);
+    // The committed file is stage's, byte for byte.
+    expect(yield* materializeZeropsEnvironment(zeropsYaml, 'stage')).toBe(zeropsYaml);
+    // Production changes that one value and nothing else.
+    const production = yield* materializeZeropsEnvironment(zeropsYaml, 'production');
+    expect(production.includes(stageLine)).toBe(false);
+    expect(production.split(`${DEPLOYMENT_ENVIRONMENT_VARIABLE}: production`).length - 1).toBe(stageCount);
+    expect(production.replaceAll(`${DEPLOYMENT_ENVIRONMENT_VARIABLE}: production`, stageLine)).toBe(zeropsYaml);
+    const missing = yield* Effect.flip(materializeZeropsEnvironment('zerops:\n  - setup: api\n', 'production'));
+    expect(missing.message).toContain(DEPLOYMENT_ENVIRONMENT_VARIABLE);
+
+    const workflow = readFileSync(workflowPath, 'utf-8');
+    expect(workflow).not.toContain('--zerops-yaml-path app/zerops.yaml');
+    expect(workflow).toContain('zerops:materialize-environment');
+    expect(workflow).toContain('--environment "$DEPLOY_ENVIRONMENT"');
+    const pushUnits = readFileSync(new URL('../push-zerops-units.sh', import.meta.url), 'utf-8');
+    expect(pushUnits).toContain('--zerops-yaml-path "$ZEROPS_YAML_PATH"');
+  }),
+);

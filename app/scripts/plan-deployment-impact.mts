@@ -30,7 +30,7 @@ import { DeployTargetSchema, OUTBOX_WORKER_HOST, outboxWorkerDelivery } from './
 import type { DeployTarget } from './outbox-worker-delivery.mjs';
 import type { AuthorizationImpactReport } from './report-fail-closed-authorization-impact.mts';
 
-export const DeploymentPhaseKindSchema = Schema.Literals(['infrastructure', 'provider', 'shell']);
+export const DeploymentPhaseKindSchema = Schema.Literals(['infrastructure', 'provider', 'shell', 'worker']);
 export type DeploymentPhaseKind = typeof DeploymentPhaseKindSchema.Type;
 
 interface TopologyUnit {
@@ -180,11 +180,17 @@ export interface DeploymentImpactPlan {
     readonly cloudflare: readonly CloudflareDeployment[];
     readonly cloudflareRetirements: readonly CloudflareRetirement[];
     readonly migrator: boolean;
+    /** Zerops providers in plan order, each vertical's outbox worker right after its owner. */
     readonly providers: readonly string[];
     readonly shell: boolean;
     readonly spicedb: boolean;
     /** Off-target worker setups to stop once this plan deploys the deploy target's own workers. */
     readonly stoppedWorkers: readonly string[];
+    /**
+     * The outbox workers among `providers`. They run on Zerops whatever the deploy target, because
+     * they drain PostgreSQL outboxes and are no edge unit.
+     */
+    readonly workers: readonly string[];
   };
 }
 
@@ -373,6 +379,7 @@ const DeploymentImpactPlanSchema = Schema.Struct({
     shell: Schema.Boolean,
     spicedb: Schema.Boolean,
     stoppedWorkers: Schema.Array(Schema.String),
+    workers: Schema.Array(Schema.String),
   }),
 });
 
@@ -1341,7 +1348,7 @@ const planWorkerPhases = (
   if (deployTarget === 'zerops') {
     return impactedWorkers.map((worker) => ({
       id: worker.id,
-      kind: 'provider' as const,
+      kind: 'worker' as const,
       serviceIdEnv: worker.serviceIdEnv,
       stageSetup: worker.stageSetup,
     }));
@@ -1351,7 +1358,7 @@ const planWorkerPhases = (
     : [
         {
           id: OUTBOX_WORKER_HOST.id,
-          kind: 'provider' as const,
+          kind: 'worker' as const,
           serviceIdEnv: OUTBOX_WORKER_HOST.serviceIdEnv,
           stageSetup: OUTBOX_WORKER_HOST.stageSetup,
         },
@@ -1471,10 +1478,13 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
           shell.packageName,
         ),
         migrator,
-        providers: phases.filter((phase) => phase.kind === 'provider').map((phase) => phase.id),
+        providers: phases
+          .filter((phase) => phase.kind === 'provider' || phase.kind === 'worker')
+          .map((phase) => phase.id),
         shell: impacted.has(shell.id),
         spicedb,
         stoppedWorkers: planStoppedWorkers(workers, workerPhases, deployTarget),
+        workers: phases.filter((phase) => phase.kind === 'worker').map((phase) => phase.id),
       },
     };
     return authorization === undefined ? plan : { ...plan, authorization };
@@ -1520,7 +1530,7 @@ const loadAuthorizationPromotionGate = (
   });
 
 const PlanJsonSchema = Schema.fromJsonString(DeploymentImpactPlanSchema);
-const ProvidersJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
+const UnitListJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
 const CloudflareJsonSchema = Schema.fromJsonString(DeploymentImpactPlanSchema.fields.units.fields.cloudflare);
 const CloudflareRetirementsJsonSchema = Schema.fromJsonString(
   DeploymentImpactPlanSchema.fields.units.fields.cloudflareRetirements,
@@ -1530,7 +1540,9 @@ const writeGitHubOutputs = (plan: DeploymentImpactPlan, outputPath: string) =>
   Effect.gen(function* writeGitHubOutputsEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
     const planJson = yield* Schema.encodeEffect(PlanJsonSchema)(plan);
-    const providersJson = yield* Schema.encodeEffect(ProvidersJsonSchema)(plan.units.providers);
+    const providersJson = yield* Schema.encodeEffect(UnitListJsonSchema)(plan.units.providers);
+    const stoppedWorkersJson = yield* Schema.encodeEffect(UnitListJsonSchema)(plan.units.stoppedWorkers);
+    const workersJson = yield* Schema.encodeEffect(UnitListJsonSchema)(plan.units.workers);
     const cloudflareJson = yield* Schema.encodeEffect(CloudflareJsonSchema)(plan.units.cloudflare);
     const cloudflareRetirementsJson = yield* Schema.encodeEffect(CloudflareRetirementsJsonSchema)(
       plan.units.cloudflareRetirements,
@@ -1544,7 +1556,8 @@ const writeGitHubOutputs = (plan: DeploymentImpactPlan, outputPath: string) =>
       `providers=${providersJson}`,
       `shell=${String(plan.units.shell)}`,
       `spicedb=${String(plan.units.spicedb)}`,
-      `stopped_workers=${yield* Schema.encodeEffect(ProvidersJsonSchema)(plan.units.stoppedWorkers)}`,
+      `stopped_workers=${stoppedWorkersJson}`,
+      `workers=${workersJson}`,
       '',
     ].join('\n');
     yield* fileSystem.writeFileString(outputPath, output, { flag: 'a' });

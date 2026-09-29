@@ -36,6 +36,11 @@ const PUBLICATION_READBACK_POLL = Duration.seconds(3);
 const PUBLICATION_READBACK_TIMEOUT = Duration.minutes(2);
 const CONSUMER_PREFLIGHT = `test -n "$${ACTIVE_APPLICATION_COMPOSITION_POLICY.projectVariable}"`;
 
+/** The environment's `DEPLOY_TARGET` variable; unset means `zerops`. */
+const readDeployTarget = Config.schema(DeployTargetSchema, 'DEPLOY_TARGET').pipe(
+  Config.withDefault<DeployTarget>('zerops'),
+);
+
 /** One deployed unit could not be observed; recovery keys on the unit's app ID. */
 export class ActiveApplicationCompositionObservationError extends Schema.TaggedError<ActiveApplicationCompositionObservationError>()(
   'ActiveApplicationCompositionObservationError',
@@ -45,7 +50,9 @@ export class ActiveApplicationCompositionObservationError extends Schema.TaggedE
 const TopologySchema = Schema.Struct({
   verticals: Schema.Array(
     Schema.Struct({
+      cloudflare: Schema.optionalKey(Schema.Struct({ workerName: Schema.optionalKey(Schema.NonEmptyString) })),
       id: OntosDeploymentAppIdSchema,
+      package: Schema.optionalKey(Schema.NonEmptyString),
       surfaceProfile: Schema.optionalKey(Schema.Literal('api-only')),
     }),
   ),
@@ -60,6 +67,12 @@ const ZeropsYamlSchema = Schema.Struct({
     }),
   ),
 });
+
+const CloudflarePlacementSchema = Schema.Struct({
+  buildEnvironment: Schema.Record(Schema.String, Schema.String),
+  units: Schema.Array(Schema.String),
+});
+type CloudflarePlacement = typeof CloudflarePlacementSchema.Type;
 
 const StageVariablesSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const SetupListJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
@@ -97,6 +110,59 @@ export const compositionConsumerSetups = (
   );
 };
 
+/**
+ * The consumers a deploy target runs on Zerops. On `zerops` that is every consumer. On `cloudflare` the
+ * delivery units run as Workers, so only the consumers that are no delivery unit (the outbox workers)
+ * are Zerops services this publication restarts.
+ */
+export const targetConsumerSetups = (
+  consumers: readonly string[],
+  target: DeployTarget,
+  deliveryUnitSetups: ReadonlySet<string>,
+): readonly string[] => (target === 'zerops' ? consumers : consumers.filter((setup) => !deliveryUnitSetups.has(setup)));
+
+/** A snapshot consumer that runs as a placed Worker and reads the snapshot from its Worker secret. */
+export interface EdgeCompositionConsumer {
+  readonly packageName: string;
+  readonly workerName: string;
+}
+
+/**
+ * The placed Workers among the snapshot consumers. A Worker has no Zerops project variable, so on the
+ * `cloudflare` target each publication must also reach them as a Worker secret of the same name.
+ */
+export const edgeCompositionConsumers = (
+  consumers: readonly string[],
+  topology: typeof TopologySchema.Type,
+  placement: CloudflarePlacement,
+): readonly EdgeCompositionConsumer[] =>
+  topology.verticals.flatMap(({ cloudflare, id, package: packageName }) => {
+    if (!consumers.includes(id) || !placement.units.includes(id)) {
+      return [];
+    }
+    const workerName = cloudflare?.workerName;
+    return packageName === undefined || workerName === undefined ? [] : [{ packageName, workerName }];
+  });
+
+/** The Worker public URL variable of a placed unit, the one its edge build and output verifier read. */
+export const cloudflarePublicUrlVariable = (appId: string): string =>
+  `ULTRAMODERN_PUBLIC_URL_${appId.replaceAll('-', '_').toUpperCase()}`;
+
+/** A placed unit's Worker origin, from the reviewed placement's build environment. */
+export const cloudflareOrigin = Effect.fn('ActiveApplicationComposition.cloudflareOrigin')(function* cloudflareOrigin(
+  placement: CloudflarePlacement,
+  appId: string,
+) {
+  const origin = placement.buildEnvironment[cloudflarePublicUrlVariable(appId)];
+  if (!placement.units.includes(appId) || origin === undefined || origin === '') {
+    return yield* new ActiveApplicationCompositionPublicationError({
+      message: `${appId} is not a placed Worker with buildEnvironment.${cloudflarePublicUrlVariable(appId)}`,
+      reason: 'invalid_observation',
+    });
+  }
+  return origin;
+});
+
 /** Stage service-ID variable of a deployment unit, named the way the topology implies. */
 export const serviceIdVariable = (setup: string): string =>
   setup === SHELL_ZEROPS_SETUP
@@ -116,17 +182,44 @@ const readWorkspaceText = (...segments: readonly string[]) =>
     return yield* fileSystem.readFileString(yield* workspaceFile(...segments));
   });
 
+const readZeropsYaml = readWorkspaceText('zerops.yaml');
+
 const readTopology = readWorkspaceText('topology', 'reference-topology.json').pipe(
   Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(TopologySchema))),
 );
 
-const readConsumerSetups = Effect.gen(function* readConsumerSetupsEffect() {
-  const deployTarget = yield* Config.schema(DeployTargetSchema, 'DEPLOY_TARGET').pipe(Config.withDefault('zerops'));
-  const [zeropsYaml, topology] = yield* Effect.all([readWorkspaceText('zerops.yaml'), readTopology], {
-    concurrency: 2,
+const readPlacement = readWorkspaceText('topology', 'cloudflare-placement.json').pipe(
+  Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(CloudflarePlacementSchema))),
+);
+
+/** The Zerops setup that serves a delivery unit on the `zerops` target. */
+const zeropsSetupOf = (appId: string): string => (appId === SHELL_APP_ID ? SHELL_ZEROPS_SETUP : appId);
+
+const readConsumerSetups = (target: DeployTarget) =>
+  Effect.gen(function* readConsumerSetupsEffect() {
+    const [zeropsYaml, topology] = yield* Effect.all([readZeropsYaml, readTopology], {
+      concurrency: 2,
+    });
+    const consumers = yield* compositionConsumerSetups(zeropsYaml, topology, target);
+    return targetConsumerSetups(
+      consumers,
+      target,
+      new Set([SHELL_ZEROPS_SETUP, ...topology.verticals.map(({ id }) => zeropsSetupOf(id))]),
+    );
   });
-  return yield* compositionConsumerSetups(zeropsYaml, topology, deployTarget);
-});
+
+/** The placed Worker consumers the deploy target must hand each publication to; none on `zerops`. */
+const readEdgeConsumers = (target: DeployTarget) =>
+  Effect.gen(function* readEdgeConsumersEffect() {
+    if (target !== 'cloudflare') {
+      return [];
+    }
+    const [zeropsYaml, topology, placement] = yield* Effect.all([readZeropsYaml, readTopology, readPlacement], {
+      concurrency: 3,
+    });
+    const consumers = yield* compositionConsumerSetups(zeropsYaml, topology, target);
+    return edgeCompositionConsumers(consumers, topology, placement);
+  });
 
 const writeGitHubOutput = (line: string) =>
   Effect.gen(function* appendGitHubOutput() {
@@ -229,20 +322,48 @@ const publicOrigin = Effect.fn('ActiveApplicationComposition.publicOrigin')(func
   return origin;
 });
 
+/**
+ * Resolves each delivery unit's public origin on the deploy target: the Zerops subdomain of its
+ * service, or the Worker URL its edge build is given.
+ */
+type OriginOf = (
+  appId: string,
+) => Effect.Effect<
+  string,
+  ActiveApplicationCompositionPublicationError | Config.ConfigError | Schema.SchemaError | ZeropsApiError,
+  ZeropsPublicApi
+>;
+
+const originResolver = Effect.fn('ActiveApplicationComposition.originResolver')(function* originResolver(
+  target: DeployTarget,
+) {
+  if (target === 'cloudflare') {
+    const placement = yield* readPlacement;
+    const workerOrigin: OriginOf = (appId) => cloudflareOrigin(placement, appId);
+    return workerOrigin;
+  }
+  const api = yield* ZeropsPublicApi;
+  const envFile = yield* api.projectEnvFile(yield* Config.String('ZEROPS_PROJECT_ID'));
+  const subdomainOrigin: OriginOf = (appId) => publicOrigin(envFile, zeropsSetupOf(appId));
+  return subdomainOrigin;
+});
+
 /** Observes every installed module except explicitly pending ones, then publishes one snapshot. */
 const publishOnce = Effect.fn('ActiveApplicationComposition.publishOnce')(function* publishOnce(
   environment: string,
   excludedApps: readonly string[],
+  target: DeployTarget,
+  snapshotFile: Option.Option<string>,
 ) {
   const api = yield* ZeropsPublicApi;
   const projectId = yield* Config.String('ZEROPS_PROJECT_ID');
-  const [topology, envFile] = yield* Effect.all([readTopology, api.projectEnvFile(projectId)], { concurrency: 2 });
+  const [topology, originOf] = yield* Effect.all([readTopology, originResolver(target)], { concurrency: 2 });
   const units = yield* Effect.forEach(
     topology.verticals.filter(({ id }) => !excludedApps.includes(id)),
-    (vertical) => publicOrigin(envFile, vertical.id).pipe(Effect.map((origin): StageUnit => ({ origin, vertical }))),
+    (vertical) => originOf(vertical.id).pipe(Effect.map((origin): StageUnit => ({ origin, vertical }))),
     { concurrency: 4 },
   );
-  const shellOrigin = yield* publicOrigin(envFile, SHELL_ZEROPS_SETUP);
+  const shellOrigin = yield* originOf(SHELL_APP_ID);
   const [modules, runtimeContract, federationManifest, observedAt] = yield* Effect.all(
     [
       Effect.forEach(units, observeStageModule, { concurrency: 4 }),
@@ -283,6 +404,11 @@ const publishOnce = Effect.fn('ActiveApplicationComposition.publishOnce')(functi
     }),
   );
   yield* decodeActiveApplicationCompositionSnapshot(published ?? '');
+  // Placed Worker consumers have no Zerops project variable; the deploy hands them this file as a Worker secret.
+  if (Option.isSome(snapshotFile)) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem.writeFileString(snapshotFile.value, encoded);
+  }
   yield* Effect.logInfo('Published the active Application Composition', {
     modules: snapshot.composition.modules.map(({ federation, moduleId }) => `${moduleId} (${federation.execution})`),
     revision: snapshot.composition.revision,
@@ -292,11 +418,12 @@ const publishOnce = Effect.fn('ActiveApplicationComposition.publishOnce')(functi
 });
 
 /** Consumers read the variable only at process start, so every publication restarts them. */
-const restartConsumers = Effect.gen(function* restartConsumers() {
+const restartConsumers = Effect.fn('ActiveApplicationComposition.restartConsumers')(function* restartConsumers(
+  target: DeployTarget,
+) {
   const api = yield* ZeropsPublicApi;
-  const projectId = yield* Config.String('ZEROPS_PROJECT_ID');
-  const [consumers, topology, envFile] = yield* Effect.all(
-    [readConsumerSetups, readTopology, api.projectEnvFile(projectId)],
+  const [consumers, topology, originOf] = yield* Effect.all(
+    [readConsumerSetups(target), readTopology, originResolver(target)],
     { concurrency: 3 },
   );
   yield* Effect.forEach(
@@ -304,7 +431,7 @@ const restartConsumers = Effect.gen(function* restartConsumers() {
     Effect.fnUntraced(function* restartConsumer(setup) {
       yield* api.restartService(yield* stageServiceId(setup));
       if (topology.verticals.some(({ id }) => id === setup)) {
-        const origin = yield* publicOrigin(envFile, setup);
+        const origin = yield* originOf(setup);
         yield* fetchArtifact(setup, artifactUrl(origin, ONTOS_MODULE_CONTRACT_PATH)).pipe(
           Effect.retry(Schedule.spaced(CONSUMER_READINESS_POLL)),
           Effect.timeoutOrElse({
@@ -332,12 +459,14 @@ const publishCommand = Command.make(
     excludedApps: Flag.String('exclude-app').pipe(Flag.atLeast(0)),
     recoverConsumers: Flag.Boolean('recover-consumers').pipe(Flag.withDefault(false)),
     restartConsumers: Flag.Boolean('restart-consumers').pipe(Flag.withDefault(false)),
+    snapshotFile: Flag.String('snapshot-file').pipe(Flag.optional),
   },
-  ({ environment, excludedApps, recoverConsumers, restartConsumers: restart }) =>
+  ({ environment, excludedApps, recoverConsumers, restartConsumers: restart, snapshotFile }) =>
     Effect.gen(function* publish() {
-      const consumers = yield* readConsumerSetups;
-      const complete = publishOnce(environment, excludedApps).pipe(
-        Effect.andThen(restart ? restartConsumers : Effect.void),
+      const target = yield* readDeployTarget;
+      const consumers = yield* readConsumerSetups(target);
+      const complete = publishOnce(environment, excludedApps, target, snapshotFile).pipe(
+        Effect.andThen(restart ? restartConsumers(target) : Effect.void),
       );
       if (!recoverConsumers) {
         return yield* complete;
@@ -348,8 +477,8 @@ const publishCommand = Command.make(
         Effect.catchTag('ActiveApplicationCompositionObservationError', (error) =>
           consumers.includes(error.appId)
             ? Effect.logWarning(`Composition consumer ${error.appId} is unobservable; recovering it`).pipe(
-                Effect.andThen(publishOnce(environment, [...excludedApps, ...consumers])),
-                Effect.andThen(restartConsumers),
+                Effect.andThen(publishOnce(environment, [...excludedApps, ...consumers], target, snapshotFile)),
+                Effect.andThen(restartConsumers(target)),
                 Effect.andThen(complete),
               )
             : Effect.fail(error),
@@ -425,8 +554,8 @@ export const onTargetWorkerSetups = (
  */
 const workerTargetDriftCommand = Command.make('worker-target-drift', {}, () =>
   Effect.gen(function* workerTargetDrift() {
-    const deployTarget = yield* Config.schema(DeployTargetSchema, 'DEPLOY_TARGET').pipe(Config.withDefault('zerops'));
-    const [zeropsYaml, topology] = yield* Effect.all([readWorkspaceText('zerops.yaml'), readTopology], {
+    const deployTarget = yield* readDeployTarget;
+    const [zeropsYaml, topology] = yield* Effect.all([readZeropsYaml, readTopology], {
       concurrency: 2,
     });
     const api = yield* ZeropsPublicApi;
@@ -461,9 +590,28 @@ const stageServiceIdCommand = Command.make('stage-service-id', { setup: Flag.Str
   stageServiceId(setup).pipe(Effect.flatMap(Console.log)),
 );
 
+const EdgeConsumersJsonSchema = Schema.fromJsonString(
+  Schema.Array(Schema.Struct({ packageName: Schema.String, workerName: Schema.String })),
+);
+
+/** Writes `edge_consumers`: the placed Worker consumers that need each publication as a Worker secret. */
+const edgeConsumersCommand = Command.make('edge-consumers', {}, () =>
+  Effect.gen(function* edgeConsumers() {
+    const json = yield* readDeployTarget.pipe(
+      Effect.flatMap(readEdgeConsumers),
+      Effect.flatMap(Schema.encodeEffect(EdgeConsumersJsonSchema)),
+    );
+    yield* Effect.logInfo(`Edge composition consumers: ${json}`);
+    return yield* writeGitHubOutput(`edge_consumers=${json}`);
+  }),
+);
+
 const consumersCommand = Command.make('consumers', {}, () =>
   Effect.gen(function* consumers() {
-    const json = yield* readConsumerSetups.pipe(Effect.flatMap(Schema.encodeEffect(SetupListJsonSchema)));
+    const json = yield* readDeployTarget.pipe(
+      Effect.flatMap(readConsumerSetups),
+      Effect.flatMap(Schema.encodeEffect(SetupListJsonSchema)),
+    );
     yield* Effect.logInfo(`Composition consumers: ${json}`);
     return yield* writeGitHubOutput(`consumers=${json}`);
   }),
@@ -574,6 +722,7 @@ const cli = Command.make('publish-active-application-composition').pipe(
     publishCommand,
     ensurePublicAccessCommand,
     consumersCommand,
+    edgeConsumersCommand,
     proveBuildCommand,
     stageServiceIdCommand,
     stopServiceCommand,

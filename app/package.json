@@ -72,6 +72,7 @@
     "deployment-base:resolve": "node ./scripts/resolve-stage-deployment-base.mts",
     "deployment-impact:plan": "node ./scripts/plan-deployment-impact.mts",
     "active-composition:publish": "node ./scripts/publish-active-application-composition.mts",
+    "zerops:materialize-environment": "node ./scripts/materialize-zerops-environment.mts",
     "action:test:unit": "pnpm --filter @app/core-runtime action:test:unit",
     "action:test:integration": "pnpm --filter @app/core-runtime action:test:integration",
     "outbox:test": "pnpm --filter @app/core-runtime outbox:test:unit && pnpm --filter @app/core-runtime outbox:test:integration",

@@ -1,7 +1,7 @@
 name: Active Application Composition Refresh
 
-# Consumers stop trusting the published snapshot at validUntil, so stage re-observes the live services and
-# re-publishes it well inside the validity window. The cadence and window live in
+# Consumers stop trusting the published snapshot at validUntil, so each deployed environment re-observes its
+# live services and re-publishes it well inside the validity window. The cadence and window live in
 # app/scripts/active-application-composition.mts (ACTIVE_APPLICATION_COMPOSITION_POLICY).
 on:
   schedule:
@@ -31,8 +31,12 @@ jobs:
     permissions:
       contents: read
       deployments: read
+    outputs:
+      edge-consumers: ${{ steps.edge-consumers.outputs.edge_consumers }}
+      snapshot: ${{ steps.publish.outputs.snapshot }}
     env:
-      # Selects which Outbox Worker services consume the snapshot: the dedicated ones, or the one host.
+      # The publisher observes Zerops subdomains or, on the Cloudflare target, the Worker URLs, and
+      # restarts the Outbox Worker services that consume the snapshot: the dedicated ones, or the one host.
       DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET || 'zerops' }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
     steps:
@@ -89,13 +93,147 @@ jobs:
         uses: ./.github/actions/install-app
 
       - name: Re-observe live services and re-publish the active Application Composition
+        id: publish
         if: steps.worker-drift.outputs.drift != 'true'
+        working-directory: app
+        env:
+          SNAPSHOT_FILE: ${{ runner.temp }}/active-application-composition.json
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          snapshot_arguments=()
+          if [[ "$DEPLOY_TARGET" == cloudflare ]]; then
+            snapshot_arguments=(--snapshot-file "$SNAPSHOT_FILE")
+          fi
+          mise exec -- pnpm active-composition:publish publish \
+            --environment stage \
+            --restart-consumers \
+            --recover-consumers \
+            "${snapshot_arguments[@]}"
+          if [[ "$DEPLOY_TARGET" == cloudflare ]]; then
+            # The encoded snapshot is one JSON line, and it holds no secret.
+            echo "snapshot=$(<"$SNAPSHOT_FILE")" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve the placed Workers that consume the snapshot
+        id: edge-consumers
+        if: env.DEPLOY_TARGET == 'cloudflare' && steps.worker-drift.outputs.drift != 'true'
+        working-directory: app
+        run: mise exec -- pnpm --silent active-composition:publish edge-consumers
+
+  # Placed Worker consumers read the snapshot from a Worker secret, not the Zerops project variable, so
+  # they need each re-publication too. Only stage-edge holds the Cloudflare token.
+  refresh-stage-edge:
+    name: Hand the re-published Application Composition to its Worker consumers
+    if: needs.refresh-stage.outputs.edge-consumers != '' && needs.refresh-stage.outputs.edge-consumers != '[]'
+    needs: [refresh-stage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: stage-edge
+      deployment: false
+    permissions:
+      contents: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout main
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Put the snapshot as each consumer Worker's secret
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          EDGE_CONSUMERS_JSON: ${{ needs.refresh-stage.outputs.edge-consumers }}
+          SNAPSHOT_JSON: ${{ needs.refresh-stage.outputs.snapshot }}
+        run: app/scripts/put-edge-composition-snapshot.sh
+
+  # Production runs on Zerops, the only target outside stage, and publishes a snapshot of the same validity.
+  # A production that is not configured or has never deployed has no snapshot to refresh.
+  refresh-production:
+    name: Re-observe and re-publish the production Application Composition
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      deployment: false
+    concurrency:
+      group: zerops-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      deployments: read
+    env:
+      DEPLOY_TARGET: zerops
+      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Check the production Zerops project and token
+        id: configuration
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          if [[ -n "$ZEROPS_PROJECT_ID" && -n "$ZEROPS_TOKEN" ]]; then
+            echo 'configured=true' >>"$GITHUB_OUTPUT"
+          else
+            echo 'configured=false' >>"$GITHUB_OUTPUT"
+            echo '::notice title=Production not configured::Production has no Zerops project and token, so there is no snapshot to refresh.'
+          fi
+
+      - name: Checkout main
+        if: steps.configuration.outputs.configured == 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the app workspace
+        if: steps.configuration.outputs.configured == 'true'
+        uses: ./.github/actions/install-app
+
+      - name: Resolve the last successful production deployment
+        id: base
+        if: steps.configuration.outputs.configured == 'true'
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base="$(mise exec -- pnpm --silent deployment-base:resolve --environment production --optional)"
+          if [[ -z "$base" ]]; then
+            echo '::notice title=Production not deployed::Production has no successful deployment, so there is no snapshot to refresh.'
+          fi
+
+      # The publisher and topology of the deployed revision describe what production actually runs.
+      - name: Check out the deployed revision
+        if: steps.base.outputs.base != ''
+        env:
+          DEPLOYED_SHA: ${{ steps.base.outputs.base }}
+        run: git checkout --detach "$DEPLOYED_SHA"
+
+      - name: Install the deployed revision's app workspace
+        if: steps.base.outputs.base != ''
+        uses: ./.github/actions/install-app
+
+      - name: Re-observe live services and re-publish the active Application Composition
+        if: steps.base.outputs.base != ''
         working-directory: app
         env:
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: >-
           mise exec -- pnpm active-composition:publish publish
-          --environment stage
+          --environment production
           --restart-consumers
           --recover-consumers
