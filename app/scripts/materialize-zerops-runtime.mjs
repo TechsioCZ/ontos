@@ -7,6 +7,8 @@ import { Config, Effect, FileSystem, Layer, Path, Predicate, Schema } from 'effe
 import { Command, Flag } from 'effect/unstable/cli';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
+import { lockedRegistryOverrides } from './locked-registry-overrides.mjs';
+
 const packageJsonFile = 'package.json';
 const workspacePackageDirectories = ['packages', 'apps', 'verticals'];
 const DependencyMapSchema = Schema.Record(Schema.String, Schema.String);
@@ -541,7 +543,16 @@ const installRuntimeDependencies = (runtimeManifest, appId, runtimeDir, workspac
     });
     const workspacePackages = yield* collectWorkspacePackages(workspaceRoot, pathService);
     const { installPackage, localDependencies } = removeWorkspaceDependencies(runtimeManifest, workspacePackages);
-    yield* writeJson(pathService.join(installDir, packageJsonFile), installPackage);
+    const lockfileText = yield* fileSystem.readFileString(pathService.join(workspaceRoot, 'pnpm-lock.yaml'));
+    const directDependencies = new Set([
+      ...Object.keys(installPackage.dependencies ?? {}),
+      ...Object.keys(installPackage.optionalDependencies ?? {}),
+    ]);
+    // npm rejects an override that restates a direct dependency, and direct dependencies are already exact.
+    const overrides = Object.fromEntries(
+      Object.entries(lockedRegistryOverrides(lockfileText)).filter(([name]) => !directDependencies.has(name)),
+    );
+    yield* writeJson(pathService.join(installDir, packageJsonFile), { ...installPackage, overrides });
     const installCommand = ChildProcess.make(
       process.platform === 'win32' ? 'npm.cmd' : 'npm',
       ['install', '--omit=dev', '--no-audit', '--fund=false', '--legacy-peer-deps'],
