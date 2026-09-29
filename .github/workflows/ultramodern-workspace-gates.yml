@@ -399,7 +399,9 @@ jobs:
 
       - name: Migrate and initialize the local tenant for the Worker topology
         working-directory: app
+        # Local initialization reads the app .env; the job environment overrides every value it uses.
         run: |
+          cp .env.example .env
           mise exec -- pnpm db:migrate
           mise exec -- pnpm local:initialize
 
