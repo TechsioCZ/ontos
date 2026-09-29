@@ -17,6 +17,7 @@ import {
   getSaleProducts,
   searchCatalog,
   searchProducts,
+  toProductSummary,
 } from "@/mock-storefront/catalog";
 
 describe("mock catalog gateway", () => {
@@ -224,5 +225,31 @@ describe("mock catalog gateway", () => {
       unit: "m",
     });
     expect(tube?.packageQuantity).toBeUndefined();
+  });
+
+  it("summarizes compatible variant stock without hiding the varying price", () => {
+    const product = getProductBySlug("vruty-se-zapustnou-hlavou-s-krizovou-drazkou-din-7997-a2");
+
+    expect(product && toProductSummary(product)).toMatchObject({
+      priceIsFrom: true,
+      stock: {
+        kind: "quantity",
+        status: "in-stock",
+        stockCount: 9903,
+        unit: "ks",
+      },
+    });
+  });
+
+  it("does not add stock from variants with incompatible units", () => {
+    const product = getProductBySlug("profilovana-stresni-krytina-product-35919");
+
+    expect(product && toProductSummary(product)).toMatchObject({
+      priceIsFrom: true,
+      stock: {
+        kind: "variants",
+        status: "in-stock",
+      },
+    });
   });
 });

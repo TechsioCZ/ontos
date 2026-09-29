@@ -13,6 +13,7 @@ import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
 } from "@/lib/product-variant-search";
+import { getProductStockStatus, type ProductStockStatus } from "@/lib/product-stock";
 import rawCatalogData from "./generated/catalog.generated.json";
 import rawCategoryData from "./generated/categories.generated.json";
 
@@ -29,6 +30,41 @@ const productsBySlug = new Map(
   catalogData.products.map((product) => [product.slug, product] as const),
 );
 
+const getVariantGroupStockStatus = (
+  variants: CatalogProduct["detail"]["variants"],
+): ProductStockStatus => {
+  const statuses = variants.map(getProductStockStatus);
+  if (statuses.includes("in-stock")) return "in-stock";
+  if (statuses.includes("limited-stock")) return "limited-stock";
+  return "out-of-stock";
+};
+
+const summarizeProductStock = (product: CatalogProduct): CatalogProductSummary["stock"] => {
+  const { variants } = product.detail;
+  if (variants.length === 0) {
+    return {
+      kind: "quantity",
+      minimumQuantity: product.minimumQuantity,
+      packageQuantity: product.packageQuantity,
+      status: getProductStockStatus(product),
+      stockCount: product.stockCount,
+      unit: product.unit,
+    };
+  }
+
+  const status = getVariantGroupStockStatus(variants);
+  const units = new Set(variants.map((variant) => variant.unit));
+  if (units.size !== 1) return { kind: "variants", status };
+
+  return {
+    kind: "quantity",
+    minimumQuantity: Math.min(...variants.map((variant) => variant.minimumQuantity)),
+    status,
+    stockCount: variants.reduce((total, variant) => total + variant.stockCount, 0),
+    unit: variants[0].unit,
+  };
+};
+
 export const toProductSummary = (product: CatalogProduct): CatalogProductSummary => ({
   id: product.id,
   slug: product.slug,
@@ -39,10 +75,6 @@ export const toProductSummary = (product: CatalogProduct): CatalogProductSummary
   priceMinor: product.priceMinor,
   originalPriceMinor: product.originalPriceMinor,
   currency: product.currency,
-  unit: product.unit,
-  minimumQuantity: product.minimumQuantity,
-  packageQuantity: product.packageQuantity,
-  stockCount: product.stockCount,
   imageSrc: product.imageSrc,
   imageAlt: product.imageAlt,
   featuredPosition: product.featuredPosition,
@@ -51,6 +83,8 @@ export const toProductSummary = (product: CatalogProduct): CatalogProductSummary
   isSale: product.isSale,
   isNew: product.isNew,
   hasVariants: product.detail.variants.length > 0,
+  priceIsFrom: product.detail.variants.length > 0,
+  stock: summarizeProductStock(product),
 });
 
 const collectCategoryIds = (categoryId: string): Set<string> => {

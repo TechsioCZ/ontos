@@ -6,7 +6,6 @@ import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 
 import { PrimaryLinkButton } from "@/components/primary-link-button";
 import { cs } from "@/i18n/cs";
-import { getProductStockStatus } from "@/lib/product-stock";
 import type { CatalogProductSummary } from "@/mock-storefront/types";
 
 export function FeaturedProductGrid({ products }: { products: CatalogProductSummary[] }) {
@@ -39,8 +38,10 @@ export function FeaturedProductGrid({ products }: { products: CatalogProductSumm
               {product.name}
             </NextLink>
           </ProductCard.Name>
-          <ProductCard.Stock className="leading-tight" status={getProductStockStatus(product)}>
-            {cs.product.inStock}: {product.stockCount.toLocaleString("cs-CZ")} {product.unit}
+          <ProductCard.Stock className="leading-tight" status={product.stock.status}>
+            {product.stock.kind === "quantity"
+              ? `${cs.product.inStock}: ${product.stock.stockCount.toLocaleString("cs-CZ")} ${product.stock.unit}`
+              : cs.product.availabilityByVariant}
           </ProductCard.Stock>
           <ProductCard.Actions>
             <PrimaryLinkButton href={`/produkt/${product.slug}`} size="sm" uppercase={false}>

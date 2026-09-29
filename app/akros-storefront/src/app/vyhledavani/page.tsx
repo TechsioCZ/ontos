@@ -5,6 +5,7 @@ import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { cs } from "@/i18n/cs";
+import { getProductStockStatus } from "@/lib/product-stock";
 import { searchCatalog, toProductSummary } from "@/mock-storefront/catalog";
 import type { CatalogSearchResult } from "@/mock-storefront/types";
 
@@ -26,10 +27,16 @@ const toSearchGridItem = (
     ...summary,
     ...(matchedVariant && {
       imageSrc: matchedVariant.imageSrc ?? summary.imageSrc,
-      minimumQuantity: matchedVariant.minimumQuantity,
       priceMinor: matchedVariant.priceMinor,
-      stockCount: matchedVariant.stockCount,
-      unit: matchedVariant.unit,
+      priceIsFrom: false,
+      stock: {
+        kind: "quantity" as const,
+        minimumQuantity: matchedVariant.minimumQuantity,
+        packageQuantity: matchedVariant.packageQuantity,
+        status: getProductStockStatus(matchedVariant),
+        stockCount: matchedVariant.stockCount,
+        unit: matchedVariant.unit,
+      },
     }),
     detailHref: `/produkt/${product.slug}?${params.toString()}#product-variants`,
     searchMatchLabel: matchedVariant

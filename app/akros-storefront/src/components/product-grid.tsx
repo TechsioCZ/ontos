@@ -8,7 +8,6 @@ import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
-import { getProductStockStatus } from "@/lib/product-stock";
 import type { CatalogProductSummary } from "@/mock-storefront/types";
 
 export interface ProductGridItem extends CatalogProductSummary {
@@ -27,6 +26,12 @@ export function ProductGrid({
     <div className="akros-product-grid">
       {products.map((product, index) => {
         const detailHref = product.detailHref ?? `/produkt/${product.slug}`;
+        const canAddToCart =
+          action === "purchase" &&
+          !product.hasVariants &&
+          product.priceMinor > 0 &&
+          product.stock.kind === "quantity" &&
+          product.stock.status === "in-stock";
 
         return (
           <ProductCard
@@ -61,25 +66,20 @@ export function ProductGrid({
             {action === "purchase" && (
               <ProductCard.Price>
                 {product.priceMinor > 0
-                  ? formatPrice(product.priceMinor, product.currency)
+                  ? `${product.priceIsFrom ? `${cs.product.from} ` : ""}${formatPrice(product.priceMinor, product.currency)}`
                   : "Cena na dotaz"}
               </ProductCard.Price>
             )}
             <ProductCard.Stock
               className="akros-catalog-product-card__stock"
-              status={getProductStockStatus(product)}
+              status={product.stock.status}
             >
-              {cs.product.inStock}: {product.stockCount.toLocaleString("cs-CZ")} {product.unit}
+              {product.stock.kind === "quantity"
+                ? `${cs.product.inStock}: ${product.stock.stockCount.toLocaleString("cs-CZ")} ${product.stock.unit}`
+                : cs.product.availabilityByVariant}
             </ProductCard.Stock>
             <ProductCard.Actions>
-              {action === "detail" ||
-              product.hasVariants ||
-              product.stockCount < product.minimumQuantity ||
-              product.priceMinor <= 0 ? (
-                <LinkButton as={NextLink} href={detailHref} size="sm" variant="primary">
-                  {cs.actions.viewDetail}
-                </LinkButton>
-              ) : (
+              {canAddToCart && product.stock.kind === "quantity" ? (
                 <AddToCartButton
                   item={{
                     productId: product.id,
@@ -88,12 +88,16 @@ export function ProductGrid({
                     sku: product.sku,
                     imageSrc: product.imageSrc,
                     imageAlt: product.imageAlt,
-                    unit: product.unit,
-                    minimumQuantity: product.minimumQuantity,
-                    stockCount: product.stockCount,
+                    unit: product.stock.unit,
+                    minimumQuantity: product.stock.minimumQuantity,
+                    stockCount: product.stock.stockCount,
                     priceMinor: product.priceMinor,
                   }}
                 />
+              ) : (
+                <LinkButton as={NextLink} href={detailHref} size="sm" variant="primary">
+                  {cs.actions.viewDetail}
+                </LinkButton>
               )}
             </ProductCard.Actions>
           </ProductCard>

@@ -1,3 +1,5 @@
+import type { ProductStockStatus } from "@/lib/product-stock";
+
 export interface CatalogCategory {
   id: string;
   parentId: string | null;
@@ -87,8 +89,27 @@ export interface CatalogSearchResult {
   matchingVariants: CatalogProductVariant[];
 }
 
-export type CatalogProductSummary = Omit<CatalogProduct, "detail" | "secondaryImageSrc"> & {
+export type CatalogProductSummaryStock =
+  | {
+      kind: "quantity";
+      minimumQuantity: number;
+      packageQuantity?: number;
+      status: ProductStockStatus;
+      stockCount: number;
+      unit: string;
+    }
+  | {
+      kind: "variants";
+      status: ProductStockStatus;
+    };
+
+export type CatalogProductSummary = Omit<
+  CatalogProduct,
+  "detail" | "minimumQuantity" | "packageQuantity" | "secondaryImageSrc" | "stockCount" | "unit"
+> & {
   hasVariants: boolean;
+  priceIsFrom: boolean;
+  stock: CatalogProductSummaryStock;
 };
 
 export interface CatalogMetadata {
