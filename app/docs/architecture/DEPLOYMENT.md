@@ -454,8 +454,10 @@ list of the people Access admits and the usage notification emails) and `STAGE_A
   variables. The kill switch only stops OntOS stage traffic: if the breakdown shows other projects
   drive the usage, they need their own action.
 - The Workers requests usage notification `ontos-stage-workers-requests` emails the Access people at
-  5M requests. Cloudflare may offer usage notifications only on Pay-as-you-go or Pro accounts; if
-  `cost-guards` fails on it, the hourly check still protects the budget.
+  5M requests. Cloudflare offers usage notifications to Pay-as-you-go accounts, which a Workers Paid
+  account is. If the API still rejects the policy, `cost-guards` and `provision` stop there with the
+  Cloudflare error; the notification is the last guard, so the kill switch and Access are already in
+  place.
 - Access: a reusable people policy `ontos-stage-people`, a service token `ontos-stage-ci` (one-year
   duration) and a policy `ontos-stage-ci-token` for it. `stage-edge` holds the token as the secrets
   `CLOUDFLARE_ACCESS_CLIENT_ID` and `CLOUDFLARE_ACCESS_CLIENT_SECRET`; when they are missing, a
@@ -474,7 +476,7 @@ switch cover them.
 To resume after the kill switch trips, find out why, then run
 `node scripts/ops/cloudflare-stage-cutover.mts resume` (the check trips it again within the hour if
 usage is still over the limit, so raise the limit variables or wait for the next cycle). To undo the
-guards, delete the two rules and the notification in the dashboard and remove the Access
+guards, delete the kill switch rule and the notification in the dashboard and remove the Access
 applications; deleting `CLOUDFLARE_STAGE_ZONE_ID` stops the hourly check.
 
 The cut-over token needs these permissions. Account: Cloudflare Tunnel Edit, Workers Scripts Edit,
