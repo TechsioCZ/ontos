@@ -212,10 +212,14 @@ Do not report release success before all required smoke checks pass.
 
 `topology/cloudflare-placement.json` lists the delivery units CI also ships as Cloudflare Workers;
 each needs a `cloudflare.workerName` in the reference topology, and its Worker configuration must be
-deployable on its own. In the hybrid topology every vertical (UI and headless API) and the Shell
-are placed, so every Worker the Shell binds as a service is placed too; Zerops keeps only the data
-plane and the outbox worker host. The deployment planner emits the
-placed, impacted units as `units.cloudflare` in dependency order (providers before Shell).
+deployable on its own. Every vertical (UI and headless API) and the Shell are placed, so every
+Worker the Shell binds as a service is placed too. The deployment planner emits the placed,
+impacted units as `units.cloudflare` in dependency order (providers before Shell).
+
+The edge deploy is additive. The Zerops deploy (`deploy-stage`: migrator, SpiceDB, providers,
+workers and Shell) is unchanged and keeps working for every environment that targets Zerops. The
+edge deploy runs only for an environment configured for Cloudflare (below); which target an
+environment serves is decided per GitHub environment, not by this job.
 
 The `deploy-cloudflare` job runs after `deploy-stage` has migrated the database, in its own
 `stage-edge` environment. It resolves the last successful `stage-edge` deployment, plans the diff
@@ -261,7 +265,7 @@ Hyperdrive and Workers VPC bindings its Worker configuration declares. The per-u
 `cloudflare:proof` and the verified rollback catch a Worker whose configuration is incomplete.
 The first edge deploy has no previous edge deployment, so seed it with a full run:
 `gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`. Placement adds the Worker
-delivery; retiring a unit's Zerops service is a separate topology and `zerops.yaml` change.
+delivery; it never removes a Zerops service or any GitHub environment variable or secret.
 
 ## Required smoke suite
 
