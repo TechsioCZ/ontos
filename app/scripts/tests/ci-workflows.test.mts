@@ -163,6 +163,9 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   // The build step is each unit's `cloudflare:deploy` without its final `wrangler deploy`.
   expect(build?.run).toContain('run cloudflare:build');
   expect(build?.run).toContain('cloudflare-output-verify --app "$id" --require-public-urls');
+  // The built Wrangler config must name the Worker the run snapshots, deploys and restores.
+  expect(build?.run).toContain("exec jq -r '.name' .output/wrangler.json");
+  expect(build?.run).toContain('"$built_worker" != "$worker"');
   expect(deploy?.run).toContain('exec wrangler deploy --config .output/wrangler.json');
   expect(proof?.run).toContain('run cloudflare:proof');
   // Build configuration comes from the reviewed placement document, not from environment

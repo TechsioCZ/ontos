@@ -749,11 +749,18 @@ jobs:
           while IFS=$'\t' read -r key value; do
             export "$key=$value"
           done < <(jq -r '.buildEnvironment | to_entries[] | [.key, .value] | @tsv' topology/cloudflare-placement.json)
-          mapfile -t units < <(jq -r '.[] | [.id, .packageName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
+          mapfile -t units < <(jq -r '.[] | [.id, .packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
           for unit in "${units[@]}"; do
-            IFS=$'\t' read -r id package <<<"$unit"
+            IFS=$'\t' read -r id package worker <<<"$unit"
             mise exec -- pnpm --filter "$package" run cloudflare:build
             mise exec -- pnpm --filter "$package" exec ultramodern-create ultramodern cloudflare-output-verify --app "$id" --require-public-urls
+            # Wrangler deploys the name in the built config; the run snapshots and restores the
+            # planned topology name, so they must be the same Worker.
+            built_worker="$(mise exec -- pnpm --filter "$package" exec jq -r '.name' .output/wrangler.json)"
+            if [[ "$built_worker" != "$worker" ]]; then
+              echo "$id builds Worker $built_worker, but topology places $worker; no Worker was changed." >&2
+              exit 1
+            fi
           done
 
       # Placement lists the Workers it no longer deploys. Deleting a Worker is irreversible, so it
