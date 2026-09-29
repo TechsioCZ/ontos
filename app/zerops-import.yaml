@@ -38,3 +38,5 @@ services:
     type: nodejs@24
   - hostname: pricegroupcatalogworker
     type: nodejs@24
+  - hostname: outboxworkerhost
+    type: nodejs@24

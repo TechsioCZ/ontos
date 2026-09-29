@@ -126,6 +126,24 @@ it('starts a dedicated Price Group worker that drains durable pending projection
   expect(worker).toContain(`exec npm run serve`);
 });
 
+it('runs every owner worker in one Outbox Worker host service beside the dedicated workers', () => {
+  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
+  const host = serviceBlock(zeropsYaml, 'outbox-worker-host');
+
+  expect(host).toContain(`zerops:materialize --app 'outbox-worker-host' --package 'app' --package-dir '.' --worker`);
+  expect(host).toContain(`- 'app/.zerops/runtime/outbox-worker-host'`);
+  expect(host).toContain(`OUTBOX_WORKER_HEALTH_PORT: '4100'`);
+  expect(host).toContain(runtimeDatabaseUrl);
+  // Commerce's worker reaches Price Group Catalog, so the host carries its binding too.
+  expect(host).toContain(`ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'`);
+  expect(host).toContain(`test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON"`);
+  expect(host.match(/path: '\/ready'/gu)).toHaveLength(2);
+  // The Zerops target keeps deploying each owner's dedicated worker.
+  for (const worker of ['party-registry-worker', 'commerce-customer-context-worker', 'price-group-catalog-worker']) {
+    expect(serviceBlock(zeropsYaml, worker)).toContain('--worker');
+  }
+});
+
 it('builds every Node service with the pinned toolchain and ships Node instead of downloading it at start', () => {
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
   const node = /^node = "(?<node>[^"]+)"$/mu.exec(readFileSync(new URL('../../.mise.toml', import.meta.url), 'utf-8'))
@@ -190,7 +208,12 @@ it('declares a public subdomain at service creation for every non-worker unit an
       ),
     ),
   ).toEqual(
-    new Set(units.map(({ run, setup }) => `${hostnameOf(setup)} ${run.base} ${String(!setup.endsWith('-worker'))}`)),
+    new Set(
+      units.map(
+        ({ run, setup }) =>
+          `${hostnameOf(setup)} ${run.base} ${String(!setup.endsWith('-worker') && setup !== 'outbox-worker-host')}`,
+      ),
+    ),
   );
   for (const service of services) {
     expect(service.hostname).toMatch(/^[a-z0-9]{1,25}$/u);

@@ -21,7 +21,7 @@
     "effect-native/no-hand-rolled-tagged-union": 3,
     "effect-native/no-imperative-loop-in-effect-gen": 2,
     "effect-native/no-json-schema-as-document-contract": 3,
-    "effect-native/no-layer-provide-in-library": 3,
+    "effect-native/no-layer-provide-in-library": 1,
     "effect-native/no-literal-union-type-alias": 5,
     "effect-native/no-local-defect-seam": 2,
     "effect-native/no-manual-tag-comparison": 34,

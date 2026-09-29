@@ -2,7 +2,7 @@ import { Effect, Layer, Schema } from 'effect';
 
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
-import { startOutboxWorkerProcess } from '../../src/outbox/process.ts';
+import { defineOutboxWorkerEntry, startOutboxWorkerHost } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 
 const MessageKey = Schema.String.pipe(Schema.brand('MessageKey'));
@@ -58,9 +58,13 @@ const runtimeLayer = Layer.effect(
   ),
 );
 
-startOutboxWorkerProcess({
-  claimOwnerPrefix: 'process-fixture',
-  layer: runtimeLayer,
-  registrations: [registration],
-  subscriptions: [registration.descriptor],
+startOutboxWorkerHost({
+  entries: [
+    defineOutboxWorkerEntry({
+      claimOwnerPrefix: 'process-fixture',
+      layer: runtimeLayer,
+      registrations: [registration],
+      subscriptions: [registration.descriptor],
+    }),
+  ],
 });

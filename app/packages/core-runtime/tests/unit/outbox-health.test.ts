@@ -3,7 +3,7 @@ import { expect, it } from 'effect-rstest';
 import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
 
 import { createOutboxWorkerHealth, serveOutboxWorkerHealth } from '../../src/outbox/health.ts';
-import { runOutboxWorkerProcess } from '../../src/outbox/process.ts';
+import { defineOutboxWorkerEntry, runOutboxWorkerHost } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
 
 it.live('production health binds all IPv4 interfaces for external-container probes', () =>
@@ -68,20 +68,24 @@ it.effect('invalid configured health ports fail startup with a typed configurati
   Effect.gen(function* invalidPortConfiguration() {
     for (const port of ['0', '65536', '4102.5', 'invalid']) {
       const failure = yield* Effect.flip(
-        runOutboxWorkerProcess({
-          claimOwnerPrefix: 'health-config-test',
+        runOutboxWorkerHost({
+          entries: [
+            defineOutboxWorkerEntry({
+              claimOwnerPrefix: 'health-config-test',
+              layer: Layer.succeed(OutboxRuntime, {
+                matchMessages: () => Effect.die('Invalid configuration must prevent matching'),
+                runCycle: () => Effect.die('Invalid configuration must prevent polling'),
+              }),
+              registrations: [],
+              subscriptions: [],
+            }),
+          ],
           health: true,
-          registrations: [],
-          subscriptions: [],
         }).pipe(
           Effect.provideService(
             ConfigProvider.ConfigProvider,
             ConfigProvider.fromUnknown({ OUTBOX_WORKER_HEALTH_PORT: port }),
           ),
-          Effect.provideService(OutboxRuntime, {
-            matchMessages: () => Effect.die('Invalid configuration must prevent matching'),
-            runCycle: () => Effect.die('Invalid configuration must prevent polling'),
-          }),
         ),
       );
       expect(Predicate.isTagged(failure, 'ConfigError')).toBe(true);

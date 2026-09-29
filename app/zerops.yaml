@@ -698,4 +698,51 @@ zerops:
           port: 4108
           path: '/ready'
       start: sh -c 'cd app/.zerops/runtime/price-group-catalog-worker && PATH="$PWD/node/bin:$PATH" exec npm run serve'
+
+  - setup: 'outbox-worker-host'
+    build:
+      base: 'alpine@3.23'
+      envVariables:
+        # Zephyr uploads only when the deploy provides ZE_CI_TOKEN; a failed upload must fail the build.
+        ZE_FAIL_BUILD: 'true'
+      prepareCommands:
+        - sudo apk add --no-cache curl libstdc++
+        - sh /build/source/app/scripts/install-zerops-node.sh 26.7.0 12.4.2
+      buildCommands:
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm install --frozen-lockfile
+        - cd app && PATH="$HOME/.local/node-26.7.0/bin:$PATH" node scripts/verify-zerops-workspace-install.mts
+        - cd app && ULTRAMODERN_SOURCE_REVISION="$(git rev-parse HEAD)" PATH="$HOME/.local/node-26.7.0/bin:$PATH" pnpm run zerops:materialize --app 'outbox-worker-host' --package 'app' --package-dir '.' --worker
+        - mkdir 'app/.zerops/runtime/outbox-worker-host/node' && cp -a "$HOME/.local/node-26.7.0/bin" "$HOME/.local/node-26.7.0/lib" 'app/.zerops/runtime/outbox-worker-host/node/'
+      deployFiles:
+        - 'app/.zerops/runtime/outbox-worker-host'
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 4100
+          path: '/ready'
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: 'nodejs@24'
+      ports:
+        - port: 4100
+          protocol: tcp
+          httpSupport: true
+      envVariables:
+        DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
+        NODE_ENV: production
+        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'
+        OUTBOX_WORKER_HEALTH_PORT: '4100'
+        PORT: '4100'
+        SPICEDB_ENDPOINT: 'spicedb:50051'
+        SPICEDB_INSECURE: 'true'
+        SPICEDB_PRESHARED_KEY: ${spicedb_SPICEDB_GRPC_PRESHARED_KEY}
+        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
+        ULTRAMODERN_ZEROPS_SERVICE: outbox-worker-host
+      healthCheck:
+        httpGet:
+          port: 4100
+          path: '/ready'
+      start: sh -c 'test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON" || { echo "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON is required" >&2; exit 1; }; cd app/.zerops/runtime/outbox-worker-host && PATH="$PWD/node/bin:$PATH" exec npm run serve'
   # </generated-outbox-worker-deployments>

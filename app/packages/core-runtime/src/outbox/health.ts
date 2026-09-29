@@ -63,6 +63,17 @@ export const createOutboxWorkerHealth = ({
   staleAfterMs,
 }: CreateOutboxWorkerHealthOptions): Effect.Effect<OutboxWorkerHealth> => makeOutboxWorkerHealth(staleAfterMs, now);
 
+/** The readiness surface one health endpoint serves and closes. */
+export type OutboxWorkerReadiness = Pick<OutboxWorkerHealth, 'isReady' | 'shuttingDown'>;
+
+/** A host is ready only while it hosts at least one loop and every hosted polling loop is ready. */
+export const combineOutboxWorkerHealth = (loops: readonly OutboxWorkerReadiness[]): OutboxWorkerReadiness => ({
+  isReady: Effect.forEach(loops, (loop) => loop.isReady, { concurrency: 1 }).pipe(
+    Effect.map((ready) => ready.length > 0 && ready.every(Boolean)),
+  ),
+  shuttingDown: Effect.forEach(loops, (loop) => loop.shuttingDown, { concurrency: 1, discard: true }),
+});
+
 export interface OutboxWorkerHealthServer {
   readonly hostname: string;
   readonly port: number;
@@ -72,7 +83,7 @@ export interface OutboxWorkerHealthServer {
 const createNodeHealthServer = () => process.getBuiltinModule('http').createServer();
 
 export const serveOutboxWorkerHealth: (
-  health: OutboxWorkerHealth,
+  health: OutboxWorkerReadiness,
   options: { readonly port: number },
 ) => Effect.Effect<OutboxWorkerHealthServer, ServeError, Scope.Scope> = Effect.fn('OutboxWorkerHealth.serve')(
   function* serveOutboxWorkerHealthEffect(health, options) {

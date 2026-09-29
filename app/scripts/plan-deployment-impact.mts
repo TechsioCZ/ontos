@@ -26,7 +26,7 @@ import type {
   AuthorizationReadinessEvidence,
 } from './check-authorization-readiness.mts';
 import { hashAuthorizationEvidence } from './check-authorization-readiness.mts';
-import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+import { OUTBOX_WORKER_HOST, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 import type { AuthorizationImpactReport } from './report-fail-closed-authorization-impact.mts';
 
 export const DeploymentPhaseKindSchema = Schema.Literals(['infrastructure', 'provider', 'shell']);
@@ -185,10 +185,20 @@ export interface DeploymentImpactPlan {
   };
 }
 
+/**
+ * Where the deploying environment runs. On `zerops` every owner's Outbox Worker has its own service;
+ * on `cloudflare` the delivery units run as Workers and one Zerops service, the Outbox Worker host,
+ * runs every owner's worker entry in place of the dedicated services.
+ */
+export const DeployTargetSchema = Schema.Literals(['cloudflare', 'zerops']);
+export type DeployTarget = typeof DeployTargetSchema.Type;
+
 export interface PlanDeploymentImpactOptions {
   readonly authorizationPromotion?: AuthorizationPromotionGateInput;
   readonly baseRevision?: string;
   readonly changedPaths?: readonly string[];
+  /** Defaults to `zerops`. */
+  readonly deployTarget?: DeployTarget;
   readonly headRevision?: string;
   /**
    * The last successful edge deployment, for retirement checks. Defaults to `baseRevision`; a full
@@ -1155,6 +1165,7 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   'scripts/materialize-zerops-runtime.mjs',
   'scripts/locked-registry-overrides.mjs',
   'scripts/outbox-worker-delivery.mjs',
+  OUTBOX_WORKER_HOST.entry,
   'zerops.yaml',
 ]);
 const isConservativeFullDeployChange = (changedPath: string): boolean =>
@@ -1309,6 +1320,38 @@ const validateWorkerStageSetups = (
   }
 };
 
+/** Each impacted owner's dedicated worker on Zerops; on Cloudflare, the one host once any owner is impacted. */
+const planWorkerPhases = (
+  workers: readonly {
+    readonly id: string;
+    readonly ownerId: string;
+    readonly serviceIdEnv: string;
+    readonly stageSetup: string;
+  }[],
+  impacted: ReadonlySet<string>,
+  deployTarget: DeployTarget,
+): readonly DeploymentPhase[] => {
+  const impactedWorkers = workers.filter((worker) => impacted.has(worker.ownerId));
+  if (deployTarget === 'zerops') {
+    return impactedWorkers.map((worker) => ({
+      id: worker.id,
+      kind: 'provider' as const,
+      serviceIdEnv: worker.serviceIdEnv,
+      stageSetup: worker.stageSetup,
+    }));
+  }
+  return impactedWorkers.length === 0
+    ? []
+    : [
+        {
+          id: OUTBOX_WORKER_HOST.id,
+          kind: 'provider' as const,
+          serviceIdEnv: OUTBOX_WORKER_HOST.serviceIdEnv,
+          stageSetup: OUTBOX_WORKER_HOST.stageSetup,
+        },
+      ];
+};
+
 export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) =>
   Effect.gen(function* planDeploymentImpactEffect() {
     const authorization =
@@ -1352,7 +1395,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       ),
     );
     const workers = workerDeliveries.filter((delivery) => delivery !== undefined);
-    validateWorkerStageSetups(workers, stageSetups);
+    validateWorkerStageSetups(workers.length === 0 ? [] : [...workers, OUTBOX_WORKER_HOST], stageSetups);
     const shell = orderedUnits.find((unit) => unit.kind === 'shell');
     if (shell === undefined) {
       return fail('reference topology has no Shell delivery unit');
@@ -1380,14 +1423,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
     }
     phases.push(
       ...selectedUnits.filter((unit) => unit.kind === 'provider').map(toPhase),
-      ...workers
-        .filter((worker) => impacted.has(worker.ownerId))
-        .map((worker) => ({
-          id: worker.id,
-          kind: 'provider' as const,
-          serviceIdEnv: worker.serviceIdEnv,
-          stageSetup: worker.stageSetup,
-        })),
+      ...planWorkerPhases(workers, impacted, options.deployTarget ?? 'zerops'),
       ...selectedUnits.filter((unit) => unit.kind === 'shell').map(toPhase),
     );
 
@@ -1501,10 +1537,19 @@ const deploymentImpactCommand = Command.make(
     authorizationNow: Flag.String('authorization-now').pipe(Flag.optional),
     baseRevision: Flag.String('base').pipe(Flag.optional),
     changedPaths: Flag.String('changed-path').pipe(Flag.atLeast(0)),
+    deployTarget: Flag.Literals('deploy-target', DeployTargetSchema.literals).pipe(Flag.withDefault('zerops')),
     headRevision: Flag.String('head').pipe(Flag.optional),
     placementBaseRevision: Flag.String('placement-base').pipe(Flag.optional),
   },
-  ({ authorizationEnvironment, authorizationNow, baseRevision, changedPaths, headRevision, placementBaseRevision }) =>
+  ({
+    authorizationEnvironment,
+    authorizationNow,
+    baseRevision,
+    changedPaths,
+    deployTarget,
+    headRevision,
+    placementBaseRevision,
+  }) =>
     Effect.gen(function* deploymentImpactCommandEffect() {
       const rootDirectory = yield* Config.String('PWD').pipe(Effect.orElseSucceed(() => '.'));
       const environment = Option.getOrUndefined(authorizationEnvironment);
@@ -1518,6 +1563,7 @@ const deploymentImpactCommand = Command.make(
       const options: PlanDeploymentImpactOptions = {
         baseRevision: Option.getOrUndefined(baseRevision),
         changedPaths: changedPaths.length === 0 ? undefined : changedPaths,
+        deployTarget,
         headRevision: Option.getOrUndefined(headRevision),
         placementBaseRevision: Option.getOrUndefined(placementBaseRevision),
         rootDirectory,

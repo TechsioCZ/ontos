@@ -181,44 +181,45 @@ export const outboxWorkerLayer = Layer.merge(
 );
 `;
 
-const renderWorkerHostMain = (consumer: OntosVerticalMetadata): string => `${OUTBOX_WORKER_HOST_HEADER}
-// @ontos-outbox-worker-host-owner ${consumer.moduleId}
-import { start${toPascalCase(consumer.slug)}OutboxWorker } from '../../scripts/outbox-worker.ts';
-
-start${toPascalCase(consumer.slug)}OutboxWorker();
-`;
-
-const renderWorkerHostScript = (consumer: OntosVerticalMetadata): string => `${OUTBOX_WORKER_HOST_HEADER}
+const renderWorkerHostEntry = (consumer: OntosVerticalMetadata): string => `${OUTBOX_WORKER_HOST_HEADER}
 // @ontos-outbox-worker-host-owner ${consumer.moduleId}
 import { Layer } from 'effect';
 import {
+  defineOutboxWorkerEntry,
   extractOutboxWorkerSubscriptions,
-  startOutboxWorkerProcess,
 } from '@app/core-runtime/outbox/worker';
-import { outboxWorkers } from '../src/workers/index.ts';
+import { outboxWorkers } from '../workers/index.ts';
 import {
   outboxWorkerCorePersistenceLive,
   outboxWorkerDatabaseConfigLive,
   outboxWorkerLayer as outboxWorkerDefinitionLayer,
   outboxWorkerRepositoryLive,
-} from '../src/worker-host/layer.ts';
+} from './layer.ts';
 
-const outboxSubscriptions = extractOutboxWorkerSubscriptions(outboxWorkers);
-const outboxWorkerProcessLayer = outboxWorkerDefinitionLayer.pipe(
-  Layer.provide(outboxWorkerRepositoryLive),
-  Layer.provide(outboxWorkerCorePersistenceLive),
-  Layer.provide(outboxWorkerDatabaseConfigLive),
-);
-
-export const start${toPascalCase(consumer.slug)}OutboxWorker = (): void =>
-  startOutboxWorkerProcess({
-    claimOwnerPrefix: '${consumer.moduleId}-outbox-worker',
-    health: true,
-    layer: outboxWorkerProcessLayer,
-    registrations: outboxWorkers,
-    subscriptions: outboxSubscriptions,
-  });
+/** The combined Outbox Worker host polls this entry in its own runtime under its own claim owner. */
+export const outboxWorkerEntry = defineOutboxWorkerEntry({
+  claimOwnerPrefix: '${consumer.moduleId}-outbox-worker',
+  layer: outboxWorkerDefinitionLayer.pipe(
+    Layer.provide(outboxWorkerRepositoryLive),
+    Layer.provide(outboxWorkerCorePersistenceLive),
+    Layer.provide(outboxWorkerDatabaseConfigLive),
+  ),
+  registrations: outboxWorkers,
+  subscriptions: extractOutboxWorkerSubscriptions(outboxWorkers),
+});
 `;
+
+/** A dedicated production worker service runs the owner's entry alone in the same Outbox Worker host. */
+const renderWorkerHostMain = (consumer: OntosVerticalMetadata): string => `${OUTBOX_WORKER_HOST_HEADER}
+// @ontos-outbox-worker-host-owner ${consumer.moduleId}
+import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';
+import { outboxWorkerEntry } from './entry.ts';
+
+startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
+`;
+
+const WORKER_HOST_DIRECTORY = 'worker-host';
+const WORKER_START_SCRIPT = 'node --experimental-strip-types ./src/worker-host/main.ts';
 
 const planWorkerHostFile = (filePath: string, consumer: OntosVerticalMetadata, content: string) =>
   Effect.gen(function* planWorkerHostFileEffect() {
@@ -273,21 +274,17 @@ const patchConsumerPackage = (consumer: OntosVerticalMetadata, producer: OntosVe
         message: `vertical ${consumer.slug} package scripts must be a JSON object`,
       });
     }
-    const scriptsValue = yield* trySync(() =>
-      asJsonObject(packageScripts, `vertical ${consumer.slug} package scripts`),
-    );
-    const workerCommand = 'node --experimental-strip-types ./src/worker-host/main.ts';
-    const scripts: MutableJsonObject = { ...scriptsValue };
-    for (const scriptName of ['dev:worker', 'worker:start'] as const) {
-      const current = scripts[scriptName];
-      if (current !== undefined && current !== workerCommand) {
-        return yield* new OutboxWorkerScaffoldError({
-          cause: current,
-          message: `vertical ${consumer.slug} has an incompatible ${scriptName} script`,
-        });
-      }
-      scripts[scriptName] = workerCommand;
+    const scripts: MutableJsonObject = {
+      ...(yield* trySync(() => asJsonObject(packageScripts, `vertical ${consumer.slug} package scripts`))),
+    };
+    const currentStart = scripts['worker:start'];
+    if (currentStart !== undefined && currentStart !== WORKER_START_SCRIPT) {
+      return yield* new OutboxWorkerScaffoldError({
+        cause: currentStart,
+        message: `vertical ${consumer.slug} has an incompatible worker:start script`,
+      });
     }
+    scripts['worker:start'] = WORKER_START_SCRIPT;
     const sortedScripts = Object.fromEntries(
       Object.entries(scripts).toSorted(([left], [right]) => left.localeCompare(right)),
     );
@@ -472,18 +469,18 @@ const planOutboxWorkerScaffoldEffect = (
     const registryMutation = yield* planRegistryMutation(registryPath, registryContent, worker);
 
     const workerHostLayerPath = yield* trySync(() =>
-      resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'src', 'worker-host', 'layer.ts'),
+      resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'src', WORKER_HOST_DIRECTORY, 'layer.ts'),
+    );
+    const workerHostEntryPath = yield* trySync(() =>
+      resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'src', WORKER_HOST_DIRECTORY, 'entry.ts'),
     );
     const workerHostMainPath = yield* trySync(() =>
-      resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'src', 'worker-host', 'main.ts'),
+      resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'src', WORKER_HOST_DIRECTORY, 'main.ts'),
     );
-    const workerHostScriptPath = yield* trySync(() =>
-      resolveContainedPath(workspaceRoot, 'verticals', consumer.slug, 'scripts', 'outbox-worker.ts'),
-    );
-    const [workerHostLayerMutation, workerHostMainMutation, workerHostScriptMutation] = yield* Effect.all([
+    const [workerHostLayerMutation, workerHostEntryMutation, workerHostMainMutation] = yield* Effect.all([
       planWorkerHostFile(workerHostLayerPath, consumer, renderWorkerHostLayer(consumer)),
+      planWorkerHostFile(workerHostEntryPath, consumer, renderWorkerHostEntry(consumer)),
       planWorkerHostFile(workerHostMainPath, consumer, renderWorkerHostMain(consumer)),
-      planWorkerHostFile(workerHostScriptPath, consumer, renderWorkerHostScript(consumer)),
     ]);
 
     const registrationImport = `import { ${workerVariable} } from './src/workers/${worker}.worker.ts';`;
@@ -527,8 +524,8 @@ const planOutboxWorkerScaffoldEffect = (
       registryMutation,
       ...(ownerRegistrationMutation === undefined ? [] : [ownerRegistrationMutation]),
       ...Option.toArray(workerHostLayerMutation),
+      ...Option.toArray(workerHostEntryMutation),
       ...Option.toArray(workerHostMainMutation),
-      ...Option.toArray(workerHostScriptMutation),
       ...(packageMutation === undefined ? [] : [packageMutation]),
       ...(tsconfigMutation === undefined ? [] : [tsconfigMutation]),
     ];

@@ -9,7 +9,9 @@
   ],
   "type": "module",
   "scripts": {
-    "dev": "pnpm --parallel --filter @app/shell-super-app --filter './verticals/*' run \"/^dev(?::worker)?$/\"",
+    "dev": "pnpm run \"/^dev:(?:applications|outbox-worker-host)$/\"",
+    "dev:applications": "pnpm --parallel --filter @app/shell-super-app --filter './verticals/*' run dev",
+    "dev:outbox-worker-host": "node --experimental-strip-types ./scripts/outbox-worker-host.generated.mts",
     "dev:shell": "pnpm --filter @app/shell-super-app dev",
     "dev:party-registry": "pnpm --filter @app/party-registry dev",
     "dev:commerce-customer-context": "pnpm --filter @app/commerce-customer-context dev",

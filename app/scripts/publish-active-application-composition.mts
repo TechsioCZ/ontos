@@ -21,6 +21,9 @@ import {
   encodeActiveApplicationCompositionSnapshot,
 } from './active-application-composition.mts';
 import type { ObservedArtifact, ObservedModuleDeployment } from './active-application-composition.mts';
+import { OUTBOX_WORKER_HOST, dedicatedOutboxWorkerSetup } from './outbox-worker-delivery.mjs';
+import { DeployTargetSchema } from './plan-deployment-impact.mts';
+import type { DeployTarget } from './plan-deployment-impact.mts';
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from './zerops-public-api.mts';
 
@@ -62,13 +65,29 @@ const ZeropsYamlSchema = Schema.Struct({
 const StageVariablesSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const SetupListJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
 
-/** Zerops setups whose start preflight requires the published snapshot; they are its consumers. */
-export const compositionConsumerSetups = (zeropsYamlText: string) =>
-  Schema.decodeUnknownEffect(ZeropsYamlSchema)(parseYaml(zeropsYamlText)).pipe(
+/**
+ * Zerops setups whose start preflight requires the published snapshot; they are its consumers. Only
+ * the deploy target's Outbox Worker services run: the dedicated owner workers on Zerops, the one
+ * Outbox Worker host on Cloudflare.
+ */
+export const compositionConsumerSetups = (
+  zeropsYamlText: string,
+  topology: { readonly verticals: readonly { readonly id: string }[] },
+  deployTarget: DeployTarget,
+) => {
+  const offTarget = new Set(
+    deployTarget === 'zerops'
+      ? [OUTBOX_WORKER_HOST.stageSetup]
+      : topology.verticals.map(({ id }) => dedicatedOutboxWorkerSetup(id)),
+  );
+  return Schema.decodeUnknownEffect(ZeropsYamlSchema)(parseYaml(zeropsYamlText)).pipe(
     Effect.map(({ zerops }) =>
-      zerops.filter(({ run }) => run?.start?.includes(CONSUMER_PREFLIGHT) === true).map(({ setup }) => setup),
+      zerops
+        .filter(({ run, setup }) => run?.start?.includes(CONSUMER_PREFLIGHT) === true && !offTarget.has(setup))
+        .map(({ setup }) => setup),
     ),
   );
+};
 
 /** Stage service-ID variable of a deployment unit, named the way the topology implies. */
 export const serviceIdVariable = (setup: string): string =>
@@ -93,7 +112,13 @@ const readTopology = readWorkspaceText('topology', 'reference-topology.json').pi
   Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(TopologySchema))),
 );
 
-const readConsumerSetups = readWorkspaceText('zerops.yaml').pipe(Effect.flatMap(compositionConsumerSetups));
+const readConsumerSetups = Effect.gen(function* readConsumerSetupsEffect() {
+  const deployTarget = yield* Config.schema(DeployTargetSchema, 'DEPLOY_TARGET').pipe(Config.withDefault('zerops'));
+  const [zeropsYaml, topology] = yield* Effect.all([readWorkspaceText('zerops.yaml'), readTopology], {
+    concurrency: 2,
+  });
+  return yield* compositionConsumerSetups(zeropsYaml, topology, deployTarget);
+});
 
 const writeGitHubOutput = (line: string) =>
   Effect.gen(function* appendGitHubOutput() {

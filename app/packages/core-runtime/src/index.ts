@@ -816,7 +816,7 @@ export {
   OutboxPollerConfigError,
   OutboxWorkerDescriptorError,
 } from './outbox/errors.ts';
-export type { OutboxWorkerHealth, OutboxWorkerHealthServer } from './outbox/health.ts';
+export type { OutboxWorkerHealth, OutboxWorkerHealthServer, OutboxWorkerReadiness } from './outbox/health.ts';
 export { parseOutboxPollingConfig, runOutboxPollingLoop } from './outbox/poller.ts';
 export type {
   OutboxCycleRunner,
@@ -837,7 +837,12 @@ export type {
   OutboxWorkerLegalEntityScopeFanoutService,
   OutboxWorkerLegalEntityScopeRecord,
 } from './outbox/legal-entity-scope-fanout.ts';
-export type { RunOutboxWorkerProcessInput, StartOutboxWorkerProcessInput } from './outbox/process.ts';
+export type {
+  DefineOutboxWorkerEntryInput,
+  OutboxWorkerEntry,
+  OutboxWorkerLoopInput,
+  RunOutboxWorkerHostInput,
+} from './outbox/process.ts';
 export { OutboxRuntime, OutboxRuntimeLive, matchOutboxMessages, runOutboxCycle } from './outbox/runtime.ts';
 export type {
   MatchOutboxMessagesInput,

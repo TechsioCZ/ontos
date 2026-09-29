@@ -32,6 +32,8 @@ jobs:
       contents: read
       deployments: read
     env:
+      # Selects which Outbox Worker services consume the snapshot: the dedicated ones, or the one host.
+      DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET || 'zerops' }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
     steps:
       - name: Harden Runner

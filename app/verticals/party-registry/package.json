@@ -44,7 +44,6 @@
     "db:test": "pnpm test:unit && pnpm test:integration",
     "db:verify": "node scripts/verify-db-schema.mts && node scripts/verify-engagement-db-schema.mts",
     "dev": "node ../../scripts/prepare-dev-module-contract.mts party-registry && modern dev",
-    "dev:worker": "node --experimental-strip-types ./src/worker-host/main.ts",
     "serve": "modern serve",
     "test:component": "rstest --project component",
     "test:integration": "rstest --project integration",

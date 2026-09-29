@@ -5,7 +5,8 @@ import { Config, Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect
 import { build } from 'esbuild';
 import { parseSync } from 'oxc-parser';
 
-import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+import { readOutboxWorkerHost, renderOutboxWorkerHostEntry } from './generate-outbox-worker-deployment.mjs';
+import { OUTBOX_WORKER_HOST, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({
@@ -200,13 +201,43 @@ const collectProductionDependency = (importedPath, packages, dependencies) =>
  */
 
 /**
- * Bundle owner + Core code; retain exact production dependencies, never workspace links.
- * @param {MaterializeOptions} options Materialization identity and paths.
+ * @typedef {{
+ *   appId: string,
+ *   packageDir: string,
+ *   packageName: string,
+ *   workspaceRoot: string,
+ * }} WorkerIdentity
  */
-const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtimeDir, workspaceRoot }) =>
-  Effect.gen(function* materializeWorker() {
+
+/**
+ * The deployable worker an identity names: one topology owner's dedicated worker, or the Outbox Worker
+ * host that runs every owner's entry. Its service id names the runtime directory and the artifact.
+ * @param {WorkerIdentity} identity Materialization identity.
+ */
+const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, workspaceRoot }) =>
+  Effect.gen(function* resolveWorker() {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    if (appId === OUTBOX_WORKER_HOST.id) {
+      const rootPackage = yield* Schema.decodeUnknownEffect(PackageManifestSchema)(
+        yield* fs.readFileString(path.join(workspaceRoot, 'package.json')),
+      );
+      if (packageDir !== '.' || packageName !== rootPackage.name) {
+        return yield* Effect.fail(failure('Worker identity must match the generated Outbox Worker host'));
+      }
+      const host = yield* readOutboxWorkerHost(workspaceRoot);
+      if (host === undefined) {
+        return yield* Effect.fail(failure('No MicroVertical has a generated Outbox Worker entry'));
+      }
+      const hostEntryPath = path.join(workspaceRoot, host.entry);
+      const hostEntry = (yield* fs.exists(hostEntryPath)) ? yield* fs.readFileString(hostEntryPath) : null;
+      if (hostEntry !== renderOutboxWorkerHostEntry(host)) {
+        return yield* Effect.fail(
+          failure('Outbox Worker host entry drift: run node scripts/generate-outbox-worker-deployment.mjs --write'),
+        );
+      }
+      return { entryPoint: host.entry, serviceId: host.id };
+    }
     const topologySource = yield* fs.readFileString(path.join(workspaceRoot, 'topology/reference-topology.json'));
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
     const vertical = topology.verticals.find((candidate) => candidate.id === appId);
@@ -219,6 +250,24 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     if (delivery === undefined) {
       return yield* Effect.fail(failure(`${appId} has no generated Outbox Worker host`));
     }
+    return { entryPoint: path.join(packageDir, delivery.entry), serviceId: delivery.id };
+  });
+
+/**
+ * @param {WorkerIdentity} identity Materialization identity.
+ * @returns {PromiseLike<{ entryPoint: string, serviceId: string }>} The worker's bundle entry and service id.
+ */
+export const resolveOutboxWorker = (identity) => nodeRuntime.runPromise(resolveOutboxWorkerEffect(identity));
+
+/**
+ * Bundle owner + Core code; retain exact production dependencies, never workspace links.
+ * @param {MaterializeOptions} options Materialization identity and paths.
+ */
+const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtimeDir, workspaceRoot }) =>
+  Effect.gen(function* materializeWorker() {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const delivery = yield* resolveOutboxWorkerEffect({ appId, packageDir, packageName, workspaceRoot });
     /** @type {Record<string, string>} */
     const dependencies = {};
     /** @type {Map<string, { manifest: Schema.Schema.Type<typeof PackageManifestSchema> }>} */
@@ -252,7 +301,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
               js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
             },
             bundle: true,
-            entryPoints: [path.join(packageDir, delivery.entry)],
+            entryPoints: [delivery.entryPoint],
             format: 'esm',
             metafile: true,
             outfile: path.join(runtimeDir, WORKER_ENTRY),
@@ -302,7 +351,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     );
     const sourceRevision = yield* Config.option(Config.String('ULTRAMODERN_SOURCE_REVISION'));
     const artifactAppId = yield* Schema.decodeUnknownEffect(AppIdSchema)(appId);
-    const artifactServiceId = yield* Schema.decodeUnknownEffect(ServiceIdSchema)(delivery.id);
+    const artifactServiceId = yield* Schema.decodeUnknownEffect(ServiceIdSchema)(delivery.serviceId);
     const { inputs: sourceInputMetadata } = yield* Schema.decodeUnknownEffect(MetafileInputsSchema)(metafile);
     /** @type {string[]} */
     const sourceInputs = [];
@@ -323,7 +372,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     yield* fs.writeFileString(path.join(runtimeDir, 'worker-artifact.json'), `${artifactSource}\n`);
     return {
       dependencies,
-      name: `${delivery.id}-runtime`,
+      name: `${delivery.serviceId}-runtime`,
       private: true,
       scripts: { serve: `node ${WORKER_ENTRY}` },
       type: 'module',

@@ -220,6 +220,9 @@ The edge deploy is additive. The Zerops deploy (`deploy-stage`: migrator, SpiceD
 workers and Shell) is unchanged and keeps working for every environment that targets Zerops. The
 edge deploy runs only for an environment configured for Cloudflare (below); which target an
 environment serves is decided per GitHub environment, not by this job.
+With the environment variable `DEPLOY_TARGET=cloudflare`, `deploy-stage` deploys the one
+`outbox-worker-host` service (`ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID`) instead of each owner's dedicated
+worker service; see [Outbox Workers](./OUTBOX_WORKERS.md).
 
 The `deploy-cloudflare` job runs after `deploy-stage` has migrated the database, in its own
 `stage-edge` environment. It resolves the last successful `stage-edge` deployment, plans the diff

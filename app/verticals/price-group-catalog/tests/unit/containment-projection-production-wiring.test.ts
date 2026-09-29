@@ -19,23 +19,21 @@ it('registers the durable containment reconciler in both module and process inve
 it.layer(NodeFileSystem.layer)(
   'starts a health-gated worker with tenant owner and containment capabilities',
   (suite) => {
-    suite.effect('uses the shared restart-draining and graceful-shutdown process host', () =>
+    suite.effect('runs inside the shared restart-draining and graceful-shutdown Outbox Worker host', () =>
       Effect.gen(function* productionWorkerHost() {
-        const start = yield* readRelative('../../src/worker-host/start.ts');
+        const entry = yield* readRelative('../../src/worker-host/entry.ts');
         const layer = yield* readRelative('../../src/worker-host/layer.ts');
-        const main = yield* readRelative('../../src/worker-host/main.ts');
+        const host = yield* readRelative('../../../../scripts/outbox-worker-host.generated.mts');
         const worker = yield* readRelative('../../src/workers/reconcile-price-group-containment-projection.worker.ts');
-        const packageJson = yield* readRelative('../../package.json');
         const registration = yield* readRelative('../../vertical.registration.ts');
 
-        expect(start).toContain('startOutboxWorkerProcess');
-        expect(start).toContain('extractOutboxWorkerSubscriptions(outboxWorkers)');
-        expect(start).toContain('health: true');
-        expect(start).toContain('registrations: outboxWorkers');
+        expect(entry).toContain('defineOutboxWorkerEntry');
+        expect(entry).toContain('extractOutboxWorkerSubscriptions(outboxWorkers)');
+        expect(entry).toContain('registrations: outboxWorkers');
+        expect(host).toContain('verticals/price-group-catalog/src/worker-host/entry.ts');
+        expect(host).toContain('health: true');
         expect(layer).toContain('OutboxWorkerTenantScopeLive');
         expect(layer).toContain('ResourceContainmentRelationshipMutationLive');
-        expect(main).toContain('startPriceGroupCatalogOutboxWorker()');
-        expect(packageJson).toContain('"worker:start": "node --experimental-strip-types ./src/worker-host/main.ts"');
         expect(registration).toContain('reconcilePriceGroupContainmentProjectionWorker');
         expect(worker).toContain("legalEntityScope: 'forbidden'");
       }),

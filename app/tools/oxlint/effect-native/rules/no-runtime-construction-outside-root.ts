@@ -4,7 +4,7 @@
  * wired layers, ... duplicated persistence providers, multiple pools" and prescribes: "Create one
  * `ManagedRuntime` per long-lived host/runtime" and "Capture the runtime at forced Promise adapters
  * rather than calling bare `Effect.runPromise`". The reference shape is
- * `packages/core-runtime/src/outbox/process.ts:83` — a single `ManagedRuntime.make(input.layer)` at
+ * `packages/core-runtime/src/outbox/process.ts` — one `ManagedRuntime.make(input.layer)` per hosted worker entry at
  * the process entry point, everything below it staying an `Effect<A, E, R>`.
  *
  * What is detected

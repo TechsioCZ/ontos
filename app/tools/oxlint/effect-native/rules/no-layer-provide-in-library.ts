@@ -32,8 +32,9 @@
  * never reported.
  *
  * What is deliberately allowed
- * - Application composition roots (`rootFiles`): the `api/index.ts` of each app and vertical, plus
- *   app `src/entry.<name>.ts[x]`. The audit's own valid example lives there:
+ * - Application composition roots (`rootFiles`): the `api/index.ts` of each app and vertical, app
+ *   `src/entry.<name>.ts[x]`, and each vertical's generated `src/worker-host/entry.ts`, which closes
+ *   the owner's worker layer before the combined Outbox Worker host builds it into its own runtime. The audit's own valid example lives there:
  *   `HttpApiBuilder.layer(Api).pipe(Layer.provide(Layer.mergeAll(...)))`.
  * - Ratified owner-private composition modules listed in `compositionFiles` (empty by default, so
  *   the strict default reports them; candidates are `packages/core-runtime/src/runtime-infrastructure.ts`
@@ -78,6 +79,7 @@ const DEFAULT_ROOT_FILES: readonly string[] = [
   'verticals/*/api/index.tsx',
   'apps/*/src/entry.*.ts',
   'apps/*/src/entry.*.tsx',
+  'verticals/*/src/worker-host/entry.ts',
 ];
 
 const DEFAULT_MEMBERS: readonly string[] = ['provide', 'provideMerge'];

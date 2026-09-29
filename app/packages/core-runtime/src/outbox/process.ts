@@ -1,4 +1,5 @@
 import {
+  Array as Arr,
   Cause,
   Config,
   Effect,
@@ -15,29 +16,66 @@ import {
 import type { Layer } from 'effect';
 
 import type { AnyOutboxWorkerRegistration, OutboxWorkerRequirements, OutboxWorkerSubscription } from './definition.ts';
-import type { createOutboxWorkerHealth, serveOutboxWorkerHealth } from './health.ts';
+import type {
+  combineOutboxWorkerHealth,
+  createOutboxWorkerHealth,
+  OutboxWorkerHealth,
+  serveOutboxWorkerHealth,
+} from './health.ts';
 import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
-import type { RunOutboxPollingLoopInput } from './poller.ts';
+import type { OutboxPollingConfig, RunOutboxPollingLoopInput } from './poller.ts';
 import type { OutboxRuntime } from './runtime.ts';
 
 const ShutdownSignalSchema = Schema.Literals(['SIGINT', 'SIGTERM']);
 export type ShutdownSignal = typeof ShutdownSignalSchema.Type;
 
-export interface RunOutboxWorkerProcessInput<
-  Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration,
-> {
+export interface DefineOutboxWorkerEntryInput<Registration extends AnyOutboxWorkerRegistration, LayerError> {
   readonly claimOwnerPrefix: string;
-  readonly health?: boolean;
+  readonly layer: Layer.Layer<OutboxRuntime | OutboxWorkerRequirements<Registration>, LayerError>;
   readonly registrations: readonly Registration[];
   readonly subscriptions: readonly OutboxWorkerSubscription[];
 }
 
-export interface StartOutboxWorkerProcessInput<
-  Registration extends AnyOutboxWorkerRegistration,
-  LayerError extends { readonly _tag: string },
-> extends RunOutboxWorkerProcessInput<Registration> {
-  readonly layer: Layer.Layer<OutboxRuntime | OutboxWorkerRequirements<Registration>, LayerError>;
+export interface OutboxWorkerLoopInput {
+  readonly config: OutboxPollingConfig;
+  readonly health?: Pick<OutboxWorkerHealth, 'cycleFailed' | 'cycleSucceeded'>;
 }
+
+/**
+ * One MicroVertical's hosted polling loop. The host runs each entry against its own
+ * ManagedRuntime so owner layers stay as isolated as they were in dedicated processes.
+ */
+export interface OutboxWorkerEntry<out LayerError> {
+  readonly claimOwnerPrefix: string;
+  readonly registrations: number;
+  readonly runLoop: (input: OutboxWorkerLoopInput) => Effect.Effect<void, LayerError>;
+}
+
+export interface RunOutboxWorkerHostInput<LayerError> {
+  readonly entries: readonly OutboxWorkerEntry<LayerError>[];
+  readonly health?: boolean;
+}
+
+export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegistration, LayerError>(
+  input: DefineOutboxWorkerEntryInput<Registration, LayerError>,
+): OutboxWorkerEntry<LayerError> =>
+  Object.freeze({
+    claimOwnerPrefix: input.claimOwnerPrefix,
+    registrations: input.registrations.length,
+    runLoop: ({ config, health }: OutboxWorkerLoopInput) => {
+      const pollingInput: RunOutboxPollingLoopInput<Registration> = {
+        config,
+        registrations: input.registrations,
+        subscriptions: input.subscriptions,
+      };
+      const loop = runOutboxPollingLoop(health === undefined ? pollingInput : { ...pollingInput, health });
+      return Effect.acquireUseRelease(
+        Effect.sync(() => ManagedRuntime.make(input.layer)),
+        (runtime) => runtime.contextEffect.pipe(Effect.flatMap((context) => Effect.provideContext(loop, context))),
+        (runtime) => runtime.disposeEffect,
+      );
+    },
+  });
 
 const waitForShutdownSignal = Effect.callback<ShutdownSignal>((resume) => {
   const onSignal = (signal: ShutdownSignal) => (): void => resume(Effect.succeed(signal));
@@ -61,6 +99,7 @@ const processTracer = Tracer.make({
 });
 
 interface OutboxWorkerHealthApi {
+  readonly combineOutboxWorkerHealth: typeof combineOutboxWorkerHealth;
   readonly createOutboxWorkerHealth: typeof createOutboxWorkerHealth;
   readonly serveOutboxWorkerHealth: typeof serveOutboxWorkerHealth;
 }
@@ -70,49 +109,81 @@ const loadOutboxWorkerHealthApi = Effect.suspend(() => {
   return Effect.promise(Fn.constant(healthApi)).pipe(Effect.timeout('30 seconds'), Effect.orDie);
 });
 
-export const runOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegistration>(
-  input: RunOutboxWorkerProcessInput<Registration>,
-) =>
+interface HostedLoop<LayerError> {
+  readonly config: OutboxPollingConfig;
+  readonly entry: OutboxWorkerEntry<LayerError>;
+  readonly health: Option.Option<OutboxWorkerHealth>;
+}
+
+const hostedLoop = <LayerError>(
+  entry: OutboxWorkerEntry<LayerError>,
+  config: OutboxPollingConfig,
+  healthApi: OutboxWorkerHealthApi | undefined,
+): Effect.Effect<HostedLoop<LayerError>> =>
+  healthApi === undefined
+    ? Effect.succeed({ config, entry, health: Option.none() })
+    : healthApi
+        .createOutboxWorkerHealth({ staleAfterMs: Math.max(5000, config.pollIntervalMs * 3) })
+        .pipe(Effect.map((health) => ({ config, entry, health: Option.some(health) })));
+
+/**
+ * Runs every entry's polling loop in one process behind one signal handler and one readiness
+ * endpoint. The first loop to fail interrupts the others; each loop disposes its own runtime
+ * before the host scope closes, so the failure surfaces only after every runtime is released.
+ */
+export const runOutboxWorkerHost = <LayerError>(input: RunOutboxWorkerHostInput<LayerError>) =>
   Effect.scoped(
-    Effect.gen(function* runOutboxWorkerProcessEffect() {
+    Effect.gen(function* runOutboxWorkerHostEffect() {
       const processNonce = yield* Random.nextInt;
-      const config = yield* parseOutboxPollingConfig({
-        defaultClaimOwner: `${input.claimOwnerPrefix}:${process.pid}:${processNonce}`,
+      const configs = yield* parseOutboxPollingConfig({
+        claimOwnerPrefixes: input.entries.map((entry) => entry.claimOwnerPrefix),
+        defaultProcessIdentity: `${process.pid}:${processNonce}`,
       });
       const healthApi = input.health === true ? yield* loadOutboxWorkerHealthApi : undefined;
-      const health =
-        healthApi === undefined
-          ? undefined
-          : yield* healthApi.createOutboxWorkerHealth({
-              staleAfterMs: Math.max(5000, config.pollIntervalMs * 3),
-            });
-      if (health !== undefined && healthApi !== undefined) {
+      const loops: readonly HostedLoop<LayerError>[] = yield* Effect.forEach(
+        Arr.zip(input.entries, configs),
+        ([entry, config]) => hostedLoop(entry, config, healthApi),
+        { concurrency: 1 },
+      );
+      if (healthApi !== undefined) {
         const configuredHealthPort = yield* healthPortConfig;
         if (Option.isSome(configuredHealthPort)) {
-          yield* healthApi.serveOutboxWorkerHealth(health, {
-            port: configuredHealthPort.value,
-          });
+          yield* healthApi.serveOutboxWorkerHealth(
+            healthApi.combineOutboxWorkerHealth(loops.flatMap(({ health }) => Option.toArray(health))),
+            { port: configuredHealthPort.value },
+          );
         }
       }
-      yield* Effect.annotateLogs(Effect.logInfo('Outbox Worker process started'), {
-        claimOwner: config.claimOwner,
-        maxDeliveries: config.maxDeliveries,
-        pollIntervalMs: config.pollIntervalMs,
-        registrations: input.registrations.length,
-      });
-
-      let pollingInput: RunOutboxPollingLoopInput<Registration> = {
-        config,
-        registrations: input.registrations,
-        subscriptions: input.subscriptions,
-      };
-      if (health !== undefined) {
-        pollingInput = { ...pollingInput, health };
-      }
-      const signal = yield* waitForShutdownSignal.pipe(
-        Effect.raceFirst(runOutboxPollingLoop(pollingInput).pipe(Effect.as<ShutdownSignal>('SIGTERM'))),
+      yield* Effect.forEach(
+        loops,
+        ({ config, entry }) =>
+          Effect.annotateLogs(Effect.logInfo('Outbox Worker loop started'), {
+            claimOwner: config.claimOwner,
+            maxDeliveries: config.maxDeliveries,
+            pollIntervalMs: config.pollIntervalMs,
+            registrations: entry.registrations,
+          }),
+        { concurrency: 1, discard: true },
       );
-      yield* Effect.logInfo(`Outbox Worker process received ${signal}; shutting down`);
+
+      const runLoops = Effect.forEach(
+        loops,
+        ({ config, entry, health }) =>
+          entry
+            .runLoop(
+              Option.match(health, {
+                onNone: () => ({ config }),
+                onSome: (loopHealth) => ({ config, health: loopHealth }),
+              }),
+            )
+            .pipe(Effect.annotateLogs({ claimOwner: config.claimOwner })),
+        // Every hosted loop polls forever, so the host needs exactly one fiber per loop.
+        { concurrency: loops.length, discard: true },
+      );
+      const signal = yield* waitForShutdownSignal.pipe(
+        Effect.raceFirst(runLoops.pipe(Effect.as<ShutdownSignal>('SIGTERM'))),
+      );
+      yield* Effect.logInfo(`Outbox Worker host received ${signal}; shutting down`);
     }),
   );
 
@@ -131,32 +202,19 @@ const describeWorkerFailure = <E extends { readonly _tag: string }>(cause: Cause
   return [...new Set(names)].join(', ');
 };
 
-export const startOutboxWorkerProcess = <
-  Registration extends AnyOutboxWorkerRegistration,
-  LayerError extends { readonly _tag: string },
->(
-  input: StartOutboxWorkerProcessInput<Registration, LayerError>,
+export const startOutboxWorkerHost = <LayerError extends { readonly _tag: string }>(
+  input: RunOutboxWorkerHostInput<LayerError>,
 ): void => {
-  let processInput: RunOutboxWorkerProcessInput<Registration> = {
-    claimOwnerPrefix: input.claimOwnerPrefix,
-    registrations: input.registrations,
-    subscriptions: input.subscriptions,
-  };
-  if (input.health !== undefined) {
-    processInput = { ...processInput, health: input.health };
-  }
-  const runtime = ManagedRuntime.make(input.layer);
-  runtime.runCallback(
-    runOutboxWorkerProcess(processInput).pipe(
+  Effect.runCallback(
+    runOutboxWorkerHost(input).pipe(
       Effect.withLogger(Logger.defaultLogger),
       Effect.withTracer(processTracer),
       Effect.provideService(References.MinimumLogLevel, 'Info'),
-      Effect.ensuring(runtime.disposeEffect),
     ),
     {
       onExit: (exit) => {
         if (Exit.isFailure(exit)) {
-          process.stderr.write(`Outbox Worker process failed: ${describeWorkerFailure(exit.cause)}\n`);
+          process.stderr.write(`Outbox Worker host failed: ${describeWorkerFailure(exit.cause)}\n`);
         }
         process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
       },

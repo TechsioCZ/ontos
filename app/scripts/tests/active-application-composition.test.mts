@@ -319,13 +319,22 @@ it.effect('rejects conflicting writes under one revision and forged revisions', 
   }),
 );
 
-it.effect('restarts exactly the services whose start preflight requires the snapshot', () =>
+it.effect('restarts exactly the deploy target services whose start preflight requires the snapshot', () =>
   Effect.gen(function* consumers() {
     const zeropsYaml = readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8');
-    expect(yield* compositionConsumerSetups(zeropsYaml)).toEqual([
-      'commerce-customer-context',
+    const topology = Schema.decodeUnknownSync(
+      Schema.fromJsonString(Schema.Struct({ verticals: Schema.Array(Schema.Struct({ id: Schema.String })) })),
+    )(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'));
+    expect(yield* compositionConsumerSetups(zeropsYaml, topology, 'zerops')).toEqual([
+      CUSTOMER_CONTEXT,
       'commerce-customer-context-worker',
     ]);
+    // On Cloudflare the Outbox Worker host runs the Commerce worker in place of its dedicated service.
+    expect(yield* compositionConsumerSetups(zeropsYaml, topology, 'cloudflare')).toEqual([
+      CUSTOMER_CONTEXT,
+      'outbox-worker-host',
+    ]);
+    expect(serviceIdVariable('outbox-worker-host')).toBe('ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID');
     expect(serviceIdVariable('commerce-customer-context-worker')).toBe(
       'ZEROPS_COMMERCE_CUSTOMER_CONTEXT_WORKER_SERVICE_ID',
     );

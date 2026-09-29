@@ -604,7 +604,22 @@ const materializeCommand = Command.make(
       yield* assertRelativePath('--package-dir', packageDir, pathService);
       const appRoot = pathService.resolve(workspaceRoot, packageDir);
       const appOutputDir = pathService.join(appRoot, '.output');
-      const runtimeDir = pathService.join(workspaceRoot, '.zerops/runtime', worker ? `${appId}-worker` : appId);
+      const outboxWorkerModule = worker
+        ? yield* Effect.tryPromise({
+            catch: (cause) => new MaterializationError(String(cause)),
+            try: async () => await import('./materialize-outbox-worker.mjs'),
+          })
+        : undefined;
+      // A worker's runtime directory is its service: an owner's dedicated worker or the Outbox Worker host.
+      const runtimeName =
+        outboxWorkerModule === undefined
+          ? appId
+          : (yield* Effect.tryPromise({
+              catch: (cause) => new MaterializationError(String(cause)),
+              try: async () =>
+                await outboxWorkerModule.resolveOutboxWorker({ appId, packageDir, packageName, workspaceRoot }),
+            })).serviceId;
+      const runtimeDir = pathService.join(workspaceRoot, '.zerops/runtime', runtimeName);
       yield* Effect.all(
         [
           assertInsideWorkspace('package directory', appRoot, workspaceRoot, pathService),
@@ -643,11 +658,7 @@ const materializeCommand = Command.make(
       const packageJsonPath = pathService.join(runtimeDir, packageJsonFile);
       /** @type {RuntimePackage} */
       let runtimePackage = (yield* readOptionalRuntimePackage(packageJsonPath)) ?? {};
-      if (worker) {
-        const outboxWorkerModule = yield* Effect.tryPromise({
-          catch: (cause) => new MaterializationError(String(cause)),
-          try: async () => await import('./materialize-outbox-worker.mjs'),
-        });
+      if (outboxWorkerModule !== undefined) {
         runtimePackage = yield* Effect.tryPromise({
           catch: (cause) => new MaterializationError(String(cause)),
           try: async () =>
