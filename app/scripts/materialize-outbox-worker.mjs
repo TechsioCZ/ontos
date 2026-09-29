@@ -6,7 +6,7 @@ import { build } from 'esbuild';
 import { parseSync } from 'oxc-parser';
 
 import { readOutboxWorkerHost, renderOutboxWorkerHostEntry } from './generate-outbox-worker-deployment.mjs';
-import { OUTBOX_WORKER_HOST, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+import { OUTBOX_WORKER_BUNDLE, OUTBOX_WORKER_HOST, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({
@@ -32,7 +32,7 @@ const MetafileInputsSchema = Schema.Struct({
   inputs: Schema.Record(Schema.String, Schema.Unknown),
 });
 
-const WORKER_ENTRY = 'worker.mjs';
+const WORKER_ENTRY = OUTBOX_WORKER_BUNDLE;
 const CORE_WORKER_ENTRYPOINT = 'packages/core-runtime/src/outbox/worker-entrypoint.ts';
 
 const CORE_WORKER_SPECIFIERS = new Set(['@app/core-runtime', '@app/core-runtime/outbox/worker']);

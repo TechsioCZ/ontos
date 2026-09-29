@@ -141,6 +141,7 @@ it.live('generates a separate supervised worker setup without changing owner con
     // Zerops expands only direct references, so the worker binds PostgreSQL itself, as the runtime role.
     expect(worker).not.toMatch(/db18_(?:user|superUser)/u);
     expect(worker).not.toMatch(/ run build/u);
+    expect(worker).toContain('cd app/.zerops/runtime/ledger-worker && exec node worker.mjs');
     expect(worker).not.toMatch(/(?:^|\s)&(?:\s|$)/u);
     expect(generated.match(/ONTOS_KEEP_ME: 'true'/gu)?.length).toBe(3);
     expect((yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, generated))).deployment).toBe(

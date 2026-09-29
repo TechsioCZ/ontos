@@ -123,7 +123,8 @@ it('starts a dedicated Price Group worker that drains durable pending projection
   expect(worker).toContain(`OUTBOX_WORKER_HEALTH_PORT: '4108'`);
   expect(worker).toContain(runtimeDatabaseUrl);
   expect(worker).toContain(`path: '/ready'`);
-  expect(worker).toContain(`exec npm run serve`);
+  expect(worker).toContain(`exec node worker.mjs`);
+  expect(worker).not.toContain('npm run serve');
 });
 
 it('runs every owner worker in one Outbox Worker host service beside the dedicated workers', () => {

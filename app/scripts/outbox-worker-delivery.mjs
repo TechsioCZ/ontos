@@ -6,6 +6,12 @@ const workerHostEntry = 'src/worker-host/entry.ts';
 const workerStartCommand = `node --experimental-strip-types ./${workerEntry}`;
 
 /**
+ * The bundle a materialized Outbox Worker runtime starts. Services exec Node on it directly, so the
+ * platform's SIGTERM reaches the worker's own graceful-shutdown handler instead of an npm wrapper.
+ */
+export const OUTBOX_WORKER_BUNDLE = 'worker.mjs';
+
+/**
  * The one Zerops service that runs every generated MicroVertical Outbox Worker entry in one process.
  * The Cloudflare deploy target runs it instead of the dedicated per-owner worker services.
  */

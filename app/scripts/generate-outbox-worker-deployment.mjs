@@ -2,7 +2,12 @@ import { NodeServices } from '@effect/platform-node';
 import { Array as Arr, Effect, FileSystem, ManagedRuntime, Order, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 
-import { OUTBOX_WORKER_HOST, outboxWorkerDelivery, outboxWorkerHostDelivery } from './outbox-worker-delivery.mjs';
+import {
+  OUTBOX_WORKER_BUNDLE,
+  OUTBOX_WORKER_HOST,
+  outboxWorkerDelivery,
+  outboxWorkerHostDelivery,
+} from './outbox-worker-delivery.mjs';
 
 /** Readiness port of the combined host; it must not collide with any topology vertical port. */
 export const OUTBOX_WORKER_HOST_HEALTH_PORT = '4100';
@@ -186,7 +191,7 @@ const renderHostService = (services, serviceIds, rootPackageName) =>
       '        httpGet:',
       `          port: ${OUTBOX_WORKER_HOST_HEALTH_PORT}`,
       "          path: '/ready'",
-      `      start: sh -c '${[...preflights].join('')}cd ${runtimeDir} && PATH="$PWD/node/bin:$PATH" exec npm run serve'`,
+      `      start: sh -c '${[...preflights].join('')}cd ${runtimeDir} && PATH="$PWD/node/bin:$PATH" exec node ${OUTBOX_WORKER_BUNDLE}'`,
     ].join('\n');
   });
 
@@ -250,6 +255,8 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
         .replace(/(?<command>run zerops:materialize[^\n]*)/u, '$<command> --worker')
         .replaceAll(`/${vertical.id}-api/${vertical.id}/readiness`, '/ready')
         .replace(`ULTRAMODERN_ZEROPS_SERVICE: ${vertical.id}`, `ULTRAMODERN_ZEROPS_SERVICE: ${delivery.id}`)
+        // npm does not wait for its child on SIGTERM, so the worker would never drain; exec Node directly.
+        .replace('exec npm run serve', `exec node ${OUTBOX_WORKER_BUNDLE}`)
         .replace(`        PORT: '${port}'`, `        PORT: '${port}'\n        OUTBOX_WORKER_HEALTH_PORT: '${port}'`);
       services.push(service);
       serviceIds.push(delivery.id);

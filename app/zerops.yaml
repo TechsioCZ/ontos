@@ -604,7 +604,7 @@ zerops:
         httpGet:
           port: 4102
           path: '/ready'
-      start: sh -c 'cd app/.zerops/runtime/party-registry-worker && PATH="$PWD/node/bin:$PATH" exec npm run serve'
+      start: sh -c 'cd app/.zerops/runtime/party-registry-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
 
   - setup: 'commerce-customer-context-worker'
     build:
@@ -651,7 +651,7 @@ zerops:
         httpGet:
           port: 4101
           path: '/ready'
-      start: sh -c 'test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON" || { echo "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON is required" >&2; exit 1; }; cd app/.zerops/runtime/commerce-customer-context-worker && PATH="$PWD/node/bin:$PATH" exec npm run serve'
+      start: sh -c 'test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON" || { echo "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON is required" >&2; exit 1; }; cd app/.zerops/runtime/commerce-customer-context-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
 
   - setup: 'price-group-catalog-worker'
     build:
@@ -697,7 +697,7 @@ zerops:
         httpGet:
           port: 4108
           path: '/ready'
-      start: sh -c 'cd app/.zerops/runtime/price-group-catalog-worker && PATH="$PWD/node/bin:$PATH" exec npm run serve'
+      start: sh -c 'cd app/.zerops/runtime/price-group-catalog-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
 
   - setup: 'outbox-worker-host'
     build:
@@ -744,5 +744,5 @@ zerops:
         httpGet:
           port: 4100
           path: '/ready'
-      start: sh -c 'test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON" || { echo "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON is required" >&2; exit 1; }; cd app/.zerops/runtime/outbox-worker-host && PATH="$PWD/node/bin:$PATH" exec npm run serve'
+      start: sh -c 'test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON" || { echo "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON is required" >&2; exit 1; }; cd app/.zerops/runtime/outbox-worker-host && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
   # </generated-outbox-worker-deployments>
