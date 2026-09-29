@@ -22,6 +22,7 @@
         "tools/oxlint/effect-native/tests/*.test.mts",
         "tools/oxlint/effect-native/report.mts",
         "scripts/run-zerops-migrator.mjs",
+        "scripts/api-contract-schema-rules.mts",
         "tools/oxlint/effect-native/tests/fixture-plugin.ts",
         "tools/oxlint/effect-native/tests/production-fixture.config.ts",
         "!**/node_modules/**",
