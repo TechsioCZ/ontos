@@ -40,6 +40,8 @@ dev_vars_outputs=()
 shell_grant_withdrawn=false
 cleanup() {
   status=$?
+  # Run once: the exit below would otherwise fire the EXIT trap again after a signal.
+  trap - EXIT INT TERM
   # The denial check withdraws the demo principal's Shell grant; never leave it withdrawn.
   if [ "$shell_grant_withdrawn" = true ]; then
     shell_grant OPERATION_TOUCH || echo "Could not restore the Shell grant in SpiceDB" >&2

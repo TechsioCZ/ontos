@@ -11,7 +11,9 @@ import { PRICE_GROUP_CATALOG_SERVICE_BINDING } from '../shared/deployment-paths.
 export const CommerceUnitTransportLive = Layer.effect(
   FetchHttpClient.Fetch,
   Config.option(Config.schema(Schema.URLFromString, 'ONTOS_PRICE_GROUP_CATALOG_BASE_URL')).pipe(
-    Effect.orDie,
+    // A malformed base URL is the Price Group Catalog port's typed failure when the catalog is used;
+    // with nothing valid to route, every call keeps the global fetch.
+    Effect.catchTag('ConfigError', () => Effect.succeedNone),
     Effect.map((priceGroupCatalogBaseUrl) =>
       unitRoutedFetch(
         Option.toArray(priceGroupCatalogBaseUrl).map((baseUrl) => ({

@@ -926,8 +926,10 @@ jobs:
             mapfile -t deployed <"$EDGE_DEPLOY_STATE"
           fi
           unrestored=()
-          for deployment in "${deployed[@]}"; do
-            IFS=$'\t' read -r deployed_package deployed_worker previous_version <<<"$deployment"
+          # Restore in reverse deploy order: a unit that binds another returns to its previous version
+          # before its binding target does, so no consumer is left calling an older provider.
+          for (( index = ${#deployed[@]} - 1; index >= 0; index-- )); do
+            IFS=$'\t' read -r deployed_package deployed_worker previous_version <<<"${deployed[index]}"
             if [[ -z "$previous_version" ]]; then
               if absent "$deployed_package" "$deployed_worker"; then
                 echo "$deployed_worker, which this run was creating, does not exist"
