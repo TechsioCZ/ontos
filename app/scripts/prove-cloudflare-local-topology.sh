@@ -242,7 +242,8 @@ for page in "party-registry:/en/contacts:Party Registry" "catalog:/en:Catalog" "
 done
 
 # 5. A vertical API through the Shell's service binding: Party Registry refuses a governed read
-#    without an assertion and accepts the one the Shell issued (assertions are single-use).
+#    without an assertion and answers it with the one the Shell issued (assertions are single-use).
+#    The answer needs the vertical's own registration of the staff namespace the assertion names.
 check "Shell issues a Party Registry gateway assertion" 200 \
   "$(request "$work/gateway.json" -H 'content-type: application/json' --data '{"audience":"party-registry"}' \
     "$shell_origin/shell-super-app-api/auth/gateway-context")"
@@ -255,17 +256,14 @@ party_search() { # <output file> [curl args...]
 }
 check "Party Registry refuses a governed read without an assertion" 401 "$(party_search "$work/party-anonymous.json")"
 asserted_status="$(party_search "$work/party-asserted.json" -H "authorization: Bearer $assertion")"
-# Past authentication and authorization, the read answers from its own contract: results (200) or,
-# for the local demo tenant today, its governed `PartiesProviderUnavailableProblem` (503), an open
-# item in the cutover runbook. Anything else (401, 403, 404, 500, a gateway error) fails the proof.
-case "$asserted_status" in
-  200) ;;
-  503) grep -q '"_tag":"PartiesProviderUnavailableProblem"' "$work/party-asserted.json" ||
-    { echo "FAIL: Party Registry answered 503 outside its read contract: $(cat "$work/party-asserted.json")" >&2; exit 1; } ;;
-  *)
-    echo "FAIL: Party Registry rejected the Shell-issued assertion (HTTP $asserted_status): $(cat "$work/party-asserted.json")" >&2
-    exit 1
-    ;;
-esac
-echo "ok: Party Registry accepted the Shell-issued assertion over the Shell service binding (HTTP $asserted_status)"
+[ "$asserted_status" = 200 ] || echo "Party Registry answered: $(cat "$work/party-asserted.json")" >&2
+check "Party Registry answers a governed read with the Shell-issued assertion over the Shell service binding" 200 \
+  "$asserted_status"
+node -e '
+  const results = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  if (!Array.isArray(results)) {
+    console.error("FAIL: the Party Registry read did not answer its result list", JSON.stringify(results));
+    process.exit(1);
+  }
+  console.log(`ok: the Party Registry read answered ${results.length} result(s)`);' "$work/party-asserted.json"
 echo "Cloudflare local topology proof passed"

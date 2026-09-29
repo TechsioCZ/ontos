@@ -45,7 +45,8 @@ served from is never taken down by it. The deployment owns the endpoint and the 
 installed transport replaces both on every call, so no caller can point the client at another host.
 
 The vertical also registers its own authentication namespace,
-`ontos.commerce.portal.better-auth.v1`, through `CommercePortalAuthenticationNamespaceRegistryLive`
+`ontos.commerce.portal.better-auth.v1`, and the Shell's staff namespace, `ontos.staff.better-auth.v1`,
+through `CommerceAuthenticationNamespaceRegistryLive`
 (`api/portal-auth/authentication-namespace-registry.ts`). This needs no environment variable, but it
 is load-bearing: Core revalidates the namespace a presented session binding names before any
 authorization runs, and with no registry reachable every namespace-carrying (version 2) gateway
