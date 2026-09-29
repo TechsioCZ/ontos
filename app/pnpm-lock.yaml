@@ -236,6 +236,18 @@ importers:
 
   .:
     dependencies:
+      '@app/commerce-customer-context':
+        specifier: workspace:*
+        version: link:verticals/commerce-customer-context
+      '@app/core-runtime':
+        specifier: workspace:*
+        version: link:packages/core-runtime
+      '@app/party-registry':
+        specifier: workspace:*
+        version: link:verticals/party-registry
+      '@app/price-group-catalog':
+        specifier: workspace:*
+        version: link:verticals/price-group-catalog
       '@authzed/authzed-node':
         specifier: 1.6.1
         version: 1.6.1

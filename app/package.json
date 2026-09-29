@@ -113,6 +113,10 @@
     "dev:price-group-catalog": "pnpm --filter @app/price-group-catalog dev"
   },
   "dependencies": {
+    "@app/commerce-customer-context": "workspace:*",
+    "@app/core-runtime": "workspace:*",
+    "@app/party-registry": "workspace:*",
+    "@app/price-group-catalog": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
     "@effect/sql-pg": "4.0.0-rc.117",
     "better-auth": "1.7.6",

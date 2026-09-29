@@ -220,6 +220,9 @@ startOutboxWorkerHost({ entries: [outboxWorkerEntry], health: true });
 
 const WORKER_HOST_DIRECTORY = 'worker-host';
 const WORKER_START_SCRIPT = 'node --experimental-strip-types ./src/worker-host/main.ts';
+/** The owner publishes its hosted entry as a package export, the only surface the combined host may import. */
+const WORKER_HOST_EXPORT = './outbox-worker-host';
+const WORKER_HOST_EXPORT_TARGET = './src/worker-host/entry.ts';
 
 const planWorkerHostFile = (filePath: string, consumer: OntosVerticalMetadata, content: string) =>
   Effect.gen(function* planWorkerHostFileEffect() {
@@ -288,10 +291,24 @@ const patchConsumerPackage = (consumer: OntosVerticalMetadata, producer: OntosVe
     const sortedScripts = Object.fromEntries(
       Object.entries(scripts).toSorted(([left], [right]) => left.localeCompare(right)),
     );
+    const exportsValue = consumer.packageJson['exports'];
+    const packageExports: MutableJsonObject =
+      exportsValue === undefined
+        ? {}
+        : { ...(yield* trySync(() => asJsonObject(exportsValue, `vertical ${consumer.slug} package exports`))) };
+    const currentHostExport = packageExports[WORKER_HOST_EXPORT];
+    if (currentHostExport !== undefined && currentHostExport !== WORKER_HOST_EXPORT_TARGET) {
+      return yield* new OutboxWorkerScaffoldError({
+        cause: currentHostExport,
+        message: `vertical ${consumer.slug} has an incompatible ${WORKER_HOST_EXPORT} export`,
+      });
+    }
+    packageExports[WORKER_HOST_EXPORT] = WORKER_HOST_EXPORT_TARGET;
     const withDependencies = yield* trySync(() =>
       patchJsonObjectProperty(consumer.packageContent, [], 'dependencies', sortedDependencies),
     );
-    return yield* trySync(() => patchJsonObjectProperty(withDependencies, [], 'scripts', sortedScripts));
+    const withExports = yield* trySync(() => patchJsonObjectProperty(withDependencies, [], 'exports', packageExports));
+    return yield* trySync(() => patchJsonObjectProperty(withExports, [], 'scripts', sortedScripts));
   });
 
 const patchConsumerTsconfig = (content: string, consumer: OntosVerticalMetadata, producer: OntosVerticalMetadata) =>

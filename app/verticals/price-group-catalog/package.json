@@ -15,7 +15,8 @@
     "./permissions/pricing.price_group.retire": "./shared/permissions/pricing-price-group-retire.ts",
     "./permissions/pricing.price_group.revision.create": "./shared/permissions/pricing-price-group-revision-create.ts",
     "./resources/price-group": "./shared/resources/price-group.ts",
-    "./resources/price-group-catalog-root": "./shared/resources/price-group-catalog-root.ts"
+    "./resources/price-group-catalog-root": "./shared/resources/price-group-catalog-root.ts",
+    "./outbox-worker-host": "./src/worker-host/entry.ts"
   },
   "scripts": {
     "dev": "node ../../scripts/prepare-dev-module-contract.mts price-group-catalog && modern dev",

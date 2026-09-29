@@ -4168,6 +4168,7 @@ export const outboxWorkerEntry = defineOutboxWorkerEntry({
         expect(consumerPackage.dependencies['@app/core-runtime']).toBe(workspaceVersion);
         expect(consumerPackage.dependencies[inventoryPackageName]).toBe(workspaceVersion);
         expect(consumerPackage.exports['./workers']).toBe(undefined);
+        expect(consumerPackage.exports['./outbox-worker-host']).toBe('./src/worker-host/entry.ts');
         expect(consumerPackage.scripts['dev:worker']).toBe(undefined);
         expect(consumerPackage.scripts['worker:start']).toBe(workerStartScript);
         expect(yield* readFixtureFile(fixture.root, 'verticals/billing/src/worker-host/main.ts'))
@@ -4281,6 +4282,7 @@ it.live(
         expect(ownerPackage.dependencies['@app/core-runtime']).toBe(workspaceVersion);
         expect(ownerPackage.dependencies[inventoryPackageName]).toBe(undefined);
         expect(ownerPackage.exports['./outbox/orders-created']).toBe(generatedOutboxContractPath);
+        expect(ownerPackage.exports['./outbox-worker-host']).toBe('./src/worker-host/entry.ts');
         expect(ownerPackage.scripts['dev:worker']).toBe(undefined);
         expect(ownerPackage.scripts['worker:start']).toBe(workerStartScript);
         const hostMain = yield* readFixtureFile(fixture.root, 'verticals/inventory-stock/src/worker-host/main.ts');
