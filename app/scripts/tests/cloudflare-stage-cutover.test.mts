@@ -1,0 +1,497 @@
+import { readFileSync } from 'node:fs';
+
+import { Array as Arr, Effect, Layer, Option, Order, Redacted, Schema } from 'effect';
+import { expect, it } from 'effect-rstest';
+
+import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from '../ops/cloudflare-api.mts';
+import {
+  CutoverConfiguration,
+  activate,
+  edgeUnits,
+  provision,
+  stageBuildEnvironment,
+  workerSecretPlan,
+} from '../ops/cloudflare-stage-cutover.mts';
+import type { CutoverSettings } from '../ops/cloudflare-stage-cutover.mts';
+import { OpsMode, STAGE_ZEROPS_PROJECT_ID } from '../ops/stage-operations.mts';
+import {
+  APP_DIRECTORY,
+  fakeCloudflareAccount,
+  fakeFiles,
+  fakeStage,
+  importWithDataLayer,
+  mutatingCommands,
+} from './stage-operations-fixture.mts';
+import type { FakeCloudflareAccount, FakeFiles, FakeStage } from './stage-operations-fixture.mts';
+
+const SHELL_ORIGIN = 'https://app.stage.example.com';
+const CI_TOKEN = 'ci-token-secret';
+const DATABASE_CREDENTIAL = 'db-password-secret';
+const AUTH_SECRET = 'better-auth-secret';
+const PRIVATE_JWK = '{"kty":"OKP","d":"private-jwk-secret"}';
+const SPICEDB_KEY = 'spicedb-key-secret';
+const PUBLIC_JWKS = '{"keys":["public"]}';
+const PLACEMENT_FILE = 'topology/cloudflare-placement.json';
+const TOPOLOGY_FILE = 'topology/reference-topology.json';
+const RUNTIME_HYPERDRIVE = 'ontos-stage-runtime';
+const HYPERDRIVE_ID = 'hyperdrive-1';
+const STAGE_EDGE = 'stage-edge';
+
+const settings: CutoverSettings = {
+  accountId: 'account-1',
+  apiToken: Redacted.make('lead-token-secret'),
+  projectId: STAGE_ZEROPS_PROJECT_ID,
+  repository: 'TechsioCZ/ontos',
+  shellHostname: 'app.stage.example.com',
+  stageEdgeApiToken: Redacted.make(CI_TOKEN),
+  stageZone: 'stage.example.com',
+};
+
+const VERTICAL_HOSTS = [
+  'partyregistry',
+  'commercecustomercontext',
+  'paymenttermcatalog',
+  'commercemarketcatalog',
+  'catalog',
+  'pricing',
+  'storefrontregistry',
+  'pricegroupcatalog',
+];
+
+const SECRET_VALUES = {
+  db18_dbName: 'ontos',
+  db18_password: DATABASE_CREDENTIAL,
+  shellsuperapp_BETTER_AUTH_SECRET: AUTH_SECRET,
+  shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK,
+  spicedb_SPICEDB_GRPC_PRESHARED_KEY: SPICEDB_KEY,
+  ...Object.fromEntries(VERTICAL_HOSTS.map((host) => [`${host}_ONTOS_GATEWAY_PUBLIC_JWKS`, PUBLIC_JWKS])),
+};
+
+const SECRETS = [
+  'lead-token-secret',
+  CI_TOKEN,
+  DATABASE_CREDENTIAL,
+  AUTH_SECRET,
+  'private-jwk-secret',
+  SPICEDB_KEY,
+  'tunnel-connector-token',
+];
+
+const PLACEMENT = `${APP_DIRECTORY}/topology/cloudflare-placement.json`;
+const JsonRecord = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
+const PlacementJson = Schema.fromJsonString(
+  Schema.Struct({ buildEnvironment: Schema.Record(Schema.String, Schema.String), units: Schema.Array(Schema.String) }),
+);
+const StringRecord = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+
+const newStage = (overrides: Parameters<typeof fakeStage>[0] = {}) =>
+  fakeStage({
+    projectValues: SECRET_VALUES,
+    services: [
+      { hostname: 'db18', id: 'db18-id', status: 'ACTIVE' },
+      { hostname: 'spicedb', id: 'spicedb-id', status: 'ACTIVE' },
+    ],
+    ...overrides,
+  });
+
+const run = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  fakes: {
+    readonly account: FakeCloudflareAccount;
+    readonly dryRun?: boolean;
+    readonly files: FakeFiles;
+    readonly stage: FakeStage;
+  },
+) =>
+  effect.pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        CloudflareApiLive.pipe(
+          Layer.provide(
+            Layer.succeed(CloudflareCredentials, { accountId: settings.accountId, apiToken: settings.apiToken }),
+          ),
+          Layer.provide(fakes.account.layer),
+        ),
+        Layer.succeed(CutoverConfiguration, settings),
+        Layer.succeed(OpsMode, { dryRun: fakes.dryRun ?? false }),
+        fakes.stage.layer,
+        fakes.files.layer,
+      ),
+    ),
+  );
+
+/** No secret value may reach a command line, a log-rendered argument or a Cloudflare URL. */
+const expectNoSecretInArguments = (stage: FakeStage, account: FakeCloudflareAccount) => {
+  const visible = [
+    ...stage.commands.map(({ args, command }) => [command, ...args].join(' ')),
+    ...account.requests.map(({ url }) => url.href),
+  ].join('\n');
+  for (const secret of SECRETS) {
+    expect(visible).not.toContain(secret);
+  }
+};
+
+it.effect('provisions the whole stage data plane on an empty account, without exposing a secret', () =>
+  Effect.gen(function* provisionsEmptyAccount() {
+    const account = fakeCloudflareAccount({});
+    const stage = newStage();
+    const files = fakeFiles({ 'zerops-import.yaml': importWithDataLayer });
+
+    yield* run(provision, { account, files, stage });
+
+    const posts = account.requests.filter(({ method }) => method === 'POST');
+    expect(
+      posts.map(({ body, url }) => [url.pathname.replace('/client/v4/accounts/account-1', ''), Option.getOrNull(body)]),
+    ).toStrictEqual([
+      ['/cfd_tunnel', { config_src: 'cloudflare', name: 'ontos-stage' }],
+      [
+        '/connectivity/directory/services',
+        {
+          app_protocol: 'postgresql',
+          host: { hostname: 'db18', resolver_network: { tunnel_id: 'tunnel-1' } },
+          name: 'ontos-stage-db18',
+          tcp_port: 5432,
+          type: 'tcp',
+        },
+      ],
+      [
+        '/connectivity/directory/services',
+        {
+          host: { hostname: 'spicedb', resolver_network: { tunnel_id: 'tunnel-1' } },
+          http_port: 8443,
+          name: 'ontos-stage-spicedb',
+          type: 'http',
+        },
+      ],
+      [
+        '/hyperdrive/configs',
+        {
+          caching: { disabled: true },
+          name: RUNTIME_HYPERDRIVE,
+          origin: {
+            database: 'ontos',
+            password: DATABASE_CREDENTIAL,
+            scheme: 'postgresql',
+            service_id: 'vpc-1',
+            user: 'ontos_runtime',
+          },
+          origin_connection_limit: 40,
+        },
+      ],
+    ]);
+    for (const request of account.requests) {
+      expect(request.url.origin).toBe('https://api.cloudflare.com');
+    }
+
+    // cloudflared is imported with the connector token as a secret, next to the worker host, then deployed.
+    const imported = stage.inputs.find(({ command }) => command.startsWith('zcli project service-import -'));
+    expect(imported?.stdin).toContain('hostname: cloudflared');
+    expect(imported?.stdin).toContain('TUNNEL_TOKEN: tunnel-connector-token');
+    expect(imported?.stdin).toContain('minContainers: 2');
+    expect(imported?.stdin).toContain('hostname: outboxworkerhost');
+    expect(stage.variables.get('stage')).toStrictEqual(
+      new Map([
+        ['ZEROPS_CLOUDFLARED_SERVICE_ID', 'imported-1'],
+        ['ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID', 'imported-2'],
+      ]),
+    );
+    expect(stage.commands.some(({ args }) => args.join(' ').includes('push') && args.includes('cloudflared'))).toBe(
+      true,
+    );
+
+    // The reviewed build environment names the new data-plane IDs; stage-edge gets the account and the CI token.
+    const placement = Schema.decodeUnknownSync(PlacementJson)(files.writes.get(PLACEMENT));
+    expect(placement.buildEnvironment).toMatchObject({
+      ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: HYPERDRIVE_ID,
+      ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-2',
+      ULTRAMODERN_MF_DEV_ORIGIN: SHELL_ORIGIN,
+      ULTRAMODERN_PUBLIC_URL_PRICING: 'https://pricing.stage.example.com',
+      ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: SHELL_ORIGIN,
+    });
+    expect(placement.units).toHaveLength(9);
+    expect(stage.environments.has(STAGE_EDGE)).toBe(true);
+    expect(stage.variables.get(STAGE_EDGE)?.get('CLOUDFLARE_ACCOUNT_ID')).toBe('account-1');
+    expect(stage.inputs.find(({ command }) => command.startsWith('gh secret set CLOUDFLARE_API_TOKEN'))?.stdin).toBe(
+      CI_TOKEN,
+    );
+
+    // Every placed Worker receives its secrets through `wrangler secret bulk` on stdin.
+    const bulk = stage.inputs.filter(({ command }) => command.includes('wrangler secret bulk'));
+    expect(bulk.map(({ command }) => command.split(' ').at(-1))).toHaveLength(9);
+    const shell = bulk.find(({ command }) => command.endsWith('--name app-shell-super-app'));
+    expect(Schema.decodeUnknownSync(StringRecord)(shell?.stdin)).toStrictEqual({
+      BETTER_AUTH_SECRET: AUTH_SECRET,
+      BETTER_AUTH_TRUSTED_ORIGINS: SHELL_ORIGIN,
+      BETTER_AUTH_URL: SHELL_ORIGIN,
+      ONTOS_GATEWAY_ISSUER: SHELL_ORIGIN,
+      ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK,
+      SPICEDB_ENDPOINT: 'spicedb:8443',
+      SPICEDB_INSECURE: 'true',
+      SPICEDB_PRESHARED_KEY: SPICEDB_KEY,
+    });
+    expectNoSecretInArguments(stage, account);
+  }),
+);
+
+it.effect('changes nothing in a dry run but still reads the real state', () =>
+  Effect.gen(function* dryRunReadsOnly() {
+    const account = fakeCloudflareAccount({});
+    const stage = newStage();
+    const files = fakeFiles({ 'zerops-import.yaml': importWithDataLayer });
+
+    yield* run(provision, { account, dryRun: true, files, stage });
+
+    expect(account.requests.every(({ method }) => method === 'GET')).toBe(true);
+    expect(mutatingCommands(stage.commands)).toStrictEqual([]);
+    expect(files.writes.size).toBe(0);
+    expect(
+      stage.commands.some(({ args }) => args.join(' ') === `service list --project-id ${STAGE_ZEROPS_PROJECT_ID}`),
+    ).toBe(true);
+  }),
+);
+
+it.effect('reuses every existing object on a re-run and creates nothing twice', () =>
+  Effect.gen(function* rerunIsIdempotent() {
+    const account = fakeCloudflareAccount({});
+    const stage = newStage();
+    const files = fakeFiles({ 'zerops-import.yaml': importWithDataLayer });
+    yield* run(provision, { account, files, stage });
+    const firstPosts = account.requests.filter(({ method }) => method === 'POST').length;
+    const firstImports = stage.commands.filter(({ args }) => args.includes('service-import')).length;
+    const firstVariableSets = stage.commands.filter(({ args }) => args[0] === 'variable' && args[1] === 'set').length;
+
+    yield* run(provision, { account, files, stage });
+
+    expect(account.requests.filter(({ method }) => method === 'POST')).toHaveLength(firstPosts);
+    expect(stage.commands.filter(({ args }) => args.includes('service-import'))).toHaveLength(firstImports);
+    expect(stage.commands.filter(({ args }) => args[0] === 'variable' && args[1] === 'set')).toHaveLength(
+      firstVariableSets,
+    );
+    expect(stage.commands.filter(({ args }) => args.includes('push'))).toHaveLength(1);
+  }),
+);
+
+it.effect('refuses to reuse a Hyperdrive config that caches tenant reads', () =>
+  Effect.gen(function* refusesCachingHyperdrive() {
+    const account = fakeCloudflareAccount({
+      hyperdrives: [
+        {
+          caching: { disabled: false },
+          id: 'hyperdrive-old',
+          name: RUNTIME_HYPERDRIVE,
+          origin: { service_id: 'vpc-1', user: 'ontos_runtime' },
+          origin_connection_limit: 40,
+        },
+      ],
+    });
+    const stage = newStage();
+    const files = fakeFiles({ 'zerops-import.yaml': importWithDataLayer });
+
+    const error = yield* run(provision, { account, files, stage }).pipe(Effect.flip);
+
+    expect(error.message).toContain(
+      'Hyperdrive ontos-stage-runtime (hyperdrive-old) differs from the runbook: caching is enabled',
+    );
+    expect(
+      account.requests.filter(({ url }) => url.pathname.endsWith('/hyperdrive/configs') && url.search === ''),
+    ).toHaveLength(0);
+    expect(files.writes.size).toBe(0);
+  }),
+);
+
+it.effect('refuses to publish a gateway key the Zerops verticals do not share', () =>
+  Effect.gen(function* refusesDivergentJwks() {
+    const account = fakeCloudflareAccount({});
+    const stage = newStage({
+      projectValues: { ...SECRET_VALUES, pricing_ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":["other"]}' },
+    });
+    const files = fakeFiles({ 'zerops-import.yaml': importWithDataLayer });
+
+    const error = yield* run(provision, { account, files, stage }).pipe(Effect.flip);
+
+    expect(error.message).toContain('do not share one ONTOS_GATEWAY_PUBLIC_JWKS');
+    expect(stage.commands.filter(({ args }) => args.includes('wrangler'))).toStrictEqual([]);
+  }),
+);
+
+it.effect('fails before importing when the data-layer setups are not merged yet', () =>
+  Effect.gen(function* requiresDataLayerSetups() {
+    const account = fakeCloudflareAccount({});
+    const stage = newStage();
+
+    const error = yield* run(provision, { account, files: fakeFiles(), stage }).pipe(Effect.flip);
+
+    expect(error.message).toBe('app/zerops-import.yaml has no "cloudflared" service; merge its Zerops setup first');
+    expect(mutatingCommands(stage.commands)).toStrictEqual([]);
+  }),
+);
+
+const provisionedAccount = (tunnelStatus: string) =>
+  fakeCloudflareAccount({
+    hyperdrives: [
+      {
+        caching: { disabled: true },
+        id: HYPERDRIVE_ID,
+        name: RUNTIME_HYPERDRIVE,
+        origin: { service_id: 'vpc-1', user: 'ontos_runtime' },
+        origin_connection_limit: 40,
+      },
+    ],
+    scripts: [
+      'app-party-registry',
+      'app-commerce-customer-context',
+      'app-payment-term-catalog',
+      'app-commerce-market-catalog',
+      'app-catalog',
+      'app-pricing',
+      'app-storefront-registry',
+      'app-price-group-catalog',
+      'app-shell-super-app',
+    ],
+    tunnels: [{ id: 'tunnel-1', name: 'ontos-stage', status: tunnelStatus }],
+    vpcServices: [
+      {
+        app_protocol: 'postgresql',
+        host: { hostname: 'db18', resolver_network: { tunnel_id: 'tunnel-1' } },
+        name: 'ontos-stage-db18',
+        service_id: 'vpc-1',
+        tcp_port: 5432,
+        type: 'tcp',
+      },
+      {
+        host: { hostname: 'spicedb', resolver_network: { tunnel_id: 'tunnel-1' } },
+        http_port: 8443,
+        name: 'ontos-stage-spicedb',
+        service_id: 'vpc-2',
+        type: 'http',
+      },
+    ],
+  });
+
+const readRepositoryFile = (path: string) => readFileSync(`${APP_DIRECTORY}/${path}`, 'utf-8');
+
+/** The placement as the merged A6 PR leaves it: the provisioned IDs in the reviewed build environment. */
+const reviewedPlacementFiles = Effect.gen(function* reviewedPlacementFilesEffect() {
+  const placementText = readRepositoryFile(PLACEMENT_FILE);
+  const units = yield* edgeUnits(readRepositoryFile(TOPOLOGY_FILE), placementText);
+  const buildEnvironment = stageBuildEnvironment({}, units, settings, {
+    hyperdriveId: HYPERDRIVE_ID,
+    spicedbVpcServiceId: 'vpc-2',
+  });
+  const placement = Schema.decodeUnknownSync(JsonRecord)(placementText);
+  return fakeFiles({
+    [PLACEMENT_FILE]: Schema.encodeUnknownSync(JsonRecord)({ ...placement, buildEnvironment }),
+  });
+});
+
+it.effect('switches stage to DEPLOY_TARGET=cloudflare only after every verification item holds', () =>
+  Effect.gen(function* activatesAfterVerification() {
+    const stage = newStage({ deployments: [{ id: 7, state: 'success' }] });
+
+    yield* run(activate, { account: provisionedAccount('healthy'), files: yield* reviewedPlacementFiles, stage });
+
+    expect(stage.variables.get('stage')?.get('DEPLOY_TARGET')).toBe('cloudflare');
+  }),
+);
+
+it.effect('leaves DEPLOY_TARGET unset while the tunnel is unhealthy', () =>
+  Effect.gen(function* refusesUnhealthyTunnel() {
+    const stage = newStage({ deployments: [{ id: 7, state: 'success' }] });
+
+    const error = yield* run(activate, {
+      account: provisionedAccount('degraded'),
+      files: yield* reviewedPlacementFiles,
+      stage,
+    }).pipe(Effect.flip);
+
+    expect(error.message).toBe('Tunnel ontos-stage is healthy: status degraded');
+    expect(mutatingCommands(stage.commands)).toStrictEqual([]);
+  }),
+);
+
+it.effect('leaves DEPLOY_TARGET unset until a stage-edge deployment succeeded', () =>
+  Effect.gen(function* refusesFailedEdgeDeployment() {
+    const stage = newStage({ deployments: [{ id: 7, state: 'failure' }] });
+
+    const error = yield* run(activate, {
+      account: provisionedAccount('healthy'),
+      files: yield* reviewedPlacementFiles,
+      stage,
+    }).pipe(Effect.flip);
+
+    expect(error.message).toContain(
+      'stage-edge deployment (Worker deploy plus cloudflare:proof) succeeded: deployment 7 is failure',
+    );
+    expect(stage.variables.get('stage')?.has('DEPLOY_TARGET')).not.toBe(true);
+  }),
+);
+
+it.effect('leaves DEPLOY_TARGET unset while the reviewed placement names other data-plane IDs', () =>
+  Effect.gen(function* refusesUnreviewedIds() {
+    const stage = newStage({ deployments: [{ id: 7, state: 'success' }] });
+
+    const error = yield* run(activate, { account: provisionedAccount('healthy'), files: fakeFiles(), stage }).pipe(
+      Effect.flip,
+    );
+
+    expect(error.message).toContain('buildEnvironment names these data-plane IDs');
+    expect(mutatingCommands(stage.commands)).toStrictEqual([]);
+  }),
+);
+
+it.effect('surfaces Cloudflare API errors with their codes', () =>
+  Effect.gen(function* surfacesApiErrors() {
+    const account = fakeCloudflareAccount({});
+    const error = yield* Effect.gen(function* readUnknownTunnel() {
+      const api = yield* CloudflareApi;
+      return yield* api.tunnel('missing/extra');
+    }).pipe(
+      Effect.provide(
+        CloudflareApiLive.pipe(
+          Layer.provide(Layer.succeed(CloudflareCredentials, { accountId: 'account-1', apiToken: settings.apiToken })),
+          Layer.provide(account.layer),
+        ),
+      ),
+      Effect.flip,
+    );
+
+    expect(error.message).toBe('Cloudflare Tunnel read failed: 7003 No route for that URI');
+  }),
+);
+
+it.effect('gives every vertical the Shell key and the callers their stage dependencies', () =>
+  Effect.gen(function* plansWorkerSecrets() {
+    const units = yield* edgeUnits(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE));
+    const secret = Redacted.make('value');
+    const plan = workerSecretPlan(units, settings, {
+      betterAuthSecret: secret,
+      gatewayPrivateJwk: secret,
+      gatewayPublicJwks: secret,
+      spicedbPresharedKey: secret,
+    });
+    const reveal = (worker: string) =>
+      Object.fromEntries(Object.entries(plan.get(worker) ?? {}).map(([key, value]) => [key, Redacted.value(value)]));
+
+    expect([...plan.keys()]).toHaveLength(9);
+    expect(reveal('app-commerce-customer-context')).toMatchObject({
+      ONTOS_CATALOG_BASE_URL: 'https://catalog.stage.example.com/catalog-api',
+      ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'https://price-group-catalog.stage.example.com/price-group-catalog-api',
+      ONTOS_PRICING_BASE_URL: 'https://pricing.stage.example.com/pricing-api',
+      ONTOS_SHELL_GATEWAY_BASE_URL: 'https://app.stage.example.com/shell-super-app-api',
+    });
+    expect(reveal('app-commerce-market-catalog')).toMatchObject({
+      ONTOS_COMMERCE_CUSTOMER_CONTEXT_BASE_URL:
+        'https://commerce-customer-context.stage.example.com/commerce-customer-context-api',
+    });
+    expect(Arr.sort(Object.keys(reveal('app-pricing')), Order.String)).toStrictEqual([
+      'ONTOS_GATEWAY_ISSUER',
+      'ONTOS_GATEWAY_PUBLIC_JWKS',
+      'SPICEDB_ENDPOINT',
+      'SPICEDB_INSECURE',
+      'SPICEDB_PRESHARED_KEY',
+    ]);
+    for (const secrets of plan.values()) {
+      expect(Object.keys(secrets)).not.toContain('DATABASE_URL');
+    }
+  }),
+);

@@ -1,0 +1,829 @@
+#!/usr/bin/env node
+import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import {
+  Array as Arr,
+  Config,
+  ConfigProvider,
+  Console,
+  Context,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Order,
+  Redacted,
+  Schedule,
+  Schema,
+} from 'effect';
+import { Command, Flag } from 'effect/unstable/cli';
+import { FetchHttpClient } from 'effect/unstable/http';
+
+import { serviceIdVariable } from '../publish-active-application-composition.mts';
+import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from './cloudflare-api.mts';
+import type { CloudflareHyperdrive, CloudflareVpcService, VpcServiceSpec } from './cloudflare-api.mts';
+import { OpsShellLive, runCommand } from './ops-shell.mts';
+import type { SecretValues } from './ops-shell.mts';
+import { StageOperationError } from './stage-operation-error.mts';
+import {
+  DEPLOY_TARGET_VARIABLE,
+  ONTOS_REPOSITORY,
+  OpsMode,
+  STAGE_EDGE_ENVIRONMENT,
+  STAGE_ENVIRONMENT,
+  STAGE_ZEROPS_PROJECT_ID,
+  appDirectory,
+  appFile,
+  decodeInput,
+  githubApi,
+  importEntry,
+  importZeropsServices,
+  listGithubVariables,
+  listZeropsServices,
+  mutate,
+  perform,
+  readAppText,
+  readZeropsImport,
+  readZeropsValue,
+  repositoryDirectory,
+  setGithubSecret,
+  setGithubVariable,
+} from './stage-operations.mts';
+import type { ServiceImport, ZeropsService } from './stage-operations.mts';
+
+/**
+ * Idempotent Cloudflare stage cut-over (design runbook section 13.3). Every step first reads the
+ * current state and creates only what is missing, so a re-run after a partial failure converges.
+ * `--dry-run` performs the reads and reports each mutation instead of running it.
+ *
+ * Settings come from the environment, else from the dotenv file `--env-file` names (default
+ * `~/.cloudflare-ontos-stage-token`): CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, STAGE_ZONE,
+ * STAGE_SHELL_HOSTNAME and, optionally, CLOUDFLARE_STAGE_EDGE_API_TOKEN (the narrower CI token;
+ * without it CI receives CLOUDFLARE_API_TOKEN). Secret values are read from Zerops with the locally
+ * authenticated `zcli` and never printed.
+ */
+export const STAGE_TUNNEL_NAME = 'ontos-stage';
+export const STAGE_HYPERDRIVE_NAME = 'ontos-stage-runtime';
+export const HYPERDRIVE_ORIGIN_CONNECTION_LIMIT = 40;
+export const HYPERDRIVE_RUNTIME_ROLE = 'ontos_runtime';
+const TUNNEL_HEALTH_POLL = Duration.seconds(10);
+const TUNNEL_HEALTH_TIMEOUT = Duration.minutes(10);
+const TUNNEL_HEALTHY = 'healthy';
+const NOT_FOUND = 'it does not exist';
+const READY_TO_DEPLOY = 'READY_TO_DEPLOY';
+
+type StageVpcService = Omit<VpcServiceSpec, 'tunnelId'>;
+
+/** The two Zerops origins the tunnel exposes, and nothing else. */
+export const STAGE_VPC_SERVICES = {
+  db18: { hostname: 'db18', name: 'ontos-stage-db18', port: 5432, type: 'tcp' },
+  spicedb: { hostname: 'spicedb', name: 'ontos-stage-spicedb', port: 8443, type: 'http' },
+} as const satisfies Readonly<Record<'db18' | 'spicedb', StageVpcService>>;
+
+/** The Zerops data-layer services Cloudflare mode adds: the tunnel connector and the combined outbox worker host. */
+export const CLOUDFLARED_SERVICE = { hostname: 'cloudflared', setup: 'cloudflared' } as const;
+export const OUTBOX_WORKER_HOST_SERVICE = { hostname: 'outboxworkerhost', setup: 'outbox-worker-host' } as const;
+
+export const HYPERDRIVE_ID_VARIABLE = 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID';
+export const SPICEDB_VPC_SERVICE_ID_VARIABLE = 'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID';
+export const MF_DEV_ORIGIN_VARIABLE = 'ULTRAMODERN_MF_DEV_ORIGIN';
+
+export interface StageOrigins {
+  readonly shellHostname: string;
+  readonly stageZone: string;
+}
+
+export interface CutoverSettings extends StageOrigins {
+  readonly accountId: string;
+  readonly apiToken: Redacted.Redacted;
+  readonly projectId: string;
+  readonly repository: string;
+  readonly stageEdgeApiToken: Redacted.Redacted;
+}
+
+export const CutoverConfiguration = Context.Service<CutoverSettings>(
+  '@app/scripts/ops/cloudflare-stage-cutover/CutoverConfiguration',
+);
+
+// ---------------------------------------------------------------------------------------------
+// Edge units and their stage origins
+
+/** One placed Worker: its topology unit, Worker name and public URL build variable. */
+export interface EdgeUnit {
+  readonly id: string;
+  readonly kind: 'shell' | 'vertical';
+  readonly publicUrlEnv: string;
+  readonly workerName: string;
+}
+
+const CloudflareUnitSchema = Schema.Struct({ publicUrlEnv: Schema.String, workerName: Schema.String });
+const TopologySchema = Schema.fromJsonString(
+  Schema.Struct({
+    shell: Schema.Struct({ cloudflare: CloudflareUnitSchema, id: Schema.String }),
+    verticals: Schema.Array(Schema.Struct({ cloudflare: CloudflareUnitSchema, id: Schema.String })),
+  }),
+);
+const BuildEnvironmentSchema = Schema.Record(Schema.String, Schema.String);
+type BuildEnvironment = typeof BuildEnvironmentSchema.Type;
+const PlacementSchema = Schema.fromJsonString(
+  Schema.Struct({ buildEnvironment: BuildEnvironmentSchema, units: Schema.Array(Schema.String) }),
+);
+/** The whole placement document, so writing `buildEnvironment` preserves every other key. */
+const PlacementDocumentSchema = Schema.fromJsonString(
+  Schema.StructWithRest(Schema.Struct({ buildEnvironment: BuildEnvironmentSchema }), [
+    Schema.Record(Schema.String, Schema.Unknown),
+  ]),
+  { space: 2 },
+);
+const PLACEMENT_PATH = ['topology', 'cloudflare-placement.json'] as const;
+const PLACEMENT_LABEL = 'topology/cloudflare-placement.json';
+
+/** The placed units in placement order, with the topology's Worker names. */
+export const edgeUnits = (topologyJson: string, placementJson: string) =>
+  Effect.gen(function* edgeUnitsEffect() {
+    const topology = yield* decodeInput(TopologySchema, 'topology/reference-topology.json')(topologyJson);
+    const placement = yield* decodeInput(PlacementSchema, PLACEMENT_LABEL)(placementJson);
+    const units = new Map<string, EdgeUnit>([
+      [topology.shell.id, { id: topology.shell.id, kind: 'shell', ...topology.shell.cloudflare }],
+    ]);
+    for (const vertical of topology.verticals) {
+      units.set(vertical.id, { id: vertical.id, kind: 'vertical', ...vertical.cloudflare });
+    }
+    return yield* Effect.forEach(
+      placement.units,
+      (id) => {
+        const unit = units.get(id);
+        return unit === undefined
+          ? Effect.fail(new StageOperationError({ message: `placed unit ${id} is not in the reference topology` }))
+          : Effect.succeed(unit);
+      },
+      { concurrency: 1 },
+    );
+  });
+
+const readEdgeUnits = Effect.gen(function* readEdgeUnitsEffect() {
+  return yield* edgeUnits(
+    yield* readAppText('topology', 'reference-topology.json'),
+    yield* readAppText(...PLACEMENT_PATH),
+  );
+});
+
+const shellOrigin = (origins: StageOrigins) => `https://${origins.shellHostname}`;
+
+/** The Shell answers on its own hostname; every vertical on `<unit>.<zone>`. */
+export const publicOrigin = (unit: EdgeUnit, origins: StageOrigins) =>
+  unit.kind === 'shell' ? shellOrigin(origins) : `https://${unit.id}.${origins.stageZone}`;
+
+export interface DataPlaneIds {
+  readonly hyperdriveId: string;
+  readonly spicedbVpcServiceId: string;
+}
+
+/** The reviewed `buildEnvironment` for these data-plane IDs; unrelated keys (e.g. MODERN_ASSET_PREFIX) are kept. */
+export const stageBuildEnvironment = (
+  current: BuildEnvironment,
+  units: readonly EdgeUnit[],
+  origins: StageOrigins,
+  ids: DataPlaneIds,
+): BuildEnvironment => {
+  const merged = new Map([
+    ...Object.entries(current),
+    [HYPERDRIVE_ID_VARIABLE, ids.hyperdriveId],
+    [MF_DEV_ORIGIN_VARIABLE, shellOrigin(origins)],
+    [SPICEDB_VPC_SERVICE_ID_VARIABLE, ids.spicedbVpcServiceId],
+    ...units.map((unit): [string, string] => [unit.publicUrlEnv, publicOrigin(unit, origins)]),
+  ]);
+  return Object.fromEntries(Arr.sortWith([...merged], ([key]) => key, Order.String));
+};
+
+// ---------------------------------------------------------------------------------------------
+// Worker secrets
+
+export interface WorkerSecretSources {
+  readonly betterAuthSecret: Redacted.Redacted;
+  readonly gatewayPrivateJwk: Redacted.Redacted;
+  readonly gatewayPublicJwks: Redacted.Redacted;
+  readonly spicedbPresharedKey: Redacted.Redacted;
+}
+
+/**
+ * The URL-addressed dependencies of the verticals that call others (runbook A7). Calls a service
+ * binding carries (Commerce → Price Group Catalog) still keep their URL for Node.
+ */
+const VERTICAL_DEPENDENCIES = new Map([
+  [
+    'commerce-customer-context',
+    new Map([
+      ['ONTOS_CATALOG_BASE_URL', 'catalog'],
+      ['ONTOS_PRICE_GROUP_CATALOG_BASE_URL', 'price-group-catalog'],
+      ['ONTOS_PRICING_BASE_URL', 'pricing'],
+    ]),
+  ],
+  ['commerce-market-catalog', new Map([['ONTOS_COMMERCE_CUSTOMER_CONTEXT_BASE_URL', 'commerce-customer-context']])],
+]);
+
+const shellSecrets = (origins: StageOrigins, sources: WorkerSecretSources) =>
+  new Map([
+    ['BETTER_AUTH_SECRET', sources.betterAuthSecret],
+    ['BETTER_AUTH_TRUSTED_ORIGINS', Redacted.make(shellOrigin(origins))],
+    ['BETTER_AUTH_URL', Redacted.make(shellOrigin(origins))],
+    ['ONTOS_GATEWAY_PRIVATE_JWK', sources.gatewayPrivateJwk],
+  ]);
+
+const verticalSecrets = (unit: EdgeUnit, origins: StageOrigins, sources: WorkerSecretSources) => {
+  const secrets = new Map([['ONTOS_GATEWAY_PUBLIC_JWKS', sources.gatewayPublicJwks]]);
+  const dependencies = VERTICAL_DEPENDENCIES.get(unit.id);
+  for (const [variable, target] of dependencies ?? []) {
+    secrets.set(variable, Redacted.make(`https://${target}.${origins.stageZone}/${target}-api`));
+  }
+  // A vertical that calls another asks the Shell for the gateway credential first.
+  if (dependencies !== undefined) {
+    secrets.set('ONTOS_SHELL_GATEWAY_BASE_URL', Redacted.make(`${shellOrigin(origins)}/shell-super-app-api`));
+  }
+  return secrets;
+};
+
+/**
+ * The runtime secrets of every placed Worker (runbook A7). Workers read PostgreSQL through their
+ * `HYPERDRIVE` binding, so no Worker receives a DATABASE_URL.
+ */
+export const workerSecretPlan = (
+  units: readonly EdgeUnit[],
+  origins: StageOrigins,
+  sources: WorkerSecretSources,
+): ReadonlyMap<string, SecretValues> =>
+  new Map(
+    units.map((unit) => {
+      const common = new Map([
+        ['ONTOS_GATEWAY_ISSUER', Redacted.make(shellOrigin(origins))],
+        [
+          'SPICEDB_ENDPOINT',
+          Redacted.make(`${STAGE_VPC_SERVICES.spicedb.hostname}:${String(STAGE_VPC_SERVICES.spicedb.port)}`),
+        ],
+        ['SPICEDB_INSECURE', Redacted.make('true')],
+        ['SPICEDB_PRESHARED_KEY', sources.spicedbPresharedKey],
+      ]);
+      const own = unit.kind === 'shell' ? shellSecrets(origins, sources) : verticalSecrets(unit, origins, sources);
+      return [unit.workerName, Object.fromEntries([...common, ...own])];
+    }),
+  );
+
+/** Zerops hostnames never contain a hyphen; the verticals' and the Shell's are their IDs without one. */
+const zeropsHostname = (unitId: string) => unitId.replaceAll('-', '');
+
+const readWorkerSecretSources = (units: readonly EdgeUnit[]) =>
+  Effect.gen(function* readWorkerSecretSourcesEffect() {
+    const { projectId } = yield* CutoverConfiguration;
+    const shell = units.find((unit) => unit.kind === 'shell');
+    if (shell === undefined) {
+      return yield* new StageOperationError({ message: 'the Cloudflare placement does not place the Shell' });
+    }
+    const shellHost = zeropsHostname(shell.id);
+    // Every vertical verifies the same Shell signing key; refuse to publish one when stage disagrees.
+    const publicJwks = yield* Effect.forEach(
+      units.filter((unit) => unit.kind === 'vertical'),
+      (unit) => readZeropsValue(projectId, `${zeropsHostname(unit.id)}_ONTOS_GATEWAY_PUBLIC_JWKS`),
+      { concurrency: 1 },
+    );
+    const [gatewayPublicJwks] = publicJwks;
+    if (gatewayPublicJwks === undefined) {
+      return yield* new StageOperationError({ message: 'the Cloudflare placement places no vertical' });
+    }
+    if (publicJwks.some((jwks) => Redacted.value(jwks) !== Redacted.value(gatewayPublicJwks))) {
+      return yield* new StageOperationError({
+        message: 'the Zerops verticals do not share one ONTOS_GATEWAY_PUBLIC_JWKS; reconcile stage before the cut-over',
+      });
+    }
+    return {
+      betterAuthSecret: yield* readZeropsValue(projectId, `${shellHost}_BETTER_AUTH_SECRET`),
+      gatewayPrivateJwk: yield* readZeropsValue(projectId, `${shellHost}_ONTOS_GATEWAY_PRIVATE_JWK`),
+      gatewayPublicJwks,
+      spicedbPresharedKey: yield* readZeropsValue(projectId, 'spicedb_SPICEDB_GRPC_PRESHARED_KEY'),
+    } satisfies WorkerSecretSources;
+  });
+
+const SecretDocumentSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+
+const secretDocument = (secrets: SecretValues) =>
+  Schema.encodeEffect(SecretDocumentSchema)(
+    Object.fromEntries(Object.entries(secrets).map(([key, value]) => [key, Redacted.value(value)])),
+  ).pipe(
+    Effect.map((json) => Redacted.make(json)),
+    Effect.mapError((cause) => new StageOperationError({ cause, message: 'the Worker secrets could not be encoded' })),
+  );
+
+/** `wrangler secret bulk` creates a Worker that does not exist yet as a draft, so this may run before the seed. */
+export const setWorkerSecrets = Effect.gen(function* setWorkerSecretsEffect() {
+  const settings = yield* CutoverConfiguration;
+  const units = yield* readEdgeUnits;
+  const plan = workerSecretPlan(units, settings, yield* readWorkerSecretSources(units));
+  const cwd = yield* appDirectory;
+  for (const [workerName, secrets] of plan) {
+    const stdin = yield* secretDocument(secrets);
+    yield* perform(
+      `set the secrets ${Object.keys(secrets).join(', ')} on Worker ${workerName}`,
+      runCommand({
+        args: ['--filter', '@app/shell-super-app', 'exec', 'wrangler', 'secret', 'bulk', '--name', workerName],
+        command: 'pnpm',
+        cwd,
+        env: { CLOUDFLARE_ACCOUNT_ID: Redacted.make(settings.accountId), CLOUDFLARE_API_TOKEN: settings.apiToken },
+        stdin,
+      }),
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------------------------
+// Tunnel, Workers VPC services, Hyperdrive
+
+export interface StageTunnel {
+  /** False only in a dry run that would create the tunnel. */
+  readonly exists: boolean;
+  readonly id: string;
+}
+
+export const ensureTunnel = Effect.gen(function* ensureTunnelEffect() {
+  const api = yield* CloudflareApi;
+  const existing = yield* api.findTunnel(STAGE_TUNNEL_NAME);
+  if (Option.isSome(existing)) {
+    yield* Console.log(`Tunnel ${STAGE_TUNNEL_NAME} exists: ${existing.value.id} (${existing.value.status})`);
+    return { exists: true, id: existing.value.id } satisfies StageTunnel;
+  }
+  return yield* mutate(
+    `create the remotely managed Tunnel ${STAGE_TUNNEL_NAME}`,
+    api.createTunnel(STAGE_TUNNEL_NAME).pipe(Effect.map(({ id }): StageTunnel => ({ exists: true, id }))),
+    { exists: false, id: `<${STAGE_TUNNEL_NAME} tunnel id>` },
+  );
+});
+
+export const awaitTunnelHealthy = (tunnelId: string) =>
+  perform(
+    `wait until Tunnel ${STAGE_TUNNEL_NAME} reports ${TUNNEL_HEALTHY}`,
+    Effect.gen(function* awaitTunnelHealthyEffect() {
+      const api = yield* CloudflareApi;
+      return yield* api.tunnel(tunnelId).pipe(
+        Effect.repeat({
+          schedule: Schedule.spaced(TUNNEL_HEALTH_POLL),
+          until: ({ status }) => status === TUNNEL_HEALTHY,
+        }),
+      );
+    }).pipe(
+      Effect.timeoutOrElse({
+        duration: TUNNEL_HEALTH_TIMEOUT,
+        orElse: () =>
+          Effect.fail(
+            new StageOperationError({
+              message: `Tunnel ${STAGE_TUNNEL_NAME} is not ${TUNNEL_HEALTHY}; check the Zerops cloudflared service logs`,
+            }),
+          ),
+      }),
+    ),
+  );
+
+const vpcSpec = (tunnelId: string, service: StageVpcService): VpcServiceSpec => ({ ...service, tunnelId });
+
+const differences = (items: readonly (string | false)[]): Option.Option<string> => {
+  const found = items.filter((item) => item !== false);
+  return found.length === 0 ? Option.none() : Option.some(found.join(', '));
+};
+
+/** Why an existing VPC service does not match its spec, if it does not. */
+export const vpcServiceDrift = (service: CloudflareVpcService, spec: VpcServiceSpec): Option.Option<string> => {
+  const port = Option.getOrUndefined(spec.type === 'tcp' ? service.tcp_port : service.http_port);
+  const hostname = Option.getOrUndefined(service.host.hostname);
+  const tunnelId = service.host.resolver_network.pipe(
+    Option.map((network) => network.tunnel_id),
+    Option.getOrUndefined,
+  );
+  return differences([
+    service.type !== spec.type && `type ${service.type}`,
+    port !== spec.port && `port ${String(port)}`,
+    hostname !== spec.hostname && `hostname ${String(hostname)}`,
+    tunnelId !== spec.tunnelId && 'another tunnel',
+  ]);
+};
+
+const ensureVpcService = (existing: readonly CloudflareVpcService[], spec: VpcServiceSpec) =>
+  Effect.gen(function* ensureVpcServiceEffect() {
+    const current = existing.find((service) => service.name === spec.name);
+    if (current !== undefined) {
+      const drift = vpcServiceDrift(current, spec);
+      if (Option.isSome(drift)) {
+        return yield* new StageOperationError({
+          message: `Workers VPC service ${spec.name} (${current.service_id}) differs from the runbook: ${drift.value}; fix or delete it, then re-run`,
+        });
+      }
+      yield* Console.log(`Workers VPC service ${spec.name} exists: ${current.service_id}`);
+      return current.service_id;
+    }
+    const api = yield* CloudflareApi;
+    return yield* mutate(
+      `create the Workers VPC ${spec.type} service ${spec.name} for ${spec.hostname}:${String(spec.port)}`,
+      api.createVpcService(spec).pipe(Effect.map(({ service_id }) => service_id)),
+      `<${spec.name} id>`,
+    );
+  });
+
+export const ensureVpcServices = (tunnelId: string) =>
+  Effect.gen(function* ensureVpcServicesEffect() {
+    const api = yield* CloudflareApi;
+    const existing = yield* api.vpcServices;
+    return {
+      db18: yield* ensureVpcService(existing, vpcSpec(tunnelId, STAGE_VPC_SERVICES.db18)),
+      spicedb: yield* ensureVpcService(existing, vpcSpec(tunnelId, STAGE_VPC_SERVICES.spicedb)),
+    };
+  });
+
+export const hyperdriveDrift = (hyperdrive: CloudflareHyperdrive, db18ServiceId: string): Option.Option<string> => {
+  const cachingDisabled = hyperdrive.caching.pipe(
+    Option.flatMap((caching) => caching.disabled),
+    Option.getOrUndefined,
+  );
+  const limit = Option.getOrUndefined(hyperdrive.origin_connection_limit);
+  const user = Option.getOrUndefined(hyperdrive.origin.user);
+  return differences([
+    cachingDisabled !== true && 'caching is enabled',
+    limit !== HYPERDRIVE_ORIGIN_CONNECTION_LIMIT && `origin connection limit ${String(limit)}`,
+    Option.getOrUndefined(hyperdrive.origin.service_id) !== db18ServiceId && 'another origin service',
+    user !== HYPERDRIVE_RUNTIME_ROLE && `user ${String(user)}`,
+  ]);
+};
+
+export const ensureHyperdrive = (db18ServiceId: string) =>
+  Effect.gen(function* ensureHyperdriveEffect() {
+    const api = yield* CloudflareApi;
+    const { projectId } = yield* CutoverConfiguration;
+    const current = (yield* api.hyperdrives).find((hyperdrive) => hyperdrive.name === STAGE_HYPERDRIVE_NAME);
+    if (current !== undefined) {
+      const drift = hyperdriveDrift(current, db18ServiceId);
+      if (Option.isSome(drift)) {
+        return yield* new StageOperationError({
+          message: `Hyperdrive ${STAGE_HYPERDRIVE_NAME} (${current.id}) differs from the runbook: ${drift.value}; fix or delete it, then re-run`,
+        });
+      }
+      yield* Console.log(`Hyperdrive ${STAGE_HYPERDRIVE_NAME} exists: ${current.id}`);
+      return current.id;
+    }
+    // Hyperdrive connects to the origin on creation, so the tunnel must already be healthy.
+    return yield* mutate(
+      `create Hyperdrive ${STAGE_HYPERDRIVE_NAME} (role ${HYPERDRIVE_RUNTIME_ROLE}, caching disabled, origin connection limit ${String(HYPERDRIVE_ORIGIN_CONNECTION_LIMIT)})`,
+      Effect.gen(function* createHyperdrive() {
+        const created = yield* api.createHyperdrive({
+          database: yield* readZeropsValue(projectId, 'db18_dbName'),
+          name: STAGE_HYPERDRIVE_NAME,
+          originConnectionLimit: HYPERDRIVE_ORIGIN_CONNECTION_LIMIT,
+          password: yield* readZeropsValue(projectId, 'db18_password'),
+          serviceId: db18ServiceId,
+          user: HYPERDRIVE_RUNTIME_ROLE,
+        });
+        return created.id;
+      }),
+      `<${STAGE_HYPERDRIVE_NAME} id>`,
+    );
+  });
+
+// ---------------------------------------------------------------------------------------------
+// Zerops data layer: cloudflared and the outbox worker host
+
+const plannedService = ({ entry }: ServiceImport): ZeropsService => ({
+  hostname: entry.hostname,
+  id: `<${entry.hostname} service id>`,
+  status: READY_TO_DEPLOY,
+});
+
+const missingDataLayerImports = (tunnel: StageTunnel, present: ReadonlySet<string>) =>
+  Effect.gen(function* missingDataLayerImportsEffect() {
+    const entries = yield* readZeropsImport;
+    const imports: ServiceImport[] = [];
+    if (!present.has(CLOUDFLARED_SERVICE.hostname)) {
+      const entry = yield* importEntry(entries, CLOUDFLARED_SERVICE.hostname);
+      const api = yield* CloudflareApi;
+      const token = tunnel.exists ? yield* api.tunnelToken(tunnel.id) : Redacted.make('<planned tunnel token>');
+      imports.push({ entry, envSecrets: { TUNNEL_TOKEN: token } });
+    }
+    if (!present.has(OUTBOX_WORKER_HOST_SERVICE.hostname)) {
+      imports.push({ entry: yield* importEntry(entries, OUTBOX_WORKER_HOST_SERVICE.hostname), envSecrets: {} });
+    }
+    return imports;
+  });
+
+const pushCloudflared = (service: ZeropsService) =>
+  Effect.gen(function* pushCloudflaredEffect() {
+    const { projectId } = yield* CutoverConfiguration;
+    yield* perform(
+      `deploy the ${CLOUDFLARED_SERVICE.setup} setup to Zerops service ${service.id}`,
+      runCommand({
+        args: [
+          'push',
+          '--working-dir',
+          '.',
+          '--zerops-yaml-path',
+          'app/zerops.yaml',
+          '--project-id',
+          projectId,
+          '--service-id',
+          service.id,
+          '--setup',
+          CLOUDFLARED_SERVICE.setup,
+        ],
+        command: 'zcli',
+        cwd: yield* repositoryDirectory,
+      }),
+    );
+  });
+
+/**
+ * Imports the missing data-layer services from `app/zerops-import.yaml` (cloudflared receives the
+ * tunnel connector token as its TUNNEL_TOKEN secret), records their `ZEROPS_*_SERVICE_ID` stage
+ * variables, and pushes cloudflared when it has never been deployed. CI deploys the outbox worker host.
+ */
+export const ensureZeropsDataLayer = (tunnel: StageTunnel) =>
+  Effect.gen(function* ensureZeropsDataLayerEffect() {
+    const { projectId, repository } = yield* CutoverConfiguration;
+    const services = yield* listZeropsServices(projectId);
+    const imports = yield* missingDataLayerImports(tunnel, new Set(services.map(({ hostname }) => hostname)));
+    const current =
+      imports.length === 0
+        ? services
+        : yield* mutate(
+            `import the Zerops services ${imports.map(({ entry }) => entry.hostname).join(', ')} from app/zerops-import.yaml`,
+            importZeropsServices(projectId, imports).pipe(Effect.andThen(listZeropsServices(projectId))),
+            [...services, ...imports.map(plannedService)],
+          );
+    const stageVariables = yield* listGithubVariables(repository, STAGE_ENVIRONMENT);
+    for (const { hostname, setup } of [CLOUDFLARED_SERVICE, OUTBOX_WORKER_HOST_SERVICE]) {
+      const service = current.find((candidate) => candidate.hostname === hostname);
+      if (service === undefined) {
+        return yield* new StageOperationError({ message: `Zerops did not create the ${hostname} service` });
+      }
+      const variable = serviceIdVariable(setup);
+      if (stageVariables.get(variable) !== service.id) {
+        yield* perform(
+          `set the ${STAGE_ENVIRONMENT} variable ${variable}=${service.id}`,
+          setGithubVariable(repository, STAGE_ENVIRONMENT, variable, service.id),
+        );
+      }
+    }
+    const cloudflared = current.find((service) => service.hostname === CLOUDFLARED_SERVICE.hostname);
+    if (cloudflared?.status === READY_TO_DEPLOY) {
+      yield* pushCloudflared(cloudflared);
+    }
+    return current;
+  });
+
+// ---------------------------------------------------------------------------------------------
+// Reviewed build environment and GitHub
+
+/** Writes the data-plane IDs and stage origins into `topology/cloudflare-placement.json` for the A6 PR. */
+export const writeBuildEnvironment = (ids: DataPlaneIds) =>
+  Effect.gen(function* writeBuildEnvironmentEffect() {
+    const settings = yield* CutoverConfiguration;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const document = yield* decodeInput(
+      PlacementDocumentSchema,
+      PLACEMENT_LABEL,
+    )(yield* readAppText(...PLACEMENT_PATH));
+    const buildEnvironment = stageBuildEnvironment(document.buildEnvironment, yield* readEdgeUnits, settings, ids);
+    const changed = Object.keys(buildEnvironment).filter(
+      (key) => document.buildEnvironment[key] !== buildEnvironment[key],
+    );
+    if (changed.length === 0) {
+      yield* Console.log(`${PLACEMENT_LABEL} buildEnvironment is current`);
+      return;
+    }
+    const text = yield* Schema.encodeEffect(PlacementDocumentSchema)({ ...document, buildEnvironment }).pipe(
+      Effect.mapError(
+        (cause) => new StageOperationError({ cause, message: `${PLACEMENT_LABEL} could not be encoded` }),
+      ),
+    );
+    const path = yield* appFile(...PLACEMENT_PATH);
+    yield* perform(
+      `write ${changed.join(', ')} into the ${PLACEMENT_LABEL} buildEnvironment; open the reviewed A6 PR with it`,
+      fileSystem.writeFileString(path, `${text}\n`),
+    );
+  });
+
+/**
+ * The edge deploy reads CLOUDFLARE_ACCOUNT_ID and the CLOUDFLARE_API_TOKEN secret from `stage-edge`.
+ * The data-plane IDs are not variables: CI reads them only from the reviewed placement
+ * `buildEnvironment`, so a Worker's configuration is always a reviewed revision.
+ */
+export const configureStageEdge = Effect.gen(function* configureStageEdgeEffect() {
+  const { accountId, repository, stageEdgeApiToken } = yield* CutoverConfiguration;
+  const environments = yield* githubApi([`repos/${repository}/environments`, '--jq', '.environments[].name']);
+  if (!environments.split('\n').includes(STAGE_EDGE_ENVIRONMENT)) {
+    yield* perform(
+      `create the GitHub environment ${STAGE_EDGE_ENVIRONMENT} without deployment protection rules`,
+      githubApi(['-X', 'PUT', `repos/${repository}/environments/${STAGE_EDGE_ENVIRONMENT}`]),
+    );
+  }
+  const variables = yield* listGithubVariables(repository, STAGE_EDGE_ENVIRONMENT);
+  if (variables.get('CLOUDFLARE_ACCOUNT_ID') !== accountId) {
+    yield* perform(
+      `set the ${STAGE_EDGE_ENVIRONMENT} variable CLOUDFLARE_ACCOUNT_ID=${accountId}`,
+      setGithubVariable(repository, STAGE_EDGE_ENVIRONMENT, 'CLOUDFLARE_ACCOUNT_ID', accountId),
+    );
+  }
+  yield* perform(
+    `set the ${STAGE_EDGE_ENVIRONMENT} secret CLOUDFLARE_API_TOKEN`,
+    setGithubSecret(repository, STAGE_EDGE_ENVIRONMENT, 'CLOUDFLARE_API_TOKEN', stageEdgeApiToken),
+  );
+});
+
+// ---------------------------------------------------------------------------------------------
+// Provisioning and verification
+
+/** Every provisioning step, in dependency order. Activation is separate and runs only after verification. */
+export const provision = Effect.gen(function* provisionEffect() {
+  const tunnel = yield* ensureTunnel;
+  yield* ensureZeropsDataLayer(tunnel);
+  yield* awaitTunnelHealthy(tunnel.id);
+  const vpc = yield* ensureVpcServices(tunnel.id);
+  const hyperdriveId = yield* ensureHyperdrive(vpc.db18);
+  yield* writeBuildEnvironment({ hyperdriveId, spicedbVpcServiceId: vpc.spicedb });
+  yield* configureStageEdge;
+  yield* setWorkerSecrets;
+});
+
+const DeploymentsSchema = Schema.fromJsonString(Schema.Array(Schema.Struct({ id: Schema.Number })));
+const StatusesSchema = Schema.fromJsonString(Schema.Array(Schema.Struct({ state: Schema.String })));
+
+const check = (label: string, failure: Option.Option<string>) =>
+  Option.match(failure, {
+    onNone: () => Console.log(`ok   ${label}`),
+    onSome: (reason) => Effect.fail(new StageOperationError({ message: `${label}: ${reason}` })),
+  });
+
+const latestStageEdgeState = Effect.gen(function* latestStageEdgeStateEffect() {
+  const { repository } = yield* CutoverConfiguration;
+  const deployments = yield* githubApi([
+    `repos/${repository}/deployments?environment=${STAGE_EDGE_ENVIRONMENT}&per_page=1`,
+  ]).pipe(Effect.flatMap(decodeInput(DeploymentsSchema, `the ${STAGE_EDGE_ENVIRONMENT} deployments`)));
+  const [deployment] = deployments;
+  if (deployment === undefined) {
+    return Option.some('there is none; seed it with a full run');
+  }
+  const [status] = yield* githubApi([
+    `repos/${repository}/deployments/${String(deployment.id)}/statuses?per_page=1`,
+  ]).pipe(Effect.flatMap(decodeInput(StatusesSchema, `the ${STAGE_EDGE_ENVIRONMENT} deployment statuses`)));
+  return status?.state === 'success'
+    ? Option.none<string>()
+    : Option.some(`deployment ${String(deployment.id)} is ${status?.state ?? 'without a status'}`);
+});
+
+/**
+ * The cut-over verification checklist. It fails on the first unmet item, before anything changes.
+ * Only when every item holds does `activate` switch `stage` to DEPLOY_TARGET=cloudflare.
+ */
+export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
+  const api = yield* CloudflareApi;
+  const tunnel = yield* api.findTunnel(STAGE_TUNNEL_NAME);
+  if (Option.isNone(tunnel)) {
+    return yield* check(`Tunnel ${STAGE_TUNNEL_NAME} is ${TUNNEL_HEALTHY}`, Option.some(NOT_FOUND));
+  }
+  yield* check(
+    `Tunnel ${STAGE_TUNNEL_NAME} is ${TUNNEL_HEALTHY}`,
+    tunnel.value.status === TUNNEL_HEALTHY ? Option.none() : Option.some(`status ${tunnel.value.status}`),
+  );
+  const vpcServices = yield* api.vpcServices;
+  const vpcIds = new Map<string, string>();
+  for (const service of Object.values(STAGE_VPC_SERVICES)) {
+    const spec = vpcSpec(tunnel.value.id, service);
+    const current = vpcServices.find(({ name }) => name === spec.name);
+    yield* check(
+      `Workers VPC service ${spec.name} targets ${spec.hostname}:${String(spec.port)} through the tunnel`,
+      current === undefined ? Option.some(NOT_FOUND) : vpcServiceDrift(current, spec),
+    );
+    vpcIds.set(spec.name, current?.service_id ?? '');
+  }
+  const hyperdrive = (yield* api.hyperdrives).find(({ name }) => name === STAGE_HYPERDRIVE_NAME);
+  yield* check(
+    `Hyperdrive ${STAGE_HYPERDRIVE_NAME} uses ${HYPERDRIVE_RUNTIME_ROLE} through the db18 service, caching off, limit ${String(HYPERDRIVE_ORIGIN_CONNECTION_LIMIT)}`,
+    hyperdrive === undefined
+      ? Option.some(NOT_FOUND)
+      : hyperdriveDrift(hyperdrive, vpcIds.get(STAGE_VPC_SERVICES.db18.name) ?? ''),
+  );
+  const placement = yield* decodeInput(PlacementSchema, PLACEMENT_LABEL)(yield* readAppText(...PLACEMENT_PATH));
+  yield* check(
+    `the ${PLACEMENT_LABEL} buildEnvironment names these data-plane IDs`,
+    placement.buildEnvironment[HYPERDRIVE_ID_VARIABLE] === hyperdrive?.id &&
+      placement.buildEnvironment[SPICEDB_VPC_SERVICE_ID_VARIABLE] === vpcIds.get(STAGE_VPC_SERVICES.spicedb.name)
+      ? Option.none()
+      : Option.some('run provision, then merge the build-environment PR and verify from main'),
+  );
+  const scripts = yield* api.workerScriptNames;
+  const missingWorkers = (yield* readEdgeUnits)
+    .map(({ workerName }) => workerName)
+    .filter((name) => !scripts.has(name));
+  yield* check(
+    'every placed Worker is deployed',
+    missingWorkers.length === 0 ? Option.none() : Option.some(`missing ${missingWorkers.join(', ')}`),
+  );
+  yield* check(
+    `the latest ${STAGE_EDGE_ENVIRONMENT} deployment (Worker deploy plus cloudflare:proof) succeeded`,
+    yield* latestStageEdgeState,
+  );
+  return yield* Effect.void;
+});
+
+export const activate = Effect.gen(function* activateEffect() {
+  const { repository } = yield* CutoverConfiguration;
+  yield* verifyCutover;
+  const variables = yield* listGithubVariables(repository, STAGE_ENVIRONMENT);
+  if (variables.get(DEPLOY_TARGET_VARIABLE) === 'cloudflare') {
+    yield* Console.log(`${STAGE_ENVIRONMENT} already deploys with ${DEPLOY_TARGET_VARIABLE}=cloudflare`);
+    return;
+  }
+  yield* perform(
+    `set the ${STAGE_ENVIRONMENT} variable ${DEPLOY_TARGET_VARIABLE}=cloudflare`,
+    setGithubVariable(repository, STAGE_ENVIRONMENT, DEPLOY_TARGET_VARIABLE, 'cloudflare'),
+  );
+});
+
+// ---------------------------------------------------------------------------------------------
+// Composition root
+
+const HOSTNAME_PATTERN = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/u;
+
+export const loadCutoverSettings = Effect.gen(function* loadCutoverSettingsEffect() {
+  const apiToken = yield* Config.Redacted('CLOUDFLARE_API_TOKEN');
+  const settings: CutoverSettings = {
+    accountId: yield* Config.String('CLOUDFLARE_ACCOUNT_ID'),
+    apiToken,
+    projectId: STAGE_ZEROPS_PROJECT_ID,
+    repository: ONTOS_REPOSITORY,
+    shellHostname: yield* Config.String('STAGE_SHELL_HOSTNAME'),
+    stageEdgeApiToken: yield* Config.Redacted('CLOUDFLARE_STAGE_EDGE_API_TOKEN').pipe(Config.withDefault(apiToken)),
+    stageZone: yield* Config.String('STAGE_ZONE'),
+  };
+  if (!HOSTNAME_PATTERN.test(settings.stageZone) || !HOSTNAME_PATTERN.test(settings.shellHostname)) {
+    return yield* new StageOperationError({ message: 'STAGE_ZONE and STAGE_SHELL_HOSTNAME must be DNS hostnames' });
+  }
+  if (settings.shellHostname !== settings.stageZone && !settings.shellHostname.endsWith(`.${settings.stageZone}`)) {
+    return yield* new StageOperationError({ message: 'STAGE_SHELL_HOSTNAME must be inside STAGE_ZONE' });
+  }
+  return settings;
+});
+
+/** The settings file, when it exists, backs every setting the environment does not provide. */
+const settingsFileProvider = (envFile: Option.Option<string>) =>
+  Effect.gen(function* settingsFileProviderEffect() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = Option.isSome(envFile)
+      ? envFile.value
+      : `${yield* Config.String('HOME')}/.cloudflare-ontos-stage-token`;
+    return (yield* fileSystem.exists(path))
+      ? yield* ConfigProvider.fromDotEnv({ path })
+      : ConfigProvider.fromUnknown({});
+  });
+
+const cutoverLayer = ({ dryRun, envFile }: { readonly dryRun: boolean; readonly envFile: Option.Option<string> }) => {
+  const configuration = Layer.effect(CutoverConfiguration, loadCutoverSettings);
+  const credentials = Layer.effect(
+    CloudflareCredentials,
+    Effect.gen(function* cloudflareCredentials() {
+      const { accountId, apiToken } = yield* CutoverConfiguration;
+      return { accountId, apiToken };
+    }),
+  );
+  return Layer.mergeAll(CloudflareApiLive.pipe(Layer.provide(credentials)), Layer.succeed(OpsMode, { dryRun })).pipe(
+    Layer.provideMerge(configuration),
+    Layer.provide(ConfigProvider.layerAdd(settingsFileProvider(envFile))),
+  );
+};
+
+const stepCommand = <A, E, R>(name: string, description: string, step: Effect.Effect<A, E, R>) =>
+  Command.make(
+    name,
+    {
+      dryRun: Flag.Boolean('dry-run').pipe(Flag.withDefault(false)),
+      envFile: Flag.String('env-file').pipe(Flag.optional),
+    },
+    () => step,
+  ).pipe(Command.withDescription(description), Command.provide(cutoverLayer));
+
+const cli = Command.make('cloudflare-stage-cutover').pipe(
+  Command.withSubcommands([
+    stepCommand(
+      'provision',
+      'Create or reuse the Tunnel, cloudflared and outbox-worker-host, VPC services, Hyperdrive, build environment, stage-edge and Worker secrets',
+      provision,
+    ),
+    stepCommand('worker-secrets', "Set every placed Worker's runtime secrets from Zerops", setWorkerSecrets),
+    stepCommand('verify', 'Run the cut-over verification checklist without changing anything', verifyCutover),
+    stepCommand('activate', 'Verify, then set DEPLOY_TARGET=cloudflare on the stage environment', activate),
+  ]),
+);
+
+export const main = Command.run({ version: '1.0.0' })(cli);
+
+if (import.meta.main) {
+  NodeRuntime.runMain(
+    Layer.build(
+      Layer.effectDiscard(main).pipe(
+        Layer.provide(OpsShellLive),
+        Layer.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer)),
+      ),
+    ).pipe(Effect.scoped),
+  );
+}

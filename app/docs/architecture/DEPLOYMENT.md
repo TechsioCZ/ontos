@@ -368,6 +368,60 @@ The first edge deploy has no previous edge deployment, so seed it with a full ru
 `gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`. Placement adds the Worker
 delivery; it never removes a Zerops service or any GitHub environment variable or secret.
 
+## Stage cut-over and Zerops service retirement
+
+Two operator scripts own the one-time account and service changes around the Cloudflare stage. Run
+them from `app/` on a clean `main`. Both read before they write, so a re-run after a partial failure
+converges, and `--dry-run` performs every read and prints each mutation instead of running it. Zerops
+is reached through the locally authenticated `zcli` and GitHub through `gh`. Secret values stay in
+memory: they reach Cloudflare in request bodies, Wrangler and `zcli` on standard input, and never
+appear in a command line or in the output.
+
+`node scripts/ops/cloudflare-stage-cutover.mts <step> [--dry-run] [--env-file <path>]` reads
+`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `STAGE_ZONE` and `STAGE_SHELL_HOSTNAME` from the
+environment, or else from the dotenv file `~/.cloudflare-ontos-stage-token`. The optional
+`CLOUDFLARE_STAGE_EDGE_API_TOKEN` is the narrower token CI receives. Without it, CI receives
+`CLOUDFLARE_API_TOKEN`.
+
+- `provision` runs every step in dependency order. It creates or reuses the remotely managed Tunnel
+  `ontos-stage`. It imports `cloudflared` from `zerops-import.yaml`, with the tunnel connector token
+  as its `TUNNEL_TOKEN` secret, and imports `outboxworkerhost`. It records their `ZEROPS_*_SERVICE_ID`
+  stage variables and deploys `cloudflared`, then waits until the tunnel is healthy. Next it creates
+  the Workers VPC services `ontos-stage-db18` (tcp `db18:5432`) and `ontos-stage-spicedb` (http
+  `spicedb:8443`), and Hyperdrive `ontos-stage-runtime`: role `ontos_runtime`, caching disabled,
+  origin connection limit 40, and the password read from Zerops `db18_password`. It writes the IDs
+  and stage origins into this placement's `buildEnvironment` for a reviewed PR. It sets the
+  `stage-edge` variable `CLOUDFLARE_ACCOUNT_ID` and secret `CLOUDFLARE_API_TOKEN`. Last, it sets every
+  placed Worker's secrets with `wrangler secret bulk`, from the Zerops values the Node services use
+  today. An existing object that differs from the runbook fails the step instead of being reused.
+- `worker-secrets` repeats only the Worker secrets step.
+- `verify` runs the cut-over checklist and changes nothing. The tunnel must be healthy. Both VPC
+  services and Hyperdrive must match the runbook, and the reviewed `buildEnvironment` must name
+  them. Every placed Worker must exist, and the latest `stage-edge` deployment, which includes
+  `cloudflare:proof`, must have succeeded.
+- `activate` runs `verify` and, only when every item holds, sets `DEPLOY_TARGET=cloudflare` on
+  `stage`.
+
+`node scripts/ops/stage-zerops-services.mts retire|restore [--dry-run]` handles the 12 stage services
+that Cloudflare mode no longer uses: the 9 application services and the 3 per-vertical outbox workers.
+It never changes `zerops.yaml`, `zerops-import.yaml`, a deploy script, or a GitHub variable.
+
+- `retire` records each service in the versioned file `scripts/ops/stage-zerops-retirement.json`:
+  its ID, status, `zerops-import.yaml` entry and stage service-ID variable. It also records the KEYS
+  of its variables, split three ways: keys the setup's `run.envVariables` declares, keys inherited
+  from the project, and service-level secrets. Values are never recorded. Commit the file. With
+  `--confirm`, `retire` then deletes each service with `zcli service delete`. It refuses to delete
+  until `stage` deploys with `DEPLOY_TARGET=cloudflare` and the `outboxworkerhost` service is ACTIVE.
+  A re-run keeps the records of services that are already gone.
+- `restore --secrets-file <vault export>` re-imports every recorded service that `zerops-import.yaml`
+  still declares. It passes each service's secrets as import `envSecrets`, read from a dotenv export
+  of the vault keyed `<hostname>_<KEY>`, the names `zcli project env` shows. Today those secrets are
+  `ONTOS_GATEWAY_PUBLIC_JWKS` on each vertical, plus `BETTER_AUTH_SECRET`,
+  `BETTER_AUTH_TRUSTED_ORIGINS`, `BETTER_AUTH_URL` and `ONTOS_GATEWAY_PRIVATE_JWK` on the Shell. If
+  the file lacks any recorded secret, `restore` changes nothing. Otherwise it points every stage
+  `ZEROPS_*_SERVICE_ID` at the new service, sets `DEPLOY_TARGET=zerops` and dispatches the full
+  Zerops deploy. Moving the Shell hostname back to Zerops remains a DNS step.
+
 ## Required smoke suite
 
 Provider readiness alone is insufficient. The post-deploy release gate exercises:
