@@ -37,8 +37,13 @@ shell_origin="http://localhost:${shell_port}"
 work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/ontos-cloudflare-local.XXXXXX")"
 pids=()
 dev_vars_outputs=()
+shell_grant_withdrawn=false
 cleanup() {
   status=$?
+  # The denial check withdraws the demo principal's Shell grant; never leave it withdrawn.
+  if [ "$shell_grant_withdrawn" = true ]; then
+    shell_grant OPERATION_TOUCH || echo "Could not restore the Shell grant in SpiceDB" >&2
+  fi
   for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
   wait 2>/dev/null || true
   if [ "$status" -ne 0 ]; then
@@ -199,10 +204,12 @@ shell_grant() { # <OPERATION_DELETE|OPERATION_TOUCH>
     {\"operation\":\"$1\",\"relationship\":{\"resource\":{\"objectType\":\"module_access\",\"objectId\":\"$shell_access\"},\"relation\":\"accessor\",\"subject\":{\"object\":{\"objectType\":\"principal\",\"objectId\":\"$principal_id\"}}}},
     {\"operation\":\"$1\",\"relationship\":{\"resource\":{\"objectType\":\"module_access\",\"objectId\":\"$shell_access\"},\"relation\":\"legal_entity\",\"subject\":{\"object\":{\"objectType\":\"legal_entity\",\"objectId\":\"$legal_entity_access\"}}}}]}" >/dev/null
 }
+shell_grant_withdrawn=true
 shell_grant OPERATION_DELETE
 check "Shell composition is denied by SpiceDB over HTTP without the Shell grant" 403 \
   "$(request "$work/composition-denied.json" "$shell_origin/shell-super-app-api/shell/composition")"
 shell_grant OPERATION_TOUCH
+shell_grant_withdrawn=false
 
 # 3. Module discovery over service bindings: every UI vertical's contract answers through its
 #    VERTICAL_*_WORKER binding, so no deployment is reported unavailable.
