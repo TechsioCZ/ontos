@@ -65,6 +65,8 @@ export interface FakeStage {
   readonly commands: OpsCommand[];
   readonly deployments: { id: number; state: string }[];
   readonly environments: Set<string>;
+  /** Hostnames a service import accepts but Zerops does not list (a partial or delayed creation). */
+  readonly hiddenOnImport: Set<string>;
   /** Every stdin the scripts piped, by rendered command. */
   readonly inputs: { command: string; stdin: string }[];
   readonly layer: Layer.Layer<OpsShellService>;
@@ -125,6 +127,9 @@ const zcliAnswer = (stage: FakeStage, command: OpsCommand, nextId: () => string)
   if (group === 'project' && action === 'service-import') {
     const stdin = command.stdin === undefined ? '' : Redacted.value(command.stdin);
     for (const { hostname } of Schema.decodeUnknownSync(ImportSchema)(parseYaml(stdin)).services) {
+      if (stage.hiddenOnImport.has(hostname)) {
+        continue;
+      }
       stage.services.push({ hostname, id: nextId(), status: 'READY_TO_DEPLOY' });
     }
     return Effect.succeed('');
@@ -215,6 +220,7 @@ export const fakeStage = (initial: FakeStageInitial): FakeStage => {
     commands: [],
     deployments: [...(initial.deployments ?? [])],
     environments: new Set(initial.environments ?? ['stage']),
+    hiddenOnImport: new Set(),
     inputs: [],
     projectUserKeys: [...(initial.projectUserKeys ?? [])],
     projectValues: new Map(Object.entries(initial.projectValues ?? {})),
@@ -266,7 +272,12 @@ export type FakeVpcService = typeof VpcServiceSchema.Type;
 const HyperdriveBodySchema = Schema.Struct({
   caching: Schema.Struct({ disabled: Schema.Boolean }),
   name: Schema.String,
-  origin: Schema.Struct({ service_id: Schema.String, user: Schema.String }),
+  origin: Schema.Struct({
+    database: Schema.String,
+    scheme: Schema.String,
+    service_id: Schema.String,
+    user: Schema.String,
+  }),
   origin_connection_limit: Schema.Number,
 });
 const HyperdriveSchema = Schema.Struct({ ...HyperdriveBodySchema.fields, id: Schema.String });

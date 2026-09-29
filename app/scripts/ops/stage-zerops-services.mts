@@ -2,6 +2,8 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Array as Arr,
+  Config,
+  ConfigProvider,
   Console,
   Context,
   DateTime,
@@ -10,14 +12,13 @@ import {
   Layer,
   Option,
   Order,
-  Redacted,
   Schema,
 } from 'effect';
+import type { Redacted } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { parse as parseYaml } from 'yaml';
 
 import { serviceIdVariable } from '../publish-active-application-composition.mts';
-import { parseZeropsEnvFile } from '../zerops-public-api.mts';
 import { OpsShellLive, runCommand } from './ops-shell.mts';
 import { StageOperationError } from './stage-operation-error.mts';
 import {
@@ -341,7 +342,7 @@ export const requiredSecretNames = (services: readonly RetiredService[]) =>
 export const restoreImports = (
   services: readonly RetiredService[],
   entries: readonly ZeropsImportEntry[],
-  secrets: ReadonlyMap<string, string>,
+  secrets: ReadonlyMap<string, Redacted.Redacted>,
 ) => {
   const missing = requiredSecretNames(services).filter((name) => !secrets.has(name));
   if (missing.length > 0) {
@@ -358,10 +359,10 @@ export const restoreImports = (
             {
               entry,
               envSecrets: Object.fromEntries(
-                environmentKeys.serviceSecrets.map((key) => [
-                  key,
-                  Redacted.make(secrets.get(`${hostname}_${key}`) ?? ''),
-                ]),
+                environmentKeys.serviceSecrets.flatMap((key) => {
+                  const value = secrets.get(`${hostname}_${key}`);
+                  return value === undefined ? [] : [[key, value] as const];
+                }),
               ),
             },
           ];
@@ -369,13 +370,35 @@ export const restoreImports = (
   );
 };
 
-const readSecretsFile = (secretsFile: Option.Option<string>) =>
+/**
+ * Reads the named secrets from the vault export with the workspace's dotenv semantics (Effect's
+ * `ConfigProvider.fromDotEnvContents`): single-quoted values are literal, so JSON secrets such as the
+ * private JWK belong in single quotes. Values stay redacted; absent names are simply not returned.
+ */
+export const readVaultSecrets = (contents: string, names: readonly string[]) =>
+  Effect.gen(function* readVaultSecretsEffect() {
+    const provider = ConfigProvider.fromDotEnvContents(contents);
+    const found = yield* Effect.forEach(
+      names,
+      (name) =>
+        Config.Redacted(name)
+          .parse(provider)
+          .pipe(
+            Effect.map((value) => [[name, value] as const]),
+            Effect.orElseSucceed(() => []),
+          ),
+      { concurrency: 1 },
+    );
+    return new Map(found.flat());
+  });
+
+const readSecretsFile = (secretsFile: Option.Option<string>, names: readonly string[]) =>
   Effect.gen(function* readSecretsFileEffect() {
     if (Option.isNone(secretsFile)) {
-      return new Map<string, string>();
+      return new Map<string, Redacted.Redacted>();
     }
     const fileSystem = yield* FileSystem.FileSystem;
-    return parseZeropsEnvFile(yield* fileSystem.readFileString(secretsFile.value));
+    return yield* readVaultSecrets(yield* fileSystem.readFileString(secretsFile.value), names);
   }).pipe(
     Effect.mapError((cause) => new StageOperationError({ cause, message: 'the secrets file could not be read' })),
   );
@@ -401,16 +424,26 @@ export const restore = (options: { readonly secretsFile: Option.Option<string> }
     const missingServices = recorded.value.services.filter(
       ({ hostname }) => declared.has(hostname) && !liveHostnames.has(hostname),
     );
-    const imports = yield* restoreImports(missingServices, entries, yield* readSecretsFile(options.secretsFile));
+    const secrets = yield* readSecretsFile(options.secretsFile, requiredSecretNames(missingServices));
+    const imports = yield* restoreImports(missingServices, entries, secrets);
     if (imports.length > 0) {
       yield* perform(
         `import the Zerops services ${imports.map(({ entry }) => entry.hostname).join(', ')} with their recorded secrets`,
         importZeropsServices(projectId, imports),
       );
     }
+    const { dryRun } = yield* OpsMode;
     const current = yield* listZeropsServices(projectId);
+    const restored = recorded.value.services.filter(({ hostname }) => declared.has(hostname));
+    const unresolved = restored.filter(({ hostname }) => !current.some((service) => service.hostname === hostname));
+    // Only a dry run plans with placeholders; a real restore never points stage at a service it cannot see.
+    if (!dryRun && unresolved.length > 0) {
+      return yield* new StageOperationError({
+        message: `Zerops lists no ${unresolved.map(({ hostname }) => hostname).join(', ')} after the import; no stage variable was changed. Re-run restore once they appear`,
+      });
+    }
     const stageVariables = yield* listGithubVariables(repository, STAGE_ENVIRONMENT);
-    for (const service of recorded.value.services.filter(({ hostname }) => declared.has(hostname))) {
+    for (const service of restored) {
       const serviceId =
         current.find(({ hostname }) => hostname === service.hostname)?.id ?? `<new ${service.hostname} service id>`;
       if (stageVariables.get(service.serviceIdVariable) !== serviceId) {

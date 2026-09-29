@@ -71,6 +71,7 @@ const TUNNEL_HEALTH_TIMEOUT = Duration.minutes(10);
 const TUNNEL_HEALTHY = 'healthy';
 const NOT_FOUND = 'it does not exist';
 const READY_TO_DEPLOY = 'READY_TO_DEPLOY';
+const DB18_DATABASE_NAME = 'db18_dbName';
 
 type StageVpcService = Omit<VpcServiceSpec, 'tunnelId'>;
 
@@ -434,17 +435,27 @@ export const ensureVpcServices = (tunnelId: string) =>
     };
   });
 
-export const hyperdriveDrift = (hyperdrive: CloudflareHyperdrive, db18ServiceId: string): Option.Option<string> => {
+/** The origin a stage Hyperdrive config must use: the db18 VPC service and the Zerops database name. */
+export interface HyperdriveOrigin {
+  readonly database: string;
+  readonly serviceId: string;
+}
+
+export const hyperdriveDrift = (hyperdrive: CloudflareHyperdrive, origin: HyperdriveOrigin): Option.Option<string> => {
   const cachingDisabled = hyperdrive.caching.pipe(
     Option.flatMap((caching) => caching.disabled),
     Option.getOrUndefined,
   );
   const limit = Option.getOrUndefined(hyperdrive.origin_connection_limit);
   const user = Option.getOrUndefined(hyperdrive.origin.user);
+  const scheme = Option.getOrUndefined(hyperdrive.origin.scheme);
+  const database = Option.getOrUndefined(hyperdrive.origin.database);
   return differences([
     cachingDisabled !== true && 'caching is enabled',
     limit !== HYPERDRIVE_ORIGIN_CONNECTION_LIMIT && `origin connection limit ${String(limit)}`,
-    Option.getOrUndefined(hyperdrive.origin.service_id) !== db18ServiceId && 'another origin service',
+    Option.getOrUndefined(hyperdrive.origin.service_id) !== origin.serviceId && 'another origin service',
+    scheme !== 'postgresql' && `scheme ${String(scheme)}`,
+    database !== origin.database && `database ${String(database)}`,
     user !== HYPERDRIVE_RUNTIME_ROLE && `user ${String(user)}`,
   ]);
 };
@@ -454,8 +465,9 @@ export const ensureHyperdrive = (db18ServiceId: string) =>
     const api = yield* CloudflareApi;
     const { projectId } = yield* CutoverConfiguration;
     const current = (yield* api.hyperdrives).find((hyperdrive) => hyperdrive.name === STAGE_HYPERDRIVE_NAME);
+    const database = yield* readZeropsValue(projectId, DB18_DATABASE_NAME);
     if (current !== undefined) {
-      const drift = hyperdriveDrift(current, db18ServiceId);
+      const drift = hyperdriveDrift(current, { database: Redacted.value(database), serviceId: db18ServiceId });
       if (Option.isSome(drift)) {
         return yield* new StageOperationError({
           message: `Hyperdrive ${STAGE_HYPERDRIVE_NAME} (${current.id}) differs from the runbook: ${drift.value}; fix or delete it, then re-run`,
@@ -469,7 +481,7 @@ export const ensureHyperdrive = (db18ServiceId: string) =>
       `create Hyperdrive ${STAGE_HYPERDRIVE_NAME} (role ${HYPERDRIVE_RUNTIME_ROLE}, caching disabled, origin connection limit ${String(HYPERDRIVE_ORIGIN_CONNECTION_LIMIT)})`,
       Effect.gen(function* createHyperdrive() {
         const created = yield* api.createHyperdrive({
-          database: yield* readZeropsValue(projectId, 'db18_dbName'),
+          database,
           name: STAGE_HYPERDRIVE_NAME,
           originConnectionLimit: HYPERDRIVE_ORIGIN_CONNECTION_LIMIT,
           password: yield* readZeropsValue(projectId, 'db18_password'),
@@ -680,6 +692,7 @@ const latestStageEdgeState = Effect.gen(function* latestStageEdgeStateEffect() {
  */
 export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
   const api = yield* CloudflareApi;
+  const { projectId } = yield* CutoverConfiguration;
   const tunnel = yield* api.findTunnel(STAGE_TUNNEL_NAME);
   if (Option.isNone(tunnel)) {
     return yield* check(`Tunnel ${STAGE_TUNNEL_NAME} is ${TUNNEL_HEALTHY}`, Option.some(NOT_FOUND));
@@ -704,7 +717,10 @@ export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
     `Hyperdrive ${STAGE_HYPERDRIVE_NAME} uses ${HYPERDRIVE_RUNTIME_ROLE} through the db18 service, caching off, limit ${String(HYPERDRIVE_ORIGIN_CONNECTION_LIMIT)}`,
     hyperdrive === undefined
       ? Option.some(NOT_FOUND)
-      : hyperdriveDrift(hyperdrive, vpcIds.get(STAGE_VPC_SERVICES.db18.name) ?? ''),
+      : hyperdriveDrift(hyperdrive, {
+          database: Redacted.value(yield* readZeropsValue(projectId, DB18_DATABASE_NAME)),
+          serviceId: vpcIds.get(STAGE_VPC_SERVICES.db18.name) ?? '',
+        }),
   );
   const placement = yield* decodeInput(PlacementSchema, PLACEMENT_LABEL)(yield* readAppText(...PLACEMENT_PATH));
   yield* check(

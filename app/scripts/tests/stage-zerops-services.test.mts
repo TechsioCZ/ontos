@@ -291,7 +291,8 @@ const vaultExport = (overrides: Readonly<Record<string, string>> = {}) =>
     shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: '{"d":"private-jwk-secret"}',
     ...overrides,
   })
-    .map(([key, value]) => `${key}="${value}"`)
+    // Single quotes keep JSON literal under dotenv rules, as a vault export writes it.
+    .map(([key, value]) => `${key}='${value}'`)
     .join('\n');
 
 it.effect('restores nothing when the secrets file lacks a recorded secret', () =>
@@ -348,6 +349,27 @@ it.effect('re-imports the retired services with their secrets, re-points the var
     );
     expect(rendered.join('\n')).not.toContain('private-jwk-secret');
     expect(rendered.join('\n')).not.toContain(AUTH_SECRET);
+  }),
+);
+
+it.effect('changes no stage variable when Zerops does not list an imported service', () =>
+  Effect.gen(function* refusesUnlistedImport() {
+    const { files, stage } = yield* retiredFiles;
+    files.writes.set(`${APP_DIRECTORY}/../vault.env`, vaultExport());
+    stage.hiddenOnImport.add('pricing');
+    const variablesBefore = new Map(stage.variables.get('stage'));
+    const commandsBefore = stage.commands.length;
+
+    const error = yield* run(restore({ secretsFile: Option.some(`${APP_DIRECTORY}/../vault.env`) }), {
+      files,
+      stage,
+    }).pipe(Effect.flip);
+
+    expect(error.message).toContain('Zerops lists no pricing after the import; no stage variable was changed');
+    expect(stage.variables.get('stage')).toStrictEqual(variablesBefore);
+    expect(
+      mutatingCommands(stage.commands.slice(commandsBefore)).map(({ args, command }) => `${command} ${args[0] ?? ''}`),
+    ).toStrictEqual(['zcli project']);
   }),
 );
 

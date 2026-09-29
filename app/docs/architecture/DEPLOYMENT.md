@@ -415,11 +415,11 @@ It never changes `zerops.yaml`, `zerops-import.yaml`, a deploy script, or a GitH
   A re-run keeps the records of services that are already gone.
 - `restore --secrets-file <vault export>` re-imports every recorded service that `zerops-import.yaml`
   still declares. It passes each service's secrets as import `envSecrets`, read from a dotenv export
-  of the vault keyed `<hostname>_<KEY>`, the names `zcli project env` shows. Today those secrets are
+  of the vault keyed `<hostname>_<KEY>`, the names `zcli project env` shows. The export is parsed with dotenv rules, so JSON values such as the private JWK belong in single quotes. Today those secrets are
   `ONTOS_GATEWAY_PUBLIC_JWKS` on each vertical, plus `BETTER_AUTH_SECRET`,
   `BETTER_AUTH_TRUSTED_ORIGINS`, `BETTER_AUTH_URL` and `ONTOS_GATEWAY_PRIVATE_JWK` on the Shell. If
   the file lacks any recorded secret, `restore` changes nothing. Otherwise it points every stage
-  `ZEROPS_*_SERVICE_ID` at the new service, sets `DEPLOY_TARGET=zerops` and dispatches the full
+  `ZEROPS_*_SERVICE_ID` at the new service (and fails, changing no variable, if Zerops does not list one), sets `DEPLOY_TARGET=zerops` and dispatches the full
   Zerops deploy. Moving the Shell hostname back to Zerops remains a DNS step.
 
 ## Required smoke suite

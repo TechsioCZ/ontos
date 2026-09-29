@@ -292,7 +292,7 @@ it.effect('refuses to reuse a Hyperdrive config that caches tenant reads', () =>
           caching: { disabled: false },
           id: 'hyperdrive-old',
           name: RUNTIME_HYPERDRIVE,
-          origin: { service_id: 'vpc-1', user: 'ontos_runtime' },
+          origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
           origin_connection_limit: 40,
         },
       ],
@@ -308,6 +308,29 @@ it.effect('refuses to reuse a Hyperdrive config that caches tenant reads', () =>
     expect(
       account.requests.filter(({ url }) => url.pathname.endsWith('/hyperdrive/configs') && url.search === ''),
     ).toHaveLength(0);
+    expect(files.writes.size).toBe(0);
+  }),
+);
+
+it.effect('refuses to reuse a Hyperdrive config that points at another database', () =>
+  Effect.gen(function* refusesOtherDatabase() {
+    const account = fakeCloudflareAccount({
+      hyperdrives: [
+        {
+          caching: { disabled: true },
+          id: 'hyperdrive-old',
+          name: RUNTIME_HYPERDRIVE,
+          origin: { database: 'postgres', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
+          origin_connection_limit: 40,
+        },
+      ],
+    });
+    const stage = newStage();
+    const files = fakeFiles({ 'zerops-import.yaml': importWithDataLayer });
+
+    const error = yield* run(provision, { account, files, stage }).pipe(Effect.flip);
+
+    expect(error.message).toContain('differs from the runbook: database postgres');
     expect(files.writes.size).toBe(0);
   }),
 );
@@ -346,7 +369,7 @@ const provisionedAccount = (tunnelStatus: string) =>
         caching: { disabled: true },
         id: HYPERDRIVE_ID,
         name: RUNTIME_HYPERDRIVE,
-        origin: { service_id: 'vpc-1', user: 'ontos_runtime' },
+        origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
         origin_connection_limit: 40,
       },
     ],

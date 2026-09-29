@@ -52,7 +52,12 @@ const HyperdriveSchema = Schema.Struct({
   caching: optional(Schema.Struct({ disabled: optional(Schema.Boolean) })),
   id: Schema.NonEmptyString,
   name: Schema.String,
-  origin: Schema.Struct({ service_id: optional(Schema.String), user: optional(Schema.String) }),
+  origin: Schema.Struct({
+    database: optional(Schema.String),
+    scheme: optional(Schema.String),
+    service_id: optional(Schema.String),
+    user: optional(Schema.String),
+  }),
   origin_connection_limit: optional(Schema.Number),
 });
 export type CloudflareHyperdrive = typeof HyperdriveSchema.Type;
