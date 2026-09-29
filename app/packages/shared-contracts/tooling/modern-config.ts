@@ -311,7 +311,7 @@ export const CLOUDFLARE_WORKER_CPU_MS = { shell: 200, vertical: 100 } as const;
 /**
  * The data plane plus the cost guards every OntOS Worker carries: it answers only on its reviewed
  * custom domain (no `*.workers.dev` route and no preview URLs, which would bypass the stage zone's
- * WAF kill switch and rate limit) and stops after `cpuMs` of CPU per request.
+ * WAF kill switch) and stops after `cpuMs` of CPU per request.
  */
 export const createCloudflareWorkerConfig = (envValue: ModernBuildContext['envValue'], cpuMs: number) => {
   const dataPlane = createCloudflareDataPlaneBindings(envValue);

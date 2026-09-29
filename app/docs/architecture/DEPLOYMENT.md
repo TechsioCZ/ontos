@@ -468,7 +468,7 @@ Access application `ontos-stage-shell`, with `ontos-stage-shell-gateway` bypassi
 `/shell-super-app-api/auth/api-key/gateway-context`, which verticals call with an API key. Keep it
 off for now: `cloudflare:proof` probes the Shell with plain `fetch`, cannot send the service token
 headers, and would fail every stage deploy. Vertical hostnames stay outside Access for good, since the
-browser loads their federated remotes cross-origin without credentials; the rate limit and the kill
+browser loads their federated remotes cross-origin without credentials; the CPU caps and the kill
 switch cover them.
 
 To resume after the kill switch trips, find out why, then run
