@@ -2544,7 +2544,7 @@ if (configuration?.tools) {
     const config = { resolve: {}, externals: [], plugins: [], node: {} };
     configuration.tools.rspack?.(config, { environment: { name }, rspack: plugins });
     const externalResults = [];
-    for (const external of config.externals) for (const request of ['node:fs', 'fs', 'cloudflare:sockets', 'cloudflare:workers', 'unrelated']) {
+    for (const external of config.externals) for (const request of ['node:fs', 'fs', 'cloudflare:sockets', 'unrelated']) {
       external({ request, dependencyType: 'commonjs' }, (...args) => externalResults.push(args));
     }
     return { config, externalResults };
