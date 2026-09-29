@@ -2,10 +2,10 @@
 
 import Image from "next/image";
 import NextLink from "next/link";
+import { Badge } from "@techsio/ui-kit/atoms/badge";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { ProductCard } from "@techsio/ui-kit/molecules/product-card";
 
-import styles from "./product-grid.module.css";
 import { AddToCartButton } from "@/features/cart/add-to-cart-button";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
@@ -30,7 +30,7 @@ export function ProductGrid({
   action?: "purchase" | "detail";
 }) {
   return (
-    <div className={`akros-product-grid ${styles.grid}`}>
+    <div className="akros-product-grid">
       {products.map((product, index) => {
         const detailHref = product.detailHref ?? `/produkt/${product.slug}`;
         const canAddToCart =
@@ -46,21 +46,18 @@ export function ProductGrid({
         const supportingText = product.description.trim() || `Kód produktu: ${product.sku}`;
 
         return (
-          <article className={styles.cardShell} key={product.id}>
-            <ProductCard
-              className={`akros-product-card akros-catalog-product-card ${styles.card}`}
-              layout="column"
-            >
-              <div className={styles.media}>
+          <article className="min-w-0" key={product.id}>
+            <ProductCard className="akros-product-card akros-catalog-product-card" layout="column">
+              <div className="relative">
                 <NextLink
                   aria-label={product.name}
-                  className={`akros-catalog-product-card__image-link ${styles.imageLink}`}
+                  className="akros-catalog-product-card__image-link flex items-center justify-center"
                   href={detailHref}
                 >
                   <ProductCard.Image
                     as={Image}
                     alt={product.imageAlt}
-                    className={`akros-catalog-product-card__image ${styles.image}`}
+                    className="akros-catalog-product-card__image object-contain"
                     height={480}
                     loading={index < 4 ? "eager" : "lazy"}
                     sizes="(max-width: 430px) 100vw, (max-width: 1100px) 50vw, 234px"
@@ -71,42 +68,55 @@ export function ProductGrid({
                 <LinkButton
                   aria-label="Zobrazit oblíbené produkty"
                   as={NextLink}
-                  className={styles.favoriteLink}
+                  className="absolute top-0 right-0 size-11 rounded-full p-0 text-(--color-neutral-400)"
                   href="/oblibene"
                   icon="icon-[mdi--heart-outline]"
                   iconSize="lg"
                   size="current"
-                  theme="unstyled"
+                  theme="borderless"
                   variant="secondary"
                 />
               </div>
 
-              <ProductCard.Name className={`akros-catalog-product-card__name ${styles.name}`}>
+              <ProductCard.Name className="akros-catalog-product-card__name m-0 text-center uppercase">
                 <NextLink className="akros-product-card__name-link" href={detailHref}>
                   {product.name}
                 </NextLink>
               </ProductCard.Name>
 
-              <div className={styles.stockRow}>
+              <div className="flex items-center justify-between gap-2">
                 <ProductCard.Stock
-                  className={`akros-catalog-product-card__stock ${styles.stock}`}
+                  className="akros-catalog-product-card__stock m-0 uppercase"
                   status={product.stock.status}
                 >
                   {stockLabels[product.stock.status]}
                 </ProductCard.Stock>
-                {product.hasVariants && <span className={styles.variantPill}>Více variant</span>}
+                {product.hasVariants && (
+                  <Badge
+                    bgColor="var(--color-base-dark)"
+                    borderColor="var(--color-base-dark)"
+                    className="whitespace-nowrap"
+                    fgColor="var(--color-base-light)"
+                    size="sm"
+                    variant="dynamic"
+                  >
+                    Více variant
+                  </Badge>
+                )}
               </div>
 
-              <p className={styles.description}>{supportingText}</p>
+              <p className="m-0 line-clamp-2 min-h-[2.8em] text-sm leading-normal text-(--color-fg-secondary)">
+                {supportingText}
+              </p>
               {product.searchMatchLabel && (
-                <p className={`akros-product-card__search-match ${styles.searchMatch}`}>
-                  {product.searchMatchLabel}
-                </p>
+                <p className="akros-product-card__search-match">{product.searchMatchLabel}</p>
               )}
 
-              <ProductCard.Price className={styles.price}>{priceLabel}</ProductCard.Price>
+              <ProductCard.Price className="mt-auto mb-0 text-center">
+                {priceLabel}
+              </ProductCard.Price>
 
-              <ProductCard.Actions className={styles.actions}>
+              <ProductCard.Actions className="mt-auto block">
                 {canAddToCart && product.stock.kind === "quantity" ? (
                   <AddToCartButton
                     item={{
@@ -128,7 +138,7 @@ export function ProductGrid({
                     as={NextLink}
                     block
                     href={detailHref}
-                    size="lg"
+                    size="sm"
                     uppercase
                     variant="primary"
                   >

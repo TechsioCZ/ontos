@@ -953,11 +953,6 @@ body {
   white-space: nowrap;
 }
 
-.akros-section--product-recommendations .akros-product-grid {
-  grid-template-columns: repeat(3, 260px);
-  gap: 16px;
-}
-
 .akros-cart-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 390px;
@@ -1554,10 +1549,6 @@ body {
     min-width: 52px;
   }
 
-  .akros-section--product-recommendations .akros-product-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .akros-variant-data-table__row {
     height: 64px;
   }
@@ -1643,8 +1634,7 @@ body {
 }
 
 @media (max-width: 430px) {
-  .akros-product-grid,
-  .akros-section--product-recommendations .akros-product-grid {
+  .akros-product-grid {
     grid-template-columns: 1fr;
   }
 }
