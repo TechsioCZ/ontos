@@ -33,6 +33,9 @@ const AUTH_SECRET = 'better-auth-secret';
 const PRIVATE_JWK = '{"kty":"OKP","d":"private-jwk-secret"}';
 const SPICEDB_KEY = 'spicedb-key-secret';
 const PUBLIC_JWKS = '{"keys":["public"]}';
+const SNAPSHOT_SECRET = 'ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON';
+const CUSTOMER_CONTEXT_WORKER = 'app-commerce-customer-context';
+const DEPLOYMENT_ENVIRONMENT = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 const PLACEMENT_FILE = 'topology/cloudflare-placement.json';
 const TOPOLOGY_FILE = 'topology/reference-topology.json';
 const RUNTIME_HYPERDRIVE = 'ontos-stage-runtime';
@@ -238,6 +241,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
       BETTER_AUTH_SECRET: AUTH_SECRET,
       BETTER_AUTH_TRUSTED_ORIGINS: SHELL_ORIGIN,
       BETTER_AUTH_URL: SHELL_ORIGIN,
+      [DEPLOYMENT_ENVIRONMENT]: 'stage',
       ONTOS_GATEWAY_ISSUER: SHELL_ORIGIN,
       ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK,
       SPICEDB_ENDPOINT: 'spicedb:8443',
@@ -364,53 +368,73 @@ it.effect('fails before importing when the data-layer setups are not merged yet'
   }),
 );
 
-const SNAPSHOT_SECRET = 'ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON';
-const CUSTOMER_CONTEXT_WORKER = 'app-commerce-customer-context';
-
-const provisionedAccount = (tunnelStatus: string, secrets: Readonly<Record<string, readonly string[]>> = {}) =>
-  fakeCloudflareAccount({
-    hyperdrives: [
-      {
-        caching: { disabled: true },
-        id: HYPERDRIVE_ID,
-        name: RUNTIME_HYPERDRIVE,
-        origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
-        origin_connection_limit: 40,
-      },
-    ],
-    scripts: [
-      'app-party-registry',
-      CUSTOMER_CONTEXT_WORKER,
-      'app-payment-term-catalog',
-      'app-commerce-market-catalog',
-      'app-catalog',
-      'app-pricing',
-      'app-storefront-registry',
-      'app-price-group-catalog',
-      'app-shell-super-app',
-    ],
-    secrets,
-    tunnels: [{ id: 'tunnel-1', name: 'ontos-stage', status: tunnelStatus }],
-    vpcServices: [
-      {
-        app_protocol: 'postgresql',
-        host: { hostname: 'db18', resolver_network: { tunnel_id: 'tunnel-1' } },
-        name: 'ontos-stage-db18',
-        service_id: 'vpc-1',
-        tcp_port: 5432,
-        type: 'tcp',
-      },
-      {
-        host: { hostname: 'spicedb', resolver_network: { tunnel_id: 'tunnel-1' } },
-        http_port: 8443,
-        name: 'ontos-stage-spicedb',
-        service_id: 'vpc-2',
-        type: 'http',
-      },
-    ],
-  });
-
 const readRepositoryFile = (path: string) => readFileSync(`${APP_DIRECTORY}/${path}`, 'utf-8');
+
+/** Each placed Worker's planned runtime secret names, the ones `provision` sets and `verify` requires. */
+const plannedSecretNames = Effect.gen(function* plannedSecretNamesEffect() {
+  const units = yield* edgeUnits(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE));
+  const secret = Redacted.make('value');
+  const plan = workerSecretPlan(units, settings, {
+    betterAuthSecret: secret,
+    gatewayPrivateJwk: secret,
+    gatewayPublicJwks: secret,
+    spicedbPresharedKey: secret,
+  });
+  return Object.fromEntries([...plan].map(([worker, secrets]) => [worker, Object.keys(secrets)]));
+});
+
+/** An account `provision` completed; `extraSecrets` adds names to a Worker's planned ones. */
+const provisionedAccount = (
+  tunnelStatus: string,
+  extraSecrets: Readonly<Record<string, readonly string[]>> = {},
+  plannedOverride?: Readonly<Record<string, readonly string[]>>,
+) =>
+  Effect.gen(function* provisionedAccountEffect() {
+    const planned: Readonly<Record<string, readonly string[]>> = plannedOverride ?? (yield* plannedSecretNames);
+    return fakeCloudflareAccount({
+      hyperdrives: [
+        {
+          caching: { disabled: true },
+          id: HYPERDRIVE_ID,
+          name: RUNTIME_HYPERDRIVE,
+          origin: { database: 'ontos', scheme: 'postgresql', service_id: 'vpc-1', user: 'ontos_runtime' },
+          origin_connection_limit: 40,
+        },
+      ],
+      scripts: [
+        'app-party-registry',
+        CUSTOMER_CONTEXT_WORKER,
+        'app-payment-term-catalog',
+        'app-commerce-market-catalog',
+        'app-catalog',
+        'app-pricing',
+        'app-storefront-registry',
+        'app-price-group-catalog',
+        'app-shell-super-app',
+      ],
+      secrets: Object.fromEntries(
+        Object.entries(planned).map(([worker, names]) => [worker, [...names, ...(extraSecrets[worker] ?? [])]]),
+      ),
+      tunnels: [{ id: 'tunnel-1', name: 'ontos-stage', status: tunnelStatus }],
+      vpcServices: [
+        {
+          app_protocol: 'postgresql',
+          host: { hostname: 'db18', resolver_network: { tunnel_id: 'tunnel-1' } },
+          name: 'ontos-stage-db18',
+          service_id: 'vpc-1',
+          tcp_port: 5432,
+          type: 'tcp',
+        },
+        {
+          host: { hostname: 'spicedb', resolver_network: { tunnel_id: 'tunnel-1' } },
+          http_port: 8443,
+          name: 'ontos-stage-spicedb',
+          service_id: 'vpc-2',
+          type: 'http',
+        },
+      ],
+    });
+  });
 
 /** The placement as the merged A6 PR leaves it: the provisioned IDs in the reviewed build environment. */
 const reviewedPlacementFiles = Effect.gen(function* reviewedPlacementFilesEffect() {
@@ -430,7 +454,11 @@ it.effect('switches stage to DEPLOY_TARGET=cloudflare only after every verificat
   Effect.gen(function* activatesAfterVerification() {
     const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] });
 
-    yield* run(activate, { account: provisionedAccount('healthy'), files: yield* reviewedPlacementFiles, stage });
+    yield* run(activate, {
+      account: yield* provisionedAccount('healthy'),
+      files: yield* reviewedPlacementFiles,
+      stage,
+    });
 
     expect(stage.variables.get('stage')?.get('DEPLOY_TARGET')).toBe('cloudflare');
   }),
@@ -441,7 +469,7 @@ it.effect('leaves DEPLOY_TARGET unset while the tunnel is unhealthy', () =>
     const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] });
 
     const error = yield* run(activate, {
-      account: provisionedAccount('degraded'),
+      account: yield* provisionedAccount('degraded'),
       files: yield* reviewedPlacementFiles,
       stage,
     }).pipe(Effect.flip);
@@ -456,7 +484,7 @@ it.effect('leaves DEPLOY_TARGET unset until a stage-edge deployment succeeded', 
     const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'failure' }] });
 
     const error = yield* run(activate, {
-      account: provisionedAccount('healthy'),
+      account: yield* provisionedAccount('healthy'),
       files: yield* reviewedPlacementFiles,
       stage,
     }).pipe(Effect.flip);
@@ -471,7 +499,7 @@ it.effect('leaves DEPLOY_TARGET unset while the latest stage-edge deployment is 
     const stage = newStage({ deployments: [{ id: 7, sha: 'fedcba9876543210', state: 'success' }] });
 
     const error = yield* run(activate, {
-      account: provisionedAccount('healthy'),
+      account: yield* provisionedAccount('healthy'),
       files: yield* reviewedPlacementFiles,
       stage,
     }).pipe(Effect.flip);
@@ -487,9 +515,11 @@ it.effect('leaves DEPLOY_TARGET unset while the reviewed placement names other d
   Effect.gen(function* refusesUnreviewedIds() {
     const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] });
 
-    const error = yield* run(activate, { account: provisionedAccount('healthy'), files: fakeFiles(), stage }).pipe(
-      Effect.flip,
-    );
+    const error = yield* run(activate, {
+      account: yield* provisionedAccount('healthy'),
+      files: fakeFiles(),
+      stage,
+    }).pipe(Effect.flip);
 
     expect(error.message).toContain('buildEnvironment names these data-plane IDs');
     expect(mutatingCommands(stage.commands)).toStrictEqual([]);
@@ -506,17 +536,39 @@ it.effect('requires the composition snapshot secret on each placed consumer Work
 
     // The first Cloudflare-target deploy has not handed the snapshot over yet.
     const error = yield* run(verifyCutover, {
-      account: provisionedAccount('healthy', { [CUSTOMER_CONTEXT_WORKER]: ['SPICEDB_PRESHARED_KEY'] }),
+      account: yield* provisionedAccount('healthy'),
       files: yield* reviewedPlacementFiles,
       stage: activated(),
     }).pipe(Effect.flip);
     expect(error.message).toContain(`holds its ${SNAPSHOT_SECRET} secret: missing on ${CUSTOMER_CONTEXT_WORKER}`);
 
     yield* run(verifyCutover, {
-      account: provisionedAccount('healthy', { [CUSTOMER_CONTEXT_WORKER]: [SNAPSHOT_SECRET] }),
+      account: yield* provisionedAccount('healthy', { [CUSTOMER_CONTEXT_WORKER]: [SNAPSHOT_SECRET] }),
       files: yield* reviewedPlacementFiles,
       stage: activated(),
     });
+  }),
+);
+
+it.effect('requires every planned runtime secret on each placed Worker', () =>
+  Effect.gen(function* requiresPlannedSecrets() {
+    const planned = yield* plannedSecretNames;
+    const partial = {
+      ...planned,
+      [CUSTOMER_CONTEXT_WORKER]: (planned[CUSTOMER_CONTEXT_WORKER] ?? []).filter(
+        (name) => name !== 'SPICEDB_PRESHARED_KEY' && name !== DEPLOYMENT_ENVIRONMENT,
+      ),
+    };
+
+    const error = yield* run(verifyCutover, {
+      account: yield* provisionedAccount('healthy', {}, partial),
+      files: yield* reviewedPlacementFiles,
+      stage: newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] }),
+    }).pipe(Effect.flip);
+
+    expect(error.message).toContain(
+      `${CUSTOMER_CONTEXT_WORKER} lacks SPICEDB_PRESHARED_KEY, ${DEPLOYMENT_ENVIRONMENT}; run worker-secrets`,
+    );
   }),
 );
 
@@ -570,6 +622,7 @@ it.effect('gives every vertical the Shell key and the callers their stage depend
       'SPICEDB_ENDPOINT',
       'SPICEDB_INSECURE',
       'SPICEDB_PRESHARED_KEY',
+      DEPLOYMENT_ENVIRONMENT,
     ]);
     for (const secrets of plan.values()) {
       expect(Object.keys(secrets)).not.toContain('DATABASE_URL');

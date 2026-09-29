@@ -201,6 +201,8 @@ export const stageBuildEnvironment = (
 // ---------------------------------------------------------------------------------------------
 // Worker secrets
 
+const DEPLOYMENT_ENVIRONMENT_BINDING = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
+
 export interface WorkerSecretSources {
   readonly betterAuthSecret: Redacted.Redacted;
   readonly gatewayPrivateJwk: Redacted.Redacted;
@@ -264,6 +266,9 @@ export const workerSecretPlan = (
         ],
         ['SPICEDB_INSECURE', Redacted.make('true')],
         ['SPICEDB_PRESHARED_KEY', sources.spicedbPresharedKey],
+        // Core accepts the insecure private SpiceDB endpoint only on stage. The Worker build's
+        // environment never reaches the Worker's runtime bindings, so the Worker needs its own.
+        [DEPLOYMENT_ENVIRONMENT_BINDING, Redacted.make('stage')],
       ]);
       const own = unit.kind === 'shell' ? shellSecrets(origins, sources) : verticalSecrets(unit, origins, sources);
       return [unit.workerName, Object.fromEntries([...common, ...own])];
@@ -739,6 +744,26 @@ const compositionSnapshotState = Effect.gen(function* compositionSnapshotStateEf
   );
 });
 
+/** Every placed Worker holds each runtime secret `provision` plans for it; values are never read back. */
+const workerSecretsState = Effect.gen(function* workerSecretsStateEffect() {
+  const api = yield* CloudflareApi;
+  const settings = yield* CutoverConfiguration;
+  const units = yield* readEdgeUnits;
+  const plan = workerSecretPlan(units, settings, yield* readWorkerSecretSources(units));
+  const gaps: string[] = [];
+  for (const [workerName, secrets] of plan) {
+    const present = yield* api.workerSecretNames(workerName);
+    const missing = Object.keys(secrets).filter((name) => !present.has(name));
+    if (missing.length > 0) {
+      gaps.push(`${workerName} lacks ${missing.join(', ')}`);
+    }
+  }
+  return yield* check(
+    'every placed Worker holds its planned runtime secrets',
+    gaps.length === 0 ? Option.none() : Option.some(`${gaps.join('; ')}; run worker-secrets`),
+  );
+});
+
 /**
  * The cut-over verification checklist. It fails on the first unmet item, before anything changes.
  * Only when every item holds does `activate` switch `stage` to DEPLOY_TARGET=cloudflare.
@@ -791,6 +816,7 @@ export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
     'every placed Worker is deployed',
     missingWorkers.length === 0 ? Option.none() : Option.some(`missing ${missingWorkers.join(', ')}`),
   );
+  yield* workerSecretsState;
   yield* check(
     `the latest ${STAGE_EDGE_ENVIRONMENT} deployment (Worker deploy plus cloudflare:proof) succeeded for the checked-out revision`,
     yield* latestStageEdgeState,

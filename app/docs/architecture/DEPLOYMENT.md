@@ -393,11 +393,12 @@ environment, or else from the dotenv file `~/.cloudflare-ontos-stage-token`. The
   and stage origins into this placement's `buildEnvironment` for a reviewed PR. It sets the
   `stage-edge` variable `CLOUDFLARE_ACCOUNT_ID` and secret `CLOUDFLARE_API_TOKEN`. Last, it sets every
   placed Worker's secrets with `wrangler secret bulk`, from the Zerops values the Node services use
-  today. An existing object that differs from the runbook fails the step instead of being reused.
+  today, plus `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`: the Worker build's environment never reaches
+  the Worker's runtime, and Core accepts the private plaintext SpiceDB endpoint only on stage. An existing object that differs from the runbook fails the step instead of being reused.
 - `worker-secrets` repeats only the Worker secrets step.
 - `verify` runs the cut-over checklist and changes nothing. The tunnel must be healthy. Both VPC
   services and Hyperdrive must match the runbook, and the reviewed `buildEnvironment` must name
-  them. Every placed Worker must exist, and the latest `stage-edge` deployment, which includes
+  them. Every placed Worker must exist and hold each runtime secret `provision` plans for it, and the latest `stage-edge` deployment, which includes
   `cloudflare:proof`, must have succeeded for the checked-out revision. Once `stage` targets
   Cloudflare, every Worker that consumes the active application composition must also hold the
   `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON` secret, which the stage deploy's composition
