@@ -245,10 +245,18 @@ party_search() { # <output file> [curl args...]
     "$@" --data '{"query":"acme"}' "$shell_origin/party-registry-api/party.registry/search/parties"
 }
 check "Party Registry refuses a governed read without an assertion" 401 "$(party_search "$work/party-anonymous.json")"
-party_search "$work/party-asserted.json" -H "authorization: Bearer $assertion" >/dev/null
-if grep -q 'AuthenticationProblem' "$work/party-asserted.json"; then
-  echo "FAIL: Party Registry rejected the Shell-issued assertion: $(cat "$work/party-asserted.json")" >&2
-  exit 1
-fi
-echo "ok: Party Registry accepted the Shell-issued assertion over the Shell service binding"
+asserted_status="$(party_search "$work/party-asserted.json" -H "authorization: Bearer $assertion")"
+# Past authentication and authorization, the read answers from its own contract: results (200) or,
+# for the local demo tenant today, its governed `PartiesProviderUnavailableProblem` (503), an open
+# item in the cutover runbook. Anything else (401, 403, 404, 500, a gateway error) fails the proof.
+case "$asserted_status" in
+  200) ;;
+  503) grep -q '"_tag":"PartiesProviderUnavailableProblem"' "$work/party-asserted.json" ||
+    { echo "FAIL: Party Registry answered 503 outside its read contract: $(cat "$work/party-asserted.json")" >&2; exit 1; } ;;
+  *)
+    echo "FAIL: Party Registry rejected the Shell-issued assertion (HTTP $asserted_status): $(cat "$work/party-asserted.json")" >&2
+    exit 1
+    ;;
+esac
+echo "ok: Party Registry accepted the Shell-issued assertion over the Shell service binding (HTTP $asserted_status)"
 echo "Cloudflare local topology proof passed"
