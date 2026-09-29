@@ -454,7 +454,7 @@ const reviewedPlacementFiles = Effect.gen(function* reviewedPlacementFilesEffect
   });
 });
 
-it.effect('switches stage to DEPLOY_TARGET=cloudflare only after every verification item holds', () =>
+it.effect('switches stage to DEPLOY_TARGET=cloudflare and the host Outbox Worker mode only after verification', () =>
   Effect.gen(function* activatesAfterVerification() {
     const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] });
 
@@ -465,6 +465,8 @@ it.effect('switches stage to DEPLOY_TARGET=cloudflare only after every verificat
     });
 
     expect(stage.variables.get('stage')?.get('DEPLOY_TARGET')).toBe('cloudflare');
+    // The Cloudflare stage runs every Outbox Worker in the one host provision created.
+    expect(stage.variables.get('stage')?.get('OUTBOX_WORKER_MODE')).toBe('host');
   }),
 );
 

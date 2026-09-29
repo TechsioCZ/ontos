@@ -17,6 +17,8 @@ export const STAGE_ENVIRONMENT = 'stage';
 export const STAGE_EDGE_ENVIRONMENT = 'stage-edge';
 export const DEPLOY_WORKFLOW = 'ultramodern-workspace-gates.yml';
 export const DEPLOY_TARGET_VARIABLE = 'DEPLOY_TARGET';
+/** `dedicated` or `host`: how an environment runs its Outbox Workers, whatever its deploy target. */
+export const OUTBOX_WORKER_MODE_VARIABLE = 'OUTBOX_WORKER_MODE';
 
 const ZCLI = 'zcli';
 const GH = 'gh';

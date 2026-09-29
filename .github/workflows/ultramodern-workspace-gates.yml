@@ -445,7 +445,10 @@ jobs:
   # Each GitHub deployment environment chooses where its delivery units run with its DEPLOY_TARGET
   # variable: `zerops` (also when unset) deploys the whole topology to Zerops; `cloudflare` keeps only
   # the migrator, SpiceDB and the outbox workers on Zerops and ships the placed units as Workers in
-  # deploy-cloudflare. Pushes to main deploy stage; production deploys only on an explicit dispatch.
+  # deploy-cloudflare. Its OUTBOX_WORKER_MODE variable, required and independent of the target, chooses
+  # how the Outbox Workers run on Zerops: `dedicated` (one service per owner, highly available) or `host`
+  # (every owner in the one outbox-worker-host process, cheap). There is no default, so an environment
+  # never inherits another's mode. Pushes to main deploy stage; production deploys only on an explicit dispatch.
   # Environment variables and secrets are unreadable in a job-level `if`, so this job reads them
   # without creating a deployment (`deployment: false`). An environment without its Zerops project
   # and token deploys nothing and records nothing.
@@ -461,19 +464,25 @@ jobs:
     outputs:
       configured: ${{ steps.target.outputs.configured }}
       environment: ${{ steps.target.outputs.environment }}
+      outbox-worker-mode: ${{ steps.target.outputs.outbox_worker_mode }}
       target: ${{ steps.target.outputs.target }}
     steps:
-      - name: Resolve the deploy target and check the Zerops project and token
+      - name: Resolve the deploy target and Outbox Worker mode and check the Zerops project and token
         id: target
         env:
           DEPLOY_ENVIRONMENT: ${{ inputs.environment || 'stage' }}
           DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET }}
+          OUTBOX_WORKER_MODE: ${{ vars.OUTBOX_WORKER_MODE }}
           ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
           target="${DEPLOY_TARGET:-zerops}"
           if [[ "$target" != zerops && "$target" != cloudflare ]]; then
             echo "::error title=Invalid deploy target::$DEPLOY_ENVIRONMENT DEPLOY_TARGET must be zerops or cloudflare, not '$target'."
+            exit 1
+          fi
+          if [[ -n "$OUTBOX_WORKER_MODE" && "$OUTBOX_WORKER_MODE" != dedicated && "$OUTBOX_WORKER_MODE" != host ]]; then
+            echo "::error title=Invalid Outbox Worker mode::$DEPLOY_ENVIRONMENT OUTBOX_WORKER_MODE must be dedicated or host, not '$OUTBOX_WORKER_MODE'."
             exit 1
           fi
           # The edge deploy keeps its history in stage-edge and builds from the stage build
@@ -484,16 +493,22 @@ jobs:
           fi
           {
             echo "environment=$DEPLOY_ENVIRONMENT"
+            echo "outbox_worker_mode=$OUTBOX_WORKER_MODE"
             echo "target=$target"
           } >>"$GITHUB_OUTPUT"
           if [[ -n "$ZEROPS_PROJECT_ID" && -n "$ZEROPS_TOKEN" ]]; then
+            # A configured environment deploys Outbox Workers, so it must have chosen how they run.
+            if [[ -z "$OUTBOX_WORKER_MODE" ]]; then
+              echo "::error title=Outbox Worker mode not set::Set the $DEPLOY_ENVIRONMENT OUTBOX_WORKER_MODE variable to dedicated or host."
+              exit 1
+            fi
             echo 'configured=true' >>"$GITHUB_OUTPUT"
           else
             echo 'configured=false' >>"$GITHUB_OUTPUT"
             echo "::notice title=Zerops deploy not configured::Set the $DEPLOY_ENVIRONMENT ZEROPS_PROJECT_ID variable and ZEROPS_TOKEN secret to deploy $DEPLOY_ENVIRONMENT."
           fi
 
-  # On the Cloudflare target this job migrates the database and swaps the outbox workers for the host, so it
+  # On the Cloudflare target this job migrates the database while the placed units ship as Workers, so it
   # runs only once the edge deploy that ships the placed units is configured too. edge-deploy-readiness
   # checks only stage, the one environment that can target Cloudflare, so it is skipped for production.
   deploy-zerops:
@@ -523,9 +538,10 @@ jobs:
       deployments: read
     env:
       DEPLOY_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
-      # `cloudflare` runs every Outbox Worker in the one outbox-worker-host service instead of each owner's
-      # dedicated worker service; the planner and the composition publisher both read it.
       DEPLOY_TARGET: ${{ needs.deploy-target.outputs.target }}
+      # `host` runs every Outbox Worker in the one outbox-worker-host service instead of each owner's
+      # dedicated worker service; the planner and the composition publisher both read it.
+      OUTBOX_WORKER_MODE: ${{ needs.deploy-target.outputs.outbox-worker-mode }}
       ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_SHELL_SERVICE_ID: ${{ vars.ZEROPS_SHELL_SERVICE_ID }}
@@ -559,16 +575,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: mise exec -- pnpm deployment-base:resolve --environment "$DEPLOY_ENVIRONMENT"
 
-      # A DEPLOY_TARGET switch changes no source, so the diff cannot show it. The other target's workers
-      # still running, or this target's workers not running, is that switch, and the plan then deploys every
-      # worker of this target and stops the other target's.
-      - name: Detect Outbox Workers that do not match the deploy target
+      # An OUTBOX_WORKER_MODE switch changes no source, so the diff cannot show it. The other mode's workers
+      # still running, or this mode's workers not running, is that switch, and the plan then deploys every
+      # worker of this mode and stops the other mode's.
+      - name: Detect Outbox Workers that do not match the Outbox Worker mode
         id: worker-drift
         working-directory: app
         env:
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: mise exec -- pnpm --silent active-composition:publish worker-target-drift
+        run: mise exec -- pnpm --silent active-composition:publish worker-mode-drift
 
       - name: Generate topology-driven deployment impact plan
         id: impact
@@ -587,7 +603,7 @@ jobs:
           fi
           mise exec -- pnpm deployment-impact:plan \
             --authorization-environment "$DEPLOY_ENVIRONMENT" \
-            --deploy-target "$DEPLOY_TARGET" \
+            --outbox-worker-mode "$OUTBOX_WORKER_MODE" \
             "${plan_arguments[@]}" \
             --head "$GITHUB_SHA"
 
@@ -596,7 +612,7 @@ jobs:
           DEPLOYMENT_PLAN_JSON: ${{ steps.impact.outputs.plan }}
         run: |
           {
-            echo "## Reviewed deployment impact plan ($DEPLOY_ENVIRONMENT, $DEPLOY_TARGET target)"
+            echo "## Reviewed deployment impact plan ($DEPLOY_ENVIRONMENT, $DEPLOY_TARGET target, $OUTBOX_WORKER_MODE Outbox Workers)"
             echo '```json'
             jq . <<<"$DEPLOYMENT_PLAN_JSON"
             echo '```'
@@ -791,9 +807,9 @@ jobs:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: mise exec -- pnpm active-composition:publish publish --environment "$DEPLOY_ENVIRONMENT" --restart-consumers
 
-      # Switching DEPLOY_TARGET leaves the other target's Outbox Workers running. The plan names them in every
-      # run that deploys this target's workers, so exactly one set of workers delivers the outbox.
-      - name: Stop the other deploy target's Outbox Workers
+      # Switching OUTBOX_WORKER_MODE leaves the other mode's Outbox Workers running. The plan names them in every
+      # run that deploys this mode's workers, so exactly one set of workers delivers the outbox.
+      - name: Stop the other Outbox Worker mode's workers
         if: steps.impact.outputs.stopped_workers != '' && steps.impact.outputs.stopped_workers != '[]'
         working-directory: app
         env:
@@ -1149,6 +1165,7 @@ jobs:
       snapshot: ${{ steps.publish.outputs.snapshot }}
     env:
       DEPLOY_TARGET: cloudflare
+      OUTBOX_WORKER_MODE: ${{ needs.deploy-target.outputs.outbox-worker-mode }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
     steps:
       - name: Harden Runner

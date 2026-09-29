@@ -283,7 +283,7 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
         failure(`The workspace root must depend on ${missingDependencies.join(', ')} as workspace:*`),
       );
     }
-    // The Zerops target deploys each owner's dedicated worker; the Cloudflare target deploys the host instead.
+    // The `dedicated` Outbox Worker mode deploys each owner's own worker; the `host` mode deploys the host instead.
     const hostService = yield* renderHostService(services, serviceIds, rootPackage.name);
     result = `${result.trimEnd()}\n\n  # <generated-outbox-worker-deployments>\n${[...services, hostService].join('\n\n')}\n  # </generated-outbox-worker-deployments>\n`;
     return { deployment: result, hostEntry: renderOutboxWorkerHostEntry(host) };

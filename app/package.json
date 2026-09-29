@@ -68,7 +68,7 @@
     "typecheck:lint-rules": "tsc -p tools/oxlint/effect-native/tsconfig.json",
     "lint:effect": "node tools/oxlint/effect-native/report.mts",
     "test:generation": "rstest --project generation",
-    "test:deployment-impact": "node scripts/generate-outbox-worker-deployment.mjs && node ./scripts/check-module-entrypoint-boundaries.mts && node ./scripts/plan-deployment-impact.mts --authorization-environment stage && rstest --project scripts scripts/tests/plan-deployment-impact scripts/tests/outbox-worker-delivery",
+    "test:deployment-impact": "node scripts/generate-outbox-worker-deployment.mjs && node ./scripts/check-module-entrypoint-boundaries.mts && node ./scripts/plan-deployment-impact.mts --authorization-environment stage --outbox-worker-mode host && rstest --project scripts scripts/tests/plan-deployment-impact scripts/tests/outbox-worker-delivery",
     "deployment-base:resolve": "node ./scripts/resolve-stage-deployment-base.mts",
     "deployment-impact:plan": "node ./scripts/plan-deployment-impact.mts",
     "active-composition:publish": "node ./scripts/publish-active-application-composition.mts",

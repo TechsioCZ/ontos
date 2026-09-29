@@ -211,7 +211,9 @@ Do not report release success before all required smoke checks pass.
 ### Deploy target per environment
 
 One workflow deploys every GitHub deployment environment. Each environment chooses where its
-delivery units run with its `DEPLOY_TARGET` variable:
+delivery units run with its `DEPLOY_TARGET` variable, and how its Outbox Workers run on Zerops with
+its required `OUTBOX_WORKER_MODE` variable (`dedicated` or `host`, see
+[Outbox Workers](./OUTBOX_WORKERS.md)). The two are independent:
 
 | Environment  | `DEPLOY_TARGET`   | What deploys                                                                                                                                                                                                                          |
 | ------------ | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -226,8 +228,18 @@ tests assert both for the same diffs. Nothing on the Zerops path is removed for 
 target: `zerops.yaml`, `zerops-import.yaml`, the generators, the materializers and the push script
 keep deploying every environment that targets Zerops.
 
-`deploy-target` reads `DEPLOY_TARGET`, `ZEROPS_PROJECT_ID` and the `ZEROPS_TOKEN` secret from the
-deploying environment without creating a deployment. An invalid target fails the run; an
+| Environment  | `OUTBOX_WORKER_MODE` | Outbox Workers on Zerops                                                         |
+| ------------ | -------------------- | -------------------------------------------------------------------------------- |
+| `stage`      | `host`               | Every owner's worker in the one `outbox-worker-host` process, the cheap choice.  |
+| `production` | `dedicated`          | One `<owner>-worker` service per owner, deployed and failing independently (HA). |
+
+Before the Cloudflare cut-over stage runs `dedicated`, the workers it has today; `cloudflare-stage-cutover.mts
+activate` switches it to `host` beside `DEPLOY_TARGET=cloudflare`. A preview or demo environment on
+Zerops can equally run `host`.
+
+`deploy-target` reads `DEPLOY_TARGET`, `OUTBOX_WORKER_MODE`, `ZEROPS_PROJECT_ID` and the `ZEROPS_TOKEN`
+secret from the deploying environment without creating a deployment. An invalid target or mode fails
+the run, and so does a configured environment without `OUTBOX_WORKER_MODE`: it has no default. An
 environment without its Zerops project or token deploys nothing and records nothing. `deploy-zerops`
 then runs in that environment: it plans from the environment's last successful deployment and
 promotes authorization for that environment (`--authorization-environment`), so production needs its
@@ -239,8 +251,8 @@ gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=produc
 ```
 
 Create `production` once, outside CI, before the first dispatch, with the operator script in
-[Create production](#create-production). Leave `DEPLOY_TARGET` unset or `zerops`. The first
-production deploy has no base, so dispatch it with `full=true`.
+[Create production](#create-production). Leave `DEPLOY_TARGET` unset or `zerops`, and keep
+`OUTBOX_WORKER_MODE=dedicated`, which the script records. The first production deploy has no base, so dispatch it with `full=true`.
 
 `zerops.yaml` describes stage. Before any push, `deploy-zerops` writes a copy that sets
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` to the deploying environment in every build and runtime that
@@ -256,7 +268,7 @@ configured and has deployed once.
 The composition publisher resolves each unit's public origin by target: the Zerops subdomain of its
 service on `zerops`, and on `cloudflare` the Worker URL its edge build is given
 (`ULTRAMODERN_PUBLIC_URL_<UNIT>` in the placement `buildEnvironment`). On `cloudflare` it restarts
-only the consumers that remain on Zerops (the Outbox Worker host). `deploy-zerops` does not publish
+only the consumers that remain on Zerops (the Outbox Workers of the environment's mode). `deploy-zerops` does not publish
 on `cloudflare`, because a new or moved Worker is unobservable until `deploy-cloudflare` ships it;
 `publish-edge-composition` publishes from the new Workers afterwards. A placed Worker that consumes
 the snapshot (Commerce Customer Context) has no Zerops project variable, so `sync-edge-composition`,
@@ -278,12 +290,12 @@ impacted units as `units.cloudflare` in dependency order (providers before Shell
 
 The edge deploy runs only for `stage`, and only when it is configured (below). On the `zerops` target
 it is additive; on the `cloudflare` target it is how the placed units reach stage.
-On the `cloudflare` target, `deploy-zerops` deploys the one `outbox-worker-host` service
-(`ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID`) instead of each owner's dedicated worker service; see
-[Outbox Workers](./OUTBOX_WORKERS.md). The run that deploys one target's workers stops the other
-target's. A switch changes no source, so each deploy first checks whether the other target's workers
-still run (`active-composition:publish worker-target-drift`); when they do, the plan deploys every
-worker of this target, whatever the diff, and stops the others.
+In the `host` Outbox Worker mode, whatever the target, `deploy-zerops` deploys the one
+`outbox-worker-host` service (`ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID`) instead of each owner's
+dedicated worker service; see [Outbox Workers](./OUTBOX_WORKERS.md). The run that deploys one mode's
+workers stops the other mode's. A switch changes no source, so each deploy first checks whether the
+other mode's workers still run or this mode's do not (`active-composition:publish worker-mode-drift`);
+when either holds, the plan deploys every worker of this mode, whatever the diff, and stops the others.
 
 The `deploy-cloudflare` job runs after `deploy-zerops` has migrated the database, in its own
 `stage-edge` environment. It resolves the last successful `stage-edge` deployment, plans the diff
@@ -399,13 +411,13 @@ environment, or else from the dotenv file `~/.cloudflare-ontos-stage-token`. The
   `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON` secret, which the stage deploy's composition
   sync writes. Before activation `verify` only reports that check as waiting, so run it again after
   `activate` and the full deploy, and move DNS only when it passes.
-- `activate` runs `verify` and, only when every item holds, sets `DEPLOY_TARGET=cloudflare` on
-  `stage`.
+- `activate` runs `verify` and, only when every item holds, sets `OUTBOX_WORKER_MODE=host` and
+  `DEPLOY_TARGET=cloudflare` on `stage`. `provision` created the host service it needs.
 
 `node scripts/ops/stage-zerops-services.mts retire|restore [--dry-run]` handles the 9 stage
 application services that Cloudflare mode no longer uses. The migrator, SpiceDB, `outboxworkerhost`
 and the 3 per-vertical outbox workers stay: the workers remain stopped, and the deploy workflow reads
-their status to reconcile Outbox Workers after a deploy target switch. The script never changes
+their status to reconcile Outbox Workers after an Outbox Worker mode switch. The script never changes
 `zerops.yaml`, `zerops-import.yaml`, a deploy script, or a GitHub variable.
 
 - `retire` records each service in the versioned file `scripts/ops/stage-zerops-retirement.json`:

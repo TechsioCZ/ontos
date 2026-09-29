@@ -29,6 +29,7 @@ import { StageOperationError } from './stage-operation-error.mts';
 import {
   DEPLOY_TARGET_VARIABLE,
   ONTOS_REPOSITORY,
+  OUTBOX_WORKER_MODE_VARIABLE,
   OpsMode,
   STAGE_EDGE_ENVIRONMENT,
   STAGE_ENVIRONMENT,
@@ -774,7 +775,7 @@ const workerSecretsState = Effect.gen(function* workerSecretsStateEffect() {
 
 /**
  * The cut-over verification checklist. It fails on the first unmet item, before anything changes.
- * Only when every item holds does `activate` switch `stage` to DEPLOY_TARGET=cloudflare.
+ * Only when every item holds does `activate` switch `stage` to DEPLOY_TARGET=cloudflare and OUTBOX_WORKER_MODE=host.
  */
 export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
   const api = yield* CloudflareApi;
@@ -833,18 +834,27 @@ export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
   return yield* Effect.void;
 });
 
+/**
+ * The Cloudflare stage runs its Outbox Workers in the one host `provision` created, the cheap mode for stage.
+ * The mode stays its own variable: a later `OUTBOX_WORKER_MODE` change and a deploy switch it alone.
+ */
+const ACTIVATED_STAGE_VARIABLES = [
+  [OUTBOX_WORKER_MODE_VARIABLE, 'host'],
+  [DEPLOY_TARGET_VARIABLE, 'cloudflare'],
+] as const;
+
 export const activate = Effect.gen(function* activateEffect() {
   const { repository } = yield* CutoverConfiguration;
   yield* verifyCutover;
   const variables = yield* listGithubVariables(repository, STAGE_ENVIRONMENT);
-  if (variables.get(DEPLOY_TARGET_VARIABLE) === 'cloudflare') {
-    yield* Console.log(`${STAGE_ENVIRONMENT} already deploys with ${DEPLOY_TARGET_VARIABLE}=cloudflare`);
-    return;
+  for (const [variable, value] of ACTIVATED_STAGE_VARIABLES) {
+    yield* variables.get(variable) === value
+      ? Console.log(`${STAGE_ENVIRONMENT} already deploys with ${variable}=${value}`)
+      : perform(
+          `set the ${STAGE_ENVIRONMENT} variable ${variable}=${value}`,
+          setGithubVariable(repository, STAGE_ENVIRONMENT, variable, value),
+        );
   }
-  yield* perform(
-    `set the ${STAGE_ENVIRONMENT} variable ${DEPLOY_TARGET_VARIABLE}=cloudflare`,
-    setGithubVariable(repository, STAGE_ENVIRONMENT, DEPLOY_TARGET_VARIABLE, 'cloudflare'),
-  );
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -930,7 +940,11 @@ const cli = Command.make('cloudflare-stage-cutover').pipe(
     ),
     stepCommand('worker-secrets', "Set every placed Worker's runtime secrets from Zerops", setWorkerSecrets),
     stepCommand('verify', 'Run the cut-over verification checklist without changing anything', verifyCutover),
-    stepCommand('activate', 'Verify, then set DEPLOY_TARGET=cloudflare on the stage environment', activate),
+    stepCommand(
+      'activate',
+      'Verify, then set DEPLOY_TARGET=cloudflare and OUTBOX_WORKER_MODE=host on the stage environment',
+      activate,
+    ),
   ]),
 );
 

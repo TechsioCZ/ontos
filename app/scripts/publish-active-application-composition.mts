@@ -21,8 +21,13 @@ import {
   encodeActiveApplicationCompositionSnapshot,
 } from './active-application-composition.mts';
 import type { ObservedArtifact, ObservedModuleDeployment } from './active-application-composition.mts';
-import { DeployTargetSchema, OUTBOX_WORKER_HOST, dedicatedOutboxWorkerSetup } from './outbox-worker-delivery.mjs';
-import type { DeployTarget } from './outbox-worker-delivery.mjs';
+import {
+  DeployTargetSchema,
+  OUTBOX_WORKER_HOST,
+  OutboxWorkerModeSchema,
+  dedicatedOutboxWorkerSetup,
+} from './outbox-worker-delivery.mjs';
+import type { DeployTarget, OutboxWorkerMode } from './outbox-worker-delivery.mjs';
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from './zerops-public-api.mts';
 
@@ -40,6 +45,12 @@ const CONSUMER_PREFLIGHT = `test -n "$${ACTIVE_APPLICATION_COMPOSITION_POLICY.pr
 const readDeployTarget = Config.schema(DeployTargetSchema, 'DEPLOY_TARGET').pipe(
   Config.withDefault<DeployTarget>('zerops'),
 );
+
+/**
+ * The environment's `OUTBOX_WORKER_MODE` variable. It has no default: an environment that did not choose
+ * between dedicated workers and the one host fails instead of silently running the other mode.
+ */
+const readOutboxWorkerMode = Config.schema(OutboxWorkerModeSchema, 'OUTBOX_WORKER_MODE');
 
 /** One deployed unit could not be observed; recovery keys on the unit's app ID. */
 export class ActiveApplicationCompositionObservationError extends Schema.TaggedError<ActiveApplicationCompositionObservationError>()(
@@ -77,36 +88,40 @@ type CloudflarePlacement = typeof CloudflarePlacementSchema.Type;
 const StageVariablesSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const SetupListJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
 
-const otherDeployTarget = (deployTarget: DeployTarget): DeployTarget =>
-  deployTarget === 'zerops' ? 'cloudflare' : 'zerops';
+const otherOutboxWorkerMode = (mode: OutboxWorkerMode): OutboxWorkerMode =>
+  mode === 'dedicated' ? 'host' : 'dedicated';
 
-const offTargetWorkerSetupNames = (
+/** The Outbox Worker setups of the mode other than `mode`: the host for `dedicated`, the owners' own for `host`. */
+const otherModeWorkerSetupNames = (
   topology: { readonly verticals: readonly { readonly id: string }[] },
-  deployTarget: DeployTarget,
+  mode: OutboxWorkerMode,
 ): ReadonlySet<string> =>
   new Set(
-    deployTarget === 'zerops'
+    mode === 'dedicated'
       ? [OUTBOX_WORKER_HOST.stageSetup]
       : topology.verticals.map(({ id }) => dedicatedOutboxWorkerSetup(id)),
   );
 
+/** Zerops setups whose start preflight requires the published snapshot, whichever Outbox Worker mode runs. */
+const snapshotConsumerSetups = (zeropsYamlText: string) =>
+  Schema.decodeUnknownEffect(ZeropsYamlSchema)(parseYaml(zeropsYamlText)).pipe(
+    Effect.map(({ zerops }) =>
+      zerops.filter(({ run }) => run?.start?.includes(CONSUMER_PREFLIGHT) === true).map(({ setup }) => setup),
+    ),
+  );
+
 /**
  * Zerops setups whose start preflight requires the published snapshot; they are its consumers. Only
- * the deploy target's Outbox Worker services run: the dedicated owner workers on Zerops, the one
- * Outbox Worker host on Cloudflare.
+ * the Outbox Worker mode's services run: the dedicated owner workers, or the one Outbox Worker host.
  */
 export const compositionConsumerSetups = (
   zeropsYamlText: string,
   topology: { readonly verticals: readonly { readonly id: string }[] },
-  deployTarget: DeployTarget,
+  mode: OutboxWorkerMode,
 ) => {
-  const offTarget = offTargetWorkerSetupNames(topology, deployTarget);
-  return Schema.decodeUnknownEffect(ZeropsYamlSchema)(parseYaml(zeropsYamlText)).pipe(
-    Effect.map(({ zerops }) =>
-      zerops
-        .filter(({ run, setup }) => run?.start?.includes(CONSUMER_PREFLIGHT) === true && !offTarget.has(setup))
-        .map(({ setup }) => setup),
-    ),
+  const otherMode = otherModeWorkerSetupNames(topology, mode);
+  return snapshotConsumerSetups(zeropsYamlText).pipe(
+    Effect.map((consumers) => consumers.filter((setup) => !otherMode.has(setup))),
   );
 };
 
@@ -195,12 +210,12 @@ const readPlacement = readWorkspaceText('topology', 'cloudflare-placement.json')
 /** The Zerops setup that serves a delivery unit on the `zerops` target. */
 const zeropsSetupOf = (appId: string): string => (appId === SHELL_APP_ID ? SHELL_ZEROPS_SETUP : appId);
 
-const readConsumerSetups = (target: DeployTarget) =>
+const readConsumerSetups = (target: DeployTarget, mode: OutboxWorkerMode) =>
   Effect.gen(function* readConsumerSetupsEffect() {
     const [zeropsYaml, topology] = yield* Effect.all([readZeropsYaml, readTopology], {
       concurrency: 2,
     });
-    const consumers = yield* compositionConsumerSetups(zeropsYaml, topology, target);
+    const consumers = yield* compositionConsumerSetups(zeropsYaml, topology, mode);
     return targetConsumerSetups(
       consumers,
       target,
@@ -217,7 +232,8 @@ export const readEdgeConsumers = (target: DeployTarget) =>
     const [zeropsYaml, topology, placement] = yield* Effect.all([readZeropsYaml, readTopology, readPlacement], {
       concurrency: 3,
     });
-    const consumers = yield* compositionConsumerSetups(zeropsYaml, topology, target);
+    // Placed Workers are no Outbox Worker, so the Outbox Worker mode does not change this set.
+    const consumers = yield* snapshotConsumerSetups(zeropsYaml);
     return edgeCompositionConsumers(consumers, topology, placement);
   });
 
@@ -420,10 +436,11 @@ const publishOnce = Effect.fn('ActiveApplicationComposition.publishOnce')(functi
 /** Consumers read the variable only at process start, so every publication restarts them. */
 const restartConsumers = Effect.fn('ActiveApplicationComposition.restartConsumers')(function* restartConsumers(
   target: DeployTarget,
+  mode: OutboxWorkerMode,
 ) {
   const api = yield* ZeropsPublicApi;
   const [consumers, topology, originOf] = yield* Effect.all(
-    [readConsumerSetups(target), readTopology, originResolver(target)],
+    [readConsumerSetups(target, mode), readTopology, originResolver(target)],
     { concurrency: 3 },
   );
   yield* Effect.forEach(
@@ -464,9 +481,10 @@ const publishCommand = Command.make(
   ({ environment, excludedApps, recoverConsumers, restartConsumers: restart, snapshotFile }) =>
     Effect.gen(function* publish() {
       const target = yield* readDeployTarget;
-      const consumers = yield* readConsumerSetups(target);
+      const mode = yield* readOutboxWorkerMode;
+      const consumers = yield* readConsumerSetups(target, mode);
       const complete = publishOnce(environment, excludedApps, target, snapshotFile).pipe(
-        Effect.andThen(restart ? restartConsumers(target) : Effect.void),
+        Effect.andThen(restart ? restartConsumers(target, mode) : Effect.void),
       );
       if (!recoverConsumers) {
         return yield* complete;
@@ -478,7 +496,7 @@ const publishCommand = Command.make(
           consumers.includes(error.appId)
             ? Effect.logWarning(`Composition consumer ${error.appId} is unobservable; recovering it`).pipe(
                 Effect.andThen(publishOnce(environment, [...excludedApps, ...consumers], target, snapshotFile)),
-                Effect.andThen(restartConsumers(target)),
+                Effect.andThen(restartConsumers(target, mode)),
                 Effect.andThen(complete),
               )
             : Effect.fail(error),
@@ -506,7 +524,7 @@ const ensurePublicAccessCommand = Command.make('ensure-public-access', { setup: 
 
 /**
  * Stops a setup's stage service when it runs. A stage that never provisioned the service, or whose service
- * already stopped, needs nothing, so the deploy can stop the other deploy target's workers on every switch.
+ * already stopped, needs nothing, so the deploy can stop the other Outbox Worker mode's workers on every switch.
  */
 const stopServiceCommand = Command.make('stop-service', { setup: Flag.String('setup') }, ({ setup }) =>
   Effect.gen(function* stopService() {
@@ -530,31 +548,31 @@ const definedWorkerSetups = (zeropsYamlText: string, workerSetupNames: ReadonlyS
   );
 
 /**
- * The other deploy target's Outbox Worker setups this revision defines: the host on Zerops, the dedicated
- * owner workers on Cloudflare.
+ * The other Outbox Worker mode's setups this revision defines: the host for `dedicated`, the dedicated
+ * owner workers for `host`.
  */
-export const offTargetWorkerSetups = (
+export const otherModeWorkerSetups = (
   zeropsYamlText: string,
   topology: { readonly verticals: readonly { readonly id: string }[] },
-  deployTarget: DeployTarget,
-) => definedWorkerSetups(zeropsYamlText, offTargetWorkerSetupNames(topology, deployTarget));
+  mode: OutboxWorkerMode,
+) => definedWorkerSetups(zeropsYamlText, otherModeWorkerSetupNames(topology, mode));
 
-/** The deploy target's own Outbox Worker setups this revision defines. */
-export const onTargetWorkerSetups = (
+/** The Outbox Worker mode's own setups this revision defines. */
+export const modeWorkerSetups = (
   zeropsYamlText: string,
   topology: { readonly verticals: readonly { readonly id: string }[] },
-  deployTarget: DeployTarget,
-) => definedWorkerSetups(zeropsYamlText, offTargetWorkerSetupNames(topology, otherDeployTarget(deployTarget)));
+  mode: OutboxWorkerMode,
+) => definedWorkerSetups(zeropsYamlText, otherModeWorkerSetupNames(topology, otherOutboxWorkerMode(mode)));
 
 /**
- * Whether the Outbox Workers still reflect another deploy target. A `DEPLOY_TARGET` switch changes no
- * source, so the plan cannot see it. The switch shows as the other target's workers still running, or as
- * one of this target's workers not running (never deployed, or stopped by an earlier switch). Either
- * way the plan reconciles the workers of both targets.
+ * Whether the Outbox Workers still reflect another Outbox Worker mode. An `OUTBOX_WORKER_MODE` switch changes
+ * no source, so the plan cannot see it. The switch shows as the other mode's workers still running, or as
+ * one of this mode's workers not running (never deployed, or stopped by an earlier switch). Either way the
+ * plan reconciles the workers of both modes. The deploy target plays no part: both run the workers on Zerops.
  */
-const workerTargetDriftCommand = Command.make('worker-target-drift', {}, () =>
-  Effect.gen(function* workerTargetDrift() {
-    const deployTarget = yield* readDeployTarget;
+const workerModeDriftCommand = Command.make('worker-mode-drift', {}, () =>
+  Effect.gen(function* workerModeDrift() {
+    const mode = yield* readOutboxWorkerMode;
     const [zeropsYaml, topology] = yield* Effect.all([readZeropsYaml, readTopology], {
       concurrency: 2,
     });
@@ -563,23 +581,23 @@ const workerTargetDriftCommand = Command.make('worker-target-drift', {}, () =>
       const serviceId = yield* provisionedStageServiceId(setup);
       return serviceId !== undefined && (yield* api.serviceStack(serviceId)).status === 'ACTIVE';
     });
-    const [offTarget, onTarget] = yield* Effect.all([
-      offTargetWorkerSetups(zeropsYaml, topology, deployTarget),
-      onTargetWorkerSetups(zeropsYaml, topology, deployTarget),
+    const [otherMode, ownMode] = yield* Effect.all([
+      otherModeWorkerSetups(zeropsYaml, topology, mode),
+      modeWorkerSetups(zeropsYaml, topology, mode),
     ]);
-    const running = yield* Effect.filter(offTarget, isRunning, { concurrency: 4 });
-    const notRunning = yield* Effect.filter(onTarget, (setup) => Effect.map(isRunning(setup), (up) => !up), {
+    const running = yield* Effect.filter(otherMode, isRunning, { concurrency: 4 });
+    const notRunning = yield* Effect.filter(ownMode, (setup) => Effect.map(isRunning(setup), (up) => !up), {
       concurrency: 4,
     });
     if (running.length > 0) {
-      yield* Effect.logInfo(`Other deploy target Outbox Workers still run: ${running.join(', ')}`);
+      yield* Effect.logInfo(`Outbox Workers of the other mode still run: ${running.join(', ')}`);
     }
     if (notRunning.length > 0) {
-      yield* Effect.logInfo(`This deploy target's Outbox Workers do not run: ${notRunning.join(', ')}`);
+      yield* Effect.logInfo(`Outbox Workers of the ${mode} mode do not run: ${notRunning.join(', ')}`);
     }
     const drift = running.length > 0 || notRunning.length > 0;
     if (!drift) {
-      yield* Effect.logInfo(`Only the ${deployTarget} deploy target's Outbox Workers run`);
+      yield* Effect.logInfo(`Only the ${mode} Outbox Worker mode's workers run`);
     }
     return yield* writeGitHubOutput(`drift=${drift}`);
   }),
@@ -608,8 +626,8 @@ const edgeConsumersCommand = Command.make('edge-consumers', {}, () =>
 
 const consumersCommand = Command.make('consumers', {}, () =>
   Effect.gen(function* consumers() {
-    const json = yield* readDeployTarget.pipe(
-      Effect.flatMap(readConsumerSetups),
+    const json = yield* Effect.all([readDeployTarget, readOutboxWorkerMode]).pipe(
+      Effect.flatMap(([target, mode]) => readConsumerSetups(target, mode)),
       Effect.flatMap(Schema.encodeEffect(SetupListJsonSchema)),
     );
     yield* Effect.logInfo(`Composition consumers: ${json}`);
@@ -726,7 +744,7 @@ const cli = Command.make('publish-active-application-composition').pipe(
     proveBuildCommand,
     stageServiceIdCommand,
     stopServiceCommand,
-    workerTargetDriftCommand,
+    workerModeDriftCommand,
   ]),
 );
 

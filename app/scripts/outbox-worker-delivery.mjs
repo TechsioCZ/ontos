@@ -15,7 +15,7 @@ export const OUTBOX_WORKER_BUNDLE = 'worker.mjs';
 
 /**
  * The one Zerops service that runs every generated MicroVertical Outbox Worker entry in one process.
- * The Cloudflare deploy target runs it instead of the dedicated per-owner worker services.
+ * The `host` Outbox Worker mode runs it instead of the dedicated per-owner worker services.
  */
 export const OUTBOX_WORKER_HOST = Object.freeze({
   entry: 'scripts/outbox-worker-host.generated.mts',
@@ -25,12 +25,19 @@ export const OUTBOX_WORKER_HOST = Object.freeze({
 });
 
 /**
- * Where the deploying environment runs. On `zerops` every owner's Outbox Worker has its own service;
- * on `cloudflare` the delivery units run as Workers and one Zerops service, the Outbox Worker host,
- * runs every owner's worker entry in place of the dedicated services.
+ * Where the deploying environment runs its delivery units: Zerops services on `zerops`, Cloudflare
+ * Workers on `cloudflare`. The Outbox Workers stay on Zerops for both; their mode chooses how.
  */
 export const DeployTargetSchema = Schema.Literals(['cloudflare', 'zerops']);
 /** @typedef {typeof DeployTargetSchema.Type} DeployTarget */
+
+/**
+ * How the deploying environment runs its Outbox Workers on Zerops, whatever its deploy target:
+ * `dedicated` gives every owner its own `<owner>-worker` service (independent, highly available);
+ * `host` runs every owner's worker entry in the one Outbox Worker host service (one cheap process).
+ */
+export const OutboxWorkerModeSchema = Schema.Literals(['dedicated', 'host']);
+/** @typedef {typeof OutboxWorkerModeSchema.Type} OutboxWorkerMode */
 
 const OwnerPackageSchema = Schema.Struct({
   exports: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
@@ -43,7 +50,7 @@ const OwnerPackageSchema = Schema.Struct({
 });
 
 /**
- * The Zerops setup of a topology owner's dedicated Outbox Worker service, deployed on the Zerops target.
+ * The Zerops setup of a topology owner's dedicated Outbox Worker service, deployed in the `dedicated` mode.
  * @param {string} ownerId Topology vertical id.
  * @returns {string} Dedicated worker setup.
  */

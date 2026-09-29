@@ -122,24 +122,24 @@ it('declares Price Group Cloudflare proof variables and resolves every provider 
   ]);
 });
 
-it("stops the other deploy target's Outbox Workers after this target's workers deploy", () => {
+it("stops the other Outbox Worker mode's workers after this mode's workers deploy", () => {
   const workflow = Schema.decodeUnknownSync(DeployWorkflowSchema)(parse(readFileSync(workflowPath, 'utf-8')));
   const deployZerops = workflow.jobs['deploy-zerops'];
   const steps = deployZerops.steps.map((step) => step.name);
-  const stop = deployZerops.steps.find((step) => step.name === "Stop the other deploy target's Outbox Workers");
+  const stop = deployZerops.steps.find((step) => step.name === "Stop the other Outbox Worker mode's workers");
 
   expect(stop?.run).toContain('active-composition:publish stop-service --setup "$setup"');
-  // A target switch changes no source, so running workers of the other target make the plan reconcile.
+  // A mode switch changes no source, so running workers of the other mode make the plan reconcile.
   const drift = deployZerops.steps.find(
-    (step) => step.name === 'Detect Outbox Workers that do not match the deploy target',
+    (step) => step.name === 'Detect Outbox Workers that do not match the Outbox Worker mode',
   );
-  expect(drift?.run).toContain('active-composition:publish worker-target-drift');
-  expect(steps.indexOf('Detect Outbox Workers that do not match the deploy target')).toBeLessThan(
+  expect(drift?.run).toContain('active-composition:publish worker-mode-drift');
+  expect(steps.indexOf('Detect Outbox Workers that do not match the Outbox Worker mode')).toBeLessThan(
     steps.indexOf('Generate topology-driven deployment impact plan'),
   );
   const plan = deployZerops.steps.find((step) => step.name === 'Generate topology-driven deployment impact plan');
   expect(plan?.run).toContain('plan_arguments+=(--reconcile-workers)');
-  expect(steps.indexOf("Stop the other deploy target's Outbox Workers")).toBeGreaterThan(
+  expect(steps.indexOf("Stop the other Outbox Worker mode's workers")).toBeGreaterThan(
     steps.indexOf('Publish the complete active Application Composition and restart its consumers'),
   );
 });
@@ -170,7 +170,7 @@ it('runs every owner worker in one Outbox Worker host service beside the dedicat
   expect(host).toContain(`ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'`);
   expect(host).toContain(`test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON"`);
   expect(host.match(/path: '\/ready'/gu)).toHaveLength(2);
-  // The Zerops target keeps deploying each owner's dedicated worker.
+  // The dedicated Outbox Worker mode keeps deploying each owner's own worker.
   for (const worker of ['party-registry-worker', 'commerce-customer-context-worker', 'price-group-catalog-worker']) {
     expect(serviceBlock(zeropsYaml, worker)).toContain('--worker');
   }

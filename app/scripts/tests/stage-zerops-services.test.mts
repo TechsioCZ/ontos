@@ -19,7 +19,7 @@ import type { FakeFiles, FakeStage } from './stage-operations-fixture.mts';
 
 const RECORD_PATH = `${APP_DIRECTORY}/scripts/ops/stage-zerops-retirement.json`;
 // The Cloudflare target keeps these on Zerops: the data plane, the migrator, the tunnel, the Outbox Worker host, and the dedicated
-// workers, stopped, whose status each deploy reads to detect a DEPLOY_TARGET switch.
+// workers, stopped, whose status each deploy reads to detect an OUTBOX_WORKER_MODE switch.
 const OUTBOX_WORKERS = ['partyregistryworker', 'commercecstmrcntxtworker', 'pricegroupcatalogworker'];
 const KEPT_ON_ZEROPS = new Set(['cloudflared', 'db18', 'migrator', 'outboxworkerhost', 'spicedb', ...OUTBOX_WORKERS]);
 

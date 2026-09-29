@@ -36,8 +36,10 @@ jobs:
       snapshot: ${{ steps.publish.outputs.snapshot }}
     env:
       # The publisher observes Zerops subdomains or, on the Cloudflare target, the Worker URLs, and
-      # restarts the Outbox Worker services that consume the snapshot: the dedicated ones, or the one host.
+      # restarts the Outbox Worker services that consume the snapshot: the dedicated ones, or the one host,
+      # as the stage OUTBOX_WORKER_MODE variable (required, `dedicated` or `host`) chooses.
       DEPLOY_TARGET: ${{ vars.DEPLOY_TARGET || 'zerops' }}
+      OUTBOX_WORKER_MODE: ${{ vars.OUTBOX_WORKER_MODE }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
     steps:
       - name: Harden Runner
@@ -68,25 +70,25 @@ jobs:
           fi
           mise exec -- pnpm deployment-base:resolve --environment "$deployment_environment"
 
-      # A DEPLOY_TARGET switch takes effect at the next stage deploy, which starts this target's Outbox Workers
-      # and stops the other target's. Until then the workers drift from the target: the other target's still
-      # run, or this target's do not. Restarting consumers would wake this target's stopped workers on stale
+      # An OUTBOX_WORKER_MODE switch takes effect at the next stage deploy, which starts this mode's Outbox
+      # Workers and stops the other mode's. Until then the workers drift from the mode: the other mode's still
+      # run, or this mode's do not. Restarting consumers would wake this mode's stopped workers on stale
       # builds, or fail on a worker the stage never provisioned.
-      - name: Detect Outbox Workers that do not match the deploy target
+      - name: Detect Outbox Workers that do not match the Outbox Worker mode
         id: worker-drift
         working-directory: app
         env:
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: mise exec -- pnpm --silent active-composition:publish worker-target-drift
+        run: mise exec -- pnpm --silent active-composition:publish worker-mode-drift
 
-      - name: Leave the pending deploy target switch to the stage deploy
+      - name: Leave the pending Outbox Worker mode switch to the stage deploy
         if: steps.worker-drift.outputs.drift == 'true'
         env:
-          TARGET: ${{ env.DEPLOY_TARGET }}
+          MODE: ${{ env.OUTBOX_WORKER_MODE }}
         run: >-
-          echo "::warning title=Refresh skipped::DEPLOY_TARGET is $TARGET but the Outbox Workers still reflect
-          the other target. Run the stage deploy to finish the switch; it re-publishes the composition."
+          echo "::warning title=Refresh skipped::OUTBOX_WORKER_MODE is $MODE but the Outbox Workers still reflect
+          the other mode. Run the stage deploy to finish the switch; it re-publishes the composition."
 
       # The publisher and topology of the deployed revision describe what stage actually runs.
       - name: Check out the deployed revision
@@ -180,6 +182,8 @@ jobs:
       deployments: read
     env:
       DEPLOY_TARGET: zerops
+      # Production chooses its Outbox Worker mode like any environment; it runs `dedicated`.
+      OUTBOX_WORKER_MODE: ${{ vars.OUTBOX_WORKER_MODE }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
     steps:
       - name: Harden Runner

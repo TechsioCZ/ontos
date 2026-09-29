@@ -152,7 +152,7 @@ Use the source-owned operator evidence commands:
 mise exec -- pnpm authorization:inventory:check
 mise exec -- pnpm authorization:impact:report -- .codex/reports/authorization/would-deny.json
 mise exec -- pnpm authorization:readiness:check -- stage
-mise exec -- pnpm deployment-impact:plan -- --authorization-environment stage
+mise exec -- pnpm deployment-impact:plan -- --authorization-environment stage --outbox-worker-mode host
 mise exec -- pnpm test:scripts
 ```
 

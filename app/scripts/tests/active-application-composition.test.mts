@@ -27,8 +27,8 @@ import {
   cloudflarePublicUrlVariable,
   compositionConsumerSetups,
   edgeCompositionConsumers,
-  offTargetWorkerSetups,
-  onTargetWorkerSetups,
+  modeWorkerSetups,
+  otherModeWorkerSetups,
   serviceIdVariable,
   targetConsumerSetups,
 } from '../publish-active-application-composition.mts';
@@ -351,30 +351,30 @@ const readReferenceTopology = () =>
     ),
   )(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'));
 
-it.effect('restarts exactly the deploy target services whose start preflight requires the snapshot', () =>
+it.effect('restarts exactly the Outbox Worker mode services whose start preflight requires the snapshot', () =>
   Effect.gen(function* consumers() {
     const zeropsYaml = readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8');
     const topology = readReferenceTopology();
-    expect(yield* compositionConsumerSetups(zeropsYaml, topology, 'zerops')).toEqual([
+    expect(yield* compositionConsumerSetups(zeropsYaml, topology, 'dedicated')).toEqual([
       CUSTOMER_CONTEXT,
       CUSTOMER_CONTEXT_WORKER,
     ]);
-    // On Cloudflare the Outbox Worker host runs the Commerce worker in place of its dedicated service.
-    expect(yield* compositionConsumerSetups(zeropsYaml, topology, 'cloudflare')).toEqual([
+    // The host mode runs the Commerce worker in the Outbox Worker host in place of its dedicated service.
+    expect(yield* compositionConsumerSetups(zeropsYaml, topology, 'host')).toEqual([
       CUSTOMER_CONTEXT,
       OUTBOX_WORKER_HOST_SETUP,
     ]);
-    // A switch leaves these running; the deploy detects them to reconcile the workers of both targets.
-    expect(yield* offTargetWorkerSetups(zeropsYaml, topology, 'zerops')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
-    expect(yield* offTargetWorkerSetups(zeropsYaml, topology, 'cloudflare')).toEqual([
+    // A mode switch leaves these running; the deploy detects them to reconcile the workers of both modes.
+    expect(yield* otherModeWorkerSetups(zeropsYaml, topology, 'dedicated')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+    expect(yield* otherModeWorkerSetups(zeropsYaml, topology, 'host')).toEqual([
       'party-registry-worker',
       CUSTOMER_CONTEXT_WORKER,
       'price-group-catalog-worker',
     ]);
-    // A switch also shows as this target's workers not running yet.
-    expect(yield* onTargetWorkerSetups(zeropsYaml, topology, 'cloudflare')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
-    expect(yield* onTargetWorkerSetups(zeropsYaml, topology, 'zerops')).toEqual(
-      yield* offTargetWorkerSetups(zeropsYaml, topology, 'cloudflare'),
+    // A switch also shows as this mode's workers not running yet.
+    expect(yield* modeWorkerSetups(zeropsYaml, topology, 'host')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+    expect(yield* modeWorkerSetups(zeropsYaml, topology, 'dedicated')).toEqual(
+      yield* otherModeWorkerSetups(zeropsYaml, topology, 'host'),
     );
     expect(serviceIdVariable(OUTBOX_WORKER_HOST_SETUP)).toBe('ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID');
     expect(serviceIdVariable(CUSTOMER_CONTEXT_WORKER)).toBe('ZEROPS_COMMERCE_CUSTOMER_CONTEXT_WORKER_SERVICE_ID');
@@ -382,23 +382,21 @@ it.effect('restarts exactly the deploy target services whose start preflight req
   }),
 );
 
-it.effect('restarts only the Zerops-hosted consumers of each deploy target', () =>
+it.effect('restarts only the Zerops-hosted consumers of each deploy target in either Outbox Worker mode', () =>
   Effect.gen(function* consumersPerTarget() {
     const zeropsYaml = readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8');
     const topology = readReferenceTopology();
     const deliveryUnits = new Set([CUSTOMER_CONTEXT, 'shellsuperapp']);
+    const consumersOf = (target: 'cloudflare' | 'zerops', mode: 'dedicated' | 'host') =>
+      compositionConsumerSetups(zeropsYaml, topology, mode).pipe(
+        Effect.map((consumers) => targetConsumerSetups(consumers, target, deliveryUnits)),
+      );
     // On Zerops every consumer is a Zerops service; on Cloudflare the vertical runs as a Worker, and
-    // only the Outbox Worker host stays on Zerops to be restarted.
-    expect(
-      targetConsumerSetups(yield* compositionConsumerSetups(zeropsYaml, topology, 'zerops'), 'zerops', deliveryUnits),
-    ).toEqual([CUSTOMER_CONTEXT, CUSTOMER_CONTEXT_WORKER]);
-    expect(
-      targetConsumerSetups(
-        yield* compositionConsumerSetups(zeropsYaml, topology, 'cloudflare'),
-        'cloudflare',
-        deliveryUnits,
-      ),
-    ).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+    // only the mode's Outbox Workers stay on Zerops to be restarted. The mode is independent of the target.
+    expect(yield* consumersOf('zerops', 'dedicated')).toEqual([CUSTOMER_CONTEXT, CUSTOMER_CONTEXT_WORKER]);
+    expect(yield* consumersOf('zerops', 'host')).toEqual([CUSTOMER_CONTEXT, OUTBOX_WORKER_HOST_SETUP]);
+    expect(yield* consumersOf('cloudflare', 'host')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+    expect(yield* consumersOf('cloudflare', 'dedicated')).toEqual([CUSTOMER_CONTEXT_WORKER]);
   }),
 );
 
@@ -448,7 +446,7 @@ it('refreshes well inside the validity window on the configured schedule', () =>
   expect(refreshCron).toMatch(/^\d+ \*\/6 \* \* \*$/u);
 });
 
-it('leaves the refresh to the stage deploy while the Outbox Workers drift from the deploy target', () => {
+it('leaves the refresh to the stage deploy while the Outbox Workers drift from the Outbox Worker mode', () => {
   const workflow = Schema.decodeUnknownSync(
     Schema.Struct({
       jobs: Schema.Record(
@@ -493,6 +491,8 @@ it('refreshes the production composition on Zerops, in its own environment and c
   expect(production.environment).toEqual({ deployment: false, name: 'production' });
   expect(production.concurrency.group).toBe('zerops-production');
   expect(production.env.DEPLOY_TARGET).toBe('zerops');
+  // Production names its own Outbox Worker mode; the publisher has no default for it.
+  expect(production.env.OUTBOX_WORKER_MODE).toBe(`\${{ vars.OUTBOX_WORKER_MODE }}`);
   const runs = production.steps.map(({ run }) => run ?? '').join('\n');
   expect(runs).toContain('deployment-base:resolve --environment production --optional');
   expect(runs).toContain('--environment production');

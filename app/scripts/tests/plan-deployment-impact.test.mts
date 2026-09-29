@@ -293,6 +293,7 @@ it.live('deploys a generated owner worker immediately after its provider', () =>
         Effect.gen(function* testEffect5() {
           const plan = yield* planDeploymentImpact({
             changedPaths: [CONTACTS_WORKER_SOURCE],
+            outboxWorkerMode: 'dedicated',
             rootDirectory: root,
           });
           expect(plan.units.providers).toEqual(['contacts', CONTACTS_WORKER_SETUP]);
@@ -300,7 +301,7 @@ it.live('deploys a generated owner worker immediately after its provider', () =>
           expect(plan.phases.map((phase) => phase.id)).toEqual(['contacts', CONTACTS_WORKER_SETUP]);
           expect(plan.phases[1]?.kind).toBe('worker');
           expect(plan.phases[1]?.serviceIdEnv).toBe('ZEROPS_CONTACTS_WORKER_SERVICE_ID');
-          // A former Cloudflare target leaves the host running; this run stops it once the dedicated worker is up.
+          // A former host mode leaves the host running; this run stops it once the dedicated worker is up.
           expect(plan.units.stoppedWorkers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
         }),
       { includeWorker: true },
@@ -308,14 +309,14 @@ it.live('deploys a generated owner worker immediately after its provider', () =>
   }),
 );
 
-it.live('deploys the one Outbox Worker host instead of dedicated workers on the Cloudflare target', () =>
+it.live('deploys the one Outbox Worker host instead of dedicated workers in the host mode', () =>
   Effect.gen(function* cloudflareWorkerHost() {
     yield* withFixture(
       (root) =>
-        Effect.gen(function* planCloudflareTarget() {
+        Effect.gen(function* planHostMode() {
           const workerChange = yield* planDeploymentImpact({
             changedPaths: [CONTACTS_WORKER_SOURCE],
-            deployTarget: 'cloudflare',
+            outboxWorkerMode: 'host',
             rootDirectory: root,
           });
           expect(workerChange.units.providers).toEqual(['contacts', OUTBOX_WORKER_HOST_SETUP]);
@@ -325,12 +326,12 @@ it.live('deploys the one Outbox Worker host instead of dedicated workers on the 
             serviceIdEnv: 'ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID',
             stageSetup: OUTBOX_WORKER_HOST_SETUP,
           });
-          // The dedicated workers of a former Zerops target stop in the run that deploys the host.
+          // The dedicated workers of a former dedicated mode stop in the run that deploys the host.
           expect(workerChange.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP]);
           // No hosted owner is impacted, so the host keeps running its current artifact.
           const shellChange = yield* planDeploymentImpact({
             changedPaths: [SHELL_FRAME_SOURCE],
-            deployTarget: 'cloudflare',
+            outboxWorkerMode: 'host',
             rootDirectory: root,
           });
           expect(shellChange.units.providers).toEqual([]);
@@ -339,7 +340,7 @@ it.live('deploys the one Outbox Worker host instead of dedicated workers on the 
           // A regenerated host entry replans every unit, the host included.
           const hostChange = yield* planDeploymentImpact({
             changedPaths: ['scripts/outbox-worker-host.generated.mts'],
-            deployTarget: 'cloudflare',
+            outboxWorkerMode: 'host',
             rootDirectory: root,
           });
           expect(hostChange.units.providers).toContain(OUTBOX_WORKER_HOST_SETUP);
@@ -350,29 +351,42 @@ it.live('deploys the one Outbox Worker host instead of dedicated workers on the 
   }),
 );
 
-it.live('reconciles every worker of the deploy target after a switch, whatever the diff impacts', () =>
+it.live('reconciles every worker of the Outbox Worker mode after a switch in either direction', () =>
   Effect.gen(function* reconcileWorkers() {
     yield* withFixture(
       (root) =>
         Effect.gen(function* planReconciliation() {
           const shellChange = [SHELL_FRAME_SOURCE];
-          // Back on Zerops, the host ran every owner, so each dedicated worker deploys and the host stops.
-          const toZerops = yield* planDeploymentImpact({
+          // host -> dedicated: the host ran every owner, so each dedicated worker deploys and the host stops.
+          const toDedicated = yield* planDeploymentImpact({
             changedPaths: shellChange,
+            outboxWorkerMode: 'dedicated',
             reconcileWorkers: true,
             rootDirectory: root,
           });
-          expect(toZerops.units.providers).toEqual([CONTACTS_WORKER_SETUP]);
-          expect(toZerops.units.stoppedWorkers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
-          // On Cloudflare the host deploys and the dedicated workers stop.
-          const toCloudflare = yield* planDeploymentImpact({
+          expect(toDedicated.units.providers).toEqual([CONTACTS_WORKER_SETUP]);
+          expect(toDedicated.units.stoppedWorkers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+          // dedicated -> host: the host deploys and the dedicated workers stop.
+          const toHost = yield* planDeploymentImpact({
             changedPaths: shellChange,
-            deployTarget: 'cloudflare',
+            outboxWorkerMode: 'host',
             reconcileWorkers: true,
             rootDirectory: root,
           });
-          expect(toCloudflare.units.providers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
-          expect(toCloudflare.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP]);
+          expect(toHost.units.providers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+          expect(toHost.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP]);
+          // The mode alone decides: the edge units the plan ships are the same in both modes.
+          expect(toHost.units.cloudflare).toEqual(toDedicated.units.cloudflare);
+          // Without a switch the Shell-only change deploys and stops no worker in either mode.
+          for (const outboxWorkerMode of ['dedicated', 'host'] as const) {
+            const steady = yield* planDeploymentImpact({
+              changedPaths: shellChange,
+              outboxWorkerMode,
+              rootDirectory: root,
+            });
+            expect(steady.units.workers).toEqual([]);
+            expect(steady.units.stoppedWorkers).toEqual([]);
+          }
         }),
       { includeWorker: true },
     );
@@ -401,9 +415,9 @@ it.live('fails closed when a generated worker has no Outbox Worker host setup', 
 );
 
 /**
- * Each deploy target's plan, as the workflow reads it: `zerops` pushes every provider (with its outbox
- * worker) and the Shell to Zerops; `cloudflare` ships the placed units as Workers and keeps only the
- * Outbox Worker host on Zerops. Infrastructure deploys on Zerops for both.
+ * Each environment's plan, as the workflow reads it: production (`zerops`, `dedicated`) pushes every provider
+ * (with its outbox worker) and the Shell to Zerops; stage (`cloudflare`, `host`) ships the placed units as
+ * Workers and keeps only the Outbox Worker host on Zerops. Infrastructure deploys on Zerops for both.
  */
 const deployTargets = (zeropsPlan: DeploymentImpactPlan, cloudflarePlan: DeploymentImpactPlan) => ({
   cloudflare: {
@@ -442,8 +456,8 @@ for (const [scenario, changedPaths, expected] of [
           Effect.gen(function* plansBothTargetsInFixture() {
             const options =
               changedPaths === undefined ? { rootDirectory: root } : { changedPaths, rootDirectory: root };
-            const zeropsPlan = yield* planDeploymentImpact(options);
-            const cloudflarePlan = yield* planDeploymentImpact({ ...options, deployTarget: 'cloudflare' });
+            const zeropsPlan = yield* planDeploymentImpact({ ...options, outboxWorkerMode: 'dedicated' });
+            const cloudflarePlan = yield* planDeploymentImpact({ ...options, outboxWorkerMode: 'host' });
             expect(deployTargets(zeropsPlan, cloudflarePlan)).toEqual(expected);
           }),
         { cloudflarePlacement: [SHELL_ID, 'contacts'], includeWorker: true },

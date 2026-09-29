@@ -26,8 +26,8 @@ import type {
   AuthorizationReadinessEvidence,
 } from './check-authorization-readiness.mts';
 import { hashAuthorizationEvidence } from './check-authorization-readiness.mts';
-import { DeployTargetSchema, OUTBOX_WORKER_HOST, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
-import type { DeployTarget } from './outbox-worker-delivery.mjs';
+import { OUTBOX_WORKER_HOST, OutboxWorkerModeSchema, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
+import type { OutboxWorkerMode } from './outbox-worker-delivery.mjs';
 import type { AuthorizationImpactReport } from './report-fail-closed-authorization-impact.mts';
 
 export const DeploymentPhaseKindSchema = Schema.Literals(['infrastructure', 'provider', 'shell', 'worker']);
@@ -184,11 +184,11 @@ export interface DeploymentImpactPlan {
     readonly providers: readonly string[];
     readonly shell: boolean;
     readonly spicedb: boolean;
-    /** Off-target worker setups to stop once this plan deploys the deploy target's own workers. */
+    /** The other Outbox Worker mode's setups to stop once this plan deploys this mode's workers. */
     readonly stoppedWorkers: readonly string[];
     /**
      * The outbox workers among `providers`. They run on Zerops whatever the deploy target, because
-     * they drain PostgreSQL outboxes and are no edge unit.
+     * they drain PostgreSQL outboxes and are no edge unit; the Outbox Worker mode chooses which.
      */
     readonly workers: readonly string[];
   };
@@ -198,17 +198,17 @@ export interface PlanDeploymentImpactOptions {
   readonly authorizationPromotion?: AuthorizationPromotionGateInput;
   readonly baseRevision?: string;
   readonly changedPaths?: readonly string[];
-  /** Defaults to `zerops`. */
-  readonly deployTarget?: DeployTarget;
   readonly headRevision?: string;
+  /** Dedicated per-owner worker services or the one Outbox Worker host. Defaults to `dedicated`. */
+  readonly outboxWorkerMode?: OutboxWorkerMode;
   /**
    * The last successful edge deployment, for retirement checks. Defaults to `baseRevision`; a full
    * plan passes it on its own so removals are still reconciled.
    */
   readonly placementBaseRevision?: string;
   /**
-   * The other deploy target's workers still run, so the deploy target changed since its workers last
-   * deployed. The plan deploys every worker of this target, whatever the diff impacts, and stops the others.
+   * The workers do not match the Outbox Worker mode, so the mode changed since its workers last deployed.
+   * The plan deploys every worker of this mode, whatever the diff impacts, and stops the other mode's.
    */
   readonly reconcileWorkers?: boolean;
   readonly rootDirectory?: string;
@@ -1329,9 +1329,9 @@ const validateWorkerStageSetups = (
 };
 
 /**
- * Each impacted owner's dedicated worker on Zerops; on Cloudflare, the one host once any owner is impacted.
- * Reconciling a deploy target switch deploys every worker of the target, since the other target's run left
- * them stopped or on stale artifacts.
+ * Each impacted owner's dedicated worker in the `dedicated` mode; in the `host` mode, the one host once any
+ * owner is impacted. Reconciling a mode switch deploys every worker of the mode, since the other mode's
+ * runs left them stopped or on stale artifacts.
  */
 const planWorkerPhases = (
   workers: readonly {
@@ -1341,11 +1341,11 @@ const planWorkerPhases = (
     readonly stageSetup: string;
   }[],
   impacted: ReadonlySet<string>,
-  deployTarget: DeployTarget,
+  mode: OutboxWorkerMode,
   reconcileWorkers: boolean,
 ): readonly DeploymentPhase[] => {
   const impactedWorkers = reconcileWorkers ? workers : workers.filter((worker) => impacted.has(worker.ownerId));
-  if (deployTarget === 'zerops') {
+  if (mode === 'dedicated') {
     return impactedWorkers.map((worker) => ({
       id: worker.id,
       kind: 'worker' as const,
@@ -1366,18 +1366,18 @@ const planWorkerPhases = (
 };
 
 /**
- * The worker services of the other deploy target. Switching `DEPLOY_TARGET` leaves them running, so they
- * are stopped in the same run that deploys this target's workers; one set of workers always runs.
+ * The worker services of the other Outbox Worker mode. Switching `OUTBOX_WORKER_MODE` leaves them running,
+ * so they are stopped in the same run that deploys this mode's workers; one set of workers always runs.
  */
 const planStoppedWorkers = (
   workers: readonly { readonly stageSetup: string }[],
   workerPhases: readonly DeploymentPhase[],
-  deployTarget: DeployTarget,
+  mode: OutboxWorkerMode,
 ): readonly string[] => {
   if (workerPhases.length === 0) {
     return [];
   }
-  return deployTarget === 'zerops' ? [OUTBOX_WORKER_HOST.stageSetup] : workers.map((worker) => worker.stageSetup);
+  return mode === 'dedicated' ? [OUTBOX_WORKER_HOST.stageSetup] : workers.map((worker) => worker.stageSetup);
 };
 
 export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) =>
@@ -1442,8 +1442,8 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
     );
 
     const selectedUnits = orderedUnits.filter((unit) => impacted.has(unit.id));
-    const deployTarget = options.deployTarget ?? 'zerops';
-    const workerPhases = planWorkerPhases(workers, impacted, deployTarget, options.reconcileWorkers ?? false);
+    const outboxWorkerMode = options.outboxWorkerMode ?? 'dedicated';
+    const workerPhases = planWorkerPhases(workers, impacted, outboxWorkerMode, options.reconcileWorkers ?? false);
     const phases: DeploymentPhase[] = [];
     if (migrator) {
       phases.push(INFRASTRUCTURE_PHASES.migrator);
@@ -1483,7 +1483,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
           .map((phase) => phase.id),
         shell: impacted.has(shell.id),
         spicedb,
-        stoppedWorkers: planStoppedWorkers(workers, workerPhases, deployTarget),
+        stoppedWorkers: planStoppedWorkers(workers, workerPhases, outboxWorkerMode),
         workers: phases.filter((phase) => phase.kind === 'worker').map((phase) => phase.id),
       },
     };
@@ -1575,8 +1575,9 @@ const deploymentImpactCommand = Command.make(
     authorizationNow: Flag.String('authorization-now').pipe(Flag.optional),
     baseRevision: Flag.String('base').pipe(Flag.optional),
     changedPaths: Flag.String('changed-path').pipe(Flag.atLeast(0)),
-    deployTarget: Flag.Literals('deploy-target', DeployTargetSchema.literals).pipe(Flag.withDefault('zerops')),
     headRevision: Flag.String('head').pipe(Flag.optional),
+    // Required: every deploying environment names its mode, so no environment inherits the other's.
+    outboxWorkerMode: Flag.Literals('outbox-worker-mode', OutboxWorkerModeSchema.literals),
     placementBaseRevision: Flag.String('placement-base').pipe(Flag.optional),
     reconcileWorkers: Flag.Boolean('reconcile-workers').pipe(Flag.withDefault(false)),
   },
@@ -1585,8 +1586,8 @@ const deploymentImpactCommand = Command.make(
     authorizationNow,
     baseRevision,
     changedPaths,
-    deployTarget,
     headRevision,
+    outboxWorkerMode,
     placementBaseRevision,
     reconcileWorkers,
   }) =>
@@ -1603,8 +1604,8 @@ const deploymentImpactCommand = Command.make(
       const options: PlanDeploymentImpactOptions = {
         baseRevision: Option.getOrUndefined(baseRevision),
         changedPaths: changedPaths.length === 0 ? undefined : changedPaths,
-        deployTarget,
         headRevision: Option.getOrUndefined(headRevision),
+        outboxWorkerMode,
         placementBaseRevision: Option.getOrUndefined(placementBaseRevision),
         reconcileWorkers,
         rootDirectory,
