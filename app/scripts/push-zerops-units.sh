@@ -28,8 +28,10 @@ while IFS= read -r unit; do
     echo "Deployment failed for planned unit $unit" >&2
     exit 1
   fi
-  # Workers serve no public traffic. Every other unit must answer on its subdomain after each deploy.
-  if [[ "$unit" != *-worker ]]; then
-    (cd app && mise exec -- pnpm --silent active-composition:publish ensure-public-access --setup "$unit")
-  fi
+  # Dedicated workers and the combined Outbox Worker host serve no public traffic and stay internal,
+  # as zerops-import.yaml declares. Every other unit must answer on its subdomain after each deploy.
+  case "$unit" in
+    *-worker | outbox-worker-host) ;;
+    *) (cd app && mise exec -- pnpm --silent active-composition:publish ensure-public-access --setup "$unit") ;;
+  esac
 done < <(jq -r '.[]' <<<"$UNITS_JSON")
