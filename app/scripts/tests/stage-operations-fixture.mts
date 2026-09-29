@@ -61,9 +61,12 @@ export const importWithDataLayer =
 // ---------------------------------------------------------------------------------------------
 // Zerops and GitHub through the shell
 
+/** The revision the fake `git rev-parse HEAD` reports. */
+export const FAKE_REVISION = '0123456789abcdef';
+
 export interface FakeStage {
   readonly commands: OpsCommand[];
-  readonly deployments: { id: number; state: string }[];
+  readonly deployments: { id: number; sha: string; state: string }[];
   readonly environments: Set<string>;
   /** Hostnames a service import accepts but Zerops does not list (a partial or delayed creation). */
   readonly hiddenOnImport: Set<string>;
@@ -79,7 +82,7 @@ export interface FakeStage {
 }
 
 export interface FakeStageInitial {
-  readonly deployments?: readonly { id: number; state: string }[];
+  readonly deployments?: readonly { id: number; sha: string; state: string }[];
   readonly environments?: readonly string[];
   readonly projectUserKeys?: readonly string[];
   readonly projectValues?: Readonly<Record<string, string>>;
@@ -169,7 +172,7 @@ const githubApiAnswer = (stage: FakeStage, command: OpsCommand) => {
     return Effect.succeed(`${[...stage.environments].join('\n')}\n`);
   }
   if (path.includes('/deployments?')) {
-    return Effect.succeed(encodeJson(stage.deployments.slice(0, 1).map(({ id }) => ({ id }))));
+    return Effect.succeed(encodeJson(stage.deployments.slice(0, 1).map(({ id, sha }) => ({ id, sha }))));
   }
   if (path.includes('/statuses?')) {
     return Effect.succeed(encodeJson(stage.deployments.slice(0, 1).map(({ state }) => ({ state }))));
@@ -204,7 +207,7 @@ const respond = (stage: FakeStage, command: OpsCommand, nextId: () => string) =>
   return Match.value(command.command).pipe(
     Match.when('zcli', () => zcliAnswer(stage, command, nextId)),
     Match.when('gh', () => ghAnswer(stage, command)),
-    Match.when('git', () => Effect.succeed('0123456789abcdef\n')),
+    Match.when('git', () => Effect.succeed(`${FAKE_REVISION}\n`)),
     Match.when('pnpm', () => Effect.succeed('')),
     Match.orElse(() => unexpected(command)),
   );

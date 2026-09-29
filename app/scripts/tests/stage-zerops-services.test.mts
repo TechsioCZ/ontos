@@ -197,7 +197,7 @@ it.effect('records every service without --confirm and deletes nothing', () =>
     const stage = liveStage({ deployTarget: 'zerops' });
     const files = fakeFiles();
 
-    yield* run(retire({ confirm: false }), { files, stage });
+    yield* run(retire({ confirm: false, dnsCutOver: false }), { files, stage });
 
     expect(mutatingCommands(stage.commands)).toStrictEqual([]);
     const record = decodeRecord(files);
@@ -227,9 +227,24 @@ it.effect('refuses to delete before stage deploys to Cloudflare', () =>
   Effect.gen(function* refusesBeforeCutover() {
     const stage = liveStage({ deployTarget: 'zerops' });
 
-    const error = yield* run(retire({ confirm: true }), { files: fakeFiles(), stage }).pipe(Effect.flip);
+    const error = yield* run(retire({ confirm: true, dnsCutOver: true }), { files: fakeFiles(), stage }).pipe(
+      Effect.flip,
+    );
 
     expect(error.message).toContain('does not deploy with DEPLOY_TARGET=cloudflare yet');
+    expect(mutatingCommands(stage.commands)).toStrictEqual([]);
+  }),
+);
+
+it.effect('refuses to delete until the operator confirms the DNS cut-over', () =>
+  Effect.gen(function* refusesWithoutDnsCutOver() {
+    const stage = liveStage();
+
+    const error = yield* run(retire({ confirm: true, dnsCutOver: false }), { files: fakeFiles(), stage }).pipe(
+      Effect.flip,
+    );
+
+    expect(error.message).toContain('add --dns-cut-over');
     expect(mutatingCommands(stage.commands)).toStrictEqual([]);
   }),
 );
@@ -238,7 +253,9 @@ it.effect('keeps the per-vertical outbox workers until the combined host runs', 
   Effect.gen(function* refusesWithoutWorkerHost() {
     const stage = liveStage({ hostStatus: 'READY_TO_DEPLOY' });
 
-    const error = yield* run(retire({ confirm: true }), { files: fakeFiles(), stage }).pipe(Effect.flip);
+    const error = yield* run(retire({ confirm: true, dnsCutOver: true }), { files: fakeFiles(), stage }).pipe(
+      Effect.flip,
+    );
 
     expect(error.message).toContain('outboxworkerhost service is not ACTIVE');
     expect(mutatingCommands(stage.commands)).toStrictEqual([]);
@@ -251,7 +268,7 @@ it.effect('records, then deletes each retired service by ID with --confirm, keep
     const files = fakeFiles();
     const variablesBefore = new Map(stage.variables.get('stage'));
 
-    yield* run(retire({ confirm: true }), { files, stage });
+    yield* run(retire({ confirm: true, dnsCutOver: true }), { files, stage });
 
     const deleted = stage.commands
       .filter(({ args }) => args[0] === 'service' && args[1] === 'delete')
@@ -265,7 +282,7 @@ it.effect('records, then deletes each retired service by ID with --confirm, keep
     expect(decodeRecord(files).services).toHaveLength(12);
 
     // A re-run after the deletion keeps the earlier records instead of emptying the file.
-    yield* run(retire({ confirm: true }), { files, stage });
+    yield* run(retire({ confirm: true, dnsCutOver: true }), { files, stage });
     expect(decodeRecord(files).services).toHaveLength(12);
   }),
 );
@@ -273,7 +290,7 @@ it.effect('records, then deletes each retired service by ID with --confirm, keep
 const retiredFiles = Effect.gen(function* retiredFilesEffect() {
   const stage = liveStage();
   const files = fakeFiles();
-  yield* run(retire({ confirm: true }), { files, stage });
+  yield* run(retire({ confirm: true, dnsCutOver: true }), { files, stage });
   return { files, stage };
 });
 

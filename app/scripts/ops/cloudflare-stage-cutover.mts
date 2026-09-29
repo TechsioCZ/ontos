@@ -660,7 +660,7 @@ export const provision = Effect.gen(function* provisionEffect() {
   yield* setWorkerSecrets;
 });
 
-const DeploymentsSchema = Schema.fromJsonString(Schema.Array(Schema.Struct({ id: Schema.Number })));
+const DeploymentsSchema = Schema.fromJsonString(Schema.Array(Schema.Struct({ id: Schema.Number, sha: Schema.String })));
 const StatusesSchema = Schema.fromJsonString(Schema.Array(Schema.Struct({ state: Schema.String })));
 
 const check = (label: string, failure: Option.Option<string>) =>
@@ -681,9 +681,20 @@ const latestStageEdgeState = Effect.gen(function* latestStageEdgeStateEffect() {
   const [status] = yield* githubApi([
     `repos/${repository}/deployments/${String(deployment.id)}/statuses?per_page=1`,
   ]).pipe(Effect.flatMap(decodeInput(StatusesSchema, `the ${STAGE_EDGE_ENVIRONMENT} deployment statuses`)));
-  return status?.state === 'success'
+  if (status?.state !== 'success') {
+    return Option.some(`deployment ${String(deployment.id)} is ${status?.state ?? 'without a status'}`);
+  }
+  // An older successful deployment does not prove the current placement and bindings are live.
+  const revision = (yield* runCommand({
+    args: ['rev-parse', 'HEAD'],
+    command: 'git',
+    cwd: yield* repositoryDirectory,
+  })).trim();
+  return deployment.sha === revision
     ? Option.none<string>()
-    : Option.some(`deployment ${String(deployment.id)} is ${status?.state ?? 'without a status'}`);
+    : Option.some(
+        `deployment ${String(deployment.id)} deployed ${deployment.sha}, not the checked-out revision ${revision}; pull main or wait for its stage-edge deployment`,
+      );
 });
 
 /**
@@ -739,7 +750,7 @@ export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
     missingWorkers.length === 0 ? Option.none() : Option.some(`missing ${missingWorkers.join(', ')}`),
   );
   yield* check(
-    `the latest ${STAGE_EDGE_ENVIRONMENT} deployment (Worker deploy plus cloudflare:proof) succeeded`,
+    `the latest ${STAGE_EDGE_ENVIRONMENT} deployment (Worker deploy plus cloudflare:proof) succeeded for the checked-out revision`,
     yield* latestStageEdgeState,
   );
   return yield* Effect.void;
@@ -797,7 +808,19 @@ const settingsFileProvider = (envFile: Option.Option<string>) =>
   });
 
 const cutoverLayer = ({ dryRun, envFile }: { readonly dryRun: boolean; readonly envFile: Option.Option<string> }) => {
-  const configuration = Layer.effect(CutoverConfiguration, loadCutoverSettings);
+  const configuration = Layer.effect(
+    CutoverConfiguration,
+    loadCutoverSettings.pipe(
+      Effect.catchTag('ConfigError', (cause) =>
+        Effect.fail(
+          new StageOperationError({
+            cause,
+            message: `a Cloudflare setting is missing or invalid (${cause.message}); set it in the environment or in ${Option.getOrElse(envFile, () => 'the dotenv file ~/.cloudflare-ontos-stage-token')}. Nothing was changed`,
+          }),
+        ),
+      ),
+    ),
+  );
   const credentials = Layer.effect(
     CloudflareCredentials,
     Effect.gen(function* cloudflareCredentials() {

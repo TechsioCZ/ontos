@@ -16,6 +16,7 @@ import type { CutoverSettings } from '../ops/cloudflare-stage-cutover.mts';
 import { OpsMode, STAGE_ZEROPS_PROJECT_ID } from '../ops/stage-operations.mts';
 import {
   APP_DIRECTORY,
+  FAKE_REVISION,
   fakeCloudflareAccount,
   fakeFiles,
   fakeStage,
@@ -422,7 +423,7 @@ const reviewedPlacementFiles = Effect.gen(function* reviewedPlacementFilesEffect
 
 it.effect('switches stage to DEPLOY_TARGET=cloudflare only after every verification item holds', () =>
   Effect.gen(function* activatesAfterVerification() {
-    const stage = newStage({ deployments: [{ id: 7, state: 'success' }] });
+    const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] });
 
     yield* run(activate, { account: provisionedAccount('healthy'), files: yield* reviewedPlacementFiles, stage });
 
@@ -432,7 +433,7 @@ it.effect('switches stage to DEPLOY_TARGET=cloudflare only after every verificat
 
 it.effect('leaves DEPLOY_TARGET unset while the tunnel is unhealthy', () =>
   Effect.gen(function* refusesUnhealthyTunnel() {
-    const stage = newStage({ deployments: [{ id: 7, state: 'success' }] });
+    const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] });
 
     const error = yield* run(activate, {
       account: provisionedAccount('degraded'),
@@ -447,7 +448,22 @@ it.effect('leaves DEPLOY_TARGET unset while the tunnel is unhealthy', () =>
 
 it.effect('leaves DEPLOY_TARGET unset until a stage-edge deployment succeeded', () =>
   Effect.gen(function* refusesFailedEdgeDeployment() {
-    const stage = newStage({ deployments: [{ id: 7, state: 'failure' }] });
+    const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'failure' }] });
+
+    const error = yield* run(activate, {
+      account: provisionedAccount('healthy'),
+      files: yield* reviewedPlacementFiles,
+      stage,
+    }).pipe(Effect.flip);
+
+    expect(error.message).toContain('succeeded for the checked-out revision: deployment 7 is failure');
+    expect(stage.variables.get('stage')?.has('DEPLOY_TARGET')).not.toBe(true);
+  }),
+);
+
+it.effect('leaves DEPLOY_TARGET unset while the latest stage-edge deployment is of an older revision', () =>
+  Effect.gen(function* refusesStaleEdgeDeployment() {
+    const stage = newStage({ deployments: [{ id: 7, sha: 'fedcba9876543210', state: 'success' }] });
 
     const error = yield* run(activate, {
       account: provisionedAccount('healthy'),
@@ -456,7 +472,7 @@ it.effect('leaves DEPLOY_TARGET unset until a stage-edge deployment succeeded', 
     }).pipe(Effect.flip);
 
     expect(error.message).toContain(
-      'stage-edge deployment (Worker deploy plus cloudflare:proof) succeeded: deployment 7 is failure',
+      `deployment 7 deployed fedcba9876543210, not the checked-out revision ${FAKE_REVISION}`,
     );
     expect(stage.variables.get('stage')?.has('DEPLOY_TARGET')).not.toBe(true);
   }),
@@ -464,7 +480,7 @@ it.effect('leaves DEPLOY_TARGET unset until a stage-edge deployment succeeded', 
 
 it.effect('leaves DEPLOY_TARGET unset while the reviewed placement names other data-plane IDs', () =>
   Effect.gen(function* refusesUnreviewedIds() {
-    const stage = newStage({ deployments: [{ id: 7, state: 'success' }] });
+    const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] });
 
     const error = yield* run(activate, { account: provisionedAccount('healthy'), files: fakeFiles(), stage }).pipe(
       Effect.flip,

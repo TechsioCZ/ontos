@@ -398,7 +398,7 @@ environment, or else from the dotenv file `~/.cloudflare-ontos-stage-token`. The
 - `verify` runs the cut-over checklist and changes nothing. The tunnel must be healthy. Both VPC
   services and Hyperdrive must match the runbook, and the reviewed `buildEnvironment` must name
   them. Every placed Worker must exist, and the latest `stage-edge` deployment, which includes
-  `cloudflare:proof`, must have succeeded.
+  `cloudflare:proof`, must have succeeded for the checked-out revision.
 - `activate` runs `verify` and, only when every item holds, sets `DEPLOY_TARGET=cloudflare` on
   `stage`.
 
@@ -411,7 +411,9 @@ It never changes `zerops.yaml`, `zerops-import.yaml`, a deploy script, or a GitH
   of its variables, split three ways: keys the setup's `run.envVariables` declares, keys inherited
   from the project, and service-level secrets. Values are never recorded. Commit the file. With
   `--confirm`, `retire` then deletes each service with `zcli service delete`. It refuses to delete
-  until `stage` deploys with `DEPLOY_TARGET=cloudflare` and the `outboxworkerhost` service is ACTIVE.
+  until `stage` deploys with `DEPLOY_TARGET=cloudflare`, the `outboxworkerhost` service is ACTIVE,
+  and `--dns-cut-over` confirms the stage hostnames already route to the Workers. `DEPLOY_TARGET`
+  only chooses where CI deploys; moving the hostnames is a DNS step outside this repository.
   A re-run keeps the records of services that are already gone.
 - `restore --secrets-file <vault export>` re-imports every recorded service that `zerops-import.yaml`
   still declares. It passes each service's secrets as import `envSecrets`, read from a dotenv export

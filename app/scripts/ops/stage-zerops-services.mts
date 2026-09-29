@@ -241,13 +241,24 @@ const captureService = (
 // ---------------------------------------------------------------------------------------------
 // Retire
 
-const retirementPreconditions = (live: readonly ZeropsService[]) =>
+/**
+ * DEPLOY_TARGET only chooses where CI deploys; the public stage hostnames move to the Workers in DNS,
+ * outside this repository. Deleting the services before that move takes stage down, so the operator
+ * confirms the DNS cut-over explicitly.
+ */
+const retirementPreconditions = (live: readonly ZeropsService[], options: { readonly dnsCutOver: boolean }) =>
   Effect.gen(function* retirementPreconditionsEffect() {
     const { repository } = yield* StageServicesConfiguration;
     const stageVariables = yield* listGithubVariables(repository, STAGE_ENVIRONMENT);
     if (stageVariables.get(DEPLOY_TARGET_VARIABLE) !== 'cloudflare') {
       return yield* new StageOperationError({
         message: `${STAGE_ENVIRONMENT} does not deploy with ${DEPLOY_TARGET_VARIABLE}=cloudflare yet; verify and activate the Cloudflare stage first`,
+      });
+    }
+    if (!options.dnsCutOver) {
+      return yield* new StageOperationError({
+        message:
+          'the stage hostnames may still route to these Zerops services; move their DNS to the Cloudflare Workers, check the Shell answers from Cloudflare, then add --dns-cut-over',
       });
     }
     const host = live.find(({ hostname }) => hostname === OUTBOX_WORKER_HOST_HOSTNAME);
@@ -259,13 +270,13 @@ const retirementPreconditions = (live: readonly ZeropsService[]) =>
     return yield* Effect.void;
   });
 
-export const retire = (options: { readonly confirm: boolean }) =>
+export const retire = (options: { readonly confirm: boolean; readonly dnsCutOver: boolean }) =>
   Effect.gen(function* retireEffect() {
     const { projectId, repository } = yield* StageServicesConfiguration;
     const fileSystem = yield* FileSystem.FileSystem;
     const live = yield* listZeropsServices(projectId);
     if (options.confirm) {
-      yield* retirementPreconditions(live);
+      yield* retirementPreconditions(live, options);
     }
     const liveHostnames = live.map(({ hostname }) => hostname);
     const context = {
@@ -476,10 +487,16 @@ const dryRunFlag = Flag.Boolean('dry-run').pipe(Flag.withDefault(false));
 
 const retireCommand = Command.make(
   'retire',
-  { confirm: Flag.Boolean('confirm').pipe(Flag.withDefault(false)), dryRun: dryRunFlag },
-  ({ confirm }) => retire({ confirm }),
+  {
+    confirm: Flag.Boolean('confirm').pipe(Flag.withDefault(false)),
+    dnsCutOver: Flag.Boolean('dns-cut-over').pipe(Flag.withDefault(false)),
+    dryRun: dryRunFlag,
+  },
+  ({ confirm, dnsCutOver }) => retire({ confirm, dnsCutOver }),
 ).pipe(
-  Command.withDescription('Record the unused stage services, then delete them with --confirm'),
+  Command.withDescription(
+    'Record the unused stage services, then delete them with --confirm once --dns-cut-over confirms DNS serves stage from Cloudflare',
+  ),
   Command.provide((input) => stageServicesLayer(input)),
 );
 
