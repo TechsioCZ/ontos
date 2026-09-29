@@ -238,14 +238,9 @@ only on an explicit dispatch:
 gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true
 ```
 
-Set up `production` once, outside CI, before the first dispatch: the GitHub environment itself
-(with required reviewers if desired), the `ZEROPS_TOKEN` secret, and the variables
-`ZEROPS_PROJECT_ID`, `ZEROPS_MIGRATOR_SERVICE_ID`, `ZEROPS_SPICEDB_SERVICE_ID`,
-`ZEROPS_SHELL_SERVICE_ID`, and one `ZEROPS_<SETUP>_SERVICE_ID` per vertical and per outbox worker
-(the names `zerops.yaml` setups imply), for services created from `zerops-import.yaml`. Also set
-`SPICEDB_ENDPOINT`, the `host:port` of production's TLS SpiceDB gRPC endpoint. Leave
-`DEPLOY_TARGET` unset or `zerops`. The first production deploy has no base, so dispatch it with
-`full=true`.
+Create `production` once, outside CI, before the first dispatch, with the operator script in
+[Create production](#create-production). Leave `DEPLOY_TARGET` unset or `zerops`. The first
+production deploy has no base, so dispatch it with `full=true`.
 
 `zerops.yaml` describes stage. Before any push, `deploy-zerops` writes a copy that sets
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` to the deploying environment in every build and runtime that
@@ -430,6 +425,77 @@ their status to reconcile Outbox Workers after a deploy target switch. The scrip
   the file lacks any recorded secret, `restore` changes nothing. Otherwise it points every stage
   `ZEROPS_*_SERVICE_ID` at the new service (and fails, changing no variable, if Zerops does not list one), sets `DEPLOY_TARGET=zerops` and dispatches the full
   Zerops deploy. Moving the Shell hostname back to Zerops remains a DNS step.
+
+## Create production
+
+Stage stays cheap: `zerops-import.yaml` declares its services in single-container mode
+(`postgresql:single@18`, one container per runtime). Production runs the same topology in high
+availability. `node scripts/ops/production-environment.mts` derives production's import from
+`zerops-import.yaml` instead of keeping a second copy:
+
+- every managed service switches from `:single` to `:ha` (`db18` becomes `postgresql:ha@18`);
+- every runtime service runs at least 2 containers, except the migrator, which runs once per deploy;
+- `cloudflared` and `outboxworkerhost` are left out: they serve only stage's Cloudflare target, and
+  production runs each owner's dedicated outbox worker.
+
+`render-import` prints that import without secrets, for review. `provision` builds production. Run
+it from `app/` on a clean `main`. Like the stage scripts, it reads before it writes, so a re-run after
+a partial failure converges, and `--dry-run` performs every read and prints each mutation instead of
+running it. It reaches Zerops through the locally authenticated `zcli` and GitHub through `gh`. It
+never deletes a service, variable or secret, and never touches `stage` or `stage-edge`.
+
+Before running it:
+
+1. Log `zcli` in with an account that may create projects in the stage project's organization.
+2. Create a Zerops access token for production CI.
+3. Export the supplied service secrets from the vault as a dotenv file keyed `<hostname>_<KEY>`,
+   with JSON values in single quotes: `shellsuperapp_BETTER_AUTH_URL`,
+   `shellsuperapp_BETTER_AUTH_TRUSTED_ORIGINS`, `shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK`, and
+   `<vertical>_ONTOS_GATEWAY_PUBLIC_JWKS` for each vertical with a public subdomain. Production needs
+   its own gateway key pair and auth origin, not stage's.
+
+```sh
+cd app
+printf %s "$PRODUCTION_ZEROPS_TOKEN" | node scripts/ops/production-environment.mts provision \
+  --spicedb-endpoint <host:port> --secrets-file <vault export> --zerops-token-stdin --dry-run
+# review the plan, then run the same command without --dry-run
+```
+
+`provision` does this, in order:
+
+1. Creates the GitHub environment `production` when it is missing, deployable only from `main`, with
+   no required reviewers.
+2. Finds the production project: the one `ZEROPS_PROJECT_ID` names, else the one named
+   `ontos-production`, else creates `ontos-production` in Serious core mode, in the stage project's
+   organization (`--org-id` overrides). It refuses a `ZEROPS_PROJECT_ID` that names the stage project.
+3. Imports the services the project lacks, with their secrets. Zerops generates
+   `BETTER_AUTH_SECRET` on the Shell and `SPICEDB_DATABASE_PASSWORD` and
+   `SPICEDB_GRPC_PRESHARED_KEY` on SpiceDB at import (`#yamlPreprocessor=on`); the rest come from the
+   vault export. If the export lacks one, nothing is imported. A service-ID variable that already
+   names a different service fails the run.
+4. Sets only the `production` variables that differ, once Zerops lists every service:
+
+   | Variable                                                  | Value                                                                           |
+   | --------------------------------------------------------- | ------------------------------------------------------------------------------- |
+   | `ZEROPS_PROJECT_ID`                                       | the production project                                                          |
+   | `ZEROPS_MIGRATOR_SERVICE_ID`, `ZEROPS_SPICEDB_SERVICE_ID` | the migrator and SpiceDB                                                        |
+   | `ZEROPS_SHELL_SERVICE_ID`                                 | the Shell                                                                       |
+   | `ZEROPS_<SETUP>_SERVICE_ID`                               | each vertical and each outbox worker, named after its `zerops.yaml` setup       |
+   | `SPICEDB_ENDPOINT`                                        | `--spicedb-endpoint`, the `host:port` of production's TLS SpiceDB gRPC endpoint |
+   | `DEPLOY_TARGET`                                           | `zerops`                                                                        |
+
+5. Sets the `ZEROPS_TOKEN` secret from standard input when `--zerops-token-stdin` is given. Until
+   `production` holds that secret, the flag is required and the run fails before changing anything.
+
+`provision` does not set Zerops project variables. Before the first deploy, set on the production
+project the values stage holds at project scope, with production's own origins:
+`MODERN_PUBLIC_SITE_URL`, `ONTOS_GATEWAY_ISSUER` and `ULTRAMODERN_MF_DEV_ORIGIN`. Production also needs its own enforced authorization evidence and
+context (see [Fail-closed authorization promotion](#fail-closed-authorization-promotion)). Then
+dispatch the first production deploy:
+
+```sh
+gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true
+```
 
 ## Required smoke suite
 

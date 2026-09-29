@@ -18,10 +18,10 @@ import { APP_DIRECTORY, fakeFiles, fakeStage, mutatingCommands } from './stage-o
 import type { FakeFiles, FakeStage } from './stage-operations-fixture.mts';
 
 const RECORD_PATH = `${APP_DIRECTORY}/scripts/ops/stage-zerops-retirement.json`;
-// The Cloudflare target keeps these on Zerops: the tunnel, the Outbox Worker host, and the dedicated
+// The Cloudflare target keeps these on Zerops: the data plane, the migrator, the tunnel, the Outbox Worker host, and the dedicated
 // workers, stopped, whose status each deploy reads to detect a DEPLOY_TARGET switch.
 const OUTBOX_WORKERS = ['partyregistryworker', 'commercecstmrcntxtworker', 'pricegroupcatalogworker'];
-const KEPT_ON_ZEROPS = new Set(['cloudflared', 'outboxworkerhost', ...OUTBOX_WORKERS]);
+const KEPT_ON_ZEROPS = new Set(['cloudflared', 'db18', 'migrator', 'outboxworkerhost', 'spicedb', ...OUTBOX_WORKERS]);
 
 // The 9 retired stage services and their IDs before the switch (backup bundle `zerops-service-list.txt`).
 const STAGE_SERVICE_IDS = new Map(

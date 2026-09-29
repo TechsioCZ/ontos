@@ -222,19 +222,29 @@ it('ships every package the migrator runs drizzle-kit in', () => {
 });
 
 // Zerops caps hostnames at 25 characters, so stage runs this worker under an abbreviated name.
-// Units that serve no public route: the Outbox Worker host and the Cloudflare Tunnel connector.
-const PRIVATE_SETUPS = new Set(['cloudflared', 'outbox-worker-host']);
+// Units that serve no public route: the migrator, the Outbox Worker host and the Cloudflare Tunnel connector.
+const PRIVATE_SETUPS = new Set(['cloudflared', 'migrator', 'outbox-worker-host']);
+const INFRASTRUCTURE_HOSTNAMES = new Set(['db18', 'spicedb']);
 
 const hostnameOf = (setup: string) =>
   setup === 'commerce-customer-context-worker' ? 'commercecstmrcntxtworker' : setup.replaceAll('-', '');
 
 it('declares a public subdomain at service creation for every non-worker unit and never for a worker', () => {
   const units = Schema.decodeUnknownSync(ZeropsYamlSchema)(parse(readFileSync(zeropsYamlPath, 'utf-8'))).zerops.filter(
-    ({ setup }) => setup !== 'migrator' && setup !== 'spicedb',
+    ({ setup }) => setup !== 'spicedb',
   );
-  const { services } = Schema.decodeUnknownSync(ZeropsImportSchema)(
+  const { services: declared } = Schema.decodeUnknownSync(ZeropsImportSchema)(
     parse(readFileSync(new URL('../../zerops-import.yaml', import.meta.url), 'utf-8')),
   );
+  // The shared data plane: PostgreSQL has no unit, and SpiceDB's Docker VM runs the image its unit pins.
+  expect(
+    declared
+      .filter(({ hostname }) => INFRASTRUCTURE_HOSTNAMES.has(hostname))
+      .map(
+        ({ enableSubdomainAccess = false, hostname, type }) => `${hostname} ${type} ${String(enableSubdomainAccess)}`,
+      ),
+  ).toStrictEqual(['db18 postgresql:single@18 false', 'spicedb docker@26.1.5 false']);
+  const services = declared.filter(({ hostname }) => !INFRASTRUCTURE_HOSTNAMES.has(hostname));
   expect(services).toHaveLength(units.length);
   expect(
     new Set(

@@ -1,10 +1,21 @@
-# Stage runtime services for every deployable unit in zerops.yaml, created with
+# Stage services for every deployable unit in zerops.yaml plus the PostgreSQL service they share, created with
 #   zcli project service-import zerops-import.yaml --project-id <stage project id>
 # Import only the entries whose hostname is missing from the project: Zerops rejects a duplicate hostname.
 # Every non-worker unit serves a public subdomain from creation, so deploys never re-enable one.
 # Hostnames are at most 25 lowercase letters or digits; CI finds each service by its
-# ZEROPS_<SETUP>_SERVICE_ID stage variable, not by hostname.
+# ZEROPS_<SETUP>_SERVICE_ID environment variable, not by hostname.
+# Stage runs in single-container mode. `scripts/ops/production-environment.mts` derives production's
+# import from this file: `:single` managed services become `:ha`, runtime services run at least two
+# containers, and the stage-only Cloudflare Tunnel connector and Outbox Worker host are left out.
 services:
+  - hostname: db18
+    type: postgresql:single@18
+  # SpiceDB runs the pinned authzed/spicedb image in a Docker VM against db18.
+  - hostname: spicedb
+    type: docker@26.1.5
+  # Runs the owner migrations and is stopped after each deploy.
+  - hostname: migrator
+    type: nodejs@24
   - hostname: shellsuperapp
     type: nodejs@24
     enableSubdomainAccess: true

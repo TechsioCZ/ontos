@@ -51,7 +51,15 @@ export const fakeFiles = (overrides: Readonly<Record<string, string>> = {}): Fak
 /** The revision the fake `git rev-parse HEAD` reports. */
 export const FAKE_REVISION = '0123456789abcdef';
 
+export interface FakeZeropsProject {
+  readonly id: string;
+  readonly name: string;
+  readonly orgId: string;
+}
+
 export interface FakeStage {
+  /** Deployment branch policies created, by environment. */
+  readonly branchPolicies: { environment: string; name: string }[];
   readonly commands: OpsCommand[];
   readonly deployments: { id: number; sha: string; state: string }[];
   /** Repository paths `git status --porcelain` reports as changed. */
@@ -62,9 +70,12 @@ export interface FakeStage {
   /** Every stdin the scripts piped, by rendered command. */
   readonly inputs: { command: string; stdin: string }[];
   readonly layer: Layer.Layer<OpsShellService>;
+  readonly projects: FakeZeropsProject[];
   readonly projectUserKeys: string[];
   /** Project-scope variable values, including `<hostname>_<KEY>` references. */
   readonly projectValues: Map<string, string>;
+  /** Secret names per GitHub environment. */
+  readonly secrets: Map<string, Set<string>>;
   services: ZeropsService[];
   readonly serviceUserKeys: Map<string, string[]>;
   readonly variables: Map<string, Map<string, string>>;
@@ -73,8 +84,10 @@ export interface FakeStage {
 export interface FakeStageInitial {
   readonly deployments?: readonly { id: number; sha: string; state: string }[];
   readonly environments?: readonly string[];
+  readonly projects?: readonly FakeZeropsProject[];
   readonly projectUserKeys?: readonly string[];
   readonly projectValues?: Readonly<Record<string, string>>;
+  readonly secrets?: Readonly<Record<string, readonly string[]>>;
   readonly services?: readonly ZeropsService[];
   readonly serviceUserKeys?: Readonly<Record<string, readonly string[]>>;
   readonly variables?: Readonly<Record<string, Readonly<Record<string, string>>>>;
@@ -94,19 +107,21 @@ const table = (services: readonly ZeropsService[]) =>
     '└────┴──────┴────────┘',
   ].join('\n');
 
+const projectTable = (projects: readonly FakeZeropsProject[]) =>
+  [
+    '│ ID │ NAME │ ORG NAME │ ORG ID │ STATUS │ MODE │',
+    ...projects.map(({ id, name, orgId }) => `│ ${id} │ ${name} │ Techsio │ ${orgId} │ ACTIVE │ SERIOUS │`),
+  ].join('\n');
+
 const unexpected = (command: OpsCommand) =>
   Effect.fail(new OpsCommandError({ command: renderCommand(command), message: 'unexpected command' }));
 
 const ImportSchema = Schema.Struct({ services: Schema.Array(Schema.Struct({ hostname: Schema.String })) });
 const VALUE_TEMPLATE = /^\{\{if eq \.Key "(?<key>[^"]+)"\}\}/u;
 
-const zcliAnswer = (stage: FakeStage, command: OpsCommand, nextId: () => string) => {
+const zcliProjectAnswer = (stage: FakeStage, command: OpsCommand) => {
   const { args } = command;
-  const [group, action] = args;
-  if (group === 'service' && action === 'list') {
-    return Effect.succeed(table(stage.services));
-  }
-  if (group === 'project' && action === 'env') {
+  if (args[1] === 'env') {
     const valueKey = VALUE_TEMPLATE.exec(option(args, '--template') ?? '')?.groups?.key;
     if (valueKey !== undefined) {
       // zcli prints one (usually empty) line per variable.
@@ -115,6 +130,26 @@ const zcliAnswer = (stage: FakeStage, command: OpsCommand, nextId: () => string)
     const service = option(args, '--service');
     const keys = service === undefined ? stage.projectUserKeys : (stage.serviceUserKeys.get(service) ?? []);
     return Effect.succeed(`${keys.join('\n')}\n`);
+  }
+  if (args[1] === 'list') {
+    return Effect.succeed(projectTable(stage.projects));
+  }
+  if (args[1] !== 'create') {
+    return unexpected(command);
+  }
+  const id = `project-${String(stage.projects.length + 1)}`;
+  stage.projects.push({ id, name: option(args, '--name') ?? '', orgId: option(args, '--org-id') ?? '' });
+  return Effect.succeed(`${id}\n`);
+};
+
+const zcliAnswer = (stage: FakeStage, command: OpsCommand, nextId: () => string) => {
+  const { args } = command;
+  const [group, action] = args;
+  if (group === 'service' && action === 'list') {
+    return Effect.succeed(table(stage.services));
+  }
+  if (group === 'project' && action !== 'service-import') {
+    return zcliProjectAnswer(stage, command);
   }
   if (group === 'project' && action === 'service-import') {
     const stdin = command.stdin === undefined ? '' : Redacted.value(command.stdin);
@@ -153,6 +188,11 @@ const environmentVariables = (stage: FakeStage, environment: string) => {
 
 const githubApiAnswer = (stage: FakeStage, command: OpsCommand) => {
   const path = command.args.find((argument) => argument.startsWith('repos/')) ?? '';
+  if (command.args.includes('POST') && path.endsWith('/deployment-branch-policies')) {
+    const name = command.args.find((argument) => argument.startsWith('name=')) ?? '';
+    stage.branchPolicies.push({ environment: path.split('/').at(-2) ?? '', name: name.slice('name='.length) });
+    return Effect.succeed('{}');
+  }
   if (command.args.includes('PUT')) {
     stage.environments.add(path.split('/').at(-1) ?? '');
     return Effect.succeed('{}');
@@ -180,6 +220,13 @@ const ghAnswer = (stage: FakeStage, command: OpsCommand) => {
   }
   if (group === 'variable' && action === 'set' && name !== undefined) {
     environmentVariables(stage, environment).set(name, option(args, '--body') ?? '');
+    return Effect.succeed('');
+  }
+  if (group === 'secret' && action === 'list') {
+    return Effect.succeed(encodeJson([...(stage.secrets.get(environment) ?? [])].map((secret) => ({ name: secret }))));
+  }
+  if (group === 'secret' && action === 'set' && name !== undefined) {
+    stage.secrets.set(environment, new Set([...(stage.secrets.get(environment) ?? []), name]));
     return Effect.succeed('');
   }
   if ((group === 'secret' && action === 'set') || (group === 'workflow' && action === 'run')) {
@@ -219,14 +266,19 @@ export const fakeStage = (initial: FakeStageInitial): FakeStage => {
     return `imported-${String(counter)}`;
   };
   const state: Omit<FakeStage, 'layer'> = {
+    branchPolicies: [],
     commands: [],
     deployments: [...(initial.deployments ?? [])],
     dirtyPaths: new Set(),
     environments: new Set(initial.environments ?? ['stage']),
     hiddenOnImport: new Set(),
     inputs: [],
+    projects: [...(initial.projects ?? [])],
     projectUserKeys: [...(initial.projectUserKeys ?? [])],
     projectValues: new Map(Object.entries(initial.projectValues ?? {})),
+    secrets: new Map(
+      Object.entries(initial.secrets ?? {}).map(([environment, names]) => [environment, new Set(names)]),
+    ),
     services: [...(initial.services ?? [])],
     serviceUserKeys: new Map(Object.entries(initial.serviceUserKeys ?? {}).map(([key, keys]) => [key, [...keys]])),
     variables: new Map(
@@ -245,7 +297,7 @@ export const fakeStage = (initial: FakeStageInitial): FakeStage => {
   return stage;
 };
 
-const MUTATING_ZCLI = /^zcli (?:project service-import|service delete|push)/u;
+const MUTATING_ZCLI = /^zcli (?:project (?:create|service-import)|service delete|push)/u;
 const MUTATING_GH = /^gh (?:variable set|secret set|workflow run|api -X)/u;
 
 /** Commands that change Zerops, GitHub or a Worker (as opposed to reads). */
