@@ -20,6 +20,7 @@ import type { CatalogProduct, CatalogProductVariant } from "@/mock-storefront/ty
 
 interface ProductPurchaseFormProps {
   product: CatalogProduct;
+  variant?: CatalogProductVariant;
   variants?: CatalogProductVariant[];
   initialVariantSearch?: string;
 }
@@ -36,13 +37,14 @@ const formatVariantLabel = (variant: CatalogProductVariant) => {
 
 export function ProductPurchaseForm({
   product,
+  variant,
   variants,
   initialVariantSearch,
 }: ProductPurchaseFormProps) {
   const { dispatch } = useCart();
   const [searchTerm, setSearchTerm] = useState(initialVariantSearch ?? "");
   const [confirmation, setConfirmation] = useState("");
-  const [quantity, setQuantity] = useState(product.minimumQuantity);
+  const [quantity, setQuantity] = useState(variant?.minimumQuantity ?? product.minimumQuantity);
   const [page, setPage] = useState(1);
   const [inStockOnly, setInStockOnly] = useState(!initialVariantSearch);
   const [packageOnly, setPackageOnly] = useState(false);
@@ -93,56 +95,70 @@ export function ProductPurchaseForm({
   };
 
   if (!variants?.length) {
+    const purchaseItem = variant ?? product;
     const productCartItem = {
       productId: product.id,
+      variantId: variant?.id,
       slug: product.slug,
       name: product.name,
-      sku: product.sku,
-      imageSrc: product.imageSrc,
+      sku: purchaseItem.sku,
+      imageSrc: variant?.imageSrc ?? product.imageSrc,
       imageAlt: product.imageAlt,
-      unit: product.unit,
-      minimumQuantity: product.minimumQuantity,
-      stockCount: product.stockCount,
-      priceMinor: product.priceMinor,
+      unit: purchaseItem.unit,
+      minimumQuantity: purchaseItem.minimumQuantity,
+      stockCount: purchaseItem.stockCount,
+      priceMinor: purchaseItem.priceMinor,
+      variantLabel: variant ? formatVariantLabel(variant) : undefined,
     };
     const maximumQuantity = getMaximumOrderQuantity(productCartItem);
 
     return (
       <div className="akros-purchase-form">
-        <span className="akros-purchase-form__label">{cs.product.selectQuantity}</span>
         <NumericInput
           id={`quantity-${product.id}`}
           locale="cs-CZ"
-          min={product.minimumQuantity}
+          min={purchaseItem.minimumQuantity}
           max={maximumQuantity}
-          step={product.minimumQuantity}
+          step={purchaseItem.minimumQuantity}
           onChange={setQuantity}
-          size="md"
+          size="lg"
           value={quantity}
         >
-          <NumericInput.Control>
+          <NumericInput.Control className="akros-purchase-form__quantity-control">
+            <NumericInput.DecrementTrigger
+              aria-label="Snížit množství"
+              className="akros-purchase-form__quantity-trigger"
+              icon="token-icon-minus"
+            />
             <NumericInput.Input aria-label={cs.cart.quantity} />
-            <NumericInput.TriggerContainer>
-              <NumericInput.IncrementTrigger />
-              <NumericInput.DecrementTrigger />
-            </NumericInput.TriggerContainer>
+            <NumericInput.IncrementTrigger
+              aria-label="Zvýšit množství"
+              className="akros-purchase-form__quantity-trigger"
+              icon="token-icon-plus"
+            />
           </NumericInput.Control>
         </NumericInput>
         <Button
           block
-          disabled={maximumQuantity <= 0 || product.priceMinor <= 0}
-          onClick={() =>
+          disabled={maximumQuantity <= 0 || purchaseItem.priceMinor <= 0}
+          icon="token-icon-cart"
+          onClick={() => {
             dispatch({
               type: "add",
               item: productCartItem,
               quantity,
-            })
-          }
-          size="md"
+            });
+            setConfirmation(`${variant?.label ?? product.name} bylo přidáno do košíku.`);
+          }}
+          size="lg"
+          uppercase
           variant="primary"
         >
-          {cs.actions.addToCart}
+          Koupit
         </Button>
+        <p aria-live="polite" className="akros-visually-hidden">
+          {confirmation}
+        </p>
       </div>
     );
   }

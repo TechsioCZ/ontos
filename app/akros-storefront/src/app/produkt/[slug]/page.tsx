@@ -1,10 +1,9 @@
 import type { Metadata } from "next";
 import Image from "next/image";
-import NextLink from "next/link";
 import { notFound } from "next/navigation";
-import { buttonVariants } from "@techsio/ui-kit/atoms/button";
+import { Badge } from "@techsio/ui-kit/atoms/badge";
 
-import { ProductDetailActions } from "@/components/product-detail-actions";
+import { ProductDetailActions, ProductFavoriteButton } from "@/components/product-detail-actions";
 import { ProductGrid } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
@@ -47,7 +46,19 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   const category = getCategoryById(product.categoryId);
   const categoryTrail = category ? getCategoryTrail(category) : [];
   const detail = product.detail;
-  const hasVariants = detail.variants.length > 0;
+  const singleVariant = detail.variants.length === 1 ? detail.variants[0] : undefined;
+  const hasMultipleVariants = detail.variants.length > 1;
+  const purchaseItem = singleVariant ?? product;
+  const purchasePriceTiers = singleVariant?.priceTiers.length
+    ? singleVariant.priceTiers
+    : detail.priceTiers;
+  const basePriceTier =
+    purchasePriceTiers.find((tier) => tier.minimumQuantity === purchaseItem.minimumQuantity) ??
+    purchasePriceTiers[0];
+  const packageQuantity = purchaseItem.packageQuantity ?? purchaseItem.minimumQuantity;
+  const availableVariantCount = detail.variants.filter(
+    (variant) => variant.stockCount >= variant.minimumQuantity,
+  ).length;
   const variantSearch = Array.isArray(requestedVariantSearch)
     ? requestedVariantSearch[0]
     : requestedVariantSearch;
@@ -57,14 +68,10 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     detail.variants.some((variant) => matchesProductVariantSearch(variant, normalizedVariantSearch))
       ? variantSearch?.trim()
       : undefined;
-  const quantityPricingParagraphs = detail.descriptionParagraphs
-    .filter(isQuantityPricingCopy)
-    .flatMap((paragraph) => paragraph.split(/(?=Snížená cena)/i))
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean);
   const productDescriptionParagraphs = detail.descriptionParagraphs.filter(
     (paragraph) => !isQuantityPricingCopy(paragraph),
   );
+  const [summaryDescription, ...remainingDescriptionParagraphs] = productDescriptionParagraphs;
   const materialMarkers = product.name.match(/\bA[1-5]\b|\b1\.\d{4}\b/gi) ?? [];
   const recommendationScore = (candidateName: string) =>
     materialMarkers.filter((marker) =>
@@ -85,6 +92,19 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
     )
     .slice(0, 3);
 
+  const simpleStockLabel =
+    purchaseItem.stockCount >= purchaseItem.minimumQuantity
+      ? `Skladem ${purchaseItem.stockCount.toLocaleString("cs-CZ")} ${purchaseItem.unit}`
+      : purchaseItem.stockCount > 0
+        ? `Omezené množství: ${purchaseItem.stockCount.toLocaleString("cs-CZ")} ${purchaseItem.unit}`
+        : "Není skladem";
+  const stockState =
+    purchaseItem.stockCount >= purchaseItem.minimumQuantity
+      ? "available"
+      : purchaseItem.stockCount > 0
+        ? "limited"
+        : "unavailable";
+
   return (
     <StorefrontShell activeCategorySlug={category?.slug}>
       <StorefrontBreadcrumbs
@@ -98,94 +118,160 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
         ]}
       />
 
-      <article
-        className={`akros-product-detail${hasVariants ? " akros-product-detail--variants" : ""}`}
-      >
-        <header className="akros-product-detail__heading">
-          <h1>{product.name}</h1>
-        </header>
-
-        <div className="akros-product-detail__lead">
+      <article className="akros-product-detail">
+        <section className="akros-product-detail__overview" aria-labelledby="product-title">
           <div className="akros-product-detail__gallery">
             <Image
               alt={product.imageAlt}
               className="akros-product-detail__image akros-product-detail__image--primary"
-              height={840}
+              height={824}
               priority
-              sizes="(max-width: 760px) 100vw, 500px"
+              sizes="(max-width: 760px) 100vw, 50vw"
               src={product.imageSrc}
               width={1000}
             />
             {product.secondaryImageSrc && (
-              <Image
-                alt={`Technický nákres: ${product.name}`}
-                className="akros-product-detail__image akros-product-detail__image--drawing"
-                height={180}
-                loading="lazy"
-                sizes="(max-width: 760px) 100vw, 500px"
-                src={product.secondaryImageSrc}
-                width={1000}
-              />
+              <div className="akros-product-detail__thumbnails">
+                <Image
+                  alt={`Technický nákres: ${product.name}`}
+                  className="akros-product-detail__image akros-product-detail__image--thumbnail"
+                  height={244}
+                  loading="lazy"
+                  sizes="148px"
+                  src={product.secondaryImageSrc}
+                  width={296}
+                />
+              </div>
             )}
           </div>
 
-          {hasVariants ? (
-            <aside
-              className="akros-product-detail__surface akros-product-detail__sales"
-              aria-label={cs.product.productActions}
-            >
-              <h2>Máte IČO? Chcete lepší cenu? Zavolejte mi!</h2>
-              {quantityPricingParagraphs.map((paragraph) => (
-                <p key={paragraph}>{paragraph}</p>
-              ))}
-              <NextLink
-                className={buttonVariants({ block: true, size: "lg", variant: "primary" })}
-                href="#product-variants"
-              >
-                Prosím vyberte variantu
-              </NextLink>
-            </aside>
-          ) : (
-            <aside className="akros-product-detail__order" aria-label={cs.product.productActions}>
-              <p className="akros-product-detail__stock">
-                {cs.product.inStock}:{" "}
-                <strong>
-                  {product.stockCount.toLocaleString("cs-CZ")} {product.unit}
-                </strong>
-              </p>
-              <p className="akros-product-detail__price">
-                {formatPrice(product.priceMinor, product.currency)} <span>/ {product.unit}</span>
-              </p>
-              <ProductPurchaseForm product={product} />
-            </aside>
-          )}
-        </div>
+          <div className="akros-product-detail__summary">
+            <header className="akros-product-detail__heading">
+              <h1 id="product-title">{product.name}</h1>
+              {hasMultipleVariants && (
+                <Badge
+                  className="akros-product-detail__variant-badge"
+                  size="md"
+                  variant="secondary"
+                >
+                  Více variant
+                </Badge>
+              )}
+              {singleVariant && (
+                <Badge
+                  className="akros-product-detail__variant-badge"
+                  size="md"
+                  variant="secondary"
+                >
+                  Jedna varianta
+                </Badge>
+              )}
+            </header>
 
-        {detail.priceTiers.length > 1 && (
-          <section
-            className="akros-product-detail__surface"
-            aria-labelledby="quantity-pricing-title"
-          >
-            <h2 id="quantity-pricing-title">{cs.product.quantityPricing}</h2>
-            <dl className="akros-price-tiers">
-              {detail.priceTiers.map((tier) => (
-                <div key={tier.minimumQuantity}>
-                  <dt>
-                    od {tier.minimumQuantity.toLocaleString("cs-CZ")} {product.unit}
-                  </dt>
-                  <dd>{formatPrice(tier.priceMinor)}</dd>
+            {summaryDescription && (
+              <p className="akros-product-detail__description">{summaryDescription}</p>
+            )}
+
+            <dl className="akros-product-detail__facts">
+              {packageQuantity > purchaseItem.minimumQuantity && (
+                <div>
+                  <dt>Počet v balení</dt>
+                  <dd>
+                    {packageQuantity.toLocaleString("cs-CZ")} {purchaseItem.unit}
+                  </dd>
                 </div>
-              ))}
+              )}
+              <div>
+                <dt>Kód produktu</dt>
+                <dd>{purchaseItem.sku}</dd>
+              </div>
+              {product.netWeight && (
+                <div>
+                  <dt>Váha</dt>
+                  <dd>
+                    {product.netWeight.toLocaleString("cs-CZ", {
+                      maximumFractionDigits: 6,
+                    })}
+                  </dd>
+                </div>
+              )}
+              <div>
+                <dt>Měrná jednotka</dt>
+                <dd>{purchaseItem.unit}</dd>
+              </div>
+              {purchaseItem.minimumQuantity > 1 && (
+                <div>
+                  <dt>Minimální odběr</dt>
+                  <dd>
+                    {purchaseItem.minimumQuantity.toLocaleString("cs-CZ")} {purchaseItem.unit}
+                  </dd>
+                </div>
+              )}
+              {hasMultipleVariants && (
+                <div>
+                  <dt>Počet variant</dt>
+                  <dd>{detail.variants.length.toLocaleString("cs-CZ")}</dd>
+                </div>
+              )}
             </dl>
-          </section>
-        )}
 
-        {hasVariants && <ProductDetailActions productId={product.id} productName={product.name} />}
+            {hasMultipleVariants ? (
+              <p
+                className={`akros-product-detail__stock${availableVariantCount > 0 ? "" : " akros-product-detail__stock--unavailable"}`}
+              >
+                {availableVariantCount > 0
+                  ? `Skladem ${availableVariantCount.toLocaleString("cs-CZ")} z ${detail.variants.length.toLocaleString("cs-CZ")} variant`
+                  : "Momentálně není skladem žádná varianta"}
+              </p>
+            ) : (
+              <>
+                <p
+                  className={`akros-product-detail__stock akros-product-detail__stock--${stockState}`}
+                >
+                  {simpleStockLabel}
+                </p>
 
-        {(productDescriptionParagraphs.length > 0 || detail.parameters.length > 0) && (
+                <div className="akros-product-detail__buying">
+                  {purchasePriceTiers.length > 1 && (
+                    <dl className="akros-price-tiers" aria-label={cs.product.quantityPricing}>
+                      {purchasePriceTiers.map((tier) => (
+                        <div key={tier.minimumQuantity}>
+                          <dt>
+                            od {tier.minimumQuantity.toLocaleString("cs-CZ")} {purchaseItem.unit}
+                          </dt>
+                          <dd>{formatPrice(tier.priceMinor, product.currency)}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                  )}
+
+                  {basePriceTier && (
+                    <p className="akros-product-detail__price-row">
+                      <span>Cena bez DPH</span>
+                      <strong>{formatPrice(basePriceTier.priceExcludingVatMinor)}</strong>
+                    </p>
+                  )}
+                  <p className="akros-product-detail__price-row akros-product-detail__price-row--total">
+                    <span>Cena s DPH</span>
+                    <strong>{formatPrice(purchaseItem.priceMinor, product.currency)}</strong>
+                  </p>
+
+                  <div className="akros-product-detail__purchase-row">
+                    <ProductPurchaseForm product={product} variant={singleVariant} />
+                    <ProductFavoriteButton productId={product.id} productName={product.name} />
+                  </div>
+                </div>
+              </>
+            )}
+
+            <ProductDetailActions productId={product.id} productName={product.name} />
+          </div>
+        </section>
+
+        {(remainingDescriptionParagraphs.length > 0 || detail.parameters.length > 0) && (
           <section className="akros-product-detail__surface" aria-labelledby="description-title">
             <h2 id="description-title">{cs.product.details}</h2>
-            {productDescriptionParagraphs.map((paragraph) => (
+            {remainingDescriptionParagraphs.map((paragraph) => (
               <p key={paragraph}>{paragraph}</p>
             ))}
             {detail.parameters.length > 0 && (
@@ -201,7 +287,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
           </section>
         )}
 
-        {hasVariants && (
+        {hasMultipleVariants && (
           <section id="product-variants" aria-label="Varianty produktu">
             <ProductPurchaseForm
               initialVariantSearch={initialVariantSearch}

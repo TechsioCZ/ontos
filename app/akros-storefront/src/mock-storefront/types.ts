@@ -66,6 +66,7 @@ export interface CatalogProduct {
   unit: string;
   minimumQuantity: number;
   packageQuantity?: number;
+  netWeight?: number;
   stockCount: number;
   imageSrc: string;
   imageAlt: string;

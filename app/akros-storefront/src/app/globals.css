@@ -6,6 +6,7 @@
 @import "../tokens/components/molecules/_akros-product-card.css";
 @import "../tokens/components/molecules/_akros-vertical-navigation.css";
 @import "../tokens/components/organisms/_akros-footer.css";
+@import "../tokens/components/templates/_akros-product-detail.css";
 @import "../styles/content-pages.css";
 @import "../styles/account-checkout.css";
 @source "../../node_modules/@techsio/ui-kit/dist";
@@ -428,45 +429,96 @@ body {
   gap: 24px;
 }
 
-.akros-product-detail__heading {
-  min-width: 0;
-}
-
-.akros-product-detail__heading h1 {
-  margin: 0;
-  font-size: 40px;
-  line-height: 1.15;
-  text-transform: uppercase;
-}
-
-.akros-product-detail__lead {
+.akros-product-detail__overview {
   display: grid;
-  grid-template-columns: 500px minmax(0, 1fr);
-  gap: 40px;
-  align-items: start;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--akros-product-detail-column-gap);
+  border-radius: var(--akros-product-detail-panel-radius);
+  padding: var(--akros-product-detail-panel-padding);
+  background: var(--color-base);
 }
 
 .akros-product-detail__gallery {
   display: grid;
-  width: min(100%, 500px);
-  gap: 16px;
+  width: min(100%, var(--akros-product-detail-gallery-max-width));
+  align-content: start;
+  gap: var(--dimension-16);
   overflow: hidden;
 }
 
-.akros-product-detail__gallery img {
+.akros-product-detail__image {
   display: block;
   width: 100%;
-  border-radius: var(--akros-radius-lg);
-  background: var(--color-base);
-  object-fit: cover;
+  border-radius: var(--akros-product-detail-image-radius);
+  background: var(--color-fill-surface);
+  object-fit: contain;
 }
 
-.akros-product-detail--variants .akros-product-detail__image--primary {
-  height: 420px;
+.akros-product-detail__image--primary {
+  aspect-ratio: var(--akros-product-detail-image-aspect-ratio);
 }
 
-.akros-product-detail--variants .akros-product-detail__image--drawing {
-  height: 90px;
+.akros-product-detail__thumbnails {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, var(--akros-product-detail-thumbnail-width)));
+  gap: var(--dimension-16);
+}
+
+.akros-product-detail__image--thumbnail {
+  aspect-ratio: var(--akros-product-detail-image-aspect-ratio);
+}
+
+.akros-product-detail__summary {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--akros-product-detail-content-gap);
+}
+
+.akros-product-detail__heading {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: var(--dimension-16);
+}
+
+.akros-product-detail__heading h1 {
+  margin: 0;
+  font-size: 31px;
+  line-height: 1.2;
+}
+
+.akros-product-detail__variant-badge {
+  background: var(--akros-product-detail-badge-bg);
+  color: var(--akros-product-detail-badge-fg);
+}
+
+.akros-product-detail__description {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.akros-product-detail__facts {
+  display: grid;
+  gap: var(--dimension-8);
+  margin: 0;
+}
+
+.akros-product-detail__facts > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(120px, auto);
+  gap: var(--dimension-16);
+  align-items: baseline;
+}
+
+.akros-product-detail__facts dt,
+.akros-product-detail__facts dd {
+  margin: 0;
+}
+
+.akros-product-detail__facts dd {
+  font-weight: 700;
+  text-align: right;
 }
 
 .akros-product-detail__surface {
@@ -488,72 +540,111 @@ body {
   line-height: 1.15;
 }
 
-.akros-product-detail__sales {
-  width: min(100%, 394px);
-  align-content: start;
-  justify-items: start;
-}
-
-.akros-product-detail__sales p {
-  max-width: 346px;
-  line-height: 1.5;
-}
-
-.akros-product-detail__order,
 .akros-product-detail__section {
   display: grid;
   gap: 16px;
 }
 
-.akros-product-detail__order {
-  border-radius: var(--akros-radius-lg);
-  padding: 24px;
-  background: var(--color-base);
+.akros-product-detail__stock {
+  margin: 0;
+  color: var(--akros-product-detail-stock-fg);
+  font-weight: 700;
 }
 
-.akros-product-detail__order p {
+.akros-product-detail__stock--limited,
+.akros-product-detail__stock--unavailable {
+  color: var(--akros-product-detail-stock-unavailable-fg);
+}
+
+.akros-product-detail__buying {
+  display: grid;
+  gap: var(--dimension-16);
+  border-block: 1px solid var(--akros-product-detail-divider-color);
+  padding-block: var(--dimension-16);
+}
+
+.akros-product-detail__price-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--dimension-24);
+  align-items: baseline;
   margin: 0;
 }
 
-.akros-product-detail__stock {
-  color: var(--color-fg-secondary);
+.akros-product-detail__price-row--total {
+  border-top: 1px solid var(--akros-product-detail-divider-color);
+  padding-top: var(--dimension-16);
+  font-size: 20px;
 }
 
-.akros-product-detail__price {
-  font-size: 30px;
-  font-weight: 800;
+.akros-product-detail__price-row--total strong {
+  font-size: 31px;
+  line-height: 1.2;
 }
 
-.akros-product-detail__price span {
-  font-size: 16px;
-  font-weight: 400;
+.akros-product-detail__purchase-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 60px;
+  gap: var(--dimension-8);
 }
 
 .akros-purchase-form {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(160px, auto);
-  gap: 12px;
+  grid-template-columns: minmax(128px, 140px) minmax(150px, 1fr);
+  gap: var(--dimension-8);
 }
 
-.akros-purchase-form__label {
-  grid-column: 1 / -1;
-  font-size: 14px;
-  font-weight: 600;
+.akros-purchase-form__quantity-control {
+  display: grid;
+  grid-template-columns: 40px minmax(48px, 1fr) 40px;
+}
+
+.akros-purchase-form__quantity-control input {
+  min-width: 0;
+  padding-inline: var(--dimension-4);
+  text-align: center;
+}
+
+.akros-purchase-form__quantity-trigger {
+  min-width: 40px;
+  padding-inline: var(--dimension-8);
+}
+
+.akros-purchase-form__quantity-trigger:first-child {
+  border-right: 1px solid var(--akros-product-detail-divider-color);
+}
+
+.akros-purchase-form__quantity-trigger:last-child {
+  border-left: 1px solid var(--akros-product-detail-divider-color);
+}
+
+.akros-product-detail__favorite {
+  min-width: 60px;
+  border-color: var(--color-border-primary);
+  color: var(--color-fg-primary);
+  padding-inline: 0;
 }
 
 .akros-price-tiers {
   display: grid;
   gap: 0;
   margin: 0;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--akros-product-detail-tier-bg);
 }
 
 .akros-price-tiers div {
   display: flex;
-  min-height: 56px;
+  min-height: 32px;
   justify-content: space-between;
   gap: 24px;
   align-items: center;
-  padding: 16px;
+  padding: var(--dimension-8) var(--dimension-16);
+}
+
+.akros-price-tiers div + div {
+  border-top: 1px solid var(--akros-product-detail-divider-color);
 }
 
 .akros-price-tiers dt,
@@ -564,27 +655,14 @@ body {
 .akros-product-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: var(--dimension-8) var(--dimension-16);
+  padding-top: var(--dimension-8);
 }
 
-.akros-product-actions > :nth-child(1) {
-  flex-basis: 346px;
-}
-
-.akros-product-actions > :nth-child(2) {
-  flex-basis: 286px;
-}
-
-.akros-product-actions > :nth-child(3) {
-  flex-basis: 120px;
-}
-
-.akros-product-actions > :nth-child(4) {
-  flex-basis: 270px;
-}
-
-.akros-product-actions > :nth-child(5) {
-  flex-basis: 283px;
+.akros-product-actions > * {
+  min-height: 40px;
+  color: var(--color-fg-primary);
+  padding-inline: 0;
 }
 
 .akros-product-parameters {
@@ -1204,17 +1282,17 @@ body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .akros-product-detail__lead {
+  .akros-product-detail__overview {
     grid-template-columns: 1fr;
+    gap: var(--dimension-24);
   }
 
-  .akros-product-detail__sales {
-    gap: 16px;
-    padding: 16px;
+  .akros-product-detail__gallery {
+    width: 100%;
   }
 
   .akros-product-detail__heading h1 {
-    font-size: 30px;
+    font-size: 26px;
   }
 
   .akros-product-detail__surface {
@@ -1222,13 +1300,23 @@ body {
   }
 
   .akros-product-actions {
-    display: grid;
-    grid-template-columns: 1fr;
+    display: flex;
   }
 
   .akros-product-actions > * {
-    width: 100%;
-    flex-basis: auto;
+    min-height: 44px;
+  }
+
+  .akros-product-detail__purchase-row {
+    grid-template-columns: minmax(0, 1fr) 52px;
+  }
+
+  .akros-purchase-form {
+    grid-template-columns: minmax(120px, 140px) minmax(0, 1fr);
+  }
+
+  .akros-product-detail__favorite {
+    min-width: 52px;
   }
 
   .akros-section--product-recommendations .akros-product-grid {

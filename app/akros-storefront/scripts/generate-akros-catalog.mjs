@@ -148,6 +148,7 @@ const directItemFields = new Map([
   ["shop/item/quantity", "stockCount"],
   ["shop/item/minimum_quantity", "minimumQuantity"],
   ["shop/item/unit_volume", "packageQuantity"],
+  ["shop/item/net_weight", "netWeight"],
   ["shop/item/content/variant_name", "variantName"],
   ["shop/item/content/title", "title"],
   ["shop/item/content/productname", "productName"],
@@ -284,6 +285,7 @@ for (const [groupId, items] of groups) {
     unit: cleanText(base.unit) || "ks",
     minimumQuantity: toPositiveNumber(base.minimumQuantity, 1),
     packageQuantity: toOptionalPositiveNumber(base.packageQuantity),
+    netWeight: toOptionalPositiveNumber(base.netWeight),
     stockCount: purchasableItems.reduce(
       (total, item) => total + Math.max(0, toNumber(item.stockCount)),
       0,

@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
-import { cs } from "@/i18n/cs";
 import type { CatalogProduct, CatalogProductVariant } from "@/mock-storefront/types";
 
 const variants: CatalogProductVariant[] = [
@@ -173,7 +172,7 @@ describe("ProductPurchaseForm", () => {
     );
 
     expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("0.5");
-    await user.click(screen.getByRole("button", { name: cs.actions.addToCart }));
+    await user.click(screen.getByRole("button", { name: "Koupit" }));
 
     expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
       expect.objectContaining({
@@ -181,6 +180,40 @@ describe("ProductPurchaseForm", () => {
         quantity: 0.5,
         stockCount: 3.5,
         unit: "m",
+      }),
+    ]);
+  });
+
+  it("adds a single source variant through the simple purchase control", async () => {
+    const user = userEvent.setup();
+    const singleVariant = {
+      ...variants[0],
+      id: "item-single",
+      sku: "10835300330020",
+      label: "destička kulatá s okem 33x20 AN 8353/A4",
+      minimumQuantity: 1,
+      packageQuantity: 10,
+      priceMinor: 6031,
+      stockCount: 6,
+    };
+
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={product} variant={singleVariant} />
+        <CartLines />
+      </CartProvider>,
+    );
+
+    expect(screen.queryByRole("searchbox")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Koupit" }));
+
+    expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
+      expect.objectContaining({
+        productId: "product-hex-bolt",
+        variantId: "item-single",
+        sku: "10835300330020",
+        priceMinor: 6031,
+        quantity: 1,
       }),
     ]);
   });

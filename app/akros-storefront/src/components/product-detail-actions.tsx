@@ -10,19 +10,51 @@ interface ProductDetailActionsProps {
   productName: string;
 }
 
-export function ProductDetailActions({ productId, productName }: ProductDetailActionsProps) {
+export function ProductFavoriteButton({ productId, productName }: ProductDetailActionsProps) {
+  const storageKey = `akros-favorite-${productId}`;
   const [isFavorite, setIsFavorite] = useState(false);
 
   const toggleFavorite = () => {
     const nextFavorite = !isFavorite;
     setIsFavorite(nextFavorite);
-    window.localStorage.setItem(`akros-favorite-${productId}`, String(nextFavorite));
+    window.localStorage.setItem(storageKey, String(nextFavorite));
+  };
+
+  return (
+    <Button
+      aria-label={
+        isFavorite ? `Odebrat ${productName} z oblíbených` : `Přidat ${productName} k oblíbeným`
+      }
+      aria-pressed={isFavorite}
+      className="akros-product-detail__favorite"
+      icon={isFavorite ? "icon-[mdi--heart]" : "icon-[mdi--heart-outline]"}
+      iconSize="lg"
+      onClick={toggleFavorite}
+      size="lg"
+      theme="outlined"
+      variant="secondary"
+    />
+  );
+}
+
+export function ProductDetailActions({ productId, productName }: ProductDetailActionsProps) {
+  const storageKey = `akros-watch-${productId}`;
+  const [isWatched, setIsWatched] = useState(false);
+
+  const toggleWatch = () => {
+    const nextWatched = !isWatched;
+    setIsWatched(nextWatched);
+    window.localStorage.setItem(storageKey, String(nextWatched));
   };
 
   const shareProduct = async () => {
     const shareData = { title: productName, url: window.location.href };
     if (navigator.share) {
-      await navigator.share(shareData);
+      try {
+        await navigator.share(shareData);
+      } catch (error) {
+        if (!(error instanceof DOMException) || error.name !== "AbortError") throw error;
+      }
       return;
     }
 
@@ -32,25 +64,36 @@ export function ProductDetailActions({ productId, productName }: ProductDetailAc
   };
 
   return (
-    <section className="akros-product-detail__surface" aria-labelledby="product-actions-title">
-      <h2 id="product-actions-title">Akce produktu</h2>
-      <div className="akros-product-actions">
-        <LinkButton as={NextLink} href="#product-variants" size="lg" variant="primary">
-          Prosím vyberte variantu
-        </LinkButton>
-        <Button onClick={toggleFavorite} size="lg" variant="primary">
-          {isFavorite ? "Odebrat z oblíbených" : "Přidat k oblíbeným"}
-        </Button>
-        <Button onClick={() => window.print()} size="lg" variant="primary">
-          Tisk
-        </Button>
-        <LinkButton as={NextLink} href="/kontakty#primy-kontakt" size="lg" variant="primary">
-          Dotaz na produkt
-        </LinkButton>
-        <Button onClick={shareProduct} size="lg" variant="primary">
-          Poslat kamarádovi
-        </Button>
-      </div>
-    </section>
+    <div className="akros-product-actions" aria-label="Další akce produktu">
+      <Button
+        aria-pressed={isWatched}
+        icon={isWatched ? "icon-[mdi--bell-ring]" : "icon-[mdi--bell-ring-outline]"}
+        onClick={toggleWatch}
+        size="sm"
+        theme="borderless"
+        variant="secondary"
+      >
+        {isWatched ? "Produkt hlídáme" : "Hlídat produkt"}
+      </Button>
+      <LinkButton
+        as={NextLink}
+        href="/kontakty#primy-kontakt"
+        icon="icon-[mdi--help-circle-outline]"
+        size="sm"
+        theme="borderless"
+        variant="secondary"
+      >
+        Dotaz na produkt
+      </LinkButton>
+      <Button
+        icon="icon-[mdi--email-outline]"
+        onClick={shareProduct}
+        size="sm"
+        theme="borderless"
+        variant="secondary"
+      >
+        Poslat kamarádovi
+      </Button>
+    </div>
   );
 }

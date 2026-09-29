@@ -1,0 +1,16 @@
+:root {
+  --akros-product-detail-column-gap: var(--dimension-32);
+  --akros-product-detail-content-gap: var(--dimension-24);
+  --akros-product-detail-panel-padding: var(--dimension-16);
+  --akros-product-detail-panel-radius: var(--radius-md);
+  --akros-product-detail-image-radius: var(--radius-md);
+  --akros-product-detail-divider-color: var(--color-border-primary);
+  --akros-product-detail-tier-bg: var(--color-fill-surface);
+  --akros-product-detail-stock-fg: var(--color-fg-status-success);
+  --akros-product-detail-stock-unavailable-fg: var(--color-fg-status-error);
+  --akros-product-detail-badge-bg: var(--color-fg-primary);
+  --akros-product-detail-badge-fg: var(--color-fg-reverse);
+  --akros-product-detail-gallery-max-width: 600px;
+  --akros-product-detail-image-aspect-ratio: 600 / 494;
+  --akros-product-detail-thumbnail-width: 148px;
+}
