@@ -250,7 +250,9 @@ The job runs only when the repository is configured for Cloudflare: the `CLOUDFL
 variable, the `CLOUDFLARE_API_TOKEN` secret in the `stage-edge` environment, and a complete build
 environment (below). The `edge-deploy-readiness` job checks all three from `stage-edge` without
 creating a deployment. If any is missing, `deploy-cloudflare` is skipped, records nothing, a notice
-names what is missing, and CI stays green.
+names what is missing, and CI stays green. Reading `stage-edge` without a deployment uses
+`environment.deployment: false`, which GitHub refuses for environments with custom deployment
+protection rules, so `stage-edge` must not have any.
 
 The non-secret configuration the Worker builds read is reviewed source, the `buildEnvironment` of
 `topology/cloudflare-placement.json`. It must hold `ULTRAMODERN_MF_DEV_ORIGIN`, the stage Shell
