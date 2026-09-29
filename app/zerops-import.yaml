@@ -40,3 +40,7 @@ services:
     type: nodejs@24
   - hostname: outboxworkerhost
     type: nodejs@24
+  # The Cloudflare Tunnel connector for Workers VPC; `stage:cloudflare provision` imports it with its TUNNEL_TOKEN secret.
+  - hostname: cloudflared
+    type: alpine@3.23
+    minContainers: 2

@@ -109,6 +109,40 @@ zerops:
           path: '/healthz'
       start: sh app/scripts/run-zerops-spicedb.sh
 
+  # The Cloudflare Tunnel connector that carries Workers VPC traffic to db18 and SpiceDB.
+  # TUNNEL_TOKEN is this service's secret, set when `stage:cloudflare provision` imports it.
+  - setup: 'cloudflared'
+    build:
+      base: 'alpine@3.23'
+      prepareCommands:
+        - sudo apk add --no-cache curl
+      buildCommands:
+        - mkdir -p 'app/.zerops/runtime/cloudflared'
+        - curl -fsSL -o 'app/.zerops/runtime/cloudflared/cloudflared' 'https://github.com/cloudflare/cloudflared/releases/download/2026.9.3/cloudflared-linux-amd64'
+        - echo '77e26d8d900e0b8469f416239d14b5f296525fdf79fee6f511ef55609e3fbac2  app/.zerops/runtime/cloudflared/cloudflared' | sha256sum -c -
+        - chmod +x 'app/.zerops/runtime/cloudflared/cloudflared'
+      deployFiles:
+        - 'app/.zerops/runtime/cloudflared'
+    deploy:
+      temporaryShutdown: false
+      readinessCheck:
+        httpGet:
+          port: 2000
+          path: '/ready'
+        failureTimeout: 3m
+        retryPeriod: 10s
+    run:
+      base: 'alpine@3.23'
+      ports:
+        - port: 2000
+          protocol: tcp
+          httpSupport: true
+      healthCheck:
+        httpGet:
+          port: 2000
+          path: '/ready'
+      start: sh -c 'test -n "$TUNNEL_TOKEN" || { echo "TUNNEL_TOKEN is required" >&2; exit 1; }; exec app/.zerops/runtime/cloudflared/cloudflared tunnel --no-autoupdate --metrics 0.0.0.0:2000 run'
+
   # <generated-vertical-provider-deployments>
   - setup: 'party-registry'
     build:

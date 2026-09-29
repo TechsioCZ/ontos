@@ -45,19 +45,6 @@ export const fakeFiles = (overrides: Readonly<Record<string, string>> = {}): Fak
   return { layer: Layer.merge(fileSystem, Path.layer), writes };
 };
 
-const DATA_LAYER_IMPORT_ENTRIES = [
-  '  - hostname: cloudflared',
-  '    type: alpine@3.23',
-  '    minContainers: 2',
-  '  - hostname: outboxworkerhost',
-  '    type: nodejs@24',
-  '',
-].join('\n');
-
-/** zerops-import.yaml with the data-layer entries whose setups other PRs add. */
-export const importWithDataLayer =
-  readFileSync(`${APP_DIRECTORY}/zerops-import.yaml`, 'utf-8') + DATA_LAYER_IMPORT_ENTRIES;
-
 // ---------------------------------------------------------------------------------------------
 // Zerops and GitHub through the shell
 

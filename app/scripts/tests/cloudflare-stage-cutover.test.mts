@@ -21,7 +21,6 @@ import {
   fakeCloudflareAccount,
   fakeFiles,
   fakeStage,
-  importWithDataLayer,
   mutatingCommands,
 } from './stage-operations-fixture.mts';
 import type { FakeCloudflareAccount, FakeFiles, FakeStage } from './stage-operations-fixture.mts';
@@ -140,7 +139,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
   Effect.gen(function* provisionsEmptyAccount() {
     const account = fakeCloudflareAccount({});
     const stage = newStage();
-    const files = fakeFiles({ 'zerops-import.yaml': importWithDataLayer });
+    const files = fakeFiles();
 
     yield* run(provision, { account, files, stage });
 
@@ -256,7 +255,7 @@ it.effect('changes nothing in a dry run but still reads the real state', () =>
   Effect.gen(function* dryRunReadsOnly() {
     const account = fakeCloudflareAccount({});
     const stage = newStage();
-    const files = fakeFiles({ 'zerops-import.yaml': importWithDataLayer });
+    const files = fakeFiles();
 
     yield* run(provision, { account, dryRun: true, files, stage });
 
@@ -273,7 +272,7 @@ it.effect('reuses every existing object on a re-run and creates nothing twice', 
   Effect.gen(function* rerunIsIdempotent() {
     const account = fakeCloudflareAccount({});
     const stage = newStage();
-    const files = fakeFiles({ 'zerops-import.yaml': importWithDataLayer });
+    const files = fakeFiles();
     yield* run(provision, { account, files, stage });
     const firstPosts = account.requests.filter(({ method }) => method === 'POST').length;
     const firstImports = stage.commands.filter(({ args }) => args.includes('service-import')).length;
@@ -304,7 +303,7 @@ it.effect('refuses to reuse a Hyperdrive config that caches tenant reads', () =>
       ],
     });
     const stage = newStage();
-    const files = fakeFiles({ 'zerops-import.yaml': importWithDataLayer });
+    const files = fakeFiles();
 
     const error = yield* run(provision, { account, files, stage }).pipe(Effect.flip);
 
@@ -332,7 +331,7 @@ it.effect('refuses to reuse a Hyperdrive config that points at another database'
       ],
     });
     const stage = newStage();
-    const files = fakeFiles({ 'zerops-import.yaml': importWithDataLayer });
+    const files = fakeFiles();
 
     const error = yield* run(provision, { account, files, stage }).pipe(Effect.flip);
 
@@ -347,7 +346,7 @@ it.effect('refuses to publish a gateway key the Zerops verticals do not share', 
     const stage = newStage({
       projectValues: { ...SECRET_VALUES, pricing_ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":["other"]}' },
     });
-    const files = fakeFiles({ 'zerops-import.yaml': importWithDataLayer });
+    const files = fakeFiles();
 
     const error = yield* run(provision, { account, files, stage }).pipe(Effect.flip);
 
@@ -356,12 +355,17 @@ it.effect('refuses to publish a gateway key the Zerops verticals do not share', 
   }),
 );
 
-it.effect('fails before importing when the data-layer setups are not merged yet', () =>
+it.effect('fails before importing when zerops-import.yaml does not declare cloudflared', () =>
   Effect.gen(function* requiresDataLayerSetups() {
     const account = fakeCloudflareAccount({});
     const stage = newStage();
+    const withoutCloudflared = readFileSync(`${APP_DIRECTORY}/zerops-import.yaml`, 'utf-8').replace(
+      /^ {2}- hostname: cloudflared\n(?: {4}.*\n)*/mu,
+      '',
+    );
+    const files = fakeFiles({ 'zerops-import.yaml': withoutCloudflared });
 
-    const error = yield* run(provision, { account, files: fakeFiles(), stage }).pipe(Effect.flip);
+    const error = yield* run(provision, { account, files, stage }).pipe(Effect.flip);
 
     expect(error.message).toBe('app/zerops-import.yaml has no "cloudflared" service; merge its Zerops setup first');
     expect(mutatingCommands(stage.commands)).toStrictEqual([]);

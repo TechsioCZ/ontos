@@ -222,6 +222,9 @@ it('ships every package the migrator runs drizzle-kit in', () => {
 });
 
 // Zerops caps hostnames at 25 characters, so stage runs this worker under an abbreviated name.
+// Units that serve no public route: the Outbox Worker host and the Cloudflare Tunnel connector.
+const PRIVATE_SETUPS = new Set(['cloudflared', 'outbox-worker-host']);
+
 const hostnameOf = (setup: string) =>
   setup === 'commerce-customer-context-worker' ? 'commercecstmrcntxtworker' : setup.replaceAll('-', '');
 
@@ -243,7 +246,7 @@ it('declares a public subdomain at service creation for every non-worker unit an
     new Set(
       units.map(
         ({ run, setup }) =>
-          `${hostnameOf(setup)} ${run.base} ${String(!setup.endsWith('-worker') && setup !== 'outbox-worker-host')}`,
+          `${hostnameOf(setup)} ${run.base} ${String(!setup.endsWith('-worker') && !PRIVATE_SETUPS.has(setup))}`,
       ),
     ),
   );
