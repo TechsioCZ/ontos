@@ -52,7 +52,7 @@ export function SiteHeader() {
             as={NextLink}
             className="text-xs"
             href="/prihlaseni"
-            size="md"
+            size="sm"
             variant="primary"
           >
             {cs.header.login}

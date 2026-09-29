@@ -60,7 +60,7 @@ body {
   width: min(100%, var(--akros-content-max));
   margin-inline: auto;
   background: var(--color-base);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-md);
 }
 
 .akros-header {
@@ -91,7 +91,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 24px;
-  padding-block: var(--dimension-12);
+  padding-block: var(--dimension-4);
 }
 
 .akros-header__utility-links {
@@ -193,7 +193,14 @@ body {
 }
 
 .akros-sidebar__desktop {
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-md);
+}
+
+@media (min-width: 761px) {
+  .akros-shell {
+    min-height: calc(100vh - var(--dimension-24));
+    margin-block-start: var(--dimension-24);
+  }
 }
 
 .akros-brand:focus-visible,
