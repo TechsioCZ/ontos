@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { CartProvider, useCart } from "@/features/cart/cart-provider";
 import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
+import { cs } from "@/i18n/cs";
 import type { CatalogProduct, CatalogProductVariant } from "@/mock-storefront/types";
 
 const variants: CatalogProductVariant[] = [
@@ -149,5 +150,38 @@ describe("ProductPurchaseForm", () => {
       (screen.getByRole("checkbox", { name: "Pouze varianty skladem" }) as HTMLInputElement)
         .checked,
     ).toBe(false);
+  });
+
+  it("adds a decimal source minimum without truncating it", async () => {
+    const user = userEvent.setup();
+    const profile = {
+      ...product,
+      id: "product-profile",
+      slug: "profile",
+      sku: "PROFILE-1",
+      unit: "m",
+      minimumQuantity: 0.5,
+      stockCount: 3.5,
+      detail: { descriptionParagraphs: [], parameters: [], priceTiers: [], variants: [] },
+    };
+
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={profile} />
+        <CartLines />
+      </CartProvider>,
+    );
+
+    expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("0.5");
+    await user.click(screen.getByRole("button", { name: cs.actions.addToCart }));
+
+    expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
+      expect.objectContaining({
+        minimumQuantity: 0.5,
+        quantity: 0.5,
+        stockCount: 3.5,
+        unit: "m",
+      }),
+    ]);
   });
 });

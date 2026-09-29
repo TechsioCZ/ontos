@@ -77,6 +77,7 @@ export function ProductGrid({
                     imageSrc: product.imageSrc,
                     imageAlt: product.imageAlt,
                     unit: product.unit,
+                    minimumQuantity: product.minimumQuantity,
                     stockCount: product.stockCount,
                     priceMinor: product.priceMinor,
                   }}

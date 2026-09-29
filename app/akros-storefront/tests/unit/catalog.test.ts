@@ -205,4 +205,24 @@ describe("mock catalog gateway", () => {
       stockCount: 880,
     });
   });
+
+  it("preserves decimal purchasing quantities from the source feed", () => {
+    const profiles = getProductBySlug("profilovana-stresni-krytina-product-35919");
+    const profile = profiles?.detail.variants.find((variant) => variant.sku === "10SOLTS1004000");
+    const tubes = getProductBySlug("trubky-kruhove-svarovane-mat-1-4301");
+    const tube = tubes?.detail.variants.find((variant) => variant.sku === "3trks021000054015");
+
+    expect(profile).toMatchObject({
+      minimumQuantity: 4.5,
+      packageQuantity: 30,
+      stockCount: 45,
+      unit: "m",
+    });
+    expect(tube).toMatchObject({
+      minimumQuantity: 0.5,
+      stockCount: 13.5,
+      unit: "m",
+    });
+    expect(tube?.packageQuantity).toBeUndefined();
+  });
 });

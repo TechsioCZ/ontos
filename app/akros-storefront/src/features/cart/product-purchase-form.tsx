@@ -15,6 +15,7 @@ import {
   matchesProductVariantSearch,
   normalizeCatalogSearchTerm,
 } from "@/lib/product-variant-search";
+import { getMaximumOrderQuantity } from "@/mock-storefront/cart";
 import type { CatalogProduct, CatalogProductVariant } from "@/mock-storefront/types";
 
 interface ProductPurchaseFormProps {
@@ -81,6 +82,7 @@ export function ProductPurchaseForm({
         imageSrc: variant.imageSrc ?? product.imageSrc,
         imageAlt: product.imageAlt,
         unit: variant.unit,
+        minimumQuantity: variant.minimumQuantity,
         stockCount: variant.stockCount,
         priceMinor: variant.priceMinor,
         variantLabel: formatVariantLabel(variant),
@@ -91,15 +93,30 @@ export function ProductPurchaseForm({
   };
 
   if (!variants?.length) {
+    const productCartItem = {
+      productId: product.id,
+      slug: product.slug,
+      name: product.name,
+      sku: product.sku,
+      imageSrc: product.imageSrc,
+      imageAlt: product.imageAlt,
+      unit: product.unit,
+      minimumQuantity: product.minimumQuantity,
+      stockCount: product.stockCount,
+      priceMinor: product.priceMinor,
+    };
+    const maximumQuantity = getMaximumOrderQuantity(productCartItem);
+
     return (
       <div className="akros-purchase-form">
         <span className="akros-purchase-form__label">{cs.product.selectQuantity}</span>
         <NumericInput
           id={`quantity-${product.id}`}
+          locale="cs-CZ"
           min={product.minimumQuantity}
-          onChange={(value) =>
-            setQuantity(Math.max(product.minimumQuantity, Math.trunc(value || 1)))
-          }
+          max={maximumQuantity}
+          step={product.minimumQuantity}
+          onChange={setQuantity}
           size="md"
           value={quantity}
         >
@@ -113,21 +130,11 @@ export function ProductPurchaseForm({
         </NumericInput>
         <Button
           block
-          disabled={product.stockCount < product.minimumQuantity || product.priceMinor <= 0}
+          disabled={maximumQuantity <= 0 || product.priceMinor <= 0}
           onClick={() =>
             dispatch({
               type: "add",
-              item: {
-                productId: product.id,
-                slug: product.slug,
-                name: product.name,
-                sku: product.sku,
-                imageSrc: product.imageSrc,
-                imageAlt: product.imageAlt,
-                unit: product.unit,
-                stockCount: product.stockCount,
-                priceMinor: product.priceMinor,
-              },
+              item: productCartItem,
               quantity,
             })
           }

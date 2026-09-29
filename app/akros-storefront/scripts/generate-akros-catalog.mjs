@@ -28,6 +28,21 @@ const toInteger = (value, fallback = 0) => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
+const toNumber = (value, fallback = 0) => {
+  const parsed = Number.parseFloat(String(value ?? "").replace(",", "."));
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const toPositiveNumber = (value, fallback) => {
+  const parsed = toNumber(value, fallback);
+  return parsed > 0 ? parsed : fallback;
+};
+
+const toOptionalPositiveNumber = (value) => {
+  const parsed = toNumber(value);
+  return parsed > 0 ? parsed : undefined;
+};
+
 const toMinorUnits = (value) => Math.round(Number.parseFloat(value || "0") * 100);
 
 const absoluteAssetUrl = (value) => {
@@ -195,7 +210,7 @@ const priceTiersFor = (item) =>
   (item.prices ?? [])
     .filter((price) => price.value && (price.type === "default" || !price.type))
     .map((price) => ({
-      minimumQuantity: Math.max(1, toInteger(price.validFromQuantity, 1)),
+      minimumQuantity: toPositiveNumber(price.validFromQuantity, 1),
       priceMinor: toMinorUnits(price.value),
       priceExcludingVatMinor: toMinorUnits(price.exclude),
     }))
@@ -267,10 +282,10 @@ for (const [groupId, items] of groups) {
     originalPriceMinor: variantItems.length === 0 ? originalPriceFor(base) : undefined,
     currency: "CZK",
     unit: cleanText(base.unit) || "ks",
-    minimumQuantity: Math.max(1, toInteger(base.minimumQuantity, 1)),
-    packageQuantity: Math.max(1, toInteger(base.packageQuantity, 1)),
+    minimumQuantity: toPositiveNumber(base.minimumQuantity, 1),
+    packageQuantity: toOptionalPositiveNumber(base.packageQuantity),
     stockCount: purchasableItems.reduce(
-      (total, item) => total + Math.max(0, toInteger(item.stockCount)),
+      (total, item) => total + Math.max(0, toNumber(item.stockCount)),
       0,
     ),
     imageSrc,
@@ -290,12 +305,12 @@ for (const [groupId, items] of groups) {
         sourceId: item.id,
         sku: cleanText(item.sku),
         label: cleanText(item.variantName || item.title || item.productName) || itemName(item),
-        minimumQuantity: Math.max(1, toInteger(item.minimumQuantity, 1)),
-        packageQuantity: Math.max(1, toInteger(item.packageQuantity, 1)),
+        minimumQuantity: toPositiveNumber(item.minimumQuantity, 1),
+        packageQuantity: toOptionalPositiveNumber(item.packageQuantity),
         priceMinor: itemPrice(item),
         originalPriceMinor: originalPriceFor(item),
         priceTiers: priceTiersFor(item),
-        stockCount: Math.max(0, toInteger(item.stockCount)),
+        stockCount: Math.max(0, toNumber(item.stockCount)),
         unit: cleanText(item.unit) || cleanText(base.unit) || "ks",
         parameters: parametersFor(item),
         imageSrc: itemImage(item),

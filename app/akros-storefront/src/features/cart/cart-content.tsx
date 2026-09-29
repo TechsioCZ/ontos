@@ -9,7 +9,7 @@ import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
 import { useCart } from "@/features/cart/cart-provider";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
-import { getCartSubtotal } from "@/mock-storefront/cart";
+import { getCartSubtotal, getMaximumOrderQuantity } from "@/mock-storefront/cart";
 
 const shippingMinor = 11_900;
 
@@ -69,7 +69,9 @@ export function CartContent() {
               </div>
               <NumericInput
                 aria-label={`${cs.cart.quantity}: ${line.name}`}
-                min={1}
+                locale="cs-CZ"
+                min={line.minimumQuantity}
+                max={getMaximumOrderQuantity(line)}
                 onChange={(quantity) =>
                   dispatch({
                     type: "set-quantity",
@@ -79,6 +81,7 @@ export function CartContent() {
                   })
                 }
                 size="sm"
+                step={line.minimumQuantity}
                 value={line.quantity}
               >
                 <NumericInput.Control>

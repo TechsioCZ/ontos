@@ -12,9 +12,9 @@ describe("CartContent", () => {
 
   it("lets a shopper remove a persisted product from the cart", async () => {
     window.localStorage.setItem(
-      "akros-demo-cart-v2",
+      "akros-demo-cart-v3",
       JSON.stringify({
-        version: 2,
+        version: 3,
         lines: [
           {
             productId: "product-screw",
@@ -24,6 +24,7 @@ describe("CartContent", () => {
             imageSrc: "/akros/products/product-02.jpg",
             imageAlt: "Test product",
             unit: "ks",
+            minimumQuantity: 1,
             stockCount: 20,
             priceMinor: 100,
             quantity: 2,

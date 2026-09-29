@@ -16,9 +16,10 @@ import {
   cartReducer,
   createEmptyCart,
   getCartItemCount,
+  normalizeOrderQuantity,
 } from "@/mock-storefront/cart";
 
-const storageKey = "akros-demo-cart-v2";
+const storageKey = "akros-demo-cart-v3";
 
 interface CartContextValue {
   cart: CartState;
@@ -50,10 +51,10 @@ const parseStoredCart = (value: string | null): CartState => {
 
   try {
     const parsed = JSON.parse(value) as Partial<CartState>;
-    if (parsed.version !== 2 || !Array.isArray(parsed.lines)) return createEmptyCart();
+    if (parsed.version !== 3 || !Array.isArray(parsed.lines)) return createEmptyCart();
 
     return {
-      version: 2,
+      version: 3,
       lines: parsed.lines.flatMap((line) => {
         if (
           typeof line?.productId !== "string" ||
@@ -65,28 +66,32 @@ const parseStoredCart = (value: string | null): CartState => {
           typeof line.unit !== "string" ||
           typeof line.priceMinor !== "number" ||
           typeof line.stockCount !== "number" ||
-          !Number.isInteger(line.quantity) ||
+          typeof line.minimumQuantity !== "number" ||
+          !Number.isFinite(line.minimumQuantity) ||
+          line.minimumQuantity <= 0 ||
+          !Number.isFinite(line.quantity) ||
           line.quantity <= 0
         ) {
           return [];
         }
 
-        return [
-          {
-            productId: line.productId,
-            ...(typeof line.variantId === "string" ? { variantId: line.variantId } : {}),
-            slug: line.slug,
-            name: line.name,
-            sku: line.sku,
-            imageSrc: line.imageSrc,
-            imageAlt: line.imageAlt,
-            unit: line.unit,
-            priceMinor: line.priceMinor,
-            stockCount: line.stockCount,
-            ...(typeof line.variantLabel === "string" ? { variantLabel: line.variantLabel } : {}),
-            quantity: line.quantity,
-          },
-        ];
+        const item = {
+          productId: line.productId,
+          ...(typeof line.variantId === "string" ? { variantId: line.variantId } : {}),
+          slug: line.slug,
+          name: line.name,
+          sku: line.sku,
+          imageSrc: line.imageSrc,
+          imageAlt: line.imageAlt,
+          unit: line.unit,
+          minimumQuantity: line.minimumQuantity,
+          priceMinor: line.priceMinor,
+          stockCount: line.stockCount,
+          ...(typeof line.variantLabel === "string" ? { variantLabel: line.variantLabel } : {}),
+        };
+        const quantity = normalizeOrderQuantity(item, line.quantity);
+
+        return quantity > 0 ? [{ ...item, quantity }] : [];
       }),
     };
   } catch {

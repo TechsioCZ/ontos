@@ -11,7 +11,7 @@ import { RadioGroup } from "@techsio/ui-kit/molecules/radio-group";
 
 import { useCart } from "@/features/cart/cart-provider";
 import { formatPrice } from "@/lib/format";
-import { getCartSubtotal } from "@/mock-storefront/cart";
+import { formatQuantity, getCartSubtotal } from "@/mock-storefront/cart";
 import { mockDeliveryMethods, mockPaymentMethods } from "@/mock-storefront/fixtures/account";
 
 function ShippingInformationStep() {
@@ -204,7 +204,7 @@ export function MockCheckout() {
                     <strong>{line.name}</strong>
                     <small>
                       {line.variantLabel && <>{line.variantLabel} · </>}
-                      Množství: {line.quantity} {line.unit}
+                      Množství: {formatQuantity(line.quantity)} {line.unit}
                     </small>
                   </div>
                   <b>{formatPrice(line.priceMinor * line.quantity)}</b>

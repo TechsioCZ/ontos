@@ -96,6 +96,7 @@ export function NewsProductGrid({ items }: { items: NewsProductCardItem[] }) {
                       imageSrc: item.imageSrc,
                       imageAlt: item.imageAlt,
                       unit: item.unit,
+                      minimumQuantity: item.minimumQuantity,
                       stockCount: item.stockCount,
                       priceMinor: item.priceMinor,
                       variantLabel: item.variantLabel,
