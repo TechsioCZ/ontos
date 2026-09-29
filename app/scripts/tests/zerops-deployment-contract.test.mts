@@ -4,7 +4,12 @@ import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
-import { DEPLOYMENT_ENVIRONMENT_VARIABLE, materializeZeropsEnvironment } from '../materialize-zerops-environment.mts';
+import {
+  DEPLOYMENT_ENVIRONMENT_VARIABLE,
+  materializeZeropsEnvironment,
+  SPICEDB_ENDPOINT_VARIABLE,
+  SPICEDB_INSECURE_VARIABLE,
+} from '../materialize-zerops-environment.mts';
 import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
 
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
@@ -298,19 +303,42 @@ it.effect('pushes every Zerops setup with the deploying environment named in its
     const stageCount = zeropsYaml.split(stageLine).length - 1;
     expect(stageCount).toBeGreaterThan(0);
     // The committed file is stage's, byte for byte.
-    expect(yield* materializeZeropsEnvironment(zeropsYaml, 'stage')).toBe(zeropsYaml);
-    // Production changes that one value and nothing else.
-    const production = yield* materializeZeropsEnvironment(zeropsYaml, 'production');
+    expect(yield* materializeZeropsEnvironment(zeropsYaml, { environment: 'stage' })).toBe(zeropsYaml);
+    // Production names itself and reaches its TLS SpiceDB endpoint, and changes nothing else.
+    const productionEndpoint = 'spicedb.production.example:443';
+    const production = yield* materializeZeropsEnvironment(zeropsYaml, {
+      environment: 'production',
+      spiceDbEndpoint: productionEndpoint,
+    });
+    const stageEndpointLine = `${SPICEDB_ENDPOINT_VARIABLE}: 'spicedb:50051'`;
+    const productionEndpointLine = `${SPICEDB_ENDPOINT_VARIABLE}: '${productionEndpoint}'`;
+    const stageInsecureLine = `${SPICEDB_INSECURE_VARIABLE}: 'true'`;
+    const productionInsecureLine = `${SPICEDB_INSECURE_VARIABLE}: 'false'`;
     expect(production.includes(stageLine)).toBe(false);
+    expect(production.includes(stageEndpointLine)).toBe(false);
+    expect(production.includes(stageInsecureLine)).toBe(false);
     expect(production.split(`${DEPLOYMENT_ENVIRONMENT_VARIABLE}: production`).length - 1).toBe(stageCount);
-    expect(production.replaceAll(`${DEPLOYMENT_ENVIRONMENT_VARIABLE}: production`, stageLine)).toBe(zeropsYaml);
-    const missing = yield* Effect.flip(materializeZeropsEnvironment('zerops:\n  - setup: api\n', 'production'));
+    expect(production.split(productionEndpointLine).length - 1).toBe(zeropsYaml.split(stageEndpointLine).length - 1);
+    expect(
+      production
+        .replaceAll(`${DEPLOYMENT_ENVIRONMENT_VARIABLE}: production`, stageLine)
+        .replaceAll(productionEndpointLine, stageEndpointLine)
+        .replaceAll(productionInsecureLine, stageInsecureLine),
+    ).toBe(zeropsYaml);
+    const missing = yield* Effect.flip(
+      materializeZeropsEnvironment('zerops:\n  - setup: api\n', { environment: 'stage' }),
+    );
     expect(missing.message).toContain(DEPLOYMENT_ENVIRONMENT_VARIABLE);
+    const schemeEndpoint = yield* Effect.flip(
+      materializeZeropsEnvironment(zeropsYaml, { environment: 'production', spiceDbEndpoint: 'https://spicedb:443' }),
+    );
+    expect(schemeEndpoint.message).toContain('host:port');
 
     const workflow = readFileSync(workflowPath, 'utf-8');
     expect(workflow).not.toContain('--zerops-yaml-path app/zerops.yaml');
     expect(workflow).toContain('zerops:materialize-environment');
     expect(workflow).toContain('--environment "$DEPLOY_ENVIRONMENT"');
+    expect(workflow).toContain('--spicedb-endpoint "$PRODUCTION_SPICEDB_ENDPOINT"');
     const pushUnits = readFileSync(new URL('../push-zerops-units.sh', import.meta.url), 'utf-8');
     expect(pushUnits).toContain('--zerops-yaml-path "$ZEROPS_YAML_PATH"');
   }),

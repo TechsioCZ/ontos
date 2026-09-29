@@ -645,17 +645,20 @@ jobs:
         run: zcli login "$ZEROPS_TOKEN"
 
       # app/zerops.yaml describes stage. Every push reads a copy that names the deploying environment, so
-      # another environment's builds and runtimes never run stage-only behaviour.
+      # another environment's builds and runtimes never run stage-only behaviour. Production's copy also
+      # points every runtime at its TLS SpiceDB endpoint, the production environment variable SPICEDB_ENDPOINT.
       - name: Materialize the environment's zerops.yaml
         if: steps.units.outputs.any == 'true'
         working-directory: app
         env:
+          PRODUCTION_SPICEDB_ENDPOINT: ${{ vars.SPICEDB_ENDPOINT }}
           ZEROPS_YAML_PATH: ${{ runner.temp }}/zerops.yaml
         run: |
-          mise exec -- pnpm --silent zerops:materialize-environment \
-            --environment "$DEPLOY_ENVIRONMENT" \
-            --input zerops.yaml \
-            --output "$ZEROPS_YAML_PATH"
+          materialize_arguments=(--environment "$DEPLOY_ENVIRONMENT" --input zerops.yaml --output "$ZEROPS_YAML_PATH")
+          if [[ "$DEPLOY_ENVIRONMENT" == 'production' ]]; then
+            materialize_arguments+=(--spicedb-endpoint "$PRODUCTION_SPICEDB_ENDPOINT")
+          fi
+          mise exec -- pnpm --silent zerops:materialize-environment "${materialize_arguments[@]}"
           echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
 
       - name: Run verified database migrations

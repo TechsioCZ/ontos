@@ -242,14 +242,18 @@ Set up `production` once, outside CI, before the first dispatch: the GitHub envi
 (with required reviewers if desired), the `ZEROPS_TOKEN` secret, and the variables
 `ZEROPS_PROJECT_ID`, `ZEROPS_MIGRATOR_SERVICE_ID`, `ZEROPS_SPICEDB_SERVICE_ID`,
 `ZEROPS_SHELL_SERVICE_ID`, and one `ZEROPS_<SETUP>_SERVICE_ID` per vertical and per outbox worker
-(the names `zerops.yaml` setups imply), for services created from `zerops-import.yaml`. Leave
+(the names `zerops.yaml` setups imply), for services created from `zerops-import.yaml`. Also set
+`SPICEDB_ENDPOINT`, the `host:port` of production's TLS SpiceDB gRPC endpoint. Leave
 `DEPLOY_TARGET` unset or `zerops`. The first production deploy has no base, so dispatch it with
 `full=true`.
 
 `zerops.yaml` describes stage. Before any push, `deploy-zerops` writes a copy that sets
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` to the deploying environment in every build and runtime that
 names it (`pnpm zerops:materialize-environment`), and every `zcli push` reads that copy. Production
-therefore never runs stage-only behaviour such as Core's insecure in-project SpiceDB transport. The
+therefore never runs stage-only behaviour. Stage's runtimes reach the in-project SpiceDB over
+plaintext gRPC (`SPICEDB_INSECURE=true`), which Core accepts only on stage, so production's copy also
+sets every `SPICEDB_ENDPOINT` to production's `SPICEDB_ENDPOINT` variable and `SPICEDB_INSECURE` to
+`false`. A production deploy without that variable fails before it pushes anything. The
 scheduled composition refresh has a `refresh-production` lane beside `refresh-stage`, in production's
 own environment and `zerops-production` concurrency group; it publishes nothing until production is
 configured and has deployed once.
