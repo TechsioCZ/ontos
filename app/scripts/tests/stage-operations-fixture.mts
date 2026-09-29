@@ -297,6 +297,8 @@ export interface FakeCloudflareAccount {
   readonly layer: Layer.Layer<HttpClient.HttpClient>;
   readonly requests: FakeCloudflareRequest[];
   readonly scripts: string[];
+  /** Secret names per Worker script. */
+  readonly secrets: Map<string, string[]>;
   readonly tunnels: FakeTunnel[];
   readonly vpcServices: FakeVpcService[];
 }
@@ -304,6 +306,7 @@ export interface FakeCloudflareAccount {
 export interface FakeCloudflareInitial {
   readonly hyperdrives?: readonly FakeHyperdrive[];
   readonly scripts?: readonly string[];
+  readonly secrets?: Readonly<Record<string, readonly string[]>>;
   readonly tunnels?: readonly FakeTunnel[];
   readonly tunnelStatus?: string;
   readonly vpcServices?: readonly FakeVpcService[];
@@ -357,6 +360,7 @@ export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloud
     hyperdrives: [...(initial.hyperdrives ?? [])],
     requests: [],
     scripts: [...(initial.scripts ?? [])],
+    secrets: new Map(Object.entries(initial.secrets ?? {}).map(([script, names]) => [script, [...names]])),
     tunnels: [...(initial.tunnels ?? [])],
     vpcServices: [...(initial.vpcServices ?? [])],
   };
@@ -383,6 +387,11 @@ export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloud
         return envelope(created);
       }
       return firstPage(url, account.hyperdrives);
+    }
+    const secretScript = /^\/workers\/scripts\/(?<script>[^/]+)\/secrets$/u.exec(path)?.groups?.script;
+    if (secretScript !== undefined) {
+      const names = account.secrets.get(decodeURIComponent(secretScript));
+      return names === undefined ? noRoute() : envelope(names.map((name) => ({ name, type: 'secret_text' })));
     }
     return path === '/workers/scripts' ? envelope(account.scripts.map((id) => ({ id }))) : noRoute();
   };

@@ -63,6 +63,7 @@ const HyperdriveSchema = Schema.Struct({
 export type CloudflareHyperdrive = typeof HyperdriveSchema.Type;
 
 const WorkerScriptSchema = Schema.Struct({ id: Schema.String });
+const WorkerSecretSchema = Schema.Struct({ name: Schema.String });
 
 /** A Workers VPC service reached by hostname through the tunnel's resolver network. */
 export interface VpcServiceSpec {
@@ -121,6 +122,8 @@ export interface CloudflareApiService {
   readonly tunnelToken: (tunnelId: string) => Effect.Effect<Redacted.Redacted, CloudflareApiError>;
   readonly vpcServices: Effect.Effect<readonly CloudflareVpcService[], CloudflareApiError>;
   readonly workerScriptNames: Effect.Effect<ReadonlySet<string>, CloudflareApiError>;
+  /** The names, never the values, of a Worker's secrets. */
+  readonly workerSecretNames: (scriptName: string) => Effect.Effect<ReadonlySet<string>, CloudflareApiError>;
 }
 
 export const CloudflareApi = Context.Service<CloudflareApiService>('@app/scripts/ops/cloudflare-api/CloudflareApi');
@@ -221,6 +224,12 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
       Schema.Array(WorkerScriptSchema),
       'Worker script list',
     ).pipe(Effect.map((scripts) => new Set(scripts.map(({ id }) => id)))),
+    workerSecretNames: (scriptName) =>
+      call(
+        HttpClientRequest.get(accountUrl(`/workers/scripts/${encodeURIComponent(scriptName)}/secrets`)),
+        Schema.Array(WorkerSecretSchema),
+        `Worker ${scriptName} secret list`,
+      ).pipe(Effect.map((secrets) => new Set(secrets.map(({ name }) => name)))),
   } satisfies CloudflareApiService;
 });
 

@@ -18,20 +18,20 @@ import { APP_DIRECTORY, fakeFiles, fakeStage, mutatingCommands } from './stage-o
 import type { FakeFiles, FakeStage } from './stage-operations-fixture.mts';
 
 const RECORD_PATH = `${APP_DIRECTORY}/scripts/ops/stage-zerops-retirement.json`;
-const DATA_LAYER = new Set(['cloudflared', 'outboxworkerhost']);
+// The Cloudflare target keeps these on Zerops: the tunnel, the Outbox Worker host, and the dedicated
+// workers, stopped, whose status each deploy reads to detect a DEPLOY_TARGET switch.
+const OUTBOX_WORKERS = ['partyregistryworker', 'commercecstmrcntxtworker', 'pricegroupcatalogworker'];
+const KEPT_ON_ZEROPS = new Set(['cloudflared', 'outboxworkerhost', ...OUTBOX_WORKERS]);
 
-// The 12 stage services and their IDs before the switch (backup bundle `zerops-service-list.txt`).
+// The 9 retired stage services and their IDs before the switch (backup bundle `zerops-service-list.txt`).
 const STAGE_SERVICE_IDS = new Map(
   Object.entries({
     catalog: 'IGOF5E9vQ7izD4ygQgoNiQ',
-    commercecstmrcntxtworker: '1knmWh09QLu586rn0hNdeQ',
     commercecustomercontext: 'omIBMTDCR7iARcXTt4SqJw',
     commercemarketcatalog: '7nJtt1fnQMKsGRDTl6Wv1w',
     partyregistry: 'cxNTAHZJSbiJr3xTqkypOg',
-    partyregistryworker: '0D7df1MKRIaN80xBzB54vA',
     paymenttermcatalog: '2FgvrWn9RzCJrfbMapwM6Q',
     pricegroupcatalog: 'aHab72wuSDS4AjkgxNbHDw',
-    pricegroupcatalogworker: '56xMc9pZSouLMhNRglBswQ',
     pricing: 'll1Dd1AiRiKSLlB1QKDhQw',
     shellsuperapp: 'E6Wy3B08Rn60XqS6T666fg',
     storefrontregistry: 't9lSg7HFRne0DJblYFwXbg',
@@ -66,13 +66,14 @@ const SHELL_KEYS = [
   'ONTOS_GATEWAY_PRIVATE_JWK',
 ];
 
-const liveStage = (overrides: { readonly deployTarget?: string; readonly hostStatus?: string } = {}) =>
+const liveStage = (overrides: { readonly deployTarget?: string } = {}) =>
   fakeStage({
     projectUserKeys: [...PROJECT_KEYS, 'partyregistry_DATABASE_URL', 'shellsuperapp_BETTER_AUTH_SECRET'],
     services: [
       { hostname: 'db18', id: 'db18-id', status: 'ACTIVE' },
       { hostname: 'spicedb', id: 'spicedb-id', status: 'ACTIVE' },
-      { hostname: 'outboxworkerhost', id: 'host-id', status: overrides.hostStatus ?? 'ACTIVE' },
+      { hostname: 'outboxworkerhost', id: 'host-id', status: 'ACTIVE' },
+      ...OUTBOX_WORKERS.map((hostname) => ({ hostname, id: `${hostname}-id`, status: 'STOPPED' })),
       ...RETIRED_STAGE_SERVICES.map(({ hostname }) => ({
         hostname,
         id: STAGE_SERVICE_IDS.get(hostname) ?? '',
@@ -132,7 +133,7 @@ it('retires exactly the application services zerops-import.yaml declares, each w
   );
 
   expect(new Set(RETIRED_STAGE_SERVICES.map(({ hostname }) => hostname))).toStrictEqual(
-    new Set(declared.filter((hostname) => !DATA_LAYER.has(hostname))),
+    new Set(declared.filter((hostname) => !KEPT_ON_ZEROPS.has(hostname))),
   );
   for (const { setup } of RETIRED_STAGE_SERVICES) {
     expect(setups).toContain(setup);
@@ -146,13 +147,10 @@ it('retires exactly the application services zerops-import.yaml declares, each w
   ).toStrictEqual([
     'ZEROPS_CATALOG_SERVICE_ID',
     'ZEROPS_COMMERCE_CUSTOMER_CONTEXT_SERVICE_ID',
-    'ZEROPS_COMMERCE_CUSTOMER_CONTEXT_WORKER_SERVICE_ID',
     'ZEROPS_COMMERCE_MARKET_CATALOG_SERVICE_ID',
     'ZEROPS_PARTY_REGISTRY_SERVICE_ID',
-    'ZEROPS_PARTY_REGISTRY_WORKER_SERVICE_ID',
     'ZEROPS_PAYMENT_TERM_CATALOG_SERVICE_ID',
     'ZEROPS_PRICE_GROUP_CATALOG_SERVICE_ID',
-    'ZEROPS_PRICE_GROUP_CATALOG_WORKER_SERVICE_ID',
     'ZEROPS_PRICING_SERVICE_ID',
     'ZEROPS_SHELL_SERVICE_ID',
     'ZEROPS_STOREFRONT_REGISTRY_SERVICE_ID',
@@ -249,19 +247,6 @@ it.effect('refuses to delete until the operator confirms the DNS cut-over', () =
   }),
 );
 
-it.effect('keeps the per-vertical outbox workers until the combined host runs', () =>
-  Effect.gen(function* refusesWithoutWorkerHost() {
-    const stage = liveStage({ hostStatus: 'READY_TO_DEPLOY' });
-
-    const error = yield* run(retire({ confirm: true, dnsCutOver: true }), { files: fakeFiles(), stage }).pipe(
-      Effect.flip,
-    );
-
-    expect(error.message).toContain('outboxworkerhost service is not ACTIVE');
-    expect(mutatingCommands(stage.commands)).toStrictEqual([]);
-  }),
-);
-
 it.effect('records, then deletes each retired service by ID with --confirm, keeping every GitHub variable', () =>
   Effect.gen(function* deletesWithConfirm() {
     const stage = liveStage();
@@ -277,13 +262,19 @@ it.effect('records, then deletes each retired service by ID with --confirm, keep
     expect(stage.commands.findIndex(({ args }) => args[1] === 'delete')).toBeGreaterThan(
       stage.commands.findIndex(({ command }) => command === 'git'),
     );
-    expect(stage.services.map(({ hostname }) => hostname)).toStrictEqual(['db18', 'spicedb', 'outboxworkerhost']);
+    // The Cloudflare target still deploys the migrator, SpiceDB and the host, and reads the stopped workers.
+    expect(stage.services.map(({ hostname }) => hostname)).toStrictEqual([
+      'db18',
+      'spicedb',
+      'outboxworkerhost',
+      ...OUTBOX_WORKERS,
+    ]);
     expect(stage.variables.get('stage')).toStrictEqual(variablesBefore);
-    expect(decodeRecord(files).services).toHaveLength(12);
+    expect(decodeRecord(files).services).toHaveLength(RETIRED_STAGE_SERVICES.length);
 
     // A re-run after the deletion keeps the earlier records instead of emptying the file.
     yield* run(retire({ confirm: true, dnsCutOver: true }), { files, stage });
-    expect(decodeRecord(files).services).toHaveLength(12);
+    expect(decodeRecord(files).services).toHaveLength(RETIRED_STAGE_SERVICES.length);
   }),
 );
 
@@ -394,16 +385,15 @@ it.effect('restores only what the current zerops-import.yaml still declares', ()
   Effect.gen(function* skipsUndeclaredServices() {
     const { files, stage } = yield* retiredFiles;
     const importText = readFileSync(`${APP_DIRECTORY}/zerops-import.yaml`, 'utf-8');
-    const withoutWorkers = importText.replaceAll(/ {2}- hostname: \w+worker\n {4}type: nodejs@24\n/gu, '');
-    files.writes.set(`${APP_DIRECTORY}/zerops-import.yaml`, withoutWorkers);
+    const withoutPricing = importText.replace(/ {2}- hostname: pricing\n(?: {4}.*\n)+/u, '');
+    expect(withoutPricing).not.toBe(importText);
+    files.writes.set(`${APP_DIRECTORY}/zerops-import.yaml`, withoutPricing);
     files.writes.set(`${APP_DIRECTORY}/../vault.env`, vaultExport());
 
     yield* run(restore({ secretsFile: Option.some(`${APP_DIRECTORY}/../vault.env`) }), { files, stage });
 
-    expect(
-      stage.services.map(({ hostname }) => hostname).filter((hostname) => hostname.endsWith('worker')),
-    ).toStrictEqual([]);
-    expect(stage.variables.get('stage')?.get('ZEROPS_PARTY_REGISTRY_WORKER_SERVICE_ID')).toBe('0D7df1MKRIaN80xBzB54vA');
+    expect(stage.services.map(({ hostname }) => hostname)).not.toContain('pricing');
+    expect(stage.variables.get('stage')?.get('ZEROPS_PRICING_SERVICE_ID')).toBe('ll1Dd1AiRiKSLlB1QKDhQw');
   }),
 );
 

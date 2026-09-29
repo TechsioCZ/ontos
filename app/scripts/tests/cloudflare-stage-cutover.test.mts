@@ -10,6 +10,7 @@ import {
   edgeUnits,
   provision,
   stageBuildEnvironment,
+  verifyCutover,
   workerSecretPlan,
 } from '../ops/cloudflare-stage-cutover.mts';
 import type { CutoverSettings } from '../ops/cloudflare-stage-cutover.mts';
@@ -363,7 +364,10 @@ it.effect('fails before importing when the data-layer setups are not merged yet'
   }),
 );
 
-const provisionedAccount = (tunnelStatus: string) =>
+const SNAPSHOT_SECRET = 'ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON';
+const CUSTOMER_CONTEXT_WORKER = 'app-commerce-customer-context';
+
+const provisionedAccount = (tunnelStatus: string, secrets: Readonly<Record<string, readonly string[]>> = {}) =>
   fakeCloudflareAccount({
     hyperdrives: [
       {
@@ -376,7 +380,7 @@ const provisionedAccount = (tunnelStatus: string) =>
     ],
     scripts: [
       'app-party-registry',
-      'app-commerce-customer-context',
+      CUSTOMER_CONTEXT_WORKER,
       'app-payment-term-catalog',
       'app-commerce-market-catalog',
       'app-catalog',
@@ -385,6 +389,7 @@ const provisionedAccount = (tunnelStatus: string) =>
       'app-price-group-catalog',
       'app-shell-super-app',
     ],
+    secrets,
     tunnels: [{ id: 'tunnel-1', name: 'ontos-stage', status: tunnelStatus }],
     vpcServices: [
       {
@@ -491,6 +496,30 @@ it.effect('leaves DEPLOY_TARGET unset while the reviewed placement names other d
   }),
 );
 
+it.effect('requires the composition snapshot secret on each placed consumer Worker once stage targets Cloudflare', () =>
+  Effect.gen(function* requiresSnapshotSecret() {
+    const activated = () =>
+      newStage({
+        deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }],
+        variables: { stage: { DEPLOY_TARGET: 'cloudflare' } },
+      });
+
+    // The first Cloudflare-target deploy has not handed the snapshot over yet.
+    const error = yield* run(verifyCutover, {
+      account: provisionedAccount('healthy', { [CUSTOMER_CONTEXT_WORKER]: ['SPICEDB_PRESHARED_KEY'] }),
+      files: yield* reviewedPlacementFiles,
+      stage: activated(),
+    }).pipe(Effect.flip);
+    expect(error.message).toContain(`holds its ${SNAPSHOT_SECRET} secret: missing on ${CUSTOMER_CONTEXT_WORKER}`);
+
+    yield* run(verifyCutover, {
+      account: provisionedAccount('healthy', { [CUSTOMER_CONTEXT_WORKER]: [SNAPSHOT_SECRET] }),
+      files: yield* reviewedPlacementFiles,
+      stage: activated(),
+    });
+  }),
+);
+
 it.effect('surfaces Cloudflare API errors with their codes', () =>
   Effect.gen(function* surfacesApiErrors() {
     const account = fakeCloudflareAccount({});
@@ -525,7 +554,7 @@ it.effect('gives every vertical the Shell key and the callers their stage depend
       Object.fromEntries(Object.entries(plan.get(worker) ?? {}).map(([key, value]) => [key, Redacted.value(value)]));
 
     expect([...plan.keys()]).toHaveLength(9);
-    expect(reveal('app-commerce-customer-context')).toMatchObject({
+    expect(reveal(CUSTOMER_CONTEXT_WORKER)).toMatchObject({
       ONTOS_CATALOG_BASE_URL: 'https://catalog.stage.example.com/catalog-api',
       ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'https://price-group-catalog.stage.example.com/price-group-catalog-api',
       ONTOS_PRICING_BASE_URL: 'https://pricing.stage.example.com/pricing-api',

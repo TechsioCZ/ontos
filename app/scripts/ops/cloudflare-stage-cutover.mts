@@ -19,7 +19,8 @@ import {
 import { Command, Flag } from 'effect/unstable/cli';
 import { FetchHttpClient } from 'effect/unstable/http';
 
-import { serviceIdVariable } from '../publish-active-application-composition.mts';
+import { ACTIVE_APPLICATION_COMPOSITION_POLICY } from '../active-application-composition.mts';
+import { readEdgeConsumers, serviceIdVariable } from '../publish-active-application-composition.mts';
 import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from './cloudflare-api.mts';
 import type { CloudflareHyperdrive, CloudflareVpcService, VpcServiceSpec } from './cloudflare-api.mts';
 import { OpsShellLive, runCommand } from './ops-shell.mts';
@@ -697,6 +698,47 @@ const latestStageEdgeState = Effect.gen(function* latestStageEdgeStateEffect() {
       );
 });
 
+const SNAPSHOT_SECRET = ACTIVE_APPLICATION_COMPOSITION_POLICY.projectVariable;
+
+/**
+ * A placed Worker that consumes the active Application Composition fails closed without its snapshot
+ * secret. CI hands every publication to those Workers only once stage deploys with
+ * DEPLOY_TARGET=cloudflare (`sync-edge-composition`, then `refresh-stage-edge` on each scheduled
+ * refresh), so before activation the item is pending, and after it the secret must exist before the
+ * stage hostnames move to the Workers.
+ */
+const compositionSnapshotState = Effect.gen(function* compositionSnapshotStateEffect() {
+  const api = yield* CloudflareApi;
+  const { repository } = yield* CutoverConfiguration;
+  const consumers = yield* readEdgeConsumers('cloudflare').pipe(
+    Effect.mapError(
+      (cause) => new StageOperationError({ cause, message: 'the placed composition consumers could not be read' }),
+    ),
+  );
+  const label = `every placed composition consumer Worker holds its ${SNAPSHOT_SECRET} secret`;
+  const names = consumers.map(({ workerName }) => workerName);
+  const variables = yield* listGithubVariables(repository, STAGE_ENVIRONMENT);
+  if (variables.get(DEPLOY_TARGET_VARIABLE) !== 'cloudflare') {
+    return yield* Console.log(
+      `wait ${label}: the first ${DEPLOY_TARGET_VARIABLE}=cloudflare deploy after activate hands it to ${names.join(', ') || 'none'}; verify again before moving DNS`,
+    );
+  }
+  const missing: string[] = [];
+  for (const workerName of names) {
+    if (!(yield* api.workerSecretNames(workerName)).has(SNAPSHOT_SECRET)) {
+      missing.push(workerName);
+    }
+  }
+  return yield* check(
+    label,
+    missing.length === 0
+      ? Option.none()
+      : Option.some(
+          `missing on ${missing.join(', ')}; run the full stage deploy so sync-edge-composition hands it over`,
+        ),
+  );
+});
+
 /**
  * The cut-over verification checklist. It fails on the first unmet item, before anything changes.
  * Only when every item holds does `activate` switch `stage` to DEPLOY_TARGET=cloudflare.
@@ -753,6 +795,7 @@ export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
     `the latest ${STAGE_EDGE_ENVIRONMENT} deployment (Worker deploy plus cloudflare:proof) succeeded for the checked-out revision`,
     yield* latestStageEdgeState,
   );
+  yield* compositionSnapshotState;
   return yield* Effect.void;
 });
 

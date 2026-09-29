@@ -47,9 +47,11 @@ import type { ServiceImport, ZeropsImportEntry, ZeropsService } from './stage-op
 
 /**
  * Retires and restores the stage Zerops services Cloudflare mode no longer uses (design section
- * 11a): the 9 application services the Workers replace and the 3 per-vertical outbox workers the
- * combined host replaces. `app/zerops.yaml`, `app/zerops-import.yaml`, every GitHub variable and
- * every deploy script stay untouched, so production and a switch back keep working.
+ * 11a): the 9 application services the Workers replace. The migrator, SpiceDB and the Outbox Worker
+ * host keep running on the Cloudflare target. The per-vertical outbox workers stay too, stopped: each
+ * deploy reads their status to detect a DEPLOY_TARGET switch, and a switch back to Zerops redeploys
+ * them. `app/zerops.yaml`, `app/zerops-import.yaml`, every GitHub variable and every deploy script
+ * stay untouched, so production and a switch back keep working.
  *
  * `retire` records, per service, its ID, status, `zerops-import.yaml` entry, stage service-ID
  * variable, and the KEYS (never values) of its variables, split by where a restore gets them back.
@@ -75,13 +77,7 @@ export const RETIRED_STAGE_SERVICES = [
   { hostname: 'pricing', setup: 'pricing' },
   { hostname: 'storefrontregistry', setup: 'storefront-registry' },
   { hostname: 'pricegroupcatalog', setup: 'price-group-catalog' },
-  { hostname: 'partyregistryworker', setup: 'party-registry-worker' },
-  { hostname: 'commercecstmrcntxtworker', setup: 'commerce-customer-context-worker' },
-  { hostname: 'pricegroupcatalogworker', setup: 'price-group-catalog-worker' },
 ] as const;
-
-/** The combined outbox worker host must run before the per-vertical workers go. */
-export const OUTBOX_WORKER_HOST_HOSTNAME = 'outboxworkerhost';
 
 const EnvironmentKeySchema = Schema.NonEmptyString.pipe(Schema.brand('ZeropsEnvironmentKey'));
 const EnvironmentKeysSchema = Schema.Array(EnvironmentKeySchema);
@@ -246,7 +242,7 @@ const captureService = (
  * outside this repository. Deleting the services before that move takes stage down, so the operator
  * confirms the DNS cut-over explicitly.
  */
-const retirementPreconditions = (live: readonly ZeropsService[], options: { readonly dnsCutOver: boolean }) =>
+const retirementPreconditions = (options: { readonly dnsCutOver: boolean }) =>
   Effect.gen(function* retirementPreconditionsEffect() {
     const { repository } = yield* StageServicesConfiguration;
     const stageVariables = yield* listGithubVariables(repository, STAGE_ENVIRONMENT);
@@ -258,13 +254,7 @@ const retirementPreconditions = (live: readonly ZeropsService[], options: { read
     if (!options.dnsCutOver) {
       return yield* new StageOperationError({
         message:
-          'the stage hostnames may still route to these Zerops services; move their DNS to the Cloudflare Workers, check the Shell answers from Cloudflare, then add --dns-cut-over',
-      });
-    }
-    const host = live.find(({ hostname }) => hostname === OUTBOX_WORKER_HOST_HOSTNAME);
-    if (host?.status !== 'ACTIVE') {
-      return yield* new StageOperationError({
-        message: `the Zerops ${OUTBOX_WORKER_HOST_HOSTNAME} service is not ACTIVE; the per-vertical outbox workers stay until it runs`,
+          'the stage hostnames may still route to these Zerops services; after the first Cloudflare-target deploy run `cloudflare-stage-cutover verify`, move their DNS to the Cloudflare Workers, check the Shell answers from Cloudflare, then add --dns-cut-over',
       });
     }
     return yield* Effect.void;
@@ -276,7 +266,7 @@ export const retire = (options: { readonly confirm: boolean; readonly dnsCutOver
     const fileSystem = yield* FileSystem.FileSystem;
     const live = yield* listZeropsServices(projectId);
     if (options.confirm) {
-      yield* retirementPreconditions(live, options);
+      yield* retirementPreconditions(options);
     }
     const liveHostnames = live.map(({ hostname }) => hostname);
     const context = {

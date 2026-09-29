@@ -209,7 +209,7 @@ const readConsumerSetups = (target: DeployTarget) =>
   });
 
 /** The placed Worker consumers the deploy target must hand each publication to; none on `zerops`. */
-const readEdgeConsumers = (target: DeployTarget) =>
+export const readEdgeConsumers = (target: DeployTarget) =>
   Effect.gen(function* readEdgeConsumersEffect() {
     if (target !== 'cloudflare') {
       return [];
