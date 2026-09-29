@@ -21,12 +21,11 @@ const failedStartup = Effect.gen(function* failedStartupEffect() {
   });
 
   expect(Number(code)).toBe(1);
-  expect(errors).toMatch(/Outbox Worker process failed/u);
-  expect(errors).toMatch(/WorkerDatabaseUnreachable: DATABASE_URL is not a PostgreSQL URL/u);
+  expect(errors).toBe('Outbox Worker process failed: WorkerDatabaseUnreachable\n');
 });
 
 it.live(
-  'a Worker whose runtime cannot start exits 1 and reports the cause on stderr',
+  'a Worker whose runtime cannot start exits 1 and names the failure on stderr without its message',
   () =>
     Layer.build(NodeServices.layer).pipe(
       Effect.flatMap((nodeServices) => failedStartup.pipe(Effect.provide(nodeServices))),

@@ -106,6 +106,8 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         'packages/core-runtime/src/search/persistence.ts',
         'packages/core-runtime/src/search/worker-snapshot.ts',
         'packages/core-runtime/src/install/stage-context-bootstrap.ts',
+        // The Outbox Worker process exit seam names a failed exit by tag, defect, or interruption.
+        'packages/core-runtime/src/outbox/process.ts',
       ],
     },
   ],

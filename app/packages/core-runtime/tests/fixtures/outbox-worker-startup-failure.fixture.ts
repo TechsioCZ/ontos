@@ -11,7 +11,7 @@ startOutboxWorkerProcess({
   claimOwnerPrefix: 'startup-failure-fixture',
   layer: Layer.effect(
     OutboxRuntime,
-    Effect.fail(new WorkerDatabaseUnreachable({ message: 'DATABASE_URL is not a PostgreSQL URL' })),
+    Effect.fail(new WorkerDatabaseUnreachable({ message: 'password authentication failed for user ontos_runtime' })),
   ),
   registrations: [],
   subscriptions: [],

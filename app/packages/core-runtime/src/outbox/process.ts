@@ -9,6 +9,7 @@ import {
   Option,
   Random,
   References,
+  Result,
   Schema,
   Tracer,
 } from 'effect';
@@ -34,7 +35,7 @@ export interface RunOutboxWorkerProcessInput<
 
 export interface StartOutboxWorkerProcessInput<
   Registration extends AnyOutboxWorkerRegistration,
-  LayerError,
+  LayerError extends { readonly _tag: string },
 > extends RunOutboxWorkerProcessInput<Registration> {
   readonly layer: Layer.Layer<OutboxRuntime | OutboxWorkerRequirements<Registration>, LayerError>;
 }
@@ -116,7 +117,22 @@ export const runOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegis
     }),
   );
 
-export const startOutboxWorkerProcess = <Registration extends AnyOutboxWorkerRegistration, LayerError>(
+/**
+ * Name the failure by its tag only. A raw cause can carry database diagnostics or credentials,
+ * and Outbox telemetry excludes raw causes, stacks, and messages.
+ */
+const describeWorkerFailure = <E extends { readonly _tag: string }>(cause: Cause.Cause<E>): string => {
+  const error = Cause.findError(cause);
+  if (Result.isSuccess(error)) {
+    return error.success._tag;
+  }
+  return Cause.hasDies(cause) ? 'Defect' : 'Interrupted';
+};
+
+export const startOutboxWorkerProcess = <
+  Registration extends AnyOutboxWorkerRegistration,
+  LayerError extends { readonly _tag: string },
+>(
   input: StartOutboxWorkerProcessInput<Registration, LayerError>,
 ): void => {
   let processInput: RunOutboxWorkerProcessInput<Registration> = {
@@ -138,7 +154,7 @@ export const startOutboxWorkerProcess = <Registration extends AnyOutboxWorkerReg
     {
       onExit: (exit) => {
         if (Exit.isFailure(exit)) {
-          process.stderr.write(`Outbox Worker process failed\n${Cause.pretty(exit.cause)}\n`);
+          process.stderr.write(`Outbox Worker process failed: ${describeWorkerFailure(exit.cause)}\n`);
         }
         process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
       },
