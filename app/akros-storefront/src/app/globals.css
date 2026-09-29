@@ -110,25 +110,13 @@ body {
 .akros-brand {
   display: flex;
   align-items: center;
-  gap: 16px;
   text-decoration: none;
 }
 
-.akros-brand__wordmark {
-  font-size: 24px;
-  font-weight: var(--font-weight-bold);
-  letter-spacing: -0.04em;
-  line-height: normal;
-}
-
-.akros-brand__stock {
-  border-radius: 4px;
-  padding: 4px 12px;
-  background: var(--color-primary);
-  font-size: var(--text-xs);
-  font-weight: var(--font-weight-semibold);
-  line-height: normal;
-  white-space: nowrap;
+.akros-brand__logo {
+  display: block;
+  width: 190px;
+  height: auto;
 }
 
 .akros-header__search {
@@ -990,10 +978,13 @@ body {
     padding-block: 14px;
   }
 
-  .akros-brand__stock,
   .akros-header__search,
   .akros-header__quick-select {
     display: none;
+  }
+
+  .akros-brand__logo {
+    width: 150px;
   }
 
   .akros-header__actions {

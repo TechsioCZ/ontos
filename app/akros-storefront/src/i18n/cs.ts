@@ -22,7 +22,6 @@ export const cs = {
     claims: "Reklamace",
     contacts: "Kontakty",
     login: "Přihlášení",
-    stock: "SKLADEM",
     quickSelect: "Rychlý výběr produktů",
     cart: "Košík",
     openNavigation: "Otevřít navigaci",

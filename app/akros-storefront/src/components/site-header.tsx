@@ -1,6 +1,7 @@
 "use client";
 
 import NextLink from "next/link";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import type { FormEvent } from "react";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
@@ -59,8 +60,14 @@ export function SiteHeader() {
 
       <div className="akros-header__main">
         <NextLink className="akros-brand" href="/" aria-label="AKROS – domovská stránka">
-          <span className="akros-brand__wordmark">AKROS</span>
-          <span className="akros-brand__stock">{cs.header.stock}</span>
+          <Image
+            alt=""
+            className="akros-brand__logo"
+            height={61}
+            priority
+            src="/akros/logo-akros.png"
+            width={380}
+          />
         </NextLink>
 
         <div className="akros-header__actions">
