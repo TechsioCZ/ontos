@@ -745,8 +745,9 @@ const placedWorkerNames = (units: readonly string[], topology: ReferenceTopology
 };
 
 /**
- * Workers placement retires. A Worker placed at the last edge deployment and no longer placed now
- * must be listed in `retiredWorkers`, so a removal or rename never leaves the old Worker serving.
+ * Workers placement retires. A Worker placed or retired at the last edge deployment and not placed
+ * now must be listed in `retiredWorkers`, so a removal or rename never leaves the old Worker
+ * serving unreported. The list is a ledger: entries are never removed.
  */
 const planCloudflareRetirements = (
   placement: CloudflarePlacement,
@@ -764,7 +765,7 @@ const planCloudflareRetirements = (
   for (const workerName of basePlacedWorkers) {
     if (!placedWorkers.has(workerName) && !retired.has(workerName)) {
       fail(
-        `${CLOUDFLARE_PLACEMENT_PATH} no longer places Worker "${workerName}"; list it in retiredWorkers so the edge deploy deletes it`,
+        `${CLOUDFLARE_PLACEMENT_PATH} no longer places or retires Worker "${workerName}"; keep it in retiredWorkers`,
       );
     }
   }
@@ -964,9 +965,12 @@ const readJsonAtRevision = <DocumentSchema extends Schema.ConstraintDecoder<unkn
     return Option.some(yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(source));
   });
 
-// Only the unit list and topology Worker names matter for the base: an older placement document
-// predating `buildEnvironment` or `retiredWorkers` still names what it deployed.
-const BasePlacementSchema = Schema.Struct({ units: Schema.Array(Schema.String) });
+// Only the units, their topology Worker names and the retirement ledger matter for the base; an older
+// placement document predating `buildEnvironment` or `retiredWorkers` still names what it deployed.
+const BasePlacementSchema = Schema.Struct({
+  retiredWorkers: Schema.optional(Schema.Array(Schema.String)),
+  units: Schema.Array(Schema.String),
+});
 
 const basePlacedWorkerNames = (rootDirectory: string, baseRevision: string | undefined) =>
   Effect.gen(function* basePlacedWorkerNamesEffect() {
@@ -998,7 +1002,12 @@ const basePlacedWorkerNames = (rootDirectory: string, baseRevision: string | und
     if (Option.isNone(topology)) {
       return fail(`placement base "${baseRevision}" has ${CLOUDFLARE_PLACEMENT_PATH} but no reference topology`);
     }
-    return placedWorkerNames(placement.value.units, topology.value);
+    // Retired Workers stay in the ledger: CI cannot see an operator's deletion, so dropping an entry
+    // would silently stop reporting a Worker that may still run.
+    return new Set([
+      ...placedWorkerNames(placement.value.units, topology.value),
+      ...(placement.value.retiredWorkers ?? []),
+    ]);
   });
 
 const changedPathsFromGit = (rootDirectory: string, baseRevision: string, headRevision: string) =>

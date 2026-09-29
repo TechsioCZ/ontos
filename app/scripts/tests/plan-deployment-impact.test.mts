@@ -510,13 +510,13 @@ it.live('refuses to drop a deployed Worker from placement until it is listed for
             yield* planningFailure(
               planDeploymentImpact({ baseRevision: deployed, headRevision: dropped, rootDirectory: root }),
             ),
-          ).toContain(`no longer places Worker "${SHELL_WORKER}"; list it in retiredWorkers`);
+          ).toContain(`no longer places or retires Worker "${SHELL_WORKER}"; keep it in retiredWorkers`);
           // A full plan of the same head still reconciles against the last edge deployment.
           expect(
             yield* planningFailure(
               planDeploymentImpact({ headRevision: dropped, placementBaseRevision: deployed, rootDirectory: root }),
             ),
-          ).toContain(`no longer places Worker "${SHELL_WORKER}"`);
+          ).toContain(`no longer places or retires Worker "${SHELL_WORKER}"`);
           const retired = yield* commitPlacement(root, ['contacts'], [SHELL_WORKER], 'retire the Shell');
           const plan = yield* planDeploymentImpact({
             baseRevision: deployed,
@@ -524,6 +524,13 @@ it.live('refuses to drop a deployed Worker from placement until it is listed for
             rootDirectory: root,
           });
           expect(plan.units.cloudflareRetirements).toEqual([{ packageName: SHELL_PACKAGE, workerName: SHELL_WORKER }]);
+          // The ledger carries forward: a later placement cannot forget a retired Worker.
+          const forgotten = yield* commitPlacement(root, ['contacts'], [], 'forget the retired Shell');
+          expect(
+            yield* planningFailure(
+              planDeploymentImpact({ baseRevision: retired, headRevision: forgotten, rootDirectory: root }),
+            ),
+          ).toContain(`no longer places or retires Worker "${SHELL_WORKER}"`);
           // A Worker still placed cannot also be retired.
           const contradictory = yield* commitPlacement(root, ['contacts'], [CONTACTS_WORKER], 'retire contacts');
           expect(

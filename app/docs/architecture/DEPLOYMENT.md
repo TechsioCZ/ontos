@@ -246,8 +246,9 @@ also have distinct Worker names. Retirement has two phases, and CI never deletes
 deploy that drops a Worker leaves it running, so a rollback of the Shell or another dependent still
 finds its binding target. After the proofs pass, every successful edge deploy reports each retired
 Worker that still exists as a warning, until an operator deletes it with
-`wrangler delete --name <worker>`. An entry can leave `retiredWorkers` once no successful edge
-deployment still places it.
+`wrangler delete --name <worker>`. `retiredWorkers` is a ledger: CI cannot see a deletion, so the
+planner keeps every entry the last edge deployment retired, and a deleted Worker's entry costs one
+read-only check per deploy.
 
 The job runs only when the repository is configured for Cloudflare: the `CLOUDFLARE_ACCOUNT_ID`
 variable, the `CLOUDFLARE_API_TOKEN` secret in the `stage-edge` environment, and a complete build
