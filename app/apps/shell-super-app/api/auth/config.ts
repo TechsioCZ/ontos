@@ -1,3 +1,4 @@
+import { databaseRuntime } from '@app/core-runtime';
 import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 
 import { loadConfigurationProvider } from './configuration-provider.ts';
@@ -123,6 +124,14 @@ export interface LoadAuthConfigOptions {
 export const loadAuthConfig = (
   options: LoadAuthConfigOptions = {},
 ): Effect.Effect<AuthConfigValue, AuthConfigFailure> =>
-  loadConfigurationProvider(options, unableToLoadEnvironment).pipe(Effect.flatMap(parseAuthConfigFromProvider));
+  loadConfigurationProvider(options, unableToLoadEnvironment).pipe(
+    // A Worker's DATABASE_URL is its HYPERDRIVE binding; Node keeps the environment's.
+    Effect.flatMap((provider) =>
+      databaseRuntime
+        .runtimeDatabaseProvider(provider)
+        .pipe(Effect.catchTag('DatabaseConfigError', ({ reason }) => Effect.fail(new AuthConfigError({ reason })))),
+    ),
+    Effect.flatMap(parseAuthConfigFromProvider),
+  );
 
 export const AuthConfigLive = Layer.effect(AuthConfig, loadAuthConfig());

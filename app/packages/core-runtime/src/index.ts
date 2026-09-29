@@ -118,6 +118,8 @@ export type {
 } from './auth/legal-entity-context.ts';
 export { DatabaseConnectionError } from './db/client.ts';
 export { DEFAULT_DATABASE_POOL_DEADLINES, configureDatabasePool } from './db/pool-configuration.ts';
+export { databaseRuntime } from '#database-runtime';
+export type { DatabaseRuntime } from './db/database-runtime.ts';
 export type { DatabasePoolDeadlines } from './db/pool-configuration.ts';
 export { CorePersistenceLive } from './runtime-infrastructure.ts';
 export {
