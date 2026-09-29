@@ -7,10 +7,7 @@ import type { PlatformError } from 'effect/PlatformError';
 import { hasCompleteGeneratedModuleApiSeam } from './generated-governed-http-boundary.mts';
 import { configuredMicroVerticalApiStem } from '@modern-js/code-tools/microvertical-api-boundary';
 import { strictEffectRuntimeTopologyViolation } from '@modern-js/code-tools/strict-effect-runtime';
-import {
-  privateOwnerImportViolation,
-  unconstrainedHttpApiContractSchemaViolation,
-} from './ultramodern-api-boundary-rules.mts';
+import { privateOwnerImportViolation } from './ultramodern-api-boundary-rules.mts';
 
 class ApiBoundaryCheckFailed extends Schema.TaggedError<ApiBoundaryCheckFailed>()('ApiBoundaryCheckFailed', {
   failureCount: Schema.Int,
@@ -238,15 +235,6 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
 
     for (const [file, content] of sourceByFile) {
       assertPrivateOwnerImports(file, content);
-      const unconstrainedContractSchema = file.includes('/tests/')
-        ? undefined
-        : unconstrainedHttpApiContractSchemaViolation(content, {
-            file,
-            sources: sourceByFile,
-          });
-      if (unconstrainedContractSchema !== undefined) {
-        fail(`${file}: ${unconstrainedContractSchema}.`);
-      }
       assertNotContains(
         file,
         content,

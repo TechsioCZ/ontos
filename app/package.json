@@ -41,8 +41,8 @@
     "skills:check": "ultramodern-create ultramodern skills check",
     "agents:refs:install": "node ./scripts/setup-agent-reference-repos.mts",
     "agents:refs:check": "node ./scripts/setup-agent-reference-repos.mts --check",
-    "api:check": "modern-api-check",
-    "api:check:files": "modern-api-check-files",
+    "api:check": "modern-api-check --rules ./scripts/api-contract-schema-rules.mts",
+    "api:check:files": "modern-api-check-files --rules ./scripts/api-contract-schema-rules.mts",
     "i18n:boundaries": "modern-i18n-check",
     "postinstall": "ultramodern-create ultramodern skills install --postinstall",
     "sandbox:new": "sh ./scripts/locki-feature.sh",
@@ -117,6 +117,7 @@
     "drizzle-orm": "1.0.0-rc.5-ab785fc"
   },
   "devDependencies": {
+    "@babel/types": "8.0.6",
     "@effect/opentelemetry": "4.0.0-rc.117",
     "@effect/platform-node": "4.0.0-rc.117",
     "@effect/tsgo": "0.41.0",
