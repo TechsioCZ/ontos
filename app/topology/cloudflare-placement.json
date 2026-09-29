@@ -12,5 +12,10 @@
     "storefront-registry",
     "price-group-catalog",
     "shell-super-app"
-  ]
+  ],
+  "unitServiceBindings": {
+    "commerce-customer-context": [
+      "price-group-catalog"
+    ]
+  }
 }

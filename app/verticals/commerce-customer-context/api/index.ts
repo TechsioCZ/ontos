@@ -37,6 +37,7 @@ import { commerceEnrollmentOwnerTransitionPreparationLive } from '../src/enrollm
 import { CommerceEnrollmentPreparationSubjectResolverLive } from '../src/enrollment/orchestration/preparation-subject.ts';
 import { CommerceEnrollmentSweptContinuationLive } from '../src/workers/enrollment-continuation-sweeper.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from './portal-auth/provider/account-creation-unavailable.ts';
+import { CommerceUnitTransportLive } from './unit-transport.ts';
 import { CommercePortalAuthAccountLookupService } from './portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthLive } from './portal-auth/provider/auth.ts';
 import {
@@ -923,7 +924,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     ),
   );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, CommerceUnitTransportLive)),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({

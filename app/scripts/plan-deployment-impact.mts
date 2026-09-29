@@ -129,6 +129,9 @@ const CloudflarePlacementSchema = Schema.Struct({
   retiredWorkers: Schema.Array(Schema.String),
   schemaVersion: Schema.Literal(1),
   units: Schema.Array(Schema.String),
+  // Placed units that call other placed units through Worker service bindings, by consumer. A
+  // binding must name a Worker that already exists, so each target deploys before its consumer.
+  unitServiceBindings: Schema.optionalKey(Schema.Record(Schema.String, Schema.Array(Schema.String))),
 });
 type CloudflarePlacement = typeof CloudflarePlacementSchema.Type;
 const CLOUDFLARE_PLACEMENT_PATH = 'topology/cloudflare-placement.json';
@@ -775,8 +778,64 @@ const planCloudflareRetirements = (
   }));
 };
 
+/**
+ * Orders placed providers so every service-binding target deploys before the unit that binds it,
+ * keeping the topology order otherwise.
+ */
+const orderByServiceBindings = (
+  providers: readonly TopologyUnit[],
+  unitServiceBindings: Readonly<Record<string, readonly string[]>>,
+): readonly TopologyUnit[] => {
+  const byId = new Map(providers.map((unit) => [unit.id, unit]));
+  const ordered: TopologyUnit[] = [];
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (unit: TopologyUnit): void => {
+    if (visited.has(unit.id)) {
+      return;
+    }
+    if (visiting.has(unit.id)) {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} unitServiceBindings contain a cycle at "${unit.id}"`);
+    }
+    visiting.add(unit.id);
+    for (const target of unitServiceBindings[unit.id] ?? []) {
+      const targetUnit = byId.get(target);
+      if (targetUnit !== undefined) {
+        visit(targetUnit);
+      }
+    }
+    visiting.delete(unit.id);
+    visited.add(unit.id);
+    ordered.push(unit);
+  };
+  for (const unit of providers) {
+    visit(unit);
+  }
+  return ordered;
+};
+
+const validateUnitServiceBindings = (
+  unitServiceBindings: Readonly<Record<string, readonly string[]>>,
+  placed: ReadonlySet<string>,
+  orderedUnits: readonly TopologyUnit[],
+): void => {
+  const kinds = new Map(orderedUnits.map((unit) => [unit.id, unit.kind]));
+  for (const [consumer, targets] of Object.entries(unitServiceBindings)) {
+    if (!placed.has(consumer) || kinds.get(consumer) !== 'provider') {
+      fail(`${CLOUDFLARE_PLACEMENT_PATH} unitServiceBindings names "${consumer}", which is not a placed vertical`);
+    }
+    for (const target of targets) {
+      if (target === consumer || !placed.has(target) || kinds.get(target) !== 'provider') {
+        fail(
+          `${CLOUDFLARE_PLACEMENT_PATH} unitServiceBindings binds "${consumer}" to "${target}", which is not another placed vertical`,
+        );
+      }
+    }
+  }
+};
+
 const planCloudflareDeployments = (
-  placement: readonly string[],
+  { units: placement, unitServiceBindings = {} }: Pick<CloudflarePlacement, 'unitServiceBindings' | 'units'>,
   workerNames: ReadonlyMap<string, string>,
   orderedUnits: readonly TopologyUnit[],
   impacted: ReadonlySet<string>,
@@ -818,11 +877,16 @@ const planCloudflareDeployments = (
     }
     placedByWorker.set(workerName, id);
   }
+  validateUnitServiceBindings(unitServiceBindings, placed, orderedUnits);
   // The Shell Worker binds every vertical Worker as a service, beyond its Module Federation
-  // remotes, so its targets must exist first: providers deploy before the Shell.
+  // remotes, so its targets must exist first: providers deploy before the Shell, and a provider
+  // another provider binds deploys before it.
   const planned = orderedUnits.filter((unit) => placed.has(unit.id) && (deployInputChanged || impacted.has(unit.id)));
   return [
-    ...planned.filter((unit) => unit.kind === 'provider'),
+    ...orderByServiceBindings(
+      planned.filter((unit) => unit.kind === 'provider'),
+      unitServiceBindings,
+    ),
     ...planned.filter((unit) => unit.kind === 'shell'),
   ].map((unit) => ({
     id: unit.id,
@@ -1333,7 +1397,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
       schemaVersion: 1,
       units: {
         cloudflare: planCloudflareDeployments(
-          cloudflarePlacement.units,
+          cloudflarePlacement,
           cloudflareWorkerNames(topology),
           orderedUnits,
           impacted,

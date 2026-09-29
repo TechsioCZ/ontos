@@ -37,7 +37,10 @@ interface FixtureOptions {
   readonly cloudflareBuildEnvironment?: Readonly<Record<string, string>>;
   readonly cloudflarePlacement?: readonly string[];
   readonly cloudflareRetiredWorkers?: readonly string[];
+  readonly cloudflareUnitServiceBindings?: Readonly<Record<string, readonly string[]>>;
   readonly extraSharedPackages?: readonly FixtureOwner[];
+  /** A second vertical, ordered before the first by id, with its own owner, project and setup. */
+  readonly extraVerticalId?: string;
   readonly includeContactOwner?: boolean;
   readonly includeWorker?: boolean;
   readonly omitVerticalWorkerName?: boolean;
@@ -83,6 +86,7 @@ interface FixtureCloudflarePlacement {
   readonly retiredWorkers: readonly string[];
   readonly schemaVersion: 1;
   readonly units: readonly string[];
+  readonly unitServiceBindings?: Readonly<Record<string, readonly string[]>>;
 }
 
 type FixtureDocument = FixtureCloudflarePlacement | FixtureOwnership | FixtureTopology;
@@ -160,14 +164,42 @@ const makeFixture = (options: FixtureOptions = {}) =>
         options.omitVerticalWorkerName === true
           ? vertical
           : { ...vertical, cloudflare: { workerName: `app-${verticalId}` } },
+        ...(options.extraVerticalId === undefined
+          ? []
+          : [
+              {
+                cloudflare: { workerName: `app-${options.extraVerticalId}` },
+                id: options.extraVerticalId,
+                moduleFederation: { remotes: [], verticalRefs: [] },
+                package: `@app/${options.extraVerticalId}`,
+                path: `verticals/${options.extraVerticalId}`,
+              },
+            ]),
       ],
     });
-    yield* writeJson(root, CLOUDFLARE_PLACEMENT_PATH, {
+    const extraVerticalOwners =
+      options.extraVerticalId === undefined
+        ? []
+        : [
+            {
+              id: options.extraVerticalId,
+              package: `@app/${options.extraVerticalId}`,
+              path: `verticals/${options.extraVerticalId}`,
+            },
+          ];
+    const placement: FixtureCloudflarePlacement = {
       buildEnvironment: options.cloudflareBuildEnvironment ?? {},
       retiredWorkers: options.cloudflareRetiredWorkers ?? [],
       schemaVersion: 1,
       units: options.cloudflarePlacement ?? [],
-    });
+    };
+    yield* writeJson(
+      root,
+      CLOUDFLARE_PLACEMENT_PATH,
+      options.cloudflareUnitServiceBindings === undefined
+        ? placement
+        : { ...placement, unitServiceBindings: options.cloudflareUnitServiceBindings },
+    );
     yield* writeJson(root, OWNERSHIP_PATH, {
       owners: [
         CORE_RUNTIME_OWNER,
@@ -177,6 +209,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
         ...(options.includeContactOwner === false
           ? []
           : [{ id: verticalId, package: verticalPackage, path: verticalPath }]),
+        ...extraVerticalOwners,
       ],
       schemaVersion: 1,
     });
@@ -191,6 +224,9 @@ const makeFixture = (options: FixtureOptions = {}) =>
       yield* writeWorkspaceProject(root, owner);
     }
     yield* writeWorkspaceProject(root, { id: verticalId, package: verticalPackage, path: verticalPath });
+    for (const owner of extraVerticalOwners) {
+      yield* writeWorkspaceProject(root, owner);
+    }
     if (options.includeWorker === true) {
       const workerRoot = path.join(root, verticalPath);
       yield* Effect.tryPromise(() => mkdir(path.join(workerRoot, 'src/worker-host'), { recursive: true }));
@@ -211,6 +247,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
       'migrator',
       'spicedb',
       verticalId,
+      ...(options.extraVerticalId === undefined ? [] : [options.extraVerticalId]),
       ...(options.includeWorker === true ? [`${verticalId}-worker`] : []),
       'shellsuperapp',
     ];
@@ -615,6 +652,55 @@ it.live('deploys the Shell Worker after every placed vertical it binds, not only
         verticalId: UNREFERENCED_VERTICAL,
       },
     );
+  }),
+);
+
+const BINDING_CONSUMER = 'alpha-orders';
+
+it.live('deploys a service-binding target before the vertical that binds it', () =>
+  Effect.gen(function* ordersServiceBindingTargetsFirst() {
+    for (const [unitServiceBindings, expected] of [
+      [{}, [BINDING_CONSUMER, 'contacts', SHELL_ID]],
+      [{ [BINDING_CONSUMER]: ['contacts'] }, ['contacts', BINDING_CONSUMER, SHELL_ID]],
+    ] as const) {
+      yield* withFixture(
+        (root) =>
+          Effect.gen(function* ordersServiceBindingTargetsFirstInFixture() {
+            const plan = yield* planDeploymentImpact({ changedPaths: [SHARED_CONTRACT_PATH], rootDirectory: root });
+            expect(plan.units.cloudflare.map(({ id }) => id)).toEqual(expected);
+          }),
+        {
+          cloudflarePlacement: [SHELL_ID, BINDING_CONSUMER, 'contacts'],
+          cloudflareUnitServiceBindings: unitServiceBindings,
+          extraVerticalId: BINDING_CONSUMER,
+        },
+      );
+    }
+  }),
+);
+
+it.live('rejects a service binding that does not name another placed vertical', () =>
+  Effect.gen(function* rejectsInvalidServiceBindings() {
+    for (const [unitServiceBindings, message] of [
+      [{ [BINDING_CONSUMER]: [BINDING_CONSUMER] }, `binds "${BINDING_CONSUMER}" to "${BINDING_CONSUMER}"`],
+      [{ [BINDING_CONSUMER]: [SHELL_ID] }, `binds "${BINDING_CONSUMER}" to "${SHELL_ID}"`],
+      [{ [BINDING_CONSUMER]: ['missing'] }, `binds "${BINDING_CONSUMER}" to "missing"`],
+      [{ missing: ['contacts'] }, 'unitServiceBindings names "missing"'],
+    ] as const) {
+      yield* withFixture(
+        (root) =>
+          Effect.gen(function* rejectsInvalidServiceBindingsInFixture() {
+            expect(
+              yield* planningFailure(planDeploymentImpact({ changedPaths: [DOCUMENTATION_PATH], rootDirectory: root })),
+            ).toContain(message);
+          }),
+        {
+          cloudflarePlacement: [SHELL_ID, BINDING_CONSUMER, 'contacts'],
+          cloudflareUnitServiceBindings: unitServiceBindings,
+          extraVerticalId: BINDING_CONSUMER,
+        },
+      );
+    }
   }),
 );
 
