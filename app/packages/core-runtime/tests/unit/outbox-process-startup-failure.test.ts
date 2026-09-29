@@ -21,7 +21,7 @@ const failedStartup = Effect.gen(function* failedStartupEffect() {
   });
 
   expect(Number(code)).toBe(1);
-  expect(errors).toBe('Outbox Worker process failed: WorkerDatabaseUnreachable, Defect\n');
+  expect(errors).toBe('Outbox Worker host failed: WorkerDatabaseUnreachable, Defect\n');
 });
 
 it.live(

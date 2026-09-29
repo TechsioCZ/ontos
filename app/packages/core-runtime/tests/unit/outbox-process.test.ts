@@ -88,7 +88,8 @@ const failFastProcess = Effect.gen(function* failFastProcessEffect() {
   expect(output).toMatch(/cycle:ledger:ledger-outbox-worker/u);
   expect(output).toMatch(/disposed:billing/u);
   expect(output).toMatch(/disposed:ledger/u);
-  expect(output).toMatch(/Outbox Worker host failed/u);
+  expect(errors).toMatch(/^Outbox Worker host failed: .*Defect/u);
+  expect(errors).not.toMatch(/fixture loop defect/u);
 });
 
 it.live(
