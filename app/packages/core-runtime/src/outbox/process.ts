@@ -1,4 +1,5 @@
 import {
+  Cause,
   Config,
   Effect,
   Exit,
@@ -136,6 +137,9 @@ export const startOutboxWorkerProcess = <Registration extends AnyOutboxWorkerReg
     ),
     {
       onExit: (exit) => {
+        if (Exit.isFailure(exit)) {
+          process.stderr.write(`Outbox Worker process failed\n${Cause.pretty(exit.cause)}\n`);
+        }
         process.exitCode = Exit.isSuccess(exit) ? 0 : 1;
       },
     },
