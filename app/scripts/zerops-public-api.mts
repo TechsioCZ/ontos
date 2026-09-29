@@ -202,8 +202,10 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
 
   return ZeropsPublicApi.of({
     enableSubdomainAccess: (serviceId) => serviceAction(serviceId, 'enable-subdomain-access'),
+    // Without an override, Zerops applies the project's env isolation, which hides every
+    // service-generated variable (`catalog_zeropsSubdomain`, ...) from the project-level file.
     projectEnvFile: (projectId) =>
-      get(`/project/${projectId}/env-file`, EnvFileSchema, 'project env file').pipe(
+      get(`/project/${projectId}/env-file?overrideEnvIsolation=none`, EnvFileSchema, 'project env file').pipe(
         Effect.map(({ envFile }) => parseZeropsEnvFile(envFile)),
       ),
     projectEnvs,
