@@ -1,14 +1,30 @@
 :root {
-  --border-footer-width: var(--border-sm);
+  --akros-footer-commerce-columns: 278px 369px 131px;
+  --akros-footer-content-gap: var(--dimension-26);
+  --akros-footer-content-padding-inline: var(--dimension-84);
+  --akros-footer-logo-height: var(--dimension-88);
+  --akros-footer-logo-width: 161px;
+  --akros-footer-min-height: 555px;
+  --akros-footer-shadow: 0 1px 4px rgb(0 0 0 / 10%);
+  --akros-footer-top-columns: 161px 194px 146px 144px;
+  --akros-footer-top-height: 218px;
+  --border-footer-width: var(--dimension-0);
   --color-footer-bg: var(--color-base);
   --color-footer-bottom-bg: var(--color-transparent);
   --color-footer-container-bg: var(--color-transparent);
+  --color-footer-divider-bg: var(--color-border-primary);
+  --color-footer-list-bg: var(--color-transparent);
   --color-footer-section-bg: var(--color-transparent);
   --container-footer-max: var(--width-full);
-  --padding-footer-bottom: var(--dimension-16);
   --padding-footer-bottom-sm: var(--dimension-0);
   --padding-footer-sm: var(--dimension-0);
-  --spacing-footer-section-sm: var(--dimension-12);
-  --text-footer-sm: var(--text-sm);
-  --text-footer-title-sm: var(--text-sm);
+  --font-weight-footer-link: var(--font-weight-medium);
+  --font-weight-footer-title: var(--font-weight-bold);
+  --height-footer-divider: var(--border-sm);
+  --spacing-footer-list: var(--dimension-0);
+  --spacing-footer-section-sm: var(--dimension-16);
+  --spacing-footer-sm: var(--dimension-0);
+  --text-footer-link-sm: var(--text-xs);
+  --text-footer-sm: var(--text-xs);
+  --text-footer-title-sm: var(--text-base);
 }
