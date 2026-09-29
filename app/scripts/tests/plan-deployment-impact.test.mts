@@ -501,6 +501,7 @@ it.live('fails closed when edge build configuration overrides the run or Worker 
       'ULTRAMODERN_SOURCE_REVISION',
       'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
       'VERTICAL_PRICING_WORKER_NAME',
+      'VERTICAL_PRICE_GROUP_CATALOG_WORKER_BINDING',
     ]) {
       yield* withFixture(
         (root) =>

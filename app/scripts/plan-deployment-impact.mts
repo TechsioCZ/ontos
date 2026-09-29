@@ -114,8 +114,10 @@ type Ownership = typeof OwnershipSchema.Type;
 const CLOUDFLARE_BUILD_VARIABLE_PATTERN = /^(?:MODERN|ULTRAMODERN|VERTICAL)_[A-Z0-9_]+$/u;
 // The deploy job sets these from the run itself; reviewed configuration must not override the
 // revision or environment a Worker build claims.
-// The Shell binds each provider by Worker name; an override would bind a Worker CI never deploys.
-const WORKER_NAME_OVERRIDE_PATTERN = /^VERTICAL_[A-Z0-9_]+_WORKER_NAME$/u;
+// A Worker's name and its service-binding name are topology identity: the Shell binds each provider
+// by Worker name, and every consumer (the Shell's discovery, Commerce's routed fetch) calls the
+// topology binding name. An override would bind a Worker CI never deploys, or a name no caller uses.
+const WORKER_IDENTITY_OVERRIDE_PATTERN = /^VERTICAL_[A-Z0-9_]+_WORKER_(?:NAME|BINDING)$/u;
 const RESERVED_CLOUDFLARE_BUILD_VARIABLES: ReadonlySet<string> = new Set([
   'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
   'ULTRAMODERN_SOURCE_REVISION',
@@ -731,9 +733,9 @@ const validateCloudflareBuildEnvironment = (buildEnvironment: Readonly<Record<st
         `${CLOUDFLARE_PLACEMENT_PATH} buildEnvironment key "${key}" must be a MODERN_, ULTRAMODERN_ or VERTICAL_ build variable`,
       );
     }
-    if (WORKER_NAME_OVERRIDE_PATTERN.test(key)) {
+    if (WORKER_IDENTITY_OVERRIDE_PATTERN.test(key)) {
       fail(
-        `${CLOUDFLARE_PLACEMENT_PATH} buildEnvironment must not set "${key}"; a Worker's name is its topology cloudflare.workerName`,
+        `${CLOUDFLARE_PLACEMENT_PATH} buildEnvironment must not set "${key}"; a Worker's name and service binding are its topology cloudflare.workerName and workerDispatch.serviceBinding`,
       );
     }
     if (RESERVED_CLOUDFLARE_BUILD_VARIABLES.has(key)) {
