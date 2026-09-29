@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SiteHeader } from "@/components/site-header";
 import { CartProvider } from "@/features/cart/cart-provider";
@@ -12,6 +12,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 describe("SiteHeader search", () => {
+  afterEach(cleanup);
+
   beforeEach(() => {
     push.mockReset();
   });
@@ -33,5 +35,16 @@ describe("SiteHeader search", () => {
 
     expect(push).toHaveBeenCalledOnce();
     expect(push).toHaveBeenCalledWith("/vyhledavani?q=M8%20A4");
+  });
+
+  it("exposes account and favorites as accessible icon links", () => {
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+
+    expect(screen.getByRole("link", { name: "Můj účet" }).getAttribute("href")).toBe("/muj-ucet");
+    expect(screen.getByRole("link", { name: "Oblíbené" }).getAttribute("href")).toBe("/oblibene");
   });
 });

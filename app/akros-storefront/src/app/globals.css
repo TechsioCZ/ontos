@@ -30,7 +30,7 @@
   --akros-radius-md: 8px;
   --akros-hero-aspect-ratio: 25 / 8;
   --akros-header-height: 160px;
-  --akros-header-search-width: 660px;
+  --akros-header-search-width: var(--dimension-container-xl);
 }
 
 * {
@@ -110,6 +110,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--dimension-32);
   padding-block: var(--dimension-24);
 }
 
@@ -121,7 +122,7 @@ body {
 
 .akros-brand__logo {
   display: block;
-  width: 190px;
+  width: var(--dimension-container-2xs);
   height: auto;
 }
 
@@ -138,8 +139,10 @@ body {
 .akros-header__actions {
   display: flex;
   min-width: 0;
+  flex: 1 1 auto;
   align-items: center;
-  gap: var(--dimension-12);
+  justify-content: space-between;
+  gap: var(--dimension-24);
   white-space: nowrap;
 }
 
