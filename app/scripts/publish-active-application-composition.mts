@@ -30,6 +30,8 @@ const MF_MANIFEST_PATH = '/mf-manifest.json';
 const BUILD_PROOF_ENVIRONMENT = 'build-proof';
 const CONSUMER_READINESS_TIMEOUT = Duration.minutes(5);
 const CONSUMER_READINESS_POLL = Duration.seconds(5);
+const PUBLICATION_READBACK_POLL = Duration.seconds(3);
+const PUBLICATION_READBACK_TIMEOUT = Duration.minutes(2);
 const CONSUMER_PREFLIGHT = `test -n "$${ACTIVE_APPLICATION_COMPOSITION_POLICY.projectVariable}"`;
 
 /** One deployed unit could not be observed; recovery keys on the unit's app ID. */
@@ -218,11 +220,20 @@ const publishOnce = Effect.fn('ActiveApplicationComposition.publishOnce')(functi
   const existing = (yield* api.projectEnvs(projectId)).find((env) => env.key === key);
   yield* assertNoConflictingPublication(Option.fromNullishOr(existing?.content), snapshot);
   yield* api.upsertProjectEnv(projectId, existing, key, encoded);
-  const published = (yield* api.projectEnvs(projectId)).find((env) => env.key === key);
-  if (published?.content !== encoded) {
-    return yield* new ZeropsApiError({ message: `${key} does not hold the value that was just published` });
-  }
-  yield* decodeActiveApplicationCompositionSnapshot(published.content);
+  // Project variables are listed through Zerops search, which reflects a finished write only eventually.
+  const published = yield* api.projectEnvs(projectId).pipe(
+    Effect.map((envs) => envs.find((env) => env.key === key)?.content),
+    Effect.repeat({
+      schedule: Schedule.spaced(PUBLICATION_READBACK_POLL),
+      until: (content) => content === encoded,
+    }),
+    Effect.timeoutOrElse({
+      duration: PUBLICATION_READBACK_TIMEOUT,
+      orElse: () =>
+        Effect.fail(new ZeropsApiError({ message: `${key} does not hold the value that was just published` })),
+    }),
+  );
+  yield* decodeActiveApplicationCompositionSnapshot(published ?? '');
   yield* Effect.logInfo('Published the active Application Composition', {
     modules: snapshot.composition.modules.map(({ federation, moduleId }) => `${moduleId} (${federation.execution})`),
     revision: snapshot.composition.revision,
