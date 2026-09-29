@@ -51,14 +51,16 @@ describe("MiniCart", () => {
       </CartProvider>,
     );
 
-    const trigger = await screen.findByRole("button", { name: /Košík, 1 položka/ });
+    const trigger = await screen.findByRole("link", { name: /Košík, 1 položka/ });
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(trigger.getAttribute("href")).toBe("/kosik");
 
-    await user.click(trigger);
+    await user.hover(trigger);
 
     expect(await screen.findByText("Nerezový řetěz")).not.toBeNull();
     expect(screen.getByText("A4 · 4 mm")).not.toBeNull();
     expect(screen.getByText("2 m")).not.toBeNull();
+    expect(document.activeElement).toBe(document.body);
     expect(screen.getByRole("link", { name: /Nerezový řetěz/ }).getAttribute("href")).toBe(
       "/kosik",
     );
@@ -78,10 +80,52 @@ describe("MiniCart", () => {
       </CartProvider>,
     );
 
-    const trigger = await screen.findByRole("button", { name: /Košík, 0 položek/ });
-    await user.click(trigger);
+    const trigger = await screen.findByRole("link", { name: /Košík, 0 položek/ });
+    await user.hover(trigger);
 
     expect(await screen.findByText("Košík je zatím prázdný.")).not.toBeNull();
     expect(screen.getByText("Přejít do košíku")).not.toBeNull();
+  });
+
+  it("keeps the preview open when moving into it and closes after leaving", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <MiniCart />
+      </CartProvider>,
+    );
+
+    const trigger = await screen.findByRole("link", { name: /Košík, 0 položek/ });
+    await user.hover(trigger);
+    const preview = await screen.findByRole("dialog");
+    await user.hover(preview);
+    // Crossing into the portalled panel must cancel the trigger's pending close.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(screen.queryByRole("dialog")).not.toBeNull();
+    await user.unhover(preview);
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("supports keyboard preview, escape, and tabbing away", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <MiniCart />
+        <button type="button">Outside</button>
+      </CartProvider>,
+    );
+
+    const trigger = await screen.findByRole("link", { name: /Košík, 0 položek/ });
+    await user.tab();
+    expect(document.activeElement).toBe(trigger);
+    expect(await screen.findByRole("dialog")).not.toBeNull();
+    await user.tab();
+    expect(document.activeElement?.textContent).toContain("Přejít do košíku");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+    await user.tab();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Outside" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });

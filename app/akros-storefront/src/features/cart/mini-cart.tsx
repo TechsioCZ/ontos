@@ -1,8 +1,10 @@
 "use client";
 
 import NextLink from "next/link";
+import { useEffect, useId, useRef, useState } from "react";
 import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { Link } from "@techsio/ui-kit/atoms/link";
+import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Popover } from "@techsio/ui-kit/molecules/popover";
 
 import { useCart } from "./cart-provider";
@@ -25,6 +27,11 @@ const getItemCountLabel = (count: number) => {
 };
 
 export function MiniCart() {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLAnchorElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { cart, itemCount, ready } = useCart();
   const subtotal = getCartSubtotal(cart);
   const itemCountLabel = getItemCountLabel(itemCount);
@@ -32,39 +39,127 @@ export function MiniCart() {
     ? `${cs.header.cart}, ${itemCountLabel}, ${formatPrice(subtotal)}`
     : `${cs.header.cart}, ${cs.cart.loading}`;
 
+  function cancelClose() {
+    if (closeTimer.current !== null) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  }
+
+  function closePreview() {
+    cancelClose();
+    setOpen(false);
+  }
+
+  function openPreview() {
+    cancelClose();
+    setOpen(true);
+  }
+
+  function scheduleClose() {
+    cancelClose();
+    // Allow crossing the gap between the link and its portalled preview.
+    closeTimer.current = setTimeout(() => {
+      closeTimer.current = null;
+      if (
+        !triggerRef.current?.contains(document.activeElement) &&
+        !contentRef.current?.contains(document.activeElement)
+      ) {
+        setOpen(false);
+      }
+    }, 200);
+  }
+
+  useEffect(
+    () => () => {
+      if (closeTimer.current !== null) clearTimeout(closeTimer.current);
+    },
+    [],
+  );
+
   return (
     <Popover
+      autoFocus={false}
       border={false}
       closeOnEscape
       closeOnInteractOutside
       gutter={17}
+      ids={{ trigger: `${id}-trigger`, content: `${id}-content` }}
+      onEscapeKeyDown={() => {
+        if (contentRef.current?.contains(document.activeElement)) triggerRef.current?.focus();
+      }}
+      onOpenChange={({ open: nextOpen }) => {
+        cancelClose();
+        setOpen(nextOpen);
+      }}
+      open={open}
       placement="bottom-end"
+      restoreFocus={false}
       shadow={false}
     >
-      <Popover.Trigger
-        aria-label={triggerLabel}
-        className="inline-flex h-12 w-auto shrink-0 cursor-pointer items-center justify-center gap-3 rounded-sm border-0 bg-(--color-primary) px-3 py-2 text-(--color-fg-primary) hover:bg-(--color-primary-hover) data-[state=open]:bg-(--color-primary-hover) max-lg:w-12 max-lg:px-2"
-        size="current"
-        theme="unstyled"
-      >
-        <strong className="min-w-0 truncate text-sm leading-tight max-lg:hidden">
-          {formatPrice(subtotal)}
-        </strong>
-        <span className="relative inline-flex shrink-0 items-center justify-center">
-          <Icon icon="token-icon-cart-button" size="xl" />
-          <span
-            className="absolute -top-1 -right-1 grid h-5 min-w-5 place-items-center rounded-full bg-(--color-fg-primary) px-1 text-xs leading-none font-bold text-(--color-base-light)"
-            aria-live="polite"
-          >
-            {itemCount}
+      <Popover.Anchor className="inline-flex shrink-0">
+        <LinkButton
+          as={NextLink}
+          aria-controls={open ? `${id}-content` : undefined}
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          aria-label={triggerLabel}
+          className="inline-flex h-12 w-auto shrink-0 cursor-pointer items-center justify-center gap-3 rounded-sm border-0 bg-(--color-primary) px-3 py-2 text-(--color-fg-primary) hover:bg-(--color-primary-hover) data-[state=open]:bg-(--color-primary-hover) max-lg:w-12 max-lg:px-2"
+          data-state={open ? "open" : "closed"}
+          href="/kosik"
+          id={`${id}-trigger`}
+          onBlur={(event) => {
+            if (!contentRef.current?.contains(event.relatedTarget)) closePreview();
+          }}
+          onClick={closePreview}
+          onFocus={(event) => {
+            if (event.currentTarget.matches(":focus-visible")) openPreview();
+          }}
+          onPointerEnter={(event) => {
+            if (event.pointerType !== "touch") openPreview();
+          }}
+          onPointerLeave={scheduleClose}
+          ref={triggerRef}
+          size="current"
+          theme="unstyled"
+        >
+          <strong className="min-w-0 truncate text-sm leading-tight max-lg:hidden">
+            {formatPrice(subtotal)}
+          </strong>
+          <span className="relative inline-flex shrink-0 items-center justify-center">
+            <Icon icon="token-icon-cart-button" size="xl" />
+            <span
+              className="absolute -top-1 -right-1 grid h-5 min-w-5 place-items-center rounded-full bg-(--color-fg-primary) px-1 text-xs leading-none font-bold text-(--color-base-light)"
+              aria-live="polite"
+            >
+              {itemCount}
+            </span>
           </span>
-        </span>
-      </Popover.Trigger>
+        </LinkButton>
+      </Popover.Anchor>
 
       <Popover.Positioner className="z-70 max-w-[calc(100vw-var(--dimension-32))]">
-        <Popover.Content className="max-h-[min(70vh,540px)] w-[min(var(--dimension-container-3xl),calc(100vw-var(--dimension-32)))] overflow-y-auto rounded-sm bg-(--color-primary) text-(--color-fg-primary) shadow-md [--padding-popover-md:0px] max-md:w-[calc(100vw-var(--dimension-32))]">
+        <Popover.Content
+          className="max-h-[min(70vh,540px)] w-[min(var(--dimension-container-3xl),calc(100vw-var(--dimension-32)))] overflow-y-auto rounded-sm bg-(--color-primary) text-(--color-fg-primary) shadow-md [--padding-popover-md:0px] max-md:w-[calc(100vw-var(--dimension-32))]"
+          onBlur={(event) => {
+            if (
+              !event.currentTarget.contains(event.relatedTarget) &&
+              !triggerRef.current?.contains(event.relatedTarget)
+            )
+              closePreview();
+          }}
+          onFocus={cancelClose}
+          onPointerEnter={cancelClose}
+          onPointerLeave={scheduleClose}
+          ref={contentRef}
+        >
           <Popover.Title className="sr-only">{cs.cart.miniCart.title}</Popover.Title>
-          <Link as={NextLink} className="block text-inherit no-underline" href="/kosik">
+          <Link
+            as={NextLink}
+            className="block text-inherit no-underline"
+            href="/kosik"
+            onClick={closePreview}
+          >
             {!ready ? (
               <span className="grid min-h-28 place-content-center gap-2 p-6 text-center">
                 {cs.cart.loading}
