@@ -64,6 +64,9 @@ const ZeropsYamlSchema = Schema.Struct({
 const StageVariablesSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const SetupListJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
 
+const otherDeployTarget = (deployTarget: DeployTarget): DeployTarget =>
+  deployTarget === 'zerops' ? 'cloudflare' : 'zerops';
+
 const offTargetWorkerSetupNames = (
   topology: { readonly verticals: readonly { readonly id: string }[] },
   deployTarget: DeployTarget,
@@ -392,6 +395,11 @@ const stopServiceCommand = Command.make('stop-service', { setup: Flag.String('se
   }),
 );
 
+const definedWorkerSetups = (zeropsYamlText: string, workerSetupNames: ReadonlySet<string>) =>
+  Schema.decodeUnknownEffect(ZeropsYamlSchema)(parseYaml(zeropsYamlText)).pipe(
+    Effect.map(({ zerops }) => zerops.filter(({ setup }) => workerSetupNames.has(setup)).map(({ setup }) => setup)),
+  );
+
 /**
  * The other deploy target's Outbox Worker setups this revision defines: the host on Zerops, the dedicated
  * owner workers on Cloudflare.
@@ -400,16 +408,20 @@ export const offTargetWorkerSetups = (
   zeropsYamlText: string,
   topology: { readonly verticals: readonly { readonly id: string }[] },
   deployTarget: DeployTarget,
-) => {
-  const offTarget = offTargetWorkerSetupNames(topology, deployTarget);
-  return Schema.decodeUnknownEffect(ZeropsYamlSchema)(parseYaml(zeropsYamlText)).pipe(
-    Effect.map(({ zerops }) => zerops.filter(({ setup }) => offTarget.has(setup)).map(({ setup }) => setup)),
-  );
-};
+) => definedWorkerSetups(zeropsYamlText, offTargetWorkerSetupNames(topology, deployTarget));
+
+/** The deploy target's own Outbox Worker setups this revision defines. */
+export const onTargetWorkerSetups = (
+  zeropsYamlText: string,
+  topology: { readonly verticals: readonly { readonly id: string }[] },
+  deployTarget: DeployTarget,
+) => definedWorkerSetups(zeropsYamlText, offTargetWorkerSetupNames(topology, otherDeployTarget(deployTarget)));
 
 /**
- * Whether any of the other deploy target's Outbox Workers still runs. A `DEPLOY_TARGET` switch changes no
- * source, so the plan cannot see it; this drift makes the plan reconcile the workers of both targets.
+ * Whether the Outbox Workers still reflect another deploy target. A `DEPLOY_TARGET` switch changes no
+ * source, so the plan cannot see it. The switch shows as the other target's workers still running, or as
+ * one of this target's workers not running (never deployed, or stopped by an earlier switch). Either
+ * way the plan reconciles the workers of both targets.
  */
 const workerTargetDriftCommand = Command.make('worker-target-drift', {}, () =>
   Effect.gen(function* workerTargetDrift() {
@@ -418,20 +430,30 @@ const workerTargetDriftCommand = Command.make('worker-target-drift', {}, () =>
       concurrency: 2,
     });
     const api = yield* ZeropsPublicApi;
-    const running = yield* Effect.filter(
-      yield* offTargetWorkerSetups(zeropsYaml, topology, deployTarget),
-      Effect.fnUntraced(function* isRunning(setup) {
-        const serviceId = yield* provisionedStageServiceId(setup);
-        return serviceId !== undefined && (yield* api.serviceStack(serviceId)).status === 'ACTIVE';
-      }),
-      { concurrency: 4 },
-    );
-    yield* Effect.logInfo(
-      running.length === 0
-        ? `No ${deployTarget === 'zerops' ? 'cloudflare' : 'zerops'} deploy target Outbox Worker runs`
-        : `Other deploy target Outbox Workers still run: ${running.join(', ')}`,
-    );
-    return yield* writeGitHubOutput(`drift=${running.length > 0}`);
+    const isRunning = Effect.fnUntraced(function* isRunning(setup: string) {
+      const serviceId = yield* provisionedStageServiceId(setup);
+      return serviceId !== undefined && (yield* api.serviceStack(serviceId)).status === 'ACTIVE';
+    });
+    const [offTarget, onTarget] = yield* Effect.all([
+      offTargetWorkerSetups(zeropsYaml, topology, deployTarget),
+      onTargetWorkerSetups(zeropsYaml, topology, deployTarget),
+    ]);
+    const running = yield* Effect.filter(offTarget, isRunning, { concurrency: 4 });
+    const notRunning = yield* Effect.filter(onTarget, (setup) => Effect.map(isRunning(setup), (up) => !up), {
+      concurrency: 4,
+    });
+    if (running.length > 0) {
+      yield* Effect.logInfo(`Other deploy target Outbox Workers still run: ${running.join(', ')}`);
+    }
+    if (notRunning.length > 0) {
+      yield* Effect.logInfo(`This deploy target's Outbox Workers do not run: ${notRunning.join(', ')}`);
+    }
+    const drift = running.length > 0 || notRunning.length > 0;
+    if (!drift) {
+      yield* Effect.logInfo(`Only the ${deployTarget} deploy target's Outbox Workers run`);
+    }
+    yield* writeGitHubOutput(`other_target_running=${running.length > 0}`);
+    return yield* writeGitHubOutput(`drift=${drift}`);
   }),
 );
 

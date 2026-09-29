@@ -489,8 +489,9 @@ jobs:
         run: mise exec -- pnpm deployment-base:resolve --environment stage
 
       # A DEPLOY_TARGET switch changes no source, so the diff cannot show it. The other target's workers
-      # still running is that switch, and the plan then deploys every worker of this target and stops those.
-      - name: Detect Outbox Workers left running by the other deploy target
+      # still running, or this target's workers not running, is that switch, and the plan then deploys every
+      # worker of this target and stops the other target's.
+      - name: Detect Outbox Workers that do not match the deploy target
         id: worker-drift
         working-directory: app
         env:

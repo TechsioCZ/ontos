@@ -69,7 +69,7 @@ jobs:
         run: mise exec -- pnpm --silent active-composition:publish worker-target-drift
 
       - name: Leave the pending deploy target switch to the stage deploy
-        if: steps.worker-drift.outputs.drift == 'true'
+        if: steps.worker-drift.outputs.other_target_running == 'true'
         env:
           TARGET: ${{ env.DEPLOY_TARGET }}
         run: >-
@@ -78,17 +78,17 @@ jobs:
 
       # The publisher and topology of the deployed revision describe what stage actually runs.
       - name: Check out the deployed revision
-        if: steps.worker-drift.outputs.drift != 'true'
+        if: steps.worker-drift.outputs.other_target_running != 'true'
         env:
           DEPLOYED_SHA: ${{ steps.base.outputs.base }}
         run: git checkout --detach "$DEPLOYED_SHA"
 
       - name: Install the deployed revision's app workspace
-        if: steps.worker-drift.outputs.drift != 'true'
+        if: steps.worker-drift.outputs.other_target_running != 'true'
         uses: ./.github/actions/install-app
 
       - name: Re-observe live services and re-publish the active Application Composition
-        if: steps.worker-drift.outputs.drift != 'true'
+        if: steps.worker-drift.outputs.other_target_running != 'true'
         working-directory: app
         env:
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}

@@ -126,10 +126,10 @@ it("stops the other deploy target's Outbox Workers after this target's workers d
   expect(stop?.run).toContain('active-composition:publish stop-service --setup "$setup"');
   // A target switch changes no source, so running workers of the other target make the plan reconcile.
   const drift = workflow.jobs['deploy-stage'].steps.find(
-    (step) => step.name === 'Detect Outbox Workers left running by the other deploy target',
+    (step) => step.name === 'Detect Outbox Workers that do not match the deploy target',
   );
   expect(drift?.run).toContain('active-composition:publish worker-target-drift');
-  expect(steps.indexOf('Detect Outbox Workers left running by the other deploy target')).toBeLessThan(
+  expect(steps.indexOf('Detect Outbox Workers that do not match the deploy target')).toBeLessThan(
     steps.indexOf('Generate topology-driven deployment impact plan'),
   );
   const plan = workflow.jobs['deploy-stage'].steps.find(

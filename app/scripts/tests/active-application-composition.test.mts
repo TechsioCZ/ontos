@@ -25,6 +25,7 @@ import type {
 import {
   compositionConsumerSetups,
   offTargetWorkerSetups,
+  onTargetWorkerSetups,
   serviceIdVariable,
 } from '../publish-active-application-composition.mts';
 import { shellRuntimeContract } from '../generate-ontos-shell-runtime-contract.mts';
@@ -347,6 +348,11 @@ it.effect('restarts exactly the deploy target services whose start preflight req
       CUSTOMER_CONTEXT_WORKER,
       'price-group-catalog-worker',
     ]);
+    // A switch also shows as this target's workers not running yet.
+    expect(yield* onTargetWorkerSetups(zeropsYaml, topology, 'cloudflare')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+    expect(yield* onTargetWorkerSetups(zeropsYaml, topology, 'zerops')).toEqual(
+      yield* offTargetWorkerSetups(zeropsYaml, topology, 'cloudflare'),
+    );
     expect(serviceIdVariable(OUTBOX_WORKER_HOST_SETUP)).toBe('ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID');
     expect(serviceIdVariable(CUSTOMER_CONTEXT_WORKER)).toBe('ZEROPS_COMMERCE_CUSTOMER_CONTEXT_WORKER_SERVICE_ID');
     expect(serviceIdVariable('shellsuperapp')).toBe('ZEROPS_SHELL_SERVICE_ID');
