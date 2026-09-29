@@ -764,7 +764,9 @@ body {
   --color-table-bg: transparent;
   --color-table-header-bg: var(--akros-variant-table-header-bg);
   --color-table-header-fg: var(--akros-variant-table-header-fg);
+  --padding-button-x-sm: var(--dimension-6);
   --radius-data-table: 0;
+  --text-button-sm: var(--akros-variant-table-button-font-size);
 
   width: 100%;
   min-width: 0;
@@ -858,17 +860,17 @@ body {
 
 .akros-variant-table__purchase-cell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
   align-items: center;
 }
 
 .akros-variant-table__order {
   display: grid;
   min-width: 0;
-  grid-template-columns: 106px minmax(88px, 1fr);
-  gap: var(--dimension-8);
+  grid-template-columns: 96px minmax(64px, 1fr);
+  gap: var(--dimension-6);
   align-items: center;
-  padding-inline: var(--dimension-8);
+  padding-inline: var(--dimension-6);
 }
 
 .akros-variant-table__order--minimum {
@@ -882,18 +884,30 @@ body {
   --color-button-fg-secondary: var(--color-base-light);
 
   border-inline-start: 1px solid var(--akros-variant-table-cell-separator-color);
+  grid-template-columns: 96px minmax(132px, 1fr);
   padding-inline-end: 0;
 }
 
 .akros-variant-table__quantity-control {
   display: grid;
-  grid-template-columns: var(--dimension-32) minmax(38px, 1fr) var(--dimension-32);
+  grid-template-columns: var(--dimension-28) minmax(36px, 1fr) var(--dimension-28);
+  align-items: center;
 }
 
 .akros-variant-table__quantity-control input {
+  height: 100%;
   min-width: 0;
-  padding-inline: var(--dimension-4);
+  padding: 0 var(--dimension-4);
+  line-height: 1;
   text-align: center;
+}
+
+.akros-variant-table__quantity-control > button {
+  display: inline-flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 
 .akros-variant-table__buy-button {
@@ -903,12 +917,16 @@ body {
 }
 
 .akros-variant-table__buy-button > span {
-  display: grid;
-  line-height: 1.05;
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: var(--dimension-2);
+  line-height: 1;
 }
 
 .akros-variant-table__buy-button small {
   font-size: 8px;
+  line-height: inherit;
 }
 
 .akros-variant-table__no-package {
