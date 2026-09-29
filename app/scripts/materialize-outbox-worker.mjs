@@ -2,7 +2,7 @@ import { isBuiltin } from 'node:module';
 
 import { NodeServices } from '@effect/platform-node';
 import { Config, Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
-import { build } from 'esbuild';
+import { build, transform } from 'esbuild';
 
 import { outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 
@@ -34,19 +34,23 @@ const WORKER_ENTRY = 'worker.mjs';
 const CORE_WORKER_ENTRYPOINT = 'packages/core-runtime/src/outbox/worker-entrypoint.ts';
 
 /**
- * Value names a module re-exports from `@app/core-runtime` or its `outbox/worker` subpath (both resolve to the
- * focused worker entrypoint), skipping `export type` blocks and `type` specifiers.
- * @param {string} source Module source.
+ * Value names compiled module code takes from `@app/core-runtime` or its `outbox/worker` subpath (both resolve
+ * to the focused worker entrypoint). Callers pass esbuild output: it has no comments or type-only names, keeps
+ * only imports used as values, and turns a re-export into an import plus a local export.
+ * @param {string} source Compiled module code.
  * @returns {string[]} Imported (pre-alias) names.
  */
 export const coreRuntimeValueReExports = (source) =>
-  [...source.matchAll(/export\s+\{(?<names>[^}]*)\}\s+from\s+'@app\/core-runtime(?:\/outbox\/worker)?'/gu)].flatMap(
-    (match) =>
-      (match.groups?.names ?? '')
-        .split(',')
-        .map((specifier) => specifier.trim())
-        .filter((specifier) => specifier !== '' && !specifier.startsWith('type '))
-        .map((specifier) => specifier.split(/\s+as\s+/u)[0] ?? specifier),
+  [
+    ...source.matchAll(
+      /(?:import|export)\s+\{(?<names>[^}]*)\}\s+from\s+(?<quote>['"])@app\/core-runtime(?:\/outbox\/worker)?\k<quote>/gu,
+    ),
+  ].flatMap((match) =>
+    (match.groups?.names ?? '')
+      .split(',')
+      .map((specifier) => specifier.trim())
+      .filter((specifier) => specifier !== '' && !specifier.startsWith('type '))
+      .map((specifier) => specifier.split(/\s+as\s+/u)[0] ?? specifier),
   );
 
 /**
@@ -271,7 +275,12 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     for (const input of Object.keys(metafile.inputs)) {
       if (input.startsWith('verticals/') && /\.(?:ts|tsx|mts)$/u.test(input)) {
         const source = yield* fs.readFileString(path.join(workspaceRoot, input));
-        coreReExports.push(...coreRuntimeValueReExports(source).map((name) => ({ input, name })));
+        // Compile first so comments and type-only exports are gone before the re-exports are read.
+        const compiled = yield* Effect.tryPromise({
+          catch: () => failure(`Unable to read the exports of ${input}`),
+          try: async () => await transform(source, { format: 'esm', loader: input.endsWith('x') ? 'tsx' : 'ts' }),
+        });
+        coreReExports.push(...coreRuntimeValueReExports(compiled.code).map((name) => ({ input, name })));
       }
     }
     const entrypointExports =
@@ -280,7 +289,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
         : focusedEntrypointValueExports(yield* fs.readFileString(path.join(workspaceRoot, CORE_WORKER_ENTRYPOINT)));
     const missingReExports = coreReExports
       .filter(({ name }) => !entrypointExports.has(name))
-      .map(({ input, name }) => `${input} re-exports ${name}`);
+      .map(({ input, name }) => `${input} uses ${name}`);
     if (missingReExports.length > 0) {
       return yield* Effect.fail(
         failure(`The Outbox Worker Core entrypoint does not export: ${missingReExports.join('; ')}`),
