@@ -267,6 +267,8 @@ export default defineConfig(
             localeDetection: {
               fallbackLanguage: 'en',
               ignoreRedirectRoutes: [
+                // The Shell runtime contract the Application Composition publisher observes.
+                '/.well-known',
                 '/@mf-types',
                 '/assets',
                 '/bundles',

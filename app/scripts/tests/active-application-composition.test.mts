@@ -356,3 +356,9 @@ it('reads quoted Zerops env-file values', () => {
   expect(environment.get('PLAIN')).toBe('value');
   expect(environment.has('invalid')).toBe(false);
 });
+
+it('serves the Shell runtime contract without a locale redirect', () => {
+  const shellConfig = readFileSync(new URL('../../apps/shell-super-app/modern.config.ts', import.meta.url), 'utf-8');
+  const ignored = /ignoreRedirectRoutes: \[(?<routes>[^\]]*)\]/u.exec(shellConfig)?.groups?.routes ?? '';
+  expect(ignored).toContain("'/.well-known'");
+});
