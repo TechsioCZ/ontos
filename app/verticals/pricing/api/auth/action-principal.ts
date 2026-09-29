@@ -2,13 +2,23 @@
 // @ontos-action-boundary-owner pricing
 // @ontos-action-boundary-audience pricing
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
+import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
-import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
-import { Effect } from 'effect';
+import { GatewayPrincipalVerifierLive, bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+import { Effect, Layer } from 'effect';
 import type { Redacted } from 'effect';
 
 const ACTION_GATEWAY_AUDIENCE = 'pricing' as const;
-export { GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
+/**
+ * What this runtime needs to accept a Shell-issued assertion for its audience: the gateway
+ * verification material, and the staff namespace registration Core revalidates the asserted
+ * principal's binding against (without it every governed route answers
+ * `operation_context_unavailable`).
+ */
+export const ActionPrincipalVerifierLive = Layer.mergeAll(
+  GatewayPrincipalVerifierLive,
+  staffAuthenticationNamespaceRegistryLayer([ACTION_GATEWAY_AUDIENCE]),
+);
 const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE);
 const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
   GatewayAssertionRedemptionService.pipe(

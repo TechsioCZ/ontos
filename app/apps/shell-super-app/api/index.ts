@@ -102,7 +102,7 @@ import { ApiKeyService, ApiKeyServiceLive } from './auth/api-key-service.ts';
 // legalEntityDetailRead uses the canonical @app/core-runtime import
 // @ontos-codesmith-core-read-server-imports:end
 import type { ApiKeyProviderError } from './auth/api-key-service.ts';
-import { STAFF_AUTHENTICATION_NAMESPACE_ID } from './auth/authentication-namespace.ts';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { StaffAuthenticationNamespaceRegistryLive } from './auth/authentication-namespace-registry.ts';
 import { AuthConfigLive } from './auth/config.ts';
 import {

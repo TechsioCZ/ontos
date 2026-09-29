@@ -5,7 +5,7 @@ import { admin } from 'better-auth/plugins/admin';
 import { and, eq } from 'drizzle-orm';
 import { Config, DateTime, Effect, Option, Redacted } from 'effect';
 
-import { STAFF_AUTHENTICATION_NAMESPACE_ID } from './authentication-namespace.ts';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { AuthDatabase } from './db/client.ts';
 import { account, session, user } from './db/schema.ts';
 import type { AuthDatabaseExecutor } from './db/types.ts';

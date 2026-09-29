@@ -3,7 +3,7 @@ import { AuthenticationNamespaceIdSchema } from '@app/core-runtime/auth/external
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../../api/auth/authentication-namespace.ts';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
 import { installedVerticalIds } from '../../api/verticals/installed-verticals.ts';
 

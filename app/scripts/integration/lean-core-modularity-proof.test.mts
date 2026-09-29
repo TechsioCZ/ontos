@@ -59,7 +59,7 @@ import {
   supportImpersonationRecovery,
   user,
 } from '../../apps/shell-super-app/api/auth/db/schema.ts';
-import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../../apps/shell-super-app/api/auth/authentication-namespace.ts';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import {
   makeSupportAuthProvider,
   makeSupportImpersonationService,

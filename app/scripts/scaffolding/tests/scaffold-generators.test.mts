@@ -36,6 +36,7 @@ import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src
 import { GatewayAssertionRedemptionService } from '../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
 import { defineSystemModuleEntrypoint } from '../../../packages/core-runtime/src/modules/module-entrypoint.ts';
 import { makeActionTestHarness } from '../../../packages/core-runtime/src/testing/actions.ts';
+import type { staffAuthenticationNamespaceRegistryLayer } from '../../../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import type { GatewayPrincipalVerifierLive } from '../../../packages/gateway-principal-verifier/src/server.ts';
 import {
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
@@ -203,8 +204,13 @@ interface GeneratedPrincipalEnvironment {
   readonly ONTOS_GATEWAY_PUBLIC_JWKS?: string;
 }
 
+type StaffAuthenticationNamespaceRegistryLayer = ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>;
+
 interface GeneratedPrincipalModule {
-  readonly ActionPrincipalVerifierLive: typeof GatewayPrincipalVerifierLive;
+  readonly ActionPrincipalVerifierLive: Layer.Layer<
+    Layer.Success<typeof GatewayPrincipalVerifierLive> | Layer.Success<StaffAuthenticationNamespaceRegistryLayer>,
+    Layer.Error<StaffAuthenticationNamespaceRegistryLayer>
+  >;
   readonly verifyActionPrincipal: (
     authorization: string | undefined,
     options: {
@@ -3033,7 +3039,7 @@ it.live(
             }),
           ),
         ).pipe(
-          Layer.provide(generatedModule.ActionPrincipalVerifierLive),
+          Layer.provide(Layer.orDie(generatedModule.ActionPrincipalVerifierLive)),
           Layer.provide(Layer.succeed(GatewayAssertionRedemptionService, testRedemption)),
           Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
           Layer.provide(harness.layer),

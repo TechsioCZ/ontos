@@ -25,7 +25,7 @@ import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
-import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../../api/auth/authentication-namespace.ts';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, session, user } from '../../api/auth/db/schema.ts';

@@ -65,7 +65,7 @@ import {
   CommerceEnrollmentCommitResolutionServiceLive,
   commerceEnrollmentCommitResolutionUnavailableLive,
 } from '../src/enrollment/commit-resolution/commit-resolution-service.ts';
-import { CommercePortalAuthenticationNamespaceRegistryLive } from './portal-auth/authentication-namespace-registry.ts';
+import { CommerceAuthenticationNamespaceRegistryLive } from './portal-auth/authentication-namespace-registry.ts';
 import { CommerceCoreIdentityClientLive } from './portal-auth/provider/core-identity-client.ts';
 import {
   CommerceCoreIdentityClientConfigLive,
@@ -916,7 +916,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     // and the admission path both read it there rather than from the process environment.
     Layer.provide(
       Layer.mergeAll(
-        CommercePortalAuthenticationNamespaceRegistryLive,
+        CommerceAuthenticationNamespaceRegistryLive,
         actionPrincipalVerifierLive,
         gatewayAssertionRedemption,
         gatewayVerification,

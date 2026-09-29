@@ -55,8 +55,9 @@ routes are unaffected.
 ## Authentication namespace registration
 
 The vertical registers its own authentication namespace, `ontos.commerce.portal.better-auth.v1`,
-for its own action-boundary audience `commerce-customer-context`
-(`api/portal-auth/authentication-namespace-registry.ts`). It needs no configuration, but it is a
+and the Shell's staff namespace, `ontos.staff.better-auth.v1` (staff sessions and API keys reach it
+through Shell-issued gateway assertions), for its own action-boundary audience
+`commerce-customer-context` (`api/portal-auth/authentication-namespace-registry.ts`). It needs no configuration, but it is a
 required deployment input of every governed route here: Core revalidates the namespace a presented
 session binding names before any authorization runs, and with no registry reachable every
 namespace-carrying gateway assertion is answered `503 operation_context_unavailable`. A deployment

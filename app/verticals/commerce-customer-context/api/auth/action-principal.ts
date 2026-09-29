@@ -8,6 +8,9 @@ import { Effect } from 'effect';
 import type { Redacted } from 'effect';
 
 const ACTION_GATEWAY_AUDIENCE = 'commerce-customer-context' as const;
+// The staff namespace registration the generated boundary merges in here is part of this vertical's
+// own registry (`CommerceAuthenticationNamespaceRegistryLive`, installed by the API runtime), since a
+// runtime has exactly one registry and this one also registers the Commerce portal namespace.
 export { GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
 
 const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE);

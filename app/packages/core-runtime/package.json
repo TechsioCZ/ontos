@@ -10,6 +10,7 @@
     "./auth/external-identity-admission": "./src/auth/external-identity/verifier.ts",
     "./auth/external-identity-contracts": "./src/auth/external-identity-contracts.ts",
     "./auth/gateway-assertion-redemption": "./src/auth/gateway-assertion-redemption.ts",
+    "./auth/staff-authentication-namespace": "./src/auth/staff-authentication-namespace.ts",
     "./auth/system-principal-context-provenance": "./src/auth/system-principal-context-provenance.ts",
     "./http/action-runner": "./src/http/http-instrumentation-seam.ts",
     "./http/governed-read": "./src/http/governed-read.ts",

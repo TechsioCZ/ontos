@@ -1,9 +1,10 @@
 import { AuthenticationNamespaceRegistry } from '@app/core-runtime/auth/external-identity-admission';
 import { AuthenticationNamespaceIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { Context, Effect, Layer, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { CommercePortalAuthenticationNamespaceRegistryLive } from '../../api/portal-auth/authentication-namespace-registry.ts';
+import { CommerceAuthenticationNamespaceRegistryLive } from '../../api/portal-auth/authentication-namespace-registry.ts';
 import { commerceCustomerContextApiContract } from '../../shared/api.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
 
@@ -17,7 +18,7 @@ import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-c
 const namespaceId = (value: string) => Schema.decodeSync(AuthenticationNamespaceIdSchema)(value);
 
 const registryFor = Effect.fnUntraced(function* registryFor() {
-  const context = yield* Layer.build(CommercePortalAuthenticationNamespaceRegistryLive);
+  const context = yield* Layer.build(CommerceAuthenticationNamespaceRegistryLive);
   return Context.get(context, AuthenticationNamespaceRegistry);
 });
 
@@ -39,11 +40,27 @@ it.effect('registers the Commerce portal namespace for this vertical’s own aud
   ),
 );
 
+it.effect('registers the staff namespace for this vertical’s own audience, so Shell-issued assertions revalidate', () =>
+  Effect.scoped(
+    Effect.gen(function* staffNamespace() {
+      const registry = yield* registryFor();
+      const found = yield* registry.lookup(STAFF_AUTHENTICATION_NAMESPACE_ID);
+      expect(Option.isSome(found)).toBe(true);
+      if (Option.isNone(found)) {
+        return;
+      }
+      expect(found.value.allowedAudiences).toStrictEqual([commerceCustomerContextApiContract.ownerId]);
+      expect(found.value.subjectTypes).toStrictEqual(['user', 'api_key']);
+      expect(found.value.requiresOperationAdmission).toBe(false);
+    }),
+  ),
+);
+
 it.effect('registers no other namespace', () =>
   Effect.scoped(
     Effect.gen(function* unregisteredNamespace() {
       const registry = yield* registryFor();
-      expect(Option.isNone(yield* registry.lookup(namespaceId('ontos.staff.better-auth.v1')))).toBe(true);
+      expect(Option.isNone(yield* registry.lookup(namespaceId('unregistered.customer.provider.v1')))).toBe(true);
     }),
   ),
 );

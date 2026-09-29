@@ -11,7 +11,7 @@ import { and, eq, or } from 'drizzle-orm';
 import { Config, ConfigProvider, Console, Effect, FileSystem, Layer, Path, Redacted, Schema } from 'effect';
 import { isSqlError } from 'effect/unstable/sql/SqlError';
 
-import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../apps/shell-super-app/api/auth/authentication-namespace.ts';
+import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import { AuthConfig } from '../apps/shell-super-app/api/auth/config.ts';
 import { AuthDatabase, AuthDatabaseLive } from '../apps/shell-super-app/api/auth/db/client.ts';
 import { account, user } from '../apps/shell-super-app/api/auth/db/schema.ts';

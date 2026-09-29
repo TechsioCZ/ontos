@@ -72,12 +72,13 @@ export const renderActionPrincipalServer = (
 // @ontos-action-boundary-owner ${vertical.appId}
 // @ontos-action-boundary-audience ${vertical.appId}
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
+import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
-import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+import { GatewayPrincipalVerifierLive, bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import type {
   GatewayPrincipalVerificationWithRedemptionOptions,
 } from '@app/gateway-principal-verifier/server';
-import { Effect, Redacted } from 'effect';
+import { Effect, Layer, Redacted } from 'effect';
 
 export {
   ACTION_PRINCIPAL_BEARER_CHALLENGE,
@@ -99,10 +100,17 @@ export type {
 } from '@app/gateway-principal-verifier/server';
 
 export const ACTION_GATEWAY_AUDIENCE = '${vertical.appId}' as const;
-export {
-  GatewayPrincipalVerifierConfiguration as ActionPrincipalVerifier,
-  GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive,
-} from '@app/gateway-principal-verifier/server';
+export { GatewayPrincipalVerifierConfiguration as ActionPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+/**
+ * What this runtime needs to accept a Shell-issued assertion for its audience: the gateway
+ * verification material, and the staff namespace registration Core revalidates the asserted
+ * principal's binding against (without it every governed route answers
+ * \`operation_context_unavailable\`).
+ */
+export const ActionPrincipalVerifierLive = Layer.mergeAll(
+  GatewayPrincipalVerifierLive,
+  staffAuthenticationNamespaceRegistryLayer([ACTION_GATEWAY_AUDIENCE]),
+);
 export type ActionPrincipalVerificationOptions =
   GatewayPrincipalVerificationWithRedemptionOptions;
 
