@@ -8,7 +8,7 @@ import { ZeropsPublicApi } from '../zerops-public-api.mts';
 import { CloudflareApi } from './cloudflare-api.mts';
 import { runCommand } from './ops-shell.mts';
 import { StageOperationError } from './stage-operation-error.mts';
-import { listZeropsProjectUserKeys, listZeropsServices, perform, readZeropsValue } from './stage-operations.mts';
+import { listZeropsServices, perform } from './stage-operations.mts';
 
 /**
  * TLS material for the stage SpiceDB service, kept as sensitive secrets on the Zerops `spicedb`
@@ -129,8 +129,6 @@ const gatewayExpectation = (target: SpicedbTlsTarget): PairExpectation => ({
 // ---------------------------------------------------------------------------------------------
 // Reading the stored pairs
 
-const projectKey = (key: string) => `${SPICEDB_SERVICE_HOSTNAME}_${key}`;
-
 const AbsentPair = Schema.TaggedStruct('Absent', {});
 const PartialPair = Schema.TaggedStruct('Partial', { present: Schema.String });
 const StoredPairMaterial = Schema.TaggedStruct('Stored', { material: TlsMaterialSchema });
@@ -142,20 +140,21 @@ interface PairEntry {
   readonly stored: StoredPair;
 }
 
-const readStoredPair = (projectId: string, keys: ReadonlySet<string>, pair: SpicedbTlsPair) =>
-  Effect.gen(function* readStoredPairEffect() {
-    const hasCertificate = keys.has(projectKey(pair.certificateKey));
-    const hasPrivateKey = keys.has(projectKey(pair.privateKeyKey));
-    if (!hasCertificate && !hasPrivateKey) {
-      return AbsentPair.make({});
-    }
-    if (!hasCertificate || !hasPrivateKey) {
-      return PartialPair.make({ present: hasCertificate ? pair.certificateKey : pair.privateKeyKey });
-    }
-    const certificate = yield* readZeropsValue(projectId, projectKey(pair.certificateKey));
-    const privateKey = yield* readZeropsValue(projectId, projectKey(pair.privateKeyKey));
-    return StoredPairMaterial.make({ material: { certificate: Redacted.value(certificate), privateKey } });
-  });
+/**
+ * Reads one pair from the `spicedb` service secrets. Their values come from the Zerops API: `zcli project env`
+ * prints sensitive secrets as `REDACTED`, which would read as an invalid certificate.
+ */
+const readStoredPair = (secrets: ReadonlyMap<string, Redacted.Redacted>, pair: SpicedbTlsPair): StoredPair => {
+  const certificate = secrets.get(pair.certificateKey);
+  const privateKey = secrets.get(pair.privateKeyKey);
+  if (certificate === undefined && privateKey === undefined) {
+    return AbsentPair.make({});
+  }
+  if (certificate === undefined || privateKey === undefined) {
+    return PartialPair.make({ present: certificate === undefined ? pair.privateKeyKey : pair.certificateKey });
+  }
+  return StoredPairMaterial.make({ material: { certificate: Redacted.value(certificate), privateKey } });
+};
 
 const pairLabel = (pair: SpicedbTlsPair) =>
   `the ${SPICEDB_SERVICE_HOSTNAME} ${pair.label} TLS secrets ${pair.certificateKey} and ${pair.privateKeyKey}`;
@@ -176,18 +175,33 @@ const storedPairProblem = ({ expectation, pair, stored }: PairEntry, now: DateTi
     }),
   );
 
+const spicedbServiceId = (projectId: string) =>
+  listZeropsServices(projectId).pipe(
+    Effect.flatMap((services) => {
+      const service = services.find(({ hostname }) => hostname === SPICEDB_SERVICE_HOSTNAME);
+      return service === undefined
+        ? Effect.fail(
+            new StageOperationError({
+              message: `Zerops project ${projectId} has no ${SPICEDB_SERVICE_HOSTNAME} service`,
+            }),
+          )
+        : Effect.succeed(service.id);
+    }),
+  );
+
 const readStoredPairs = (target: SpicedbTlsTarget) =>
   Effect.gen(function* readStoredPairsEffect() {
-    const keys = new Set(yield* listZeropsProjectUserKeys(target.projectId));
+    const api = yield* ZeropsPublicApi;
+    const secrets = yield* api.serviceSecrets(yield* spicedbServiceId(target.projectId));
     const grpc: PairEntry = {
       expectation: grpcExpectation,
       pair: SPICEDB_GRPC_TLS,
-      stored: yield* readStoredPair(target.projectId, keys, SPICEDB_GRPC_TLS),
+      stored: readStoredPair(secrets, SPICEDB_GRPC_TLS),
     };
     const gateway: PairEntry = {
       expectation: gatewayExpectation(target),
       pair: SPICEDB_HTTP_TLS,
-      stored: yield* readStoredPair(target.projectId, keys, SPICEDB_HTTP_TLS),
+      stored: readStoredPair(secrets, SPICEDB_HTTP_TLS),
     };
     return { gateway, grpc };
   });
@@ -272,20 +286,6 @@ export const generateGatewayMaterial = (gatewayHostname: string) =>
     const { certificate } = yield* api.createOriginCertificate({ csr, hostnames: [gatewayHostname] });
     return { certificate, privateKey } satisfies TlsMaterial;
   });
-
-const spicedbServiceId = (projectId: string) =>
-  listZeropsServices(projectId).pipe(
-    Effect.flatMap((services) => {
-      const service = services.find(({ hostname }) => hostname === SPICEDB_SERVICE_HOSTNAME);
-      return service === undefined
-        ? Effect.fail(
-            new StageOperationError({
-              message: `Zerops project ${projectId} has no ${SPICEDB_SERVICE_HOSTNAME} service`,
-            }),
-          )
-        : Effect.succeed(service.id);
-    }),
-  );
 
 const storePair = <E, R>(target: SpicedbTlsTarget, entry: PairEntry, generate: Effect.Effect<TlsMaterial, E, R>) =>
   Effect.gen(function* storePairEffect() {

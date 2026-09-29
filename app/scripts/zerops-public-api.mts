@@ -45,6 +45,12 @@ const ServiceStackSchema = Schema.Struct({
   subdomainAccess: Schema.Boolean,
 });
 const EnvFileSchema = Schema.Struct({ envFile: Schema.String });
+const ServiceUserDataPageSchema = Schema.Struct({
+  list: Schema.Array(Schema.Struct({ content: Schema.String, key: Schema.String })),
+  total: Schema.Number,
+});
+/** The page size for service user data listings; `total` tells whether another page follows. */
+const SERVICE_USER_DATA_PAGE = 100;
 
 export type ZeropsProjectEnv = typeof ProjectEnvSchema.Type;
 export type ZeropsServiceStack = typeof ServiceStackSchema.Type;
@@ -87,6 +93,11 @@ export interface ZeropsPublicApiService {
   readonly projectEnvFile: (projectId: string) => Effect.Effect<ReadonlyMap<string, string>, ZeropsApiError>;
   readonly projectEnvs: (projectId: string) => Effect.Effect<readonly ZeropsProjectEnv[], ZeropsApiError>;
   readonly restartService: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
+  /**
+   * Reads every secret on one service (its "user data" entries) with their values. Unlike `zcli project env`,
+   * which prints `REDACTED` for sensitive secrets, the API returns the stored values to the owning token.
+   */
+  readonly serviceSecrets: (serviceId: string) => Effect.Effect<ReadonlyMap<string, Redacted.Redacted>, ZeropsApiError>;
   readonly serviceStack: (serviceId: string) => Effect.Effect<ZeropsServiceStack, ZeropsApiError>;
   readonly stopService: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
   /** Creates the project variable, or updates it in place when it exists, and waits until Zerops applied it. */
@@ -216,6 +227,28 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     yield* awaitProcess(process, `service secret ${key}`);
   });
 
+  const serviceSecrets = Effect.fn('ZeropsPublicApi.serviceSecrets')(function* readServiceSecrets(serviceId: string) {
+    const secrets = new Map<string, Redacted.Redacted>();
+    let offset = 0;
+    let total = 1;
+    while (offset < total) {
+      const page = yield* get(
+        `/service-stack/${serviceId}/user-data?limit=${String(SERVICE_USER_DATA_PAGE)}&offset=${String(offset)}`,
+        ServiceUserDataPageSchema,
+        'service secret list',
+      );
+      for (const { content, key } of page.list) {
+        secrets.set(key, Redacted.make(content));
+      }
+      if (page.list.length === 0) {
+        break;
+      }
+      offset += page.list.length;
+      ({ total } = page);
+    }
+    return secrets;
+  });
+
   const serviceAction = Effect.fn('ZeropsPublicApi.serviceAction')(function* runServiceAction(
     serviceId: string,
     action: 'enable-subdomain-access' | 'restart' | 'stop',
@@ -237,6 +270,7 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
       ),
     projectEnvs,
     restartService: (serviceId) => serviceAction(serviceId, 'restart'),
+    serviceSecrets,
     serviceStack: (serviceId) => get(`/service-stack/${serviceId}`, ServiceStackSchema, 'service read'),
     stopService: (serviceId) => serviceAction(serviceId, 'stop'),
     upsertProjectEnv,

@@ -90,6 +90,8 @@ export interface FakeStage {
   readonly projectValues: Map<string, string>;
   /** Secret names per GitHub environment. */
   readonly secrets: Map<string, Set<string>>;
+  /** Project-scope keys of sensitive service secrets, which `zcli project env` prints as `REDACTED`. */
+  readonly sensitiveKeys: Set<string>;
   services: ZeropsService[];
   readonly serviceUserKeys: Map<string, string[]>;
   readonly variables: Map<string, Map<string, string>>;
@@ -102,6 +104,7 @@ export interface FakeStageInitial {
   readonly projectUserKeys?: readonly string[];
   readonly projectValues?: Readonly<Record<string, string>>;
   readonly secrets?: Readonly<Record<string, readonly string[]>>;
+  readonly sensitiveKeys?: readonly string[];
   readonly services?: readonly ZeropsService[];
   readonly serviceUserKeys?: Readonly<Record<string, readonly string[]>>;
   readonly variables?: Readonly<Record<string, Readonly<Record<string, string>>>>;
@@ -139,7 +142,8 @@ const zcliProjectAnswer = (stage: FakeStage, command: OpsCommand) => {
     const valueKey = VALUE_TEMPLATE.exec(option(args, '--template') ?? '')?.groups?.key;
     if (valueKey !== undefined) {
       // zcli prints one (usually empty) line per variable.
-      return Effect.succeed(`\n\n${stage.projectValues.get(valueKey) ?? ''}\n\n`);
+      const value = stage.sensitiveKeys.has(valueKey) ? 'REDACTED' : (stage.projectValues.get(valueKey) ?? '');
+      return Effect.succeed(`\n\n${value}\n\n`);
     }
     const service = option(args, '--service');
     const keys = service === undefined ? stage.projectUserKeys : (stage.serviceUserKeys.get(service) ?? []);
@@ -425,6 +429,7 @@ export const fakeStage = (initial: FakeStageInitial): FakeStage => {
     secrets: new Map(
       Object.entries(initial.secrets ?? {}).map(([environment, names]) => [environment, new Set(names)]),
     ),
+    sensitiveKeys: new Set(initial.sensitiveKeys),
     services: [...(initial.services ?? [])],
     serviceUserKeys: new Map(Object.entries(initial.serviceUserKeys ?? {}).map(([key, keys]) => [key, [...keys]])),
     variables: new Map(
@@ -481,11 +486,21 @@ export const fakeZeropsApi = (stage: FakeStage): FakeZeropsApi => {
           const hostname = stage.services.find(({ id }) => id === serviceId)?.hostname ?? serviceId;
           stage.projectUserKeys.push(`${hostname}_${key}`);
           stage.projectValues.set(`${hostname}_${key}`, content);
+          stage.sensitiveKeys.add(`${hostname}_${key}`);
         }),
       enableSubdomainAccess: notFaked('enableSubdomainAccess'),
       projectEnvFile: notFaked('projectEnvFile'),
       projectEnvs: notFaked('projectEnvs'),
       restartService: notFaked('restartService'),
+      serviceSecrets: (serviceId) =>
+        Effect.sync(() => {
+          const prefix = `${stage.services.find(({ id }) => id === serviceId)?.hostname ?? serviceId}_`;
+          return new Map(
+            [...stage.projectValues]
+              .filter(([key]) => key.startsWith(prefix))
+              .map(([key, value]) => [key.slice(prefix.length), Redacted.make(value)] as const),
+          );
+        }),
       serviceStack: notFaked('serviceStack'),
       stopService: notFaked('stopService'),
       upsertProjectEnv: notFaked('upsertProjectEnv'),

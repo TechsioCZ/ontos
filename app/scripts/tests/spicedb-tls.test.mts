@@ -38,7 +38,13 @@ interface Fakes {
 }
 
 const newFakes = (projectValues: Readonly<Record<string, string>> = {}): Fakes => {
-  const stage = fakeStage({ projectUserKeys: Object.keys(projectValues), projectValues, services: [SPICEDB_SERVICE] });
+  // Service secrets are sensitive: zcli prints them as REDACTED, so only the Zerops API can read them back.
+  const stage = fakeStage({
+    projectUserKeys: Object.keys(projectValues),
+    projectValues,
+    sensitiveKeys: Object.keys(projectValues),
+    services: [SPICEDB_SERVICE],
+  });
   return { account: fakeCloudflareAccount({}), stage, zerops: fakeZeropsApi(stage) };
 };
 

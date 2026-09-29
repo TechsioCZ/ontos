@@ -109,19 +109,22 @@ const GUARDED_STAGE_EDGE = {
   variables: { [STAGE_EDGE]: { CLOUDFLARE_STAGE_ZONE_ID: 'zone-1' } },
 };
 
-/** A stage whose spicedb service already holds its TLS secrets, unless `projectUserKeys` says otherwise. */
-const newStage = (overrides: Parameters<typeof fakeStage>[0] = {}) =>
-  fakeStage({
-    projectUserKeys: Object.keys(SPICEDB_TLS),
+/** A stage whose spicedb service already holds its TLS secrets, unless `spicedbTls` is false. */
+const newStage = (overrides: Parameters<typeof fakeStage>[0] = {}, { spicedbTls = true } = {}) => {
+  const tls = spicedbTls ? SPICEDB_TLS : {};
+  return fakeStage({
+    projectUserKeys: Object.keys(tls),
+    sensitiveKeys: Object.keys(tls),
     services: [
       { hostname: 'db18', id: 'db18-id', status: 'ACTIVE' },
       { hostname: 'spicedb', id: 'spicedb-id', status: 'ACTIVE' },
     ],
     ...overrides,
-    projectValues: { ...SECRET_VALUES, ...SPICEDB_TLS, ...overrides.projectValues },
+    projectValues: { ...SECRET_VALUES, ...tls, ...overrides.projectValues },
     secrets: { ...GUARDED_STAGE_EDGE.secrets, ...overrides.secrets },
     variables: { ...GUARDED_STAGE_EDGE.variables, ...overrides.variables },
   });
+};
 
 const run = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
@@ -301,7 +304,7 @@ it.effect('changes nothing in a dry run but still reads the real state', () =>
 it.effect('creates the SpiceDB TLS secrets first on a stage without them', () =>
   Effect.gen(function* provisionsSpicedbTls() {
     const account = fakeCloudflareAccount({});
-    const stage = newStage({ projectUserKeys: [] });
+    const stage = newStage({}, { spicedbTls: false });
     const files = fakeFiles();
     const zerops = fakeZeropsApi(stage);
 
@@ -333,7 +336,7 @@ it.effect('creates the SpiceDB TLS secrets first on a stage without them', () =>
 it.effect('creates no SpiceDB TLS material in a dry run', () =>
   Effect.gen(function* dryRunSpicedbTls() {
     const account = fakeCloudflareAccount({});
-    const stage = newStage({ projectUserKeys: [] });
+    const stage = newStage({}, { spicedbTls: false });
     const zerops = fakeZeropsApi(stage);
 
     yield* run(provision, { account, dryRun: true, files: fakeFiles(), stage, zerops });
@@ -571,7 +574,7 @@ it.effect('switches stage to DEPLOY_TARGET=cloudflare and the host Outbox Worker
 
 it.effect('leaves DEPLOY_TARGET unset while the spicedb service lacks its TLS secrets', () =>
   Effect.gen(function* refusesMissingSpicedbTls() {
-    const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }], projectUserKeys: [] });
+    const stage = newStage({ deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }] }, { spicedbTls: false });
 
     const error = yield* run(activate, {
       account: yield* provisionedAccount('healthy'),
