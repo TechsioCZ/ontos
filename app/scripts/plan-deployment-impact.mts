@@ -114,6 +114,8 @@ type Ownership = typeof OwnershipSchema.Type;
 const CLOUDFLARE_BUILD_VARIABLE_PATTERN = /^(?:MODERN|ULTRAMODERN|VERTICAL)_[A-Z0-9_]+$/u;
 // The deploy job sets these from the run itself; reviewed configuration must not override the
 // revision or environment a Worker build claims.
+// The Shell binds each provider by Worker name; an override would bind a Worker CI never deploys.
+const WORKER_NAME_OVERRIDE_PATTERN = /^VERTICAL_[A-Z0-9_]+_WORKER_NAME$/u;
 const RESERVED_CLOUDFLARE_BUILD_VARIABLES: ReadonlySet<string> = new Set([
   'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
   'ULTRAMODERN_SOURCE_REVISION',
@@ -723,6 +725,11 @@ const validateCloudflareBuildEnvironment = (buildEnvironment: Readonly<Record<st
     if (!CLOUDFLARE_BUILD_VARIABLE_PATTERN.test(key)) {
       fail(
         `${CLOUDFLARE_PLACEMENT_PATH} buildEnvironment key "${key}" must be a MODERN_, ULTRAMODERN_ or VERTICAL_ build variable`,
+      );
+    }
+    if (WORKER_NAME_OVERRIDE_PATTERN.test(key)) {
+      fail(
+        `${CLOUDFLARE_PLACEMENT_PATH} buildEnvironment must not set "${key}"; a Worker's name is its topology cloudflare.workerName`,
       );
     }
     if (RESERVED_CLOUDFLARE_BUILD_VARIABLES.has(key)) {

@@ -256,9 +256,10 @@ The non-secret configuration the Worker builds read is reviewed source, the `bui
 `topology/cloudflare-placement.json`. It must hold `ULTRAMODERN_MF_DEV_ORIGIN`, the stage Shell
 origin (the placed units' API CORS allowlist), and `ULTRAMODERN_PUBLIC_URL_<UNIT>` for every placed
 unit (the output verifier requires them). It may add `MODERN_ASSET_PREFIX` or
-`VERTICAL_*_WORKER_BINDING` / `_WORKER_NAME` overrides. Only `MODERN_`, `ULTRAMODERN_` and
-`VERTICAL_` keys are accepted, and `ULTRAMODERN_SOURCE_REVISION` and
-`ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` are reserved for the run. Because it is a topology document,
+`VERTICAL_*_WORKER_BINDING` overrides. Only `MODERN_`, `ULTRAMODERN_` and `VERTICAL_` keys are
+accepted. `ULTRAMODERN_SOURCE_REVISION` and `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` are reserved for
+the run, and `VERTICAL_*_WORKER_NAME` is rejected because a Worker's name is its topology
+`cloudflare.workerName`, the name CI deploys. Because it is a topology document,
 changing a value replans every unit, so no Worker keeps a build of the old configuration. The job
 never reads the Zerops `stage` environment.
 Each Worker's runtime configuration is set once, outside CI, before its first deploy: secrets

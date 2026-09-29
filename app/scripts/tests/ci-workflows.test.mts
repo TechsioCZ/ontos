@@ -73,6 +73,7 @@ const EdgeDeployWorkflowSchema = Schema.Struct({
 
 /** Every `pnpm …` command line a workflow step runs. */
 const packageCommands = (step: typeof WorkflowStepSchema.Type) => (step.run ?? '').match(/pnpm [^\n]*/gu) ?? [];
+const PLAN_STEP = 'Plan the impacted edge units';
 const DEPLOY_STEP = 'Deploy planned edge units in dependency order';
 const RESTORE_STEP = 'Restore the edge Workers this run deployed';
 const RETIRE_STEP = 'Verify retired Workers are absent';
@@ -151,7 +152,7 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   expect(edge.env).toBeUndefined();
   const byName = new Map(edge.steps.map((step) => [step.name, step]));
   expect(byName.get('Resolve the last successful edge deployment')?.run).toContain('--environment stage-edge');
-  expect(byName.get('Plan the impacted edge units')?.id).toBe('impact');
+  expect(byName.get(PLAN_STEP)?.id).toBe('impact');
   const build = byName.get(BUILD_STEP);
   const deploy = byName.get(DEPLOY_STEP);
   const proof = byName.get(PROOF_STEP);
@@ -208,5 +209,9 @@ it('bounds every edge step that changes or proves Workers and checks retirements
   const resolve = byName.get('Resolve the last successful edge deployment');
   expect(resolve?.if).toBeUndefined();
   expect(resolve?.run).toContain('--optional');
-  expect(byName.get('Plan the impacted edge units')?.run).toContain('--placement-base "$BASE_SHA"');
+  expect(byName.get(PLAN_STEP)?.run).toContain('--placement-base "$BASE_SHA"');
+  // A recovery run after rewritten history fetches that base by id before planning.
+  const fetchBase = byName.get('Fetch the last edge deployment commit');
+  expect(fetchBase?.run).toContain('fetch --no-tags --depth=1 origin "$BASE_SHA"');
+  expect(names.indexOf('Fetch the last edge deployment commit')).toBeLessThan(names.indexOf(PLAN_STEP));
 });

@@ -699,6 +699,20 @@ jobs:
           fi
           mise exec -- pnpm deployment-base:resolve --environment stage-edge "${optional[@]}"
 
+      # A full recovery run after rewritten history may name a base no branch reaches any more; the
+      # planner needs its placement to check retirements, so fetch that commit by id.
+      - name: Fetch the last edge deployment commit
+        if: steps.base.outputs.base != ''
+        env:
+          BASE_SHA: ${{ steps.base.outputs.base }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            authorization="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $authorization" \
+              fetch --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+
       - name: Plan the impacted edge units
         id: impact
         working-directory: app

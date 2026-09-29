@@ -458,9 +458,13 @@ it.live('fails closed for an edge build variable the Cloudflare builds do not re
   }),
 );
 
-it.live('fails closed when edge build configuration overrides the run identity', () =>
+it.live('fails closed when edge build configuration overrides the run or Worker identity', () =>
   Effect.gen(function* failsClosedForReservedBuildVariables() {
-    for (const key of ['ULTRAMODERN_SOURCE_REVISION', 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT']) {
+    for (const key of [
+      'ULTRAMODERN_SOURCE_REVISION',
+      'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT',
+      'VERTICAL_PRICING_WORKER_NAME',
+    ]) {
       yield* withFixture(
         (root) =>
           Effect.gen(function* failsClosedForReservedBuildVariableInFixture() {
