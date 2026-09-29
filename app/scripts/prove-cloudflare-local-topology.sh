@@ -5,7 +5,8 @@
 #   - repeated database-backed requests (a Worker's Effect runtime never outlives its request);
 #   - Shell authentication, and a Shell read authorized by SpiceDB over HTTP;
 #   - the Shell's module discovery over Worker service bindings;
-#   - Shell SSR, each UI vertical's own SSR route, and a vertical API reached through the Shell.
+#   - Shell SSR, each UI vertical's own SSR route, and a vertical API reached through the Shell
+#     with a Shell-issued gateway assertion.
 #
 # Each Worker runs in its own `wrangler dev` session (so each serves its own static assets) and
 # the sessions reach each other through a private dev registry. Workers VPC services have no local
@@ -35,6 +36,7 @@ shell_origin="http://localhost:${shell_port}"
 
 work="$(mktemp -d "${RUNNER_TEMP:-${TMPDIR:-/tmp}}/ontos-cloudflare-local.XXXXXX")"
 pids=()
+dev_vars_outputs=()
 cleanup() {
   status=$?
   for pid in "${pids[@]}"; do kill "$pid" 2>/dev/null || true; done
@@ -46,7 +48,15 @@ cleanup() {
       echo "::endgroup::"
     done
   fi
-  find apps/*/.output verticals/*/.output -maxdepth 1 \( -name wrangler.local-topology.json -o -name .dev.vars \) -delete
+  # Put back each output's own .dev.vars (for example the SSR proof's), or remove the one this run wrote.
+  for index in "${!dev_vars_outputs[@]}"; do
+    if [ -f "$work/dev-vars/$index" ]; then
+      cp -p "$work/dev-vars/$index" "${dev_vars_outputs[$index]}/.dev.vars"
+    else
+      rm -f "${dev_vars_outputs[$index]}/.dev.vars"
+    fi
+  done
+  find apps/*/.output verticals/*/.output -maxdepth 1 -name wrangler.local-topology.json -delete
   rm -rf "$work"
   exit "$status"
 }
@@ -90,6 +100,11 @@ start_worker() { # <name> <config> <port>
 # Worker secrets, as `wrangler secret put` sets them in the account. SPICEDB_ENDPOINT names the
 # HTTP gateway (the binding ignores the host); the Workers' own DATABASE_URL is their HYPERDRIVE.
 write_dev_vars() {
+  mkdir -p "$work/dev-vars"
+  if [ -f "$1/.dev.vars" ]; then
+    cp -p "$1/.dev.vars" "$work/dev-vars/${#dev_vars_outputs[@]}"
+  fi
+  dev_vars_outputs+=("$1")
   {
     printf 'BETTER_AUTH_SECRET=%s\n' "$BETTER_AUTH_SECRET"
     printf 'BETTER_AUTH_URL=%s\n' "$shell_origin"
@@ -100,7 +115,7 @@ write_dev_vars() {
     printf 'SPICEDB_ENDPOINT=localhost:%s\n' "$SPICEDB_HTTP_PORT"
     printf 'SPICEDB_INSECURE=true\n'
     printf 'SPICEDB_PRESHARED_KEY=%s\n' "$SPICEDB_PRESHARED_KEY"
-  } >"$1/.dev.vars"
+  } >|"$1/.dev.vars"
 }
 
 start_worker spicedb-gateway "$work/spicedb-gateway/wrangler.json" "$((first_vertical_port - 1))"
@@ -217,10 +232,23 @@ for page in "party-registry:/en/contacts:Party Registry" "catalog:/en:Catalog" "
   grep -q "$marker" "$work/$name.html" || { echo "FAIL: $name SSR did not render $marker" >&2; exit 1; }
 done
 
-# 5. A vertical API through the Shell's service binding, with a Shell-issued gateway assertion.
+# 5. A vertical API through the Shell's service binding: Party Registry refuses a governed read
+#    without an assertion and accepts the one the Shell issued (assertions are single-use).
 check "Shell issues a Party Registry gateway assertion" 200 \
   "$(request "$work/gateway.json" -H 'content-type: application/json' --data '{"audience":"party-registry"}' \
     "$shell_origin/shell-super-app-api/auth/gateway-context")"
-check "Party Registry readiness through the Shell service binding" 200 \
-  "$(request "$work/party-registry-ready.json" "$shell_origin/party-registry-api/party-registry/readiness")"
+assertion="$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).token)' "$work/gateway.json")"
+party_search() { # <output file> [curl args...]
+  local output="$1"
+  shift
+  request "$output" -H 'content-type: application/json' -H "x-correlation-id: $(node -e 'console.log(crypto.randomUUID())')" \
+    "$@" --data '{"query":"acme"}' "$shell_origin/party-registry-api/party.registry/search/parties"
+}
+check "Party Registry refuses a governed read without an assertion" 401 "$(party_search "$work/party-anonymous.json")"
+party_search "$work/party-asserted.json" -H "authorization: Bearer $assertion" >/dev/null
+if grep -q 'AuthenticationProblem' "$work/party-asserted.json"; then
+  echo "FAIL: Party Registry rejected the Shell-issued assertion: $(cat "$work/party-asserted.json")" >&2
+  exit 1
+fi
+echo "ok: Party Registry accepted the Shell-issued assertion over the Shell service binding"
 echo "Cloudflare local topology proof passed"

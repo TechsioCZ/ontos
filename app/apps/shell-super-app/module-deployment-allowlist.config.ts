@@ -1,10 +1,13 @@
+import { getOrUndefined as getOptionOrUndefined } from 'effect/Option';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
   Literal,
   NonEmptyString,
+  OptionFromUndefinedOr,
   Struct,
   Trim,
   URLFromString,
+  check,
   decodeResult,
   decodeUnknownResult,
   isMinLength,
@@ -59,6 +62,37 @@ const productionOriginSchema = (environmentName: string, environment: string) =>
     }),
   );
 
+/**
+ * Applies a build's `workerDispatch.serviceBindingEnv` override to each vertical's service binding,
+ * as the Shell Worker's `deploy.worker.services` does, so discovery calls the binding the Worker has.
+ */
+const withConfiguredServiceBindings = (
+  topology: DeploymentAllowlistTopology,
+  readEnvironment: EnvironmentReader,
+): DeploymentAllowlistTopology => ({
+  verticals: topology.verticals.map((vertical) => {
+    const workerDispatch = vertical.backendFederation?.executionSurfaces.cloudflare.workerDispatch;
+    const configured =
+      workerDispatch?.serviceBindingEnv === undefined
+        ? undefined
+        : getOptionOrUndefined(
+            getResultOrThrow(
+              decodeUnknownResult(OptionFromUndefinedOr(Trim.pipe(check(isMinLength(1)))))(
+                readEnvironment(workerDispatch.serviceBindingEnv),
+              ),
+            ),
+          );
+    return workerDispatch === undefined || configured === undefined
+      ? vertical
+      : {
+          ...vertical,
+          backendFederation: {
+            executionSurfaces: { cloudflare: { workerDispatch: { ...workerDispatch, serviceBinding: configured } } },
+          },
+        };
+  }),
+});
+
 /** Produces immutable build input; production URLs come only from deployment configuration. */
 export const createModuleDeploymentAllowlistBuildInput = ({
   cloudflareDeployEnabled,
@@ -69,7 +103,10 @@ export const createModuleDeploymentAllowlistBuildInput = ({
   const parsedDevelopmentOverlay = getResultOrThrow(
     decodeUnknownResult(DeploymentAllowlistOverlaySchema)(developmentOverlay),
   );
-  const parsedTopology = getResultOrThrow(decodeUnknownResult(DeploymentAllowlistTopologySchema)(topology));
+  const parsedTopology = withConfiguredServiceBindings(
+    getResultOrThrow(decodeUnknownResult(DeploymentAllowlistTopologySchema)(topology)),
+    readEnvironment,
+  );
   const configuredEnvironment = getResultOrThrow(
     decodeUnknownResult(Trim)(readEnvironment('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT') ?? ''),
   );

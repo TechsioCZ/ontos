@@ -53,7 +53,7 @@ const DeploymentAllowlistVerticalSchema = Struct({
     Struct({
       executionSurfaces: Struct({
         cloudflare: Struct({
-          workerDispatch: Struct({ serviceBinding: NonEmptyString }),
+          workerDispatch: Struct({ serviceBinding: NonEmptyString, serviceBindingEnv: optionalKey(NonEmptyString) }),
         }),
       }),
     }),
