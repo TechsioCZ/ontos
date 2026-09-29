@@ -184,14 +184,22 @@ const observeStageModule = ({ origin, vertical }: StageUnit) =>
         })),
       );
 
+/** The stage service id of a setup, or `undefined` when the stage has no such service. */
+const provisionedStageServiceId = Effect.fn('ActiveApplicationComposition.provisionedStageServiceId')(
+  function* provisionedStageServiceId(setup: string) {
+    const variables = yield* Config.String('STAGE_VARIABLES_JSON').pipe(
+      Effect.flatMap(Schema.decodeEffect(StageVariablesSchema)),
+    );
+    const serviceId = variables[serviceIdVariable(setup)];
+    return serviceId === undefined || serviceId === '' ? undefined : serviceId;
+  },
+);
+
 const stageServiceId = Effect.fn('ActiveApplicationComposition.stageServiceId')(function* stageServiceId(
   setup: string,
 ) {
-  const variables = yield* Config.String('STAGE_VARIABLES_JSON').pipe(
-    Effect.flatMap(Schema.decodeEffect(StageVariablesSchema)),
-  );
-  const serviceId = variables[serviceIdVariable(setup)];
-  if (serviceId === undefined || serviceId === '') {
+  const serviceId = yield* provisionedStageServiceId(setup);
+  if (serviceId === undefined) {
     return yield* new ZeropsApiError({ message: `missing stage service variable ${serviceIdVariable(setup)}` });
   }
   return serviceId;
@@ -359,6 +367,26 @@ const ensurePublicAccessCommand = Command.make('ensure-public-access', { setup: 
   }),
 );
 
+/**
+ * Stops a setup's stage service when it runs. A stage that never provisioned the service, or whose service
+ * already stopped, needs nothing, so the deploy can stop the other deploy target's workers on every switch.
+ */
+const stopServiceCommand = Command.make('stop-service', { setup: Flag.String('setup') }, ({ setup }) =>
+  Effect.gen(function* stopService() {
+    const serviceId = yield* provisionedStageServiceId(setup);
+    if (serviceId === undefined) {
+      return yield* Effect.logInfo(`${setup} has no stage service, so there is nothing to stop`);
+    }
+    const api = yield* ZeropsPublicApi;
+    const service = yield* api.serviceStack(serviceId);
+    if (service.status !== 'ACTIVE') {
+      return yield* Effect.logInfo(`${setup} is ${service.status}, so there is nothing to stop`);
+    }
+    yield* api.stopService(serviceId);
+    return yield* Effect.logInfo(`Stopped ${setup}`);
+  }),
+);
+
 /** The one service-ID lookup the deploy scripts use, so shell and TypeScript never map setups differently. */
 const stageServiceIdCommand = Command.make('stage-service-id', { setup: Flag.String('setup') }, ({ setup }) =>
   stageServiceId(setup).pipe(Effect.flatMap(Console.log)),
@@ -479,6 +507,7 @@ const cli = Command.make('publish-active-application-composition').pipe(
     consumersCommand,
     proveBuildCommand,
     stageServiceIdCommand,
+    stopServiceCommand,
   ]),
 );
 

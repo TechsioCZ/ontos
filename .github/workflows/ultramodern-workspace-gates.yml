@@ -652,6 +652,20 @@ jobs:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: mise exec -- pnpm active-composition:publish publish --environment stage --restart-consumers
 
+      # Switching DEPLOY_TARGET leaves the other target's Outbox Workers running. The plan names them in the
+      # run that deploys this target's workers, so exactly one set of workers delivers the outbox.
+      - name: Stop the other deploy target's Outbox Workers
+        if: steps.impact.outputs.stopped_workers != '' && steps.impact.outputs.stopped_workers != '[]'
+        working-directory: app
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          STOPPED_WORKERS_JSON: ${{ steps.impact.outputs.stopped_workers }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          while IFS= read -r setup; do
+            mise exec -- pnpm --silent active-composition:publish stop-service --setup "$setup"
+          done < <(jq -r '.[]' <<<"$STOPPED_WORKERS_JSON")
+
       - name: Show bounded Shell logs after failure
         if: failure() && steps.shell.outcome == 'failure'
         continue-on-error: true

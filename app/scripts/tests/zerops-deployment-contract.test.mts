@@ -4,6 +4,8 @@ import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
+import { OUTBOX_WORKER_HOST } from '../outbox-worker-delivery.mjs';
+
 const runtimeDatabaseUrl = `DATABASE_URL: postgresql://ontos_runtime:\${db18_password}@\${db18_hostname}:\${db18_port}/\${db18_dbName}`;
 const commerceCustomerContextSetup = 'commerce-customer-context';
 const priceGroupCatalogSetup = 'price-group-catalog';
@@ -102,15 +104,29 @@ it('declares Price Group Cloudflare proof variables and resolves every provider 
   expect(workflow).toContain('ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid');
   expect(workflow).toContain(`STAGE_VARIABLES_JSON: \${{ toJSON(vars) }}`);
   expect(workflow).toContain('app/scripts/push-zerops-units.sh');
-  expect(readFileSync(new URL('../push-zerops-units.sh', import.meta.url), 'utf-8')).toContain(
-    'active-composition:publish stage-service-id --setup "$unit"',
-  );
+  const pushUnits = readFileSync(new URL('../push-zerops-units.sh', import.meta.url), 'utf-8');
+  expect(pushUnits).toContain('active-composition:publish stage-service-id --setup "$unit"');
+  // Neither dedicated workers nor the combined host may be given a public subdomain.
+  expect(pushUnits).toContain(`    *-worker | ${OUTBOX_WORKER_HOST.stageSetup}) ;;`);
   const providerVariables = workflow.match(/^ +ZEROPS_[A-Z_]+_SERVICE_ID: /gmu)?.map((line) => line.trim()) ?? [];
   expect(providerVariables).toEqual([
     'ZEROPS_MIGRATOR_SERVICE_ID:',
     'ZEROPS_SHELL_SERVICE_ID:',
     'ZEROPS_SPICEDB_SERVICE_ID:',
   ]);
+});
+
+it("stops the other deploy target's Outbox Workers after this target's workers deploy", () => {
+  const workflow = Schema.decodeUnknownSync(DeployWorkflowSchema)(parse(readFileSync(workflowPath, 'utf-8')));
+  const steps = workflow.jobs['deploy-stage'].steps.map((step) => step.name);
+  const stop = workflow.jobs['deploy-stage'].steps.find(
+    (step) => step.name === "Stop the other deploy target's Outbox Workers",
+  );
+
+  expect(stop?.run).toContain('active-composition:publish stop-service --setup "$setup"');
+  expect(steps.indexOf("Stop the other deploy target's Outbox Workers")).toBeGreaterThan(
+    steps.indexOf('Publish the complete active Application Composition and restart its consumers'),
+  );
 });
 
 it('starts a dedicated Price Group worker that drains durable pending projections after restart', () => {

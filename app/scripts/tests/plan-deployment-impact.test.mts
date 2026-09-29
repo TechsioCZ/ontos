@@ -237,7 +237,7 @@ const makeFixture = (options: FixtureOptions = {}) =>
       yield* Effect.tryPromise(() =>
         writeFile(
           path.join(workerRoot, 'package.json'),
-          `${JSON.stringify({ name: verticalPackage, scripts: { 'worker:start': 'node --experimental-strip-types ./src/worker-host/main.ts' } })}\n`,
+          `${JSON.stringify({ exports: { './outbox-worker-host': './src/worker-host/entry.ts' }, name: verticalPackage, scripts: { 'worker:start': 'node --experimental-strip-types ./src/worker-host/main.ts' } })}\n`,
         ),
       );
       for (const generated of ['src/worker-host/main.ts', 'src/worker-host/entry.ts']) {
@@ -293,6 +293,8 @@ it.live('deploys a generated owner worker immediately after its provider', () =>
           expect(plan.units.providers).toEqual(['contacts', CONTACTS_WORKER_SETUP]);
           expect(plan.phases.map((phase) => phase.id)).toEqual(['contacts', CONTACTS_WORKER_SETUP]);
           expect(plan.phases[1]?.serviceIdEnv).toBe('ZEROPS_CONTACTS_WORKER_SERVICE_ID');
+          // A former Cloudflare target leaves the host running; this run stops it once the dedicated worker is up.
+          expect(plan.units.stoppedWorkers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
         }),
       { includeWorker: true },
     );
@@ -316,6 +318,8 @@ it.live('deploys the one Outbox Worker host instead of dedicated workers on the 
             serviceIdEnv: 'ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID',
             stageSetup: OUTBOX_WORKER_HOST_SETUP,
           });
+          // The dedicated workers of a former Zerops target stop in the run that deploys the host.
+          expect(workerChange.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP]);
           // No hosted owner is impacted, so the host keeps running its current artifact.
           const shellChange = yield* planDeploymentImpact({
             changedPaths: ['apps/shell-super-app/src/routes/shell-frame.tsx'],
@@ -323,6 +327,8 @@ it.live('deploys the one Outbox Worker host instead of dedicated workers on the 
             rootDirectory: root,
           });
           expect(shellChange.units.providers).toEqual([]);
+          // Nothing replaces the running workers, so nothing is stopped.
+          expect(shellChange.units.stoppedWorkers).toEqual([]);
           // A regenerated host entry replans every unit, the host included.
           const hostChange = yield* planDeploymentImpact({
             changedPaths: ['scripts/outbox-worker-host.generated.mts'],
@@ -383,6 +389,7 @@ it.live('plans current Contacts owner-local changes without a hard-coded owner r
           providers: ['contacts'],
           shell: false,
           spicedb: false,
+          stoppedWorkers: [],
         });
         expect(plan.phases.map((phase) => phase.id)).toEqual(['contacts']);
       }),

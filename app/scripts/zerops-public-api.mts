@@ -4,8 +4,8 @@ import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 
 /**
- * Minimal adapter over the Zerops public REST API for the operations zcli does not expose: project
- * variables, service restarts, and subdomain access. Responses are decoded, never logged, because
+ * Minimal adapter over the Zerops public REST API for the operations the deploy runs without zcli: project
+ * variables, service restarts and stops, and subdomain access. Responses are decoded, never logged, because
  * project variable listings can contain secrets. The token is read per request, so commands that
  * never call Zerops need no credentials.
  */
@@ -40,6 +40,8 @@ const ProjectSearchSchema = Schema.Struct({
 });
 const ServiceStackSchema = Schema.Struct({
   name: Schema.NonEmptyString,
+  /** Zerops lifecycle status, such as `ACTIVE` for a running service or `STOPPED`. */
+  status: Schema.String,
   subdomainAccess: Schema.Boolean,
 });
 const EnvFileSchema = Schema.Struct({ envFile: Schema.String });
@@ -80,6 +82,7 @@ export interface ZeropsPublicApiService {
   readonly projectEnvs: (projectId: string) => Effect.Effect<readonly ZeropsProjectEnv[], ZeropsApiError>;
   readonly restartService: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
   readonly serviceStack: (serviceId: string) => Effect.Effect<ZeropsServiceStack, ZeropsApiError>;
+  readonly stopService: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
   /** Creates the project variable, or updates it in place when it exists, and waits until Zerops applied it. */
   readonly upsertProjectEnv: (
     projectId: string,
@@ -195,7 +198,7 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
 
   const serviceAction = Effect.fn('ZeropsPublicApi.serviceAction')(function* runServiceAction(
     serviceId: string,
-    action: 'enable-subdomain-access' | 'restart',
+    action: 'enable-subdomain-access' | 'restart' | 'stop',
   ) {
     const process = yield* send(
       HttpClientRequest.put(`${ZEROPS_PUBLIC_API_URL}/service-stack/${serviceId}/${action}`),
@@ -214,6 +217,7 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     projectEnvs,
     restartService: (serviceId) => serviceAction(serviceId, 'restart'),
     serviceStack: (serviceId) => get(`/service-stack/${serviceId}`, ServiceStackSchema, 'service read'),
+    stopService: (serviceId) => serviceAction(serviceId, 'stop'),
     upsertProjectEnv,
   });
 });

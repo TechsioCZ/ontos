@@ -182,6 +182,8 @@ export interface DeploymentImpactPlan {
     readonly providers: readonly string[];
     readonly shell: boolean;
     readonly spicedb: boolean;
+    /** Off-target worker setups to stop once this plan deploys the deploy target's own workers. */
+    readonly stoppedWorkers: readonly string[];
   };
 }
 
@@ -372,6 +374,7 @@ const DeploymentImpactPlanSchema = Schema.Struct({
     providers: Schema.Array(Schema.String),
     shell: Schema.Boolean,
     spicedb: Schema.Boolean,
+    stoppedWorkers: Schema.Array(Schema.String),
   }),
 });
 
@@ -1352,6 +1355,21 @@ const planWorkerPhases = (
       ];
 };
 
+/**
+ * The worker services of the other deploy target. Switching `DEPLOY_TARGET` leaves them running, so they
+ * are stopped in the same run that deploys this target's workers; one set of workers always runs.
+ */
+const planStoppedWorkers = (
+  workers: readonly { readonly stageSetup: string }[],
+  workerPhases: readonly DeploymentPhase[],
+  deployTarget: DeployTarget,
+): readonly string[] => {
+  if (workerPhases.length === 0) {
+    return [];
+  }
+  return deployTarget === 'zerops' ? [OUTBOX_WORKER_HOST.stageSetup] : workers.map((worker) => worker.stageSetup);
+};
+
 export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) =>
   Effect.gen(function* planDeploymentImpactEffect() {
     const authorization =
@@ -1414,6 +1432,8 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
     );
 
     const selectedUnits = orderedUnits.filter((unit) => impacted.has(unit.id));
+    const deployTarget = options.deployTarget ?? 'zerops';
+    const workerPhases = planWorkerPhases(workers, impacted, deployTarget);
     const phases: DeploymentPhase[] = [];
     if (migrator) {
       phases.push(INFRASTRUCTURE_PHASES.migrator);
@@ -1423,7 +1443,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
     }
     phases.push(
       ...selectedUnits.filter((unit) => unit.kind === 'provider').map(toPhase),
-      ...planWorkerPhases(workers, impacted, options.deployTarget ?? 'zerops'),
+      ...workerPhases,
       ...selectedUnits.filter((unit) => unit.kind === 'shell').map(toPhase),
     );
 
@@ -1451,6 +1471,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
         providers: phases.filter((phase) => phase.kind === 'provider').map((phase) => phase.id),
         shell: impacted.has(shell.id),
         spicedb,
+        stoppedWorkers: planStoppedWorkers(workers, workerPhases, deployTarget),
       },
     };
     return authorization === undefined ? plan : { ...plan, authorization };
@@ -1520,6 +1541,7 @@ const writeGitHubOutputs = (plan: DeploymentImpactPlan, outputPath: string) =>
       `providers=${providersJson}`,
       `shell=${String(plan.units.shell)}`,
       `spicedb=${String(plan.units.spicedb)}`,
+      `stopped_workers=${yield* Schema.encodeEffect(ProvidersJsonSchema)(plan.units.stoppedWorkers)}`,
       '',
     ].join('\n');
     yield* fileSystem.writeFileString(outputPath, output, { flag: 'a' });

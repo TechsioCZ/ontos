@@ -33,3 +33,29 @@ it.effect('reads the project env file without the project env isolation, so serv
     ]);
   }),
 );
+
+it.effect('stops a service through its stop action and waits for the stop process to finish', () =>
+  Effect.gen(function* stopsService() {
+    const requests: string[] = [];
+    const client = HttpClient.make((request, url) => {
+      requests.push(`${request.method} ${url.pathname}`);
+      const body = url.pathname.endsWith('/stop')
+        ? { id: 'stop-process', status: 'PENDING' }
+        : { id: 'stop-process', status: 'FINISHED' };
+      return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+    });
+    const layer = Layer.merge(
+      ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
+      ConfigProvider.layer(ConfigProvider.fromUnknown({ ZEROPS_TOKEN: 'test-token' })),
+    );
+    yield* Effect.gen(function* stopWorker() {
+      const api = yield* ZeropsPublicApi;
+      yield* api.stopService('worker-service');
+    }).pipe(Effect.provide(layer));
+
+    expect(requests).toEqual([
+      'PUT /api/rest/public/service-stack/worker-service/stop',
+      'GET /api/rest/public/process/stop-process',
+    ]);
+  }),
+);
