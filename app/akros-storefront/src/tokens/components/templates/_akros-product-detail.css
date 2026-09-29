@@ -13,4 +13,12 @@
   --akros-product-detail-gallery-max-width: 600px;
   --akros-product-detail-image-aspect-ratio: 600 / 494;
   --akros-product-detail-thumbnail-width: 148px;
+  --akros-variant-filter-background: var(--color-base);
+  --akros-variant-filter-label-color: var(--color-fg-primary);
+  --akros-variant-filter-separator-color: var(--color-border-primary);
+  --akros-variant-filter-padding: var(--dimension-8);
+  --akros-variant-filter-label-font-size: 10px;
+  --akros-variant-filter-measurement-width: 185px;
+  --akros-variant-filter-material-width: 190px;
+  --akros-variant-filter-price-width: 245px;
 }

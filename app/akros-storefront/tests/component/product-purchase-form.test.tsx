@@ -95,16 +95,12 @@ describe("ProductPurchaseForm", () => {
     ]);
   });
 
-  it("does not allow buying an out-of-stock source variant", async () => {
-    const user = userEvent.setup();
-
+  it("does not allow buying an out-of-stock source variant", () => {
     render(
       <CartProvider storage={null}>
         <ProductPurchaseForm product={product} variants={[{ ...variants[0], stockCount: 0 }]} />
       </CartProvider>,
     );
-
-    await user.click(screen.getByRole("checkbox", { name: "Pouze varianty skladem" }));
 
     expect(screen.getByRole("button", { name: "Koupit M 2 × 5" }).hasAttribute("disabled")).toBe(
       true,
@@ -142,13 +138,29 @@ describe("ProductPurchaseForm", () => {
       </CartProvider>,
     );
 
-    expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe("10093300040016");
+    expect(screen.queryByRole("searchbox")).toBeNull();
     expect(screen.getByRole("button", { name: /Koupit M 4/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
-    expect(
-      (screen.getByRole("checkbox", { name: "Pouze varianty skladem" }) as HTMLInputElement)
-        .checked,
-    ).toBe(false);
+  });
+
+  it("filters variants by their material after submitting the filters", async () => {
+    const user = userEvent.setup();
+    const materialVariants = [
+      { ...variants[0], label: "M 2 × 5 /A2" },
+      { ...variants[1], label: "M 4 × 16 /A4" },
+    ];
+
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={product} variants={materialVariants} />
+      </CartProvider>,
+    );
+
+    await user.click(screen.getByRole("checkbox", { name: "A2" }));
+    await user.click(screen.getByRole("button", { name: "Filtrovat" }));
+
+    expect(screen.getByRole("button", { name: /Koupit M 4/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
   });
 
   it("adds a decimal source minimum without truncating it", async () => {
