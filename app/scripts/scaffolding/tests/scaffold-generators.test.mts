@@ -2585,6 +2585,35 @@ it.live(
 );
 
 it.live(
+  'action boundary reruns reject a boundary without the staff namespace registration',
+  Effect.fn(function* rejectBoundaryWithoutStaffNamespace() {
+    yield* withFixture(
+      Effect.fn(function* rejectBoundaryWithoutStaffNamespaceFixture(fixture) {
+        yield* run(fixture, scaffoldCommand.microverticalActionBoundary, [scaffoldFlag.vertical, inventorySlug]);
+        const generated = yield* readFixtureFile(fixture.root, inventoryActionPrincipalFile);
+        const stale = generated
+          .replace(/^import \{ staffAuthenticationNamespaceRegistryLayer \}.*\n/mu, '')
+          .replace(
+            /\/\*\*\n \* What this runtime needs[\s\S]*?\n\);\n/u,
+            'export { GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive };\n',
+          );
+        expect(stale).not.toMatch(/AuthenticationNamespaceRegistry/u);
+        yield* write(fixture.root, inventoryActionPrincipalFile, stale);
+        const before = yield* snapshotTree(fixture.root);
+        yield* expectFailure(
+          run(fixture, scaffoldCommand.microverticalActionBoundary, [scaffoldFlag.vertical, inventorySlug]),
+          (error) =>
+            expect(String(error)).toMatch(
+              /incompatible generated Action boundary:.*Register the staff authentication namespace for this audience/u,
+            ),
+        );
+        expect(yield* snapshotTree(fixture.root)).toEqual(before);
+      }),
+    );
+  }),
+);
+
+it.live(
   'governed generation preserves compatible owner principal adaptations',
   Effect.fn(function* preserveOwnerPrincipalAdaptations() {
     yield* withFixture(

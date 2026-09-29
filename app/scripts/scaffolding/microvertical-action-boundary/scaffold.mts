@@ -39,7 +39,7 @@ const createOrAcceptOwnedMutation = (
   filePath: string,
   content: string,
   requiredMarkers: readonly string[],
-  requiredContract?: { readonly marker: string; readonly migration: string },
+  requiredContracts: readonly { readonly marker: string; readonly migration: string }[] = [],
 ): Effect.Effect<Option.Option<Mutation>, ActionBoundaryScaffoldError | ScaffoldFailure, FileSystem.FileSystem> =>
   Effect.gen(function* createOrAcceptOwnedMutationEffect() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -56,9 +56,10 @@ const createOrAcceptOwnedMutation = (
       current.startsWith(`${ACTION_BOUNDARY_GENERATOR_HEADER}\n`) &&
       requiredMarkers.every((marker) => current.includes(marker))
     ) {
-      if (requiredContract !== undefined && !current.includes(requiredContract.marker)) {
+      const missingContract = requiredContracts.find(({ marker }) => !current.includes(marker));
+      if (missingContract !== undefined) {
         return yield* scaffoldError(
-          `incompatible generated Action boundary: ${filePath}. ${requiredContract.migration}`,
+          `incompatible generated Action boundary: ${filePath}. ${missingContract.migration}`,
         );
       }
       return Option.none();
@@ -235,11 +236,20 @@ export const planActionBoundaryScaffold = (
       serverPath,
       renderActionPrincipalServer(vertical),
       [`@ontos-action-boundary-owner ${vertical.appId}`, `@ontos-action-boundary-audience ${vertical.appId}`],
-      {
-        marker: 'export const authenticateOperationPrincipal',
-        migration:
-          'Preserve owner adaptations and export authenticateOperationPrincipal using makeMicroverticalHttpPrincipalAuthentication with the audience-bound verifier; provide ActionPrincipalVerifierLive at the owning API runtime before generating governed contributions.',
-      },
+      [
+        {
+          marker: 'export const authenticateOperationPrincipal',
+          migration:
+            'Preserve owner adaptations and export authenticateOperationPrincipal using makeMicroverticalHttpPrincipalAuthentication with the audience-bound verifier; provide ActionPrincipalVerifierLive at the owning API runtime before generating governed contributions.',
+        },
+        {
+          // Core revalidates the staff namespace every Shell-issued assertion names; a runtime
+          // without its registration answers every governed route operation_context_unavailable.
+          marker: 'AuthenticationNamespaceRegistry',
+          migration:
+            'Register the staff authentication namespace for this audience: merge staffAuthenticationNamespaceRegistryLayer([ACTION_GATEWAY_AUDIENCE]) into ActionPrincipalVerifierLive, or name the runtime-owned AuthenticationNamespaceRegistry that already includes it.',
+        },
+      ],
     );
     const clientMutation = yield* createOrAcceptOwnedMutation(clientPath, renderActionGatewayClient(vertical), [
       `ACTION_GATEWAY_AUDIENCE = '${vertical.appId}'`,
