@@ -178,9 +178,12 @@ const publicOrigin = Effect.fn('ActiveApplicationComposition.publicOrigin')(func
 ) {
   const api = yield* ZeropsPublicApi;
   const service = yield* api.serviceStack(yield* stageServiceId(setup));
+  if (!service.subdomainAccess) {
+    return yield* new ZeropsApiError({ message: `${setup} has its public Zerops subdomain disabled` });
+  }
   const origin = environment.get(`${service.name}_zeropsSubdomain`);
-  if (origin === undefined || !service.subdomainAccess) {
-    return yield* new ZeropsApiError({ message: `${setup} has no enabled public Zerops subdomain` });
+  if (origin === undefined) {
+    return yield* new ZeropsApiError({ message: `the project env file has no ${service.name}_zeropsSubdomain` });
   }
   return origin;
 });

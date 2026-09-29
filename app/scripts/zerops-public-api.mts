@@ -12,6 +12,11 @@ import { ZeropsApiError } from './zerops-public-api-error.mts';
 export const ZEROPS_PUBLIC_API_URL = 'https://api.app-prg1.zerops.io/api/rest/public';
 
 const REQUEST_TIMEOUT = Duration.seconds(30);
+/**
+ * The project env file lists service-scoped variables such as `<hostname>_zeropsSubdomain` only when service
+ * isolation is overridden, exactly as `zcli project env` requests it; without it only project variables return.
+ */
+const PROJECT_ENV_FILE_QUERY = 'name=&overrideEnvIsolation=none&userOnly=false&reveal=false';
 const PROCESS_POLL_INTERVAL = Duration.seconds(3);
 const PROCESS_TIMEOUT = Duration.minutes(15);
 
@@ -203,7 +208,7 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
   return ZeropsPublicApi.of({
     enableSubdomainAccess: (serviceId) => serviceAction(serviceId, 'enable-subdomain-access'),
     projectEnvFile: (projectId) =>
-      get(`/project/${projectId}/env-file`, EnvFileSchema, 'project env file').pipe(
+      get(`/project/${projectId}/env-file?${PROJECT_ENV_FILE_QUERY}`, EnvFileSchema, 'project env file').pipe(
         Effect.map(({ envFile }) => parseZeropsEnvFile(envFile)),
       ),
     projectEnvs,
