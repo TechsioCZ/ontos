@@ -130,4 +130,24 @@ describe("ProductPurchaseForm", () => {
       }),
     ]);
   });
+
+  it("opens a deep-linked source variant already filtered in the table", () => {
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm
+          initialVariantSearch="10093300040016"
+          product={product}
+          variants={variants}
+        />
+      </CartProvider>,
+    );
+
+    expect((screen.getByRole("searchbox") as HTMLInputElement).value).toBe("10093300040016");
+    expect(screen.getByRole("button", { name: /Koupit M 4/ })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Koupit M 2/ })).toBeNull();
+    expect(
+      (screen.getByRole("checkbox", { name: "Pouze varianty skladem" }) as HTMLInputElement)
+        .checked,
+    ).toBe(false);
+  });
 });

@@ -82,6 +82,11 @@ export interface CatalogPromotionItem {
   kind: "action" | "sale";
 }
 
+export interface CatalogSearchResult {
+  product: CatalogProduct;
+  matchingVariants: CatalogProductVariant[];
+}
+
 export type CatalogProductSummary = Omit<CatalogProduct, "detail" | "secondaryImageSrc"> & {
   hasVariants: boolean;
 };

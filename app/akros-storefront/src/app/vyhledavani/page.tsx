@@ -1,14 +1,42 @@
 import type { Metadata } from "next";
 
 import { CatalogPagination } from "@/components/catalog-pagination";
-import { ProductGrid } from "@/components/product-grid";
+import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
 import { cs } from "@/i18n/cs";
-import { searchProducts, toProductSummary } from "@/mock-storefront/catalog";
+import { searchCatalog, toProductSummary } from "@/mock-storefront/catalog";
+import type { CatalogSearchResult } from "@/mock-storefront/types";
 
 export const metadata: Metadata = { title: cs.search.results };
 const productsPerPage = 24;
+
+const toSearchGridItem = (
+  { product, matchingVariants }: CatalogSearchResult,
+  query: string,
+): ProductGridItem => {
+  const summary = toProductSummary(product);
+  if (matchingVariants.length === 0) return summary;
+
+  const matchedVariant = matchingVariants.length === 1 ? matchingVariants[0] : undefined;
+  const variantQuery = matchedVariant?.sku ?? query.trim();
+  const params = new URLSearchParams({ variant: variantQuery });
+
+  return {
+    ...summary,
+    ...(matchedVariant && {
+      imageSrc: matchedVariant.imageSrc ?? summary.imageSrc,
+      minimumQuantity: matchedVariant.minimumQuantity,
+      priceMinor: matchedVariant.priceMinor,
+      stockCount: matchedVariant.stockCount,
+      unit: matchedVariant.unit,
+    }),
+    detailHref: `/produkt/${product.slug}?${params.toString()}#product-variants`,
+    searchMatchLabel: matchedVariant
+      ? `Varianta: ${matchedVariant.label} · SKU ${matchedVariant.sku}`
+      : `${matchingVariants.length.toLocaleString("cs-CZ")} odpovídajících variant`,
+  };
+};
 
 export default async function SearchPage({
   searchParams,
@@ -17,13 +45,13 @@ export default async function SearchPage({
 }) {
   const { page = "1", q = "" } = await searchParams;
   const requestedPage = Number.parseInt(page, 10);
-  const products = searchProducts(q);
-  const totalPages = Math.max(1, Math.ceil(products.length / productsPerPage));
+  const results = searchCatalog(q);
+  const totalPages = Math.max(1, Math.ceil(results.length / productsPerPage));
   const currentPage = Math.min(
     Math.max(Number.isFinite(requestedPage) ? requestedPage : 1, 1),
     totalPages,
   );
-  const visibleProducts = products.slice(
+  const visibleResults = results.slice(
     (currentPage - 1) * productsPerPage,
     currentPage * productsPerPage,
   );
@@ -38,12 +66,12 @@ export default async function SearchPage({
           <h1 id="search-results-title">{cs.search.results}</h1>
           {q && <p>Dotaz: „{q}“</p>}
         </div>
-        {products.length > 0 ? (
+        {results.length > 0 ? (
           <>
-            <ProductGrid products={visibleProducts.map(toProductSummary)} />
+            <ProductGrid products={visibleResults.map((result) => toSearchGridItem(result, q))} />
             <CatalogPagination
               currentPage={currentPage}
-              itemCount={products.length}
+              itemCount={results.length}
               pageSize={productsPerPage}
               pathname="/vyhledavani"
               searchParams={{ q }}

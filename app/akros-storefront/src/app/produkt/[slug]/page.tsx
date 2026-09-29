@@ -12,6 +12,10 @@ import { ProductPurchaseForm } from "@/features/cart/product-purchase-form";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
 import {
+  matchesProductVariantSearch,
+  normalizeCatalogSearchTerm,
+} from "@/lib/product-variant-search";
+import {
   getCategoryById,
   getCategoryTrail,
   getProductBySlug,
@@ -21,6 +25,7 @@ import {
 
 interface ProductPageProps {
   params: Promise<{ slug: string }>;
+  searchParams: Promise<{ variant?: string | string[] }>;
 }
 
 const isQuantityPricingCopy = (paragraph: string) =>
@@ -33,8 +38,9 @@ export async function generateMetadata({ params }: ProductPageProps): Promise<Me
   return { title: product?.name ?? "Produkt" };
 }
 
-export default async function ProductPage({ params }: ProductPageProps) {
+export default async function ProductPage({ params, searchParams }: ProductPageProps) {
   const { slug } = await params;
+  const { variant: requestedVariantSearch } = await searchParams;
   const product = getProductBySlug(slug);
   if (!product) notFound();
 
@@ -42,6 +48,15 @@ export default async function ProductPage({ params }: ProductPageProps) {
   const categoryTrail = category ? getCategoryTrail(category) : [];
   const detail = product.detail;
   const hasVariants = detail.variants.length > 0;
+  const variantSearch = Array.isArray(requestedVariantSearch)
+    ? requestedVariantSearch[0]
+    : requestedVariantSearch;
+  const normalizedVariantSearch = normalizeCatalogSearchTerm(variantSearch ?? "");
+  const initialVariantSearch =
+    normalizedVariantSearch &&
+    detail.variants.some((variant) => matchesProductVariantSearch(variant, normalizedVariantSearch))
+      ? variantSearch?.trim()
+      : undefined;
   const quantityPricingParagraphs = detail.descriptionParagraphs
     .filter(isQuantityPricingCopy)
     .flatMap((paragraph) => paragraph.split(/(?=Snížená cena)/i))
@@ -188,7 +203,11 @@ export default async function ProductPage({ params }: ProductPageProps) {
 
         {hasVariants && (
           <section id="product-variants" aria-label="Varianty produktu">
-            <ProductPurchaseForm product={product} variants={detail.variants} />
+            <ProductPurchaseForm
+              initialVariantSearch={initialVariantSearch}
+              product={product}
+              variants={detail.variants}
+            />
           </section>
         )}
 

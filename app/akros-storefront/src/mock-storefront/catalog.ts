@@ -5,8 +5,14 @@ import type {
   CatalogProduct,
   CatalogPromotionItem,
   CatalogProductSummary,
+  CatalogSearchResult,
   CategoryData,
 } from "./types";
+import {
+  formatCatalogParametersForSearch,
+  matchesProductVariantSearch,
+  normalizeCatalogSearchTerm,
+} from "@/lib/product-variant-search";
 import rawCatalogData from "./generated/catalog.generated.json";
 import rawCategoryData from "./generated/categories.generated.json";
 
@@ -46,13 +52,6 @@ export const toProductSummary = (product: CatalogProduct): CatalogProductSummary
   isNew: product.isNew,
   hasVariants: product.detail.variants.length > 0,
 });
-
-const normalizeSearchTerm = (value: string) =>
-  value
-    .normalize("NFD")
-    .replaceAll(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("cs-CZ")
-    .trim();
 
 const collectCategoryIds = (categoryId: string): Set<string> => {
   const ids = new Set([categoryId]);
@@ -210,13 +209,27 @@ export const getProductsByCategory = (slug: string): CatalogProduct[] => {
   return getProducts().filter((product) => categoryIds.has(product.categoryId));
 };
 
-export const searchProducts = (query: string): CatalogProduct[] => {
-  const normalizedQuery = normalizeSearchTerm(query);
+export const searchCatalog = (query: string): CatalogSearchResult[] => {
+  const normalizedQuery = normalizeCatalogSearchTerm(query);
   if (!normalizedQuery) return [];
 
-  return getProducts().filter((product) =>
-    normalizeSearchTerm(`${product.name} ${product.sku} ${product.description}`).includes(
-      normalizedQuery,
-    ),
-  );
+  return getProducts().flatMap((product) => {
+    const productMatches = normalizeCatalogSearchTerm(
+      `${product.name} ${product.sku} ${product.description} ${formatCatalogParametersForSearch(product.detail.parameters)}`,
+    ).includes(normalizedQuery);
+    const matchingVariants = product.detail.variants.filter((variant) =>
+      matchesProductVariantSearch(variant, normalizedQuery),
+    );
+    const exactSkuMatch = matchingVariants.find(
+      (variant) => normalizeCatalogSearchTerm(variant.sku) === normalizedQuery,
+    );
+
+    if (exactSkuMatch) return [{ product, matchingVariants: [exactSkuMatch] }];
+    if (productMatches) return [{ product, matchingVariants: [] }];
+    if (matchingVariants.length > 0) return [{ product, matchingVariants }];
+    return [];
+  });
 };
+
+export const searchProducts = (query: string): CatalogProduct[] =>
+  searchCatalog(query).map(({ product }) => product);

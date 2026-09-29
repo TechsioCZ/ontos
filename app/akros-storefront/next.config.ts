@@ -36,7 +36,7 @@ const nextConfig: NextConfig = {
       },
       {
         source: "/matice-sestihranna-m8-din-934-a2",
-        destination: "/produkt/matice-sestihranna-m8-din-934-a2",
+        destination: "/produkt/matice-sestihranne-0-8-d-din-934-a2?variant=10093400080000",
       },
     ];
   },

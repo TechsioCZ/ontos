@@ -15,6 +15,7 @@ import {
   getPromotionItems,
   getRecommendedProducts,
   getSaleProducts,
+  searchCatalog,
   searchProducts,
 } from "@/mock-storefront/catalog";
 
@@ -147,6 +148,39 @@ describe("mock catalog gateway", () => {
     expect(searchProducts("SROUBY S SESTIHRANNOU").map((product) => product.slug)).toContain(
       "srouby-se-sestihrannou-hlavou-din-933-a2",
     );
+  });
+
+  it("finds a concrete purchasing variant by its source SKU", () => {
+    const results = searchCatalog("10799700050025");
+
+    expect(results).toHaveLength(1);
+    expect(results[0]).toMatchObject({
+      product: {
+        slug: "vruty-se-zapustnou-hlavou-s-krizovou-drazkou-din-7997-a2",
+      },
+      matchingVariants: [
+        {
+          id: "item-4709",
+          sku: "10799700050025",
+        },
+      ],
+    });
+  });
+
+  it("searches variant parameters from the feed without duplicating product families", () => {
+    const results = searchCatalog("l=40mm");
+    const doubleNipple = results.find(
+      ({ product }) => product.slug === "dvojniply-typ-310-mat-1-4404",
+    );
+
+    expect(doubleNipple?.matchingVariants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          sku: "3dn31028000000010",
+        }),
+      ]),
+    );
+    expect(new Set(results.map(({ product }) => product.id)).size).toBe(results.length);
   });
 
   it("resolves categories by their public slug", () => {

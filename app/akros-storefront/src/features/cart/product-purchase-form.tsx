@@ -11,22 +11,20 @@ import { Table } from "@techsio/ui-kit/organisms/table";
 import { useCart } from "@/features/cart/cart-provider";
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
+import {
+  matchesProductVariantSearch,
+  normalizeCatalogSearchTerm,
+} from "@/lib/product-variant-search";
 import type { CatalogProduct, CatalogProductVariant } from "@/mock-storefront/types";
 
 interface ProductPurchaseFormProps {
   product: CatalogProduct;
   variants?: CatalogProductVariant[];
+  initialVariantSearch?: string;
 }
 
 const variantsPerPage = 5;
 const variantCollator = new Intl.Collator("cs-CZ", { numeric: true, sensitivity: "base" });
-
-const normalizeSearchTerm = (value: string) =>
-  value
-    .normalize("NFD")
-    .replaceAll(/[\u0300-\u036f]/g, "")
-    .toLocaleLowerCase("cs-CZ")
-    .trim();
 
 const formatVariantLabel = (variant: CatalogProductVariant) => {
   const dimension = variant.label.match(/\bM\s*(\d+(?:[.,]\d+)?)\s*[x×]\s*(\d+(?:[.,]\d+)?)/i);
@@ -35,21 +33,25 @@ const formatVariantLabel = (variant: CatalogProductVariant) => {
   return `M ${dimension[1]} × ${dimension[2]}`;
 };
 
-export function ProductPurchaseForm({ product, variants }: ProductPurchaseFormProps) {
+export function ProductPurchaseForm({
+  product,
+  variants,
+  initialVariantSearch,
+}: ProductPurchaseFormProps) {
   const { dispatch } = useCart();
-  const [searchTerm, setSearchTerm] = useState("");
+  const [searchTerm, setSearchTerm] = useState(initialVariantSearch ?? "");
   const [confirmation, setConfirmation] = useState("");
   const [quantity, setQuantity] = useState(product.minimumQuantity);
   const [page, setPage] = useState(1);
-  const [inStockOnly, setInStockOnly] = useState(true);
+  const [inStockOnly, setInStockOnly] = useState(!initialVariantSearch);
   const [packageOnly, setPackageOnly] = useState(false);
-  const normalizedSearchTerm = normalizeSearchTerm(searchTerm);
+  const normalizedSearchTerm = normalizeCatalogSearchTerm(searchTerm);
   const visibleVariants = useMemo(
     () =>
       (variants ?? [])
         .filter((variant) => {
           const matchesSearch = normalizedSearchTerm
-            ? normalizeSearchTerm(`${variant.label} ${variant.sku}`).includes(normalizedSearchTerm)
+            ? matchesProductVariantSearch(variant, normalizedSearchTerm)
             : true;
           const matchesStock = !inStockOnly || variant.stockCount >= variant.minimumQuantity;
           const packageQuantity = variant.packageQuantity ?? variant.minimumQuantity;

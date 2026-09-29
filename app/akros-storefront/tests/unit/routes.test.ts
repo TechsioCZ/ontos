@@ -23,4 +23,13 @@ describe("public storefront rewrites", () => {
       ]),
     );
   });
+
+  it("maps the public M8 nut shortcut to its source family and purchasing variant", async () => {
+    const rewrites = await nextConfig.rewrites?.();
+
+    expect(rewrites).toContainEqual({
+      source: "/matice-sestihranna-m8-din-934-a2",
+      destination: "/produkt/matice-sestihranne-0-8-d-din-934-a2?variant=10093400080000",
+    });
+  });
 });
