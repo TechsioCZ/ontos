@@ -57,12 +57,22 @@ body {
 
 .akros-shell {
   min-height: 100vh;
+  width: min(100%, var(--akros-content-max));
+  margin-inline: auto;
+  background: var(--color-base);
+  box-shadow: var(--shadow-sm);
 }
 
 .akros-header {
   position: sticky;
   z-index: 20;
   top: 0;
+  background: var(--color-base);
+  box-shadow: var(--shadow-sm);
+}
+
+.akros-header__utility-bar {
+  border-bottom: 1px solid var(--color-border-primary);
   background: var(--color-fill-surface);
 }
 
@@ -168,7 +178,7 @@ body {
   display: grid;
   grid-template-columns: var(--akros-sidebar-width) minmax(0, 1fr);
   gap: 32px;
-  padding-block: 0 64px;
+  padding-block: var(--dimension-16) 64px;
 }
 
 .akros-sidebar {
@@ -178,21 +188,12 @@ body {
   padding-block: 0;
 }
 
-.akros-sidebar__desktop > h2 {
-  margin: 0 0 8px;
-  font-size: 20px;
-  line-height: 1.2;
-}
-
-.akros-sidebar__desktop > p,
-.akros-sidebar__mobile > p {
-  margin: 0 0 24px;
-  font-size: 16px;
-  line-height: 1.5;
-}
-
 .akros-sidebar__mobile {
   display: none;
+}
+
+.akros-sidebar__desktop {
+  box-shadow: var(--shadow-sm);
 }
 
 .akros-brand:focus-visible,
@@ -968,7 +969,7 @@ body {
     position: relative;
   }
 
-  .akros-header__utility {
+  .akros-header__utility-bar {
     display: none;
   }
 
@@ -1035,7 +1036,7 @@ body {
 
   .akros-sidebar {
     position: static;
-    padding-block: 20px 0;
+    padding-block: 0;
   }
 
   .akros-sidebar__desktop {

@@ -153,7 +153,7 @@ export function CatalogSidebar({
       maxIndentDepth={3}
       size="sm"
     >
-      <VerticalNavigation.Group tone="plain">
+      <VerticalNavigation.Group tone="subtle">
         <VerticalNavigation.List>
           <SpecialCategoriesNavigation navigationId={navigationId} />
           {topCategories.map((category) => (
@@ -173,14 +173,9 @@ export function CatalogSidebar({
 
   return (
     <aside className="akros-sidebar" aria-label={cs.catalog.title}>
-      <div className="akros-sidebar__desktop">
-        <h2>{cs.catalog.title}</h2>
-        <p>{cs.catalog.description}</p>
-        {navigation("catalog-desktop")}
-      </div>
+      <div className="akros-sidebar__desktop">{navigation("catalog-desktop")}</div>
       <details className="akros-sidebar__mobile">
         <summary>{cs.catalog.title}</summary>
-        <p>{cs.catalog.description}</p>
         {navigation("catalog-mobile")}
       </details>
     </aside>

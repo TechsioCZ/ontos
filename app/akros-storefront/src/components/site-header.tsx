@@ -39,23 +39,25 @@ export function SiteHeader() {
 
   return (
     <header className="akros-header">
-      <div className="akros-header__utility">
-        <nav className="akros-header__utility-links" aria-label="Pomocná navigace">
-          {utilityLinks.map((item) => (
-            <Link key={item.href} as={NextLink} href={item.href}>
-              {item.label}
-            </Link>
-          ))}
-        </nav>
-        <LinkButton
-          as={NextLink}
-          className="text-xs"
-          href="/prihlaseni"
-          size="md"
-          variant="primary"
-        >
-          {cs.header.login}
-        </LinkButton>
+      <div className="akros-header__utility-bar">
+        <div className="akros-header__utility">
+          <nav className="akros-header__utility-links" aria-label="Pomocná navigace">
+            {utilityLinks.map((item) => (
+              <Link key={item.href} as={NextLink} href={item.href}>
+                {item.label}
+              </Link>
+            ))}
+          </nav>
+          <LinkButton
+            as={NextLink}
+            className="text-xs"
+            href="/prihlaseni"
+            size="md"
+            variant="primary"
+          >
+            {cs.header.login}
+          </LinkButton>
+        </div>
       </div>
 
       <div className="akros-header__main">
