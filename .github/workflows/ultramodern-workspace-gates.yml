@@ -381,7 +381,9 @@ jobs:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: [workspace-gate, static-contracts, service-integration, node-runtime, cloudflare-runtime]
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # Each Zerops push builds its unit remotely for about 12 minutes and units deploy one after another in
+    # plan order, so a full topology deploy (12 units plus migrations and publication) needs about 3 hours.
+    timeout-minutes: 240
     environment: stage
     # Serializes with the scheduled composition refresh so no publication interleaves with a deploy.
     concurrency:
