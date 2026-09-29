@@ -411,6 +411,9 @@ Certificates: Edit" for the Origin CA.
   placed Worker's secrets with `wrangler secret bulk`, from the Zerops values the Node services use
   today, plus `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`: the Worker build's environment never reaches
   the Worker's runtime, and Core accepts the private plaintext SpiceDB endpoint only on stage. An existing object that differs from the runbook fails the step instead of being reused.
+- `cost-guards` repeats only the cost-guard step, which `provision` runs after the `stage-edge`
+  settings (see [Stage cost guards](#stage-cost-guards)).
+- `resume` turns the cost kill switch off again.
 - `worker-secrets` repeats only the Worker secrets step.
 - `verify` runs the cut-over checklist and changes nothing. The tunnel must be healthy, and both
   SpiceDB TLS pairs must exist and hold. Both VPC
@@ -423,6 +426,64 @@ Certificates: Edit" for the Origin CA.
   `activate` and the full deploy, and move DNS only when it passes.
 - `activate` runs `verify` and, only when every item holds, sets `OUTBOX_WORKER_MODE=host` and
   `DEPLOY_TARGET=cloudflare` on `stage`. `provision` created the host service it needs.
+
+### Stage cost guards
+
+Stage runs on Workers Paid ($5 a month, which includes 10M requests and 30M CPU ms). That allowance
+covers the whole Cloudflare account, which also runs other projects' Workers, and the stage zone is
+shared with them. So the guards measure account-wide usage but only ever change OntOS stage objects. The cut-over script also reads `STAGE_ACCESS_EMAILS` (required, a comma-separated
+list of the people Access admits and the usage notification emails) and `STAGE_ACCESS_ENFORCE_SHELL`
+(default `false`).
+
+- Every Worker config sets `workers_dev: false` and `preview_urls: false`, so the only way in is the
+  zone routes the guards cover, and caps CPU per request at 200 ms for the Shell and 100 ms for a
+  vertical (`CLOUDFLARE_WORKER_CPU_MS` in `packages/shared-contracts/tooling/modern-config.ts`).
+  Nothing has been measured yet; raise a cap when a real request hits it.
+- A WAF custom rule `ontos_stage_kill_switch` blocks exactly the placed OntOS stage hostnames. It is
+  added next to any rules other projects keep in the zone, created disabled, and re-runs keep its
+  current state. The WAF answers before a Worker runs, so blocked requests are never billed. There is
+  no rate-limit rule: on the Free plan a rate-limit expression cannot match a hostname, so it would
+  throttle every other project in the zone. `cost-guards` also records the zone as the `stage-edge` variable
+  `CLOUDFLARE_STAGE_ZONE_ID`.
+- The hourly `.github/workflows/stage-edge-cost-guard.yml` runs
+  `node scripts/ops/cloudflare-stage-cost-guard.mts check` once that variable exists. It sums the
+  whole account's Workers requests and CPU time since the billing cycle started, and logs each OntOS
+  Worker's share and the other Workers' total (`STAGE_BILLING_CYCLE_DAY`,
+  1-28, default 1). Past `STAGE_WORKERS_REQUEST_LIMIT` (default 8M) or `STAGE_WORKERS_CPU_MS_LIMIT`
+  (default 24M), it enables the kill switch and fails the run. All three are optional `stage-edge`
+  variables. The kill switch only stops OntOS stage traffic: if the breakdown shows other projects
+  drive the usage, they need their own action.
+- The Workers requests usage notification `ontos-stage-workers-requests` emails the Access people at
+  5M requests. Cloudflare may offer usage notifications only on Pay-as-you-go or Pro accounts; if
+  `cost-guards` fails on it, the hourly check still protects the budget.
+- Access: a reusable people policy `ontos-stage-people`, a service token `ontos-stage-ci` (one-year
+  duration) and a policy `ontos-stage-ci-token` for it. `stage-edge` holds the token as the secrets
+  `CLOUDFLARE_ACCESS_CLIENT_ID` and `CLOUDFLARE_ACCESS_CLIENT_SECRET`; when they are missing, a
+  re-run rotates the token to recover the secret. Enable Zero Trust once in the dashboard (the Free
+  plan covers 50 people) before the first run; until then Cloudflare answers
+  `access.api.error.not_enabled`, `cost-guards` stops with that to-do, and `verify` reports it.
+
+Only with `STAGE_ACCESS_ENFORCE_SHELL=true` does `cost-guards` put the Shell hostname behind the
+Access application `ontos-stage-shell`, with `ontos-stage-shell-gateway` bypassing
+`/shell-super-app-api/auth/api-key/gateway-context`, which verticals call with an API key. Keep it
+off for now: `cloudflare:proof` probes the Shell with plain `fetch`, cannot send the service token
+headers, and would fail every stage deploy. Vertical hostnames stay outside Access for good, since the
+browser loads their federated remotes cross-origin without credentials; the rate limit and the kill
+switch cover them.
+
+To resume after the kill switch trips, find out why, then run
+`node scripts/ops/cloudflare-stage-cutover.mts resume` (the check trips it again within the hour if
+usage is still over the limit, so raise the limit variables or wait for the next cycle). To undo the
+guards, delete the two rules and the notification in the dashboard and remove the Access
+applications; deleting `CLOUDFLARE_STAGE_ZONE_ID` stops the hourly check.
+
+The cut-over token needs these permissions. Account: Cloudflare Tunnel Edit, Workers Scripts Edit,
+Hyperdrive Edit, Connectivity Directory Admin, Access: Apps and Policies Edit, Access: Service Tokens
+Edit, Notifications Edit, Account Analytics Read and Account Settings Read. Zone: Zone Read, DNS
+Edit, Workers Routes Edit and Zone WAF Edit. The narrower `stage-edge` token additionally needs
+Account Analytics Read and Zone WAF Edit for the hourly check.
+
+### Zerops service retirement
 
 `node scripts/ops/stage-zerops-services.mts retire|restore [--dry-run]` handles the 9 stage
 application services that Cloudflare mode no longer uses. The migrator, SpiceDB, `outboxworkerhost`

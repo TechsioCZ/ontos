@@ -16,8 +16,8 @@ import {
   OpsMode,
   STAGE_ZEROPS_PROJECT_ID,
   ZeropsImportEntrySchema,
-  decodeInput,
   githubApi,
+  listGithubSecretNames,
   listGithubVariables,
   listZeropsServices,
   mutate,
@@ -377,17 +377,6 @@ const ensureGithubEnvironment = Effect.gen(function* ensureGithubEnvironmentEffe
     }),
   );
 });
-
-const SecretNamesSchema = Schema.fromJsonString(Schema.Array(Schema.Struct({ name: Schema.String })));
-
-const listGithubSecretNames = (repository: string, environment: string) =>
-  runCommand({
-    args: ['secret', 'list', '--repo', repository, '--env', environment, '--json', 'name'],
-    command: 'gh',
-  }).pipe(
-    Effect.flatMap(decodeInput(SecretNamesSchema, `the ${environment} secret list`)),
-    Effect.map((secrets): ReadonlySet<string> => new Set(secrets.map(({ name }) => name))),
-  );
 
 const readTokenFromStdin = Effect.gen(function* readTokenFromStdinEffect() {
   const stdio = yield* Stdio.Stdio;

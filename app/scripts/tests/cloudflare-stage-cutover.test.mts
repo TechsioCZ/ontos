@@ -7,15 +7,17 @@ import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from '../ops/
 import {
   CutoverConfiguration,
   activate,
-  edgeUnits,
   provision,
   spicedbGatewayHostname,
+  publicOrigin,
   stageBuildEnvironment,
   verifyCutover,
   workerSecretPlan,
 } from '../ops/cloudflare-stage-cutover.mts';
 import type { CutoverSettings } from '../ops/cloudflare-stage-cutover.mts';
 import { SPICEDB_GRPC_TLS, SPICEDB_HTTP_TLS, spicedbTlsState } from '../ops/spicedb-tls.mts';
+import { ciPolicy, killSwitchRule, peoplePolicy, usageAlert } from '../ops/cloudflare-stage-cost-guard.mts';
+import { edgeUnits } from '../ops/stage-edge-units.mts';
 import { OpsMode, STAGE_ZEROPS_PROJECT_ID } from '../ops/stage-operations.mts';
 import {
   APP_DIRECTORY,
@@ -46,8 +48,10 @@ const HYPERDRIVE_ID = 'hyperdrive-1';
 const STAGE_EDGE = 'stage-edge';
 
 const settings: CutoverSettings = {
+  accessEmails: ['ops@example.com'],
   accountId: 'account-1',
   apiToken: Redacted.make('lead-token-secret'),
+  enforceShellAccess: false,
   projectId: STAGE_ZEROPS_PROJECT_ID,
   repository: 'TechsioCZ/ontos',
   shellHostname: 'app.stage.example.com',
@@ -83,6 +87,7 @@ const SECRETS = [
   'private-jwk-secret',
   SPICEDB_KEY,
   'tunnel-connector-token',
+  'service-token-secret',
 ];
 
 const GATEWAY_HOSTNAME = 'ontos-stage-spicedb.stage.example.com';
@@ -90,11 +95,19 @@ const GATEWAY_HOSTNAME = 'ontos-stage-spicedb.stage.example.com';
 const SPICEDB_TLS = spicedbTlsSecrets({ gatewayHostname: GATEWAY_HOSTNAME });
 
 const PLACEMENT = `${APP_DIRECTORY}/topology/cloudflare-placement.json`;
+const ACCOUNT_PATH = '/client/v4/accounts/account-1';
+const DATA_PLANE_PATH = /^\/(?:cfd_tunnel|connectivity|hyperdrive)/u;
 const JsonRecord = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 const PlacementJson = Schema.fromJsonString(
   Schema.Struct({ buildEnvironment: Schema.Record(Schema.String, Schema.String), units: Schema.Array(Schema.String) }),
 );
 const StringRecord = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+
+/** stage-edge as the cost guards leave it: the zone ID and the Access service token credentials. */
+const GUARDED_STAGE_EDGE = {
+  secrets: { [STAGE_EDGE]: ['CLOUDFLARE_ACCESS_CLIENT_ID', 'CLOUDFLARE_ACCESS_CLIENT_SECRET'] },
+  variables: { [STAGE_EDGE]: { CLOUDFLARE_STAGE_ZONE_ID: 'zone-1' } },
+};
 
 /** A stage whose spicedb service already holds its TLS secrets, unless `projectUserKeys` says otherwise. */
 const newStage = (overrides: Parameters<typeof fakeStage>[0] = {}) =>
@@ -106,6 +119,8 @@ const newStage = (overrides: Parameters<typeof fakeStage>[0] = {}) =>
     ],
     ...overrides,
     projectValues: { ...SECRET_VALUES, ...SPICEDB_TLS, ...overrides.projectValues },
+    secrets: { ...GUARDED_STAGE_EDGE.secrets, ...overrides.secrets },
+    variables: { ...GUARDED_STAGE_EDGE.variables, ...overrides.variables },
   });
 
 const run = <A, E, R>(
@@ -155,9 +170,12 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
 
     yield* run(provision, { account, files, stage });
 
-    const posts = account.requests.filter(({ method }) => method === 'POST');
+    // The cost guards have their own tests; these are the data-plane objects.
+    const posts = account.requests.filter(
+      ({ method, url }) => method === 'POST' && DATA_PLANE_PATH.test(url.pathname.replace(ACCOUNT_PATH, '')),
+    );
     expect(
-      posts.map(({ body, url }) => [url.pathname.replace('/client/v4/accounts/account-1', ''), Option.getOrNull(body)]),
+      posts.map(({ body, url }) => [url.pathname.replace(ACCOUNT_PATH, ''), Option.getOrNull(body)]),
     ).toStrictEqual([
       ['/cfd_tunnel', { config_src: 'cloudflare', name: 'ontos-stage' }],
       [
@@ -445,6 +463,28 @@ const plannedSecretNames = Effect.gen(function* plannedSecretNamesEffect() {
   return Object.fromEntries([...plan].map(([worker, secrets]) => [worker, Object.keys(secrets)]));
 });
 
+/** Every cost guard as `provision` leaves it, with the kill switch off. */
+const guardedAccount = Effect.gen(function* guardedAccountEffect() {
+  const units = yield* edgeUnits(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE));
+  const hostnames = units.map((unit) => new URL(publicOrigin(unit, settings)).hostname);
+  return {
+    accessPolicies: [
+      { ...peoplePolicy(settings.accessEmails), id: 'policy-1' },
+      { ...ciPolicy('token-1'), id: 'policy-2' },
+    ],
+    alertPolicies: [{ ...usageAlert(settings.accessEmails), id: 'alert-1' }],
+    rulesets: [
+      {
+        id: 'custom',
+        kind: 'zone',
+        phase: 'http_request_firewall_custom',
+        rules: [{ ...killSwitchRule(hostnames, false), id: 'rule-2' }],
+      },
+    ],
+    serviceTokens: [{ client_id: 'access-client-id', id: 'token-1', name: 'ontos-stage-ci' }],
+  };
+});
+
 /** An account `provision` completed; `extraSecrets` adds names to a Worker's planned ones. */
 const provisionedAccount = (
   tunnelStatus: string,
@@ -454,6 +494,7 @@ const provisionedAccount = (
   Effect.gen(function* provisionedAccountEffect() {
     const planned: Readonly<Record<string, readonly string[]>> = plannedOverride ?? (yield* plannedSecretNames);
     return fakeCloudflareAccount({
+      ...(yield* guardedAccount),
       hyperdrives: [
         {
           caching: { disabled: true },

@@ -538,24 +538,65 @@ export interface FakeCloudflareRequest {
   readonly url: URL;
 }
 
+/** A cost-guard object the fake stores as the API returns it. */
+export type FakeRecord = Readonly<Record<string, Json>>;
+
+export interface FakeRuleset {
+  readonly id: string;
+  readonly kind: string;
+  readonly phase: string;
+  rules: FakeRecord[];
+}
+
+export interface FakeZone {
+  readonly id: string;
+  readonly name: string;
+}
+
+/** One Worker script's usage in the window the GraphQL Analytics API is asked about. */
+export interface FakeUsage {
+  readonly cpuTimeUs: number;
+  readonly requests: number;
+  readonly scriptName: string;
+}
+
 export interface FakeCloudflareAccount {
+  readonly accessApps: FakeRecord[];
+  /** Whether Zero Trust is on; while it is off every Access route answers `access.api.error.not_enabled`. */
+  accessEnabled: boolean;
+  readonly accessPolicies: FakeRecord[];
+  readonly alertPolicies: FakeRecord[];
   readonly hyperdrives: FakeHyperdrive[];
   readonly layer: Layer.Layer<HttpClient.HttpClient>;
   readonly requests: FakeCloudflareRequest[];
+  readonly rulesets: FakeRuleset[];
   readonly scripts: string[];
   /** Secret names per Worker script. */
   readonly secrets: Map<string, string[]>;
+  readonly serviceTokens: FakeRecord[];
   readonly tunnels: FakeTunnel[];
+  /** What the GraphQL Analytics API reports for any window, one row per script. */
+  usage: readonly FakeUsage[];
   readonly vpcServices: FakeVpcService[];
+  readonly zones: FakeZone[];
 }
 
 export interface FakeCloudflareInitial {
+  readonly accessApps?: readonly FakeRecord[];
+  readonly accessEnabled?: boolean;
+  readonly accessPolicies?: readonly FakeRecord[];
+  readonly alertPolicies?: readonly FakeRecord[];
   readonly hyperdrives?: readonly FakeHyperdrive[];
+  readonly rulesets?: readonly FakeRuleset[];
   readonly scripts?: readonly string[];
   readonly secrets?: Readonly<Record<string, readonly string[]>>;
+  readonly serviceTokens?: readonly FakeRecord[];
   readonly tunnels?: readonly FakeTunnel[];
   readonly tunnelStatus?: string;
+  readonly usage?: readonly FakeUsage[];
   readonly vpcServices?: readonly FakeVpcService[];
+  /** Defaults to the test stage zone `stage.example.com` as `zone-1`. */
+  readonly zones?: readonly FakeZone[];
 }
 
 const requestBody = (request: HttpClientRequest.HttpClientRequest): Option.Option<Json> =>
@@ -595,28 +636,196 @@ const tunnelAnswer = (
   return tunnel === undefined ? undefined : envelope(tunnel);
 };
 
+const RecordSchema = Schema.Record(Schema.String, Schema.Json);
+const RulesSchema = Schema.Struct({ rules: Schema.Array(RecordSchema) });
+
+type FakeState = Omit<FakeCloudflareAccount, 'layer'>;
+
+/** Stores a POSTed object with a fresh `id`, or replaces the one a PUT names. */
+const collection = (
+  items: FakeRecord[],
+  prefix: string,
+  method: string,
+  id: string | undefined,
+  body: Option.Option<Json>,
+  created: (record: FakeRecord, id: string) => FakeRecord = (record, newId) => ({ ...record, id: newId }),
+) => {
+  if (method === 'GET' && id === undefined) {
+    return items;
+  }
+  const record = decodeBody(RecordSchema, body);
+  if (method === 'POST') {
+    const stored = created(record, `${prefix}-${String(items.length + 1)}`);
+    items.push(stored);
+    return stored;
+  }
+  const index = items.findIndex((item) => item.id === id);
+  const replaced = { ...record, id: id ?? '' };
+  if (index !== -1) {
+    items[index] = replaced;
+  }
+  return index === -1 ? undefined : replaced;
+};
+
+const serviceTokenAnswer = (account: FakeState, method: string, path: string) => {
+  const rotated = /^\/access\/service_tokens\/(?<id>[^/]+)\/rotate$/u.exec(path)?.groups?.id;
+  if (rotated !== undefined) {
+    const token = account.serviceTokens.find(({ id }) => id === rotated);
+    return token === undefined ? undefined : { ...token, client_secret: 'rotated-service-token-secret' };
+  }
+  if (method === 'GET') {
+    return account.serviceTokens;
+  }
+  const token = {
+    client_id: 'access-client-id',
+    id: `token-${String(account.serviceTokens.length + 1)}`,
+    name: 'ontos-stage-ci',
+  };
+  account.serviceTokens.push(token);
+  return { ...token, client_secret: 'service-token-secret' };
+};
+
+const accountGuardAnswer = (account: FakeState, method: string, path: string, body: Option.Option<Json>) => {
+  const match = /^\/(?<resource>access\/policies|access\/apps|alerting\/v3\/policies)(?:\/(?<id>[^/]+))?$/u.exec(path);
+  const resource = match?.groups?.resource;
+  const id = match?.groups?.id;
+  if (resource === 'access/policies') {
+    return collection(account.accessPolicies, 'policy', method, id, body);
+  }
+  if (resource === 'access/apps') {
+    return collection(account.accessApps, 'app', method, id, body);
+  }
+  if (resource === 'alerting/v3/policies') {
+    const stored = collection(account.alertPolicies, 'alert', method, id, body);
+    return Array.isArray(stored) || stored === undefined ? stored : { id: stored.id ?? '' };
+  }
+  return path.startsWith('/access/service_tokens') ? serviceTokenAnswer(account, method, path) : undefined;
+};
+
+const rulesetView = ({ id, rules }: FakeRuleset) => ({ id, rules });
+
+const withRuleIds = (ruleset: FakeRuleset, rules: readonly FakeRecord[]) =>
+  rules.map((rule, index) => ({ ...rule, id: `${ruleset.id}-rule-${String(ruleset.rules.length + index + 1)}` }));
+
+const zoneAnswer = (account: FakeState, method: string, url: URL, body: Option.Option<Json>): Json | undefined => {
+  const path = url.pathname.replace(/^\/client\/v4\/zones/u, '');
+  if (path === '') {
+    return account.zones
+      .filter(({ name }) => name === url.searchParams.get('name'))
+      .map(({ id, name }) => ({ id, name }));
+  }
+  const parts = /^\/[^/]+\/rulesets(?:\/(?<rest>.*))?$/u.exec(path)?.groups;
+  const rest = parts?.rest;
+  if (parts === undefined) {
+    return undefined;
+  }
+  if (rest === undefined) {
+    return account.rulesets.map(({ id, kind, phase }) => ({ id, kind, phase }));
+  }
+  const phase = /^phases\/(?<phase>[^/]+)\/entrypoint$/u.exec(rest)?.groups?.phase;
+  if (phase !== undefined) {
+    const ruleset: FakeRuleset = { id: `ruleset-${phase}`, kind: 'zone', phase, rules: [] };
+    ruleset.rules = withRuleIds(ruleset, decodeBody(RulesSchema, body).rules);
+    account.rulesets.push(ruleset);
+    return rulesetView(ruleset);
+  }
+  const [rulesetId, , ruleId] = rest.split('/');
+  const ruleset = account.rulesets.find(({ id }) => id === rulesetId);
+  if (ruleset === undefined) {
+    return undefined;
+  }
+  if (method === 'POST') {
+    ruleset.rules.push(...withRuleIds(ruleset, [decodeBody(RecordSchema, body)]));
+  }
+  if (method === 'PATCH') {
+    ruleset.rules = ruleset.rules.map((rule) =>
+      rule.id === ruleId ? { ...decodeBody(RecordSchema, body), id: ruleId ?? '' } : rule,
+    );
+  }
+  return rulesetView(ruleset);
+};
+
+const graphqlAnswer = (account: FakeState) =>
+  Response.json({
+    data: {
+      viewer: {
+        accounts: [
+          {
+            workersInvocationsAdaptive: account.usage.map(({ cpuTimeUs, requests, scriptName }) => ({
+              dimensions: { scriptName },
+              sum: { cpuTimeUs, requests },
+            })),
+          },
+        ],
+      },
+    },
+    errors: null,
+  });
+
 const noRoute = () =>
   Response.json(
     { errors: [{ code: 7003, message: 'No route for that URI' }], result: null, success: false },
     { status: 404 },
   );
 
+const accessNotEnabled = () =>
+  Response.json(
+    { errors: [{ code: 9999, message: 'access.api.error.not_enabled' }], result: null, success: false },
+    { status: 403 },
+  );
+
+/** Routes outside `/accounts/<id>`: Origin CA certificates, GraphQL analytics and zones. */
+const nonAccountAnswer = (
+  account: FakeState,
+  method: string,
+  url: URL,
+  body: Option.Option<Json>,
+): Response | undefined => {
+  if (url.pathname === '/client/v4/certificates' && method === 'POST') {
+    const { csr, hostnames, requested_validity } = decodeBody(OriginCertificateBodySchema, body);
+    const certificate = signWithFakeOriginCa(csr, hostnames, requested_validity);
+    return envelope({ certificate, expires_on: '2041-01-01 00:00:00 +0000 UTC', hostnames, id: 'origin-cert-1' });
+  }
+  if (url.pathname === '/client/v4/graphql') {
+    return graphqlAnswer(account);
+  }
+  if (!url.pathname.startsWith('/client/v4/zones')) {
+    return undefined;
+  }
+  const zoneResult = zoneAnswer(account, method, url, body);
+  return zoneResult === undefined ? noRoute() : envelope(zoneResult);
+};
+
 export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloudflareAccount => {
-  const account: Omit<FakeCloudflareAccount, 'layer'> = {
+  const account: FakeState = {
+    accessApps: [...(initial.accessApps ?? [])],
+    accessEnabled: initial.accessEnabled ?? true,
+    accessPolicies: [...(initial.accessPolicies ?? [])],
+    alertPolicies: [...(initial.alertPolicies ?? [])],
     hyperdrives: [...(initial.hyperdrives ?? [])],
     requests: [],
+    rulesets: (initial.rulesets ?? []).map((ruleset) => ({ ...ruleset, rules: [...ruleset.rules] })),
     scripts: [...(initial.scripts ?? [])],
     secrets: new Map(Object.entries(initial.secrets ?? {}).map(([script, names]) => [script, [...names]])),
+    serviceTokens: [...(initial.serviceTokens ?? [])],
     tunnels: [...(initial.tunnels ?? [])],
+    usage: [...(initial.usage ?? [])],
     vpcServices: [...(initial.vpcServices ?? [])],
+    zones: [...(initial.zones ?? [{ id: 'zone-1', name: 'stage.example.com' }])],
   };
   const answer = (method: string, url: URL, body: Option.Option<Json>): Response => {
-    if (url.pathname === '/client/v4/certificates' && method === 'POST') {
-      const { csr, hostnames, requested_validity } = decodeBody(OriginCertificateBodySchema, body);
-      const certificate = signWithFakeOriginCa(csr, hostnames, requested_validity);
-      return envelope({ certificate, expires_on: '2041-01-01 00:00:00 +0000 UTC', hostnames, id: 'origin-cert-1' });
+    const outsideAccount = nonAccountAnswer(account, method, url, body);
+    if (outsideAccount !== undefined) {
+      return outsideAccount;
     }
     const path = url.pathname.replace(/^\/client\/v4\/accounts\/[^/]+/u, '');
+    if (!account.accessEnabled && path.startsWith('/access/')) {
+      return accessNotEnabled();
+    }
+    const guardResult = accountGuardAnswer(account, method, path, body);
+    if (guardResult !== undefined) {
+      return Array.isArray(guardResult) ? firstPage(url, guardResult) : envelope(guardResult);
+    }
     if (path.startsWith('/cfd_tunnel')) {
       return tunnelAnswer(account, initial, method, url, path) ?? noRoute();
     }
@@ -654,5 +863,6 @@ export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloud
       return Effect.succeed(HttpClientResponse.fromWeb(request, answer(request.method, url, body)));
     }),
   );
-  return { ...account, layer };
+  // The layer answers against this same object, so tests observe every change and can set `usage`.
+  return Object.assign(account, { layer });
 };

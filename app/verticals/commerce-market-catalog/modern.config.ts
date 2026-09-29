@@ -14,7 +14,8 @@ import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import {
-  createCloudflareDataPlaneBindings,
+  CLOUDFLARE_WORKER_CPU_MS,
+  createCloudflareWorkerConfig,
   createCloudflareWorkerSecurity,
   createModernBuildContext,
   createWorkerSsrPlugins,
@@ -78,12 +79,14 @@ const appDevServerHeaders: NonNullable<NonNullable<NonNullable<AppToolsUserConfi
   'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
 };
 
-// Only a Worker build binds the private data plane; its IDs are required there and unused elsewhere.
-const cloudflareDataPlaneBindings = cloudflareDeployEnabled ? createCloudflareDataPlaneBindings(envValue) : undefined;
+// Only a Worker build binds the private data plane and carries the cost guards; its IDs are required there and unused elsewhere.
+const cloudflareWorkerConfig = cloudflareDeployEnabled
+  ? createCloudflareWorkerConfig(envValue, CLOUDFLARE_WORKER_CPU_MS.vertical)
+  : undefined;
 const cloudflareDeployment = whenEnabled(cloudflareDeployEnabled, {
   deploy: {
     worker: {
-      ...cloudflareDataPlaneBindings,
+      ...cloudflareWorkerConfig,
       compatibilityDate: '2026-06-02',
       name: cloudflareWorkerName,
       security: createCloudflareWorkerSecurity(),

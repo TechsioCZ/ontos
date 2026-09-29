@@ -251,6 +251,18 @@ export const setGithubSecret = (repository: string, environment: string, name: s
     stdin: value,
   });
 
+const GithubSecretNamesSchema = Schema.fromJsonString(Schema.Array(Schema.Struct({ name: Schema.String })));
+
+/** Secret names of a GitHub environment; GitHub never returns the values. */
+export const listGithubSecretNames = (repository: string, environment: string) =>
+  runCommand({
+    args: ['secret', 'list', REPOSITORY_FLAG, repository, ENVIRONMENT_FLAG, environment, '--json', 'name'],
+    command: GH,
+  }).pipe(
+    Effect.flatMap(decodeInput(GithubSecretNamesSchema, `the ${environment} secret list`)),
+    Effect.map((secrets): ReadonlySet<string> => new Set(secrets.map(({ name }) => name))),
+  );
+
 const GithubVariablesSchema = Schema.fromJsonString(
   Schema.Array(Schema.Struct({ name: Schema.String, value: Schema.String })),
 );

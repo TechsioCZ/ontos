@@ -24,9 +24,19 @@ import { readEdgeConsumers, serviceIdVariable } from '../publish-active-applicat
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from './cloudflare-api.mts';
 import type { CloudflareHyperdrive, CloudflareVpcService, VpcServiceSpec } from './cloudflare-api.mts';
+import { costGuardChecks, ensureCostGuards, setKillSwitch } from './cloudflare-stage-cost-guard.mts';
+import type { CostGuardPlan } from './cloudflare-stage-cost-guard.mts';
 import { OpsShellLive, runCommand } from './ops-shell.mts';
 import type { SecretValues } from './ops-shell.mts';
 import { ensureSpicedbTls, spicedbTlsState } from './spicedb-tls.mts';
+import {
+  BuildEnvironmentSchema,
+  PLACEMENT_LABEL,
+  PLACEMENT_PATH,
+  PlacementSchema,
+  readEdgeUnits,
+} from './stage-edge-units.mts';
+import type { BuildEnvironment, EdgeUnit } from './stage-edge-units.mts';
 import { StageOperationError } from './stage-operation-error.mts';
 import {
   DEPLOY_TARGET_VARIABLE,
@@ -62,9 +72,11 @@ import type { ServiceImport, ZeropsService } from './stage-operations.mts';
  *
  * Settings come from the environment, else from the dotenv file `--env-file` names (default
  * `~/.cloudflare-ontos-stage-token`): CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, STAGE_ZONE,
- * STAGE_SHELL_HOSTNAME and, optionally, CLOUDFLARE_STAGE_EDGE_API_TOKEN (the narrower CI token;
- * without it CI receives CLOUDFLARE_API_TOKEN), plus ZEROPS_TOKEN for the SpiceDB TLS secrets. Secret
- * values are read from Zerops with the locally authenticated `zcli` and never printed.
+ * STAGE_SHELL_HOSTNAME, STAGE_ACCESS_EMAILS (comma-separated people Access admits and the usage
+ * notification emails) and, optionally, CLOUDFLARE_STAGE_EDGE_API_TOKEN (the narrower CI token;
+ * without it CI receives CLOUDFLARE_API_TOKEN) and STAGE_ACCESS_ENFORCE_SHELL (default false),
+ * plus ZEROPS_TOKEN for the SpiceDB TLS secrets. Secret values are read from Zerops with the
+ * locally authenticated `zcli` and never printed.
  */
 export const STAGE_TUNNEL_NAME = 'ontos-stage';
 export const STAGE_HYPERDRIVE_NAME = 'ontos-stage-runtime';
@@ -99,8 +111,14 @@ export interface StageOrigins {
 }
 
 export interface CutoverSettings extends StageOrigins {
+  readonly accessEmails: readonly string[];
   readonly accountId: string;
   readonly apiToken: Redacted.Redacted;
+  /**
+   * Gates the Shell hostname behind Access. Off until the framework's `cloudflare:proof` can send the
+   * CI service token's headers: until then every stage-edge proof would fail and roll back.
+   */
+  readonly enforceShellAccess: boolean;
   readonly projectId: string;
   readonly repository: string;
   readonly stageEdgeApiToken: Redacted.Redacted;
@@ -113,26 +131,6 @@ export const CutoverConfiguration = Context.Service<CutoverSettings>(
 // ---------------------------------------------------------------------------------------------
 // Edge units and their stage origins
 
-/** One placed Worker: its topology unit, Worker name and public URL build variable. */
-export interface EdgeUnit {
-  readonly id: string;
-  readonly kind: 'shell' | 'vertical';
-  readonly publicUrlEnv: string;
-  readonly workerName: string;
-}
-
-const CloudflareUnitSchema = Schema.Struct({ publicUrlEnv: Schema.String, workerName: Schema.String });
-const TopologySchema = Schema.fromJsonString(
-  Schema.Struct({
-    shell: Schema.Struct({ cloudflare: CloudflareUnitSchema, id: Schema.String }),
-    verticals: Schema.Array(Schema.Struct({ cloudflare: CloudflareUnitSchema, id: Schema.String })),
-  }),
-);
-const BuildEnvironmentSchema = Schema.Record(Schema.String, Schema.String);
-type BuildEnvironment = typeof BuildEnvironmentSchema.Type;
-const PlacementSchema = Schema.fromJsonString(
-  Schema.Struct({ buildEnvironment: BuildEnvironmentSchema, units: Schema.Array(Schema.String) }),
-);
 /** The whole placement document, so writing `buildEnvironment` preserves every other key. */
 const PlacementDocumentSchema = Schema.fromJsonString(
   Schema.StructWithRest(Schema.Struct({ buildEnvironment: BuildEnvironmentSchema }), [
@@ -140,38 +138,6 @@ const PlacementDocumentSchema = Schema.fromJsonString(
   ]),
   { space: 2 },
 );
-const PLACEMENT_PATH = ['topology', 'cloudflare-placement.json'] as const;
-const PLACEMENT_LABEL = 'topology/cloudflare-placement.json';
-
-/** The placed units in placement order, with the topology's Worker names. */
-export const edgeUnits = (topologyJson: string, placementJson: string) =>
-  Effect.gen(function* edgeUnitsEffect() {
-    const topology = yield* decodeInput(TopologySchema, 'topology/reference-topology.json')(topologyJson);
-    const placement = yield* decodeInput(PlacementSchema, PLACEMENT_LABEL)(placementJson);
-    const units = new Map<string, EdgeUnit>([
-      [topology.shell.id, { id: topology.shell.id, kind: 'shell', ...topology.shell.cloudflare }],
-    ]);
-    for (const vertical of topology.verticals) {
-      units.set(vertical.id, { id: vertical.id, kind: 'vertical', ...vertical.cloudflare });
-    }
-    return yield* Effect.forEach(
-      placement.units,
-      (id) => {
-        const unit = units.get(id);
-        return unit === undefined
-          ? Effect.fail(new StageOperationError({ message: `placed unit ${id} is not in the reference topology` }))
-          : Effect.succeed(unit);
-      },
-      { concurrency: 1 },
-    );
-  });
-
-const readEdgeUnits = Effect.gen(function* readEdgeUnitsEffect() {
-  return yield* edgeUnits(
-    yield* readAppText('topology', 'reference-topology.json'),
-    yield* readAppText(...PLACEMENT_PATH),
-  );
-});
 
 const shellOrigin = (origins: StageOrigins) => `https://${origins.shellHostname}`;
 
@@ -669,6 +635,38 @@ const spicedbTlsTarget = Effect.gen(function* spicedbTlsTargetEffect() {
 /** Creates the SpiceDB gRPC and HTTP gateway TLS secrets on the Zerops `spicedb` service when they are missing. */
 export const ensureStageSpicedbTls = spicedbTlsTarget.pipe(Effect.flatMap(ensureSpicedbTls));
 
+// Cost guards
+
+/** The cost guards cover the Shell and every placed vertical's public hostname. */
+const costGuardPlan = Effect.gen(function* costGuardPlanEffect() {
+  const settings = yield* CutoverConfiguration;
+  const units = yield* readEdgeUnits;
+  const plan: CostGuardPlan = {
+    accessEmails: settings.accessEmails,
+    enforceShellAccess: settings.enforceShellAccess,
+    hostnames: units.map((unit) => new URL(publicOrigin(unit, settings)).hostname),
+    repository: settings.repository,
+    shellHostname: settings.shellHostname,
+    stageZone: settings.stageZone,
+  };
+  return plan;
+});
+
+export const provisionCostGuards = Effect.gen(function* provisionCostGuardsEffect() {
+  yield* ensureCostGuards(yield* costGuardPlan);
+});
+
+/** Turns the kill switch off again once the cause of the usage spike is understood. */
+export const resume = Effect.gen(function* resumeEffect() {
+  const api = yield* CloudflareApi;
+  const { stageZone } = yield* CutoverConfiguration;
+  const zoneId = yield* api.findZoneId(stageZone);
+  if (Option.isNone(zoneId)) {
+    return yield* new StageOperationError({ message: `the API token cannot read the zone ${stageZone}` });
+  }
+  return yield* setKillSwitch(zoneId.value, false);
+});
+
 // ---------------------------------------------------------------------------------------------
 // Provisioning and verification
 
@@ -682,6 +680,7 @@ export const provision = Effect.gen(function* provisionEffect() {
   const hyperdriveId = yield* ensureHyperdrive(vpc.db18);
   yield* writeBuildEnvironment({ hyperdriveId, spicedbVpcServiceId: vpc.spicedb });
   yield* configureStageEdge;
+  yield* provisionCostGuards;
   yield* setWorkerSecrets;
 });
 
@@ -849,6 +848,9 @@ export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
     missingWorkers.length === 0 ? Option.none() : Option.some(`missing ${missingWorkers.join(', ')}`),
   );
   yield* workerSecretsState;
+  for (const [label, failure] of yield* costGuardChecks(yield* costGuardPlan)) {
+    yield* check(label, failure);
+  }
   yield* check(
     `the latest ${STAGE_EDGE_ENVIRONMENT} deployment (Worker deploy plus cloudflare:proof) succeeded for the checked-out revision`,
     yield* latestStageEdgeState,
@@ -884,12 +886,18 @@ export const activate = Effect.gen(function* activateEffect() {
 // Composition root
 
 const HOSTNAME_PATTERN = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/u;
+const EMAIL_PATTERN = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/u;
 
 export const loadCutoverSettings = Effect.gen(function* loadCutoverSettingsEffect() {
   const apiToken = yield* Config.Redacted('CLOUDFLARE_API_TOKEN');
   const settings: CutoverSettings = {
+    accessEmails: (yield* Config.String('STAGE_ACCESS_EMAILS'))
+      .split(',')
+      .map((email) => email.trim())
+      .filter((email) => email !== ''),
     accountId: yield* Config.String('CLOUDFLARE_ACCOUNT_ID'),
     apiToken,
+    enforceShellAccess: yield* Config.Boolean('STAGE_ACCESS_ENFORCE_SHELL').pipe(Config.withDefault(false)),
     projectId: STAGE_ZEROPS_PROJECT_ID,
     repository: ONTOS_REPOSITORY,
     shellHostname: yield* Config.String('STAGE_SHELL_HOSTNAME'),
@@ -898,6 +906,9 @@ export const loadCutoverSettings = Effect.gen(function* loadCutoverSettingsEffec
   };
   if (!HOSTNAME_PATTERN.test(settings.stageZone) || !HOSTNAME_PATTERN.test(settings.shellHostname)) {
     return yield* new StageOperationError({ message: 'STAGE_ZONE and STAGE_SHELL_HOSTNAME must be DNS hostnames' });
+  }
+  if (settings.accessEmails.length === 0 || !settings.accessEmails.every((email) => EMAIL_PATTERN.test(email))) {
+    return yield* new StageOperationError({ message: 'STAGE_ACCESS_EMAILS must list at least one email address' });
   }
   if (settings.shellHostname !== settings.stageZone && !settings.shellHostname.endsWith(`.${settings.stageZone}`)) {
     return yield* new StageOperationError({ message: 'STAGE_SHELL_HOSTNAME must be inside STAGE_ZONE' });
@@ -960,13 +971,18 @@ const cli = Command.make('cloudflare-stage-cutover').pipe(
   Command.withSubcommands([
     stepCommand(
       'provision',
-      'Create or reuse the SpiceDB TLS secrets, the Tunnel, cloudflared and outbox-worker-host, VPC services, Hyperdrive, build environment, stage-edge and Worker secrets',
+      'Create or reuse the SpiceDB TLS secrets, the Tunnel, cloudflared and outbox-worker-host, VPC services, Hyperdrive, build environment, stage-edge, cost guards and Worker secrets',
       provision,
     ),
     stepCommand(
       'spicedb-tls',
       'Create the SpiceDB gRPC and HTTP gateway TLS certificates as Zerops spicedb service secrets when missing',
       ensureStageSpicedbTls,
+    ),
+    stepCommand(
+      'cost-guards',
+      'Create or converge Access, the disabled kill switch and the usage notification',
+      provisionCostGuards,
     ),
     stepCommand('worker-secrets', "Set every placed Worker's runtime secrets from Zerops", setWorkerSecrets),
     stepCommand('verify', 'Run the cut-over verification checklist without changing anything', verifyCutover),
@@ -975,6 +991,7 @@ const cli = Command.make('cloudflare-stage-cutover').pipe(
       'Verify, then set DEPLOY_TARGET=cloudflare and OUTBOX_WORKER_MODE=host on the stage environment',
       activate,
     ),
+    stepCommand('resume', 'Turn the cost kill switch off so the stage hostnames reach the Workers again', resume),
   ]),
 );
 

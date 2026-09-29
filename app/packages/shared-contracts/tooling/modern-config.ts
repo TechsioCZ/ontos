@@ -300,6 +300,27 @@ export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['
   },
 });
 
+/**
+ * CPU budgets per invocation. Workers Paid includes 30M CPU ms a month, so a runaway request is cut
+ * off here instead of billed. Nothing has been measured yet: an API vertical does a few database and
+ * SpiceDB round trips (waiting on I/O is not CPU time), and the Shell also renders SSR, so it gets
+ * twice the vertical budget. Raise a cap only with a measured p99 from Workers analytics.
+ */
+export const CLOUDFLARE_WORKER_CPU_MS = { shell: 200, vertical: 100 } as const;
+
+/**
+ * The data plane plus the cost guards every OntOS Worker carries: it answers only on its reviewed
+ * custom domain (no `*.workers.dev` route and no preview URLs, which would bypass the stage zone's
+ * WAF kill switch and rate limit) and stops after `cpuMs` of CPU per request.
+ */
+export const createCloudflareWorkerConfig = (envValue: ModernBuildContext['envValue'], cpuMs: number) => {
+  const dataPlane = createCloudflareDataPlaneBindings(envValue);
+  return {
+    ...dataPlane,
+    wrangler: { ...dataPlane.wrangler, limits: { cpu_ms: cpuMs }, preview_urls: false, workers_dev: false },
+  };
+};
+
 /** A Worker service binding to another OntOS unit's Worker, named as in the reference topology. */
 export interface CloudflareUnitServiceBinding {
   readonly binding: string;
@@ -358,7 +379,7 @@ const createCloudflareDeployment = (
     ? {
         deploy: {
           worker: {
-            ...createCloudflareDataPlaneBindings(build.envValue),
+            ...createCloudflareWorkerConfig(build.envValue, CLOUDFLARE_WORKER_CPU_MS.vertical),
             compatibilityDate: '2026-06-02',
             name: worker.name,
             security: createCloudflareWorkerSecurity(),

@@ -18,7 +18,10 @@ import type {
 import type { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { Cause, Effect, Predicate, Schema } from 'effect';
 import { describe, afterEach, expect, it, rs } from 'effect-rstest';
-import { createCloudflareDataPlaneBindings } from '../../packages/shared-contracts/tooling/modern-config.ts';
+import {
+  CLOUDFLARE_WORKER_CPU_MS,
+  createCloudflareWorkerConfig,
+} from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { build as bundleSource, transform } from 'esbuild';
 
 import { MicroVerticalReadinessSchema } from '@modern-js/bff-effect/microvertical-api';
@@ -2586,18 +2589,19 @@ process.stdout.write(JSON.stringify(evidence, normalize));
 const OntosEvaluatedConfigSchema = Schema.Struct({
   deploy: Schema.Struct({ worker: Schema.Record(Schema.String, Schema.Json) }),
 });
-const withOntosWorkerDataPlane = (configuration: Schema.Json): Schema.Json => {
+const withOntosWorkerConfig = (configuration: Schema.Json): Schema.Json => {
   const { deploy } = Schema.decodeUnknownSync(OntosEvaluatedConfigSchema)(configuration);
-  const dataPlane = createCloudflareDataPlaneBindings(
+  const workerConfig = createCloudflareWorkerConfig(
     (name) =>
       ({
         ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
         ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
       })[name],
+    CLOUDFLARE_WORKER_CPU_MS.vertical,
   );
   return Schema.decodeUnknownSync(Schema.Json)({
     ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(configuration),
-    deploy: { ...deploy, worker: { ...dataPlane, ...deploy.worker } },
+    deploy: { ...deploy, worker: { ...workerConfig, ...deploy.worker } },
   });
 };
 
@@ -2709,7 +2713,7 @@ it.live(
                       const decode = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
                       expect(
                         cloudflare && fileName === modernConfigFile
-                          ? withOntosWorkerDataPlane(decode(expected))
+                          ? withOntosWorkerConfig(decode(expected))
                           : decode(expected),
                         `${moduleFormat}: ${fileName} must preserve evaluated configuration, build identity and plugin behavior`,
                       ).toEqual(decode(evaluated));

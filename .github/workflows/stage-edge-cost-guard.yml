@@ -1,0 +1,58 @@
+name: Stage Edge Cost Guard
+
+# Hourly check of the account-wide Workers usage for the current billing cycle. Past the request or CPU
+# budget, it enables the OntOS stage kill-switch rule (and nothing else) and fails, so Workers Paid stays at its base price.
+# Undo with `node scripts/ops/cloudflare-stage-cutover.mts resume` (docs/architecture/DEPLOYMENT.md).
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage-edge-cost-guard
+  cancel-in-progress: false
+
+jobs:
+  check-usage:
+    name: Check stage Workers usage
+    # Stays idle until `cloudflare-stage-cutover.mts cost-guards` records the stage zone.
+    if: vars.CLOUDFLARE_STAGE_ZONE_ID != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: stage-edge
+      deployment: false
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Enforce the stage usage budget
+        working-directory: app
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_STAGE_ZONE_ID: ${{ vars.CLOUDFLARE_STAGE_ZONE_ID }}
+          STAGE_BILLING_CYCLE_DAY: ${{ vars.STAGE_BILLING_CYCLE_DAY }}
+          STAGE_WORKERS_CPU_MS_LIMIT: ${{ vars.STAGE_WORKERS_CPU_MS_LIMIT }}
+          STAGE_WORKERS_REQUEST_LIMIT: ${{ vars.STAGE_WORKERS_REQUEST_LIMIT }}
+        run: |
+          # Unset optional limits the environment leaves blank, so the script applies its defaults.
+          for name in STAGE_BILLING_CYCLE_DAY STAGE_WORKERS_CPU_MS_LIMIT STAGE_WORKERS_REQUEST_LIMIT; do
+            [[ -n "${!name}" ]] || unset "$name"
+          done
+          mise exec -- node scripts/ops/cloudflare-stage-cost-guard.mts check

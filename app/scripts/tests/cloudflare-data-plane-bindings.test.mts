@@ -3,7 +3,11 @@ import { readFileSync } from 'node:fs';
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { createCloudflareDataPlaneBindings } from '../../packages/shared-contracts/tooling/modern-config.ts';
+import {
+  CLOUDFLARE_WORKER_CPU_MS,
+  createCloudflareDataPlaneBindings,
+  createCloudflareWorkerConfig,
+} from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { PRICE_GROUP_CATALOG_SERVICE_BINDING } from '../../verticals/commerce-customer-context/shared/deployment-paths.ts';
 
 const HYPERDRIVE_ID = 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID';
@@ -28,6 +32,21 @@ it('binds every Worker to PostgreSQL through Hyperdrive and to SpiceDB through i
     vpcServices: [{ binding: 'SPICEDB', serviceId: SPICEDB_VPC_SERVICE }],
     wrangler: { hyperdrive: [{ binding: 'HYPERDRIVE', id: HYPERDRIVE_CONFIG }] },
   });
+});
+
+it('keeps every Worker off workers.dev and preview URLs and caps its CPU per request', () => {
+  const values = reader({ [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG, [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE });
+
+  expect(createCloudflareWorkerConfig(values, CLOUDFLARE_WORKER_CPU_MS.vertical)).toEqual({
+    vpcServices: [{ binding: 'SPICEDB', serviceId: SPICEDB_VPC_SERVICE }],
+    wrangler: {
+      hyperdrive: [{ binding: 'HYPERDRIVE', id: HYPERDRIVE_CONFIG }],
+      limits: { cpu_ms: 100 },
+      preview_urls: false,
+      workers_dev: false,
+    },
+  });
+  expect(createCloudflareWorkerConfig(values, CLOUDFLARE_WORKER_CPU_MS.shell).wrangler.limits).toEqual({ cpu_ms: 200 });
 });
 
 it.each([
