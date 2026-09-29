@@ -219,7 +219,8 @@ it('lets stage deploy failures fail the job, tolerating only best-effort log col
 
 it('binds every browser MicroVertical origin into the Shell build from its Zerops subdomain', () => {
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
-  const shell = serviceBlock(zeropsYaml, 'shellsuperapp');
+  const shellBlock = serviceBlock(zeropsYaml, 'shellsuperapp');
+  const shellBuild = shellBlock.slice(0, shellBlock.indexOf('\n    deploy:'));
   const topology = Schema.decodeUnknownSync(
     Schema.fromJsonString(
       Schema.Struct({
@@ -236,6 +237,6 @@ it('binds every browser MicroVertical origin into the Shell build from its Zerop
   const browserVerticals = topology.verticals.filter(({ surfaceProfile }) => surfaceProfile !== 'api-only');
   expect(browserVerticals.length).toBeGreaterThan(0);
   for (const { cloudflare, id } of browserVerticals) {
-    expect(shell).toContain(`${cloudflare.publicUrlEnv}: \${${id.replaceAll('-', '')}_zeropsSubdomain}`);
+    expect(shellBuild).toContain(`${cloudflare.publicUrlEnv}: \${${id.replaceAll('-', '')}_zeropsSubdomain}`);
   }
 });
