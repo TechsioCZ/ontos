@@ -1,7 +1,6 @@
 import { v1 } from '@authzed/authzed-node';
-import { NodeServices } from '@effect/platform-node';
+import { NodeHttpClient, NodeServices } from '@effect/platform-node';
 import { Config, ConfigProvider, Crypto, Effect, Layer, Option, Redacted, Schema } from 'effect';
-import { FetchHttpClient } from 'effect/unstable/http';
 import type { HttpClient } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
 
@@ -11,13 +10,14 @@ import { SpiceDbConfigError } from '../../src/permissions/config-error.ts';
 import { SPICEDB_ROOT_ENV_PATH, loadSpiceDbConfig } from '../../src/permissions/config.ts';
 import type { SpiceDbConfigValue } from '../../src/permissions/config.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
-import { openSpiceDbGrpcRpc } from '../../src/permissions/spicedb-grpc-rpc.ts';
+import { openSpiceDbGrpcRpc, spiceDbCaCertificate } from '../../src/permissions/spicedb-grpc-rpc.ts';
 import { spiceDbHttpRpc } from '../../src/permissions/spicedb-http-rpc.ts';
 import type { SpiceDbHttpRpc } from '../../src/permissions/spicedb-http-rpc.ts';
 import type { SpiceDbRpcError } from '../../src/permissions/spicedb-rpc.ts';
 
 // Both transports run against the same SpiceDB (`serve --http-enabled`, the image stage runs), so
-// every response must be identical once the per-call revision tokens are cleared.
+// every response must be identical once the per-call revision tokens are cleared. Both listeners
+// serve the development certificate, so the gateway is reached over HTTPS on the gRPC host name.
 const loadHttpOrigin = (configuration: SpiceDbConfigValue) =>
   loadDotEnvProvider(SPICEDB_ROOT_ENV_PATH, (reason, cause) => new SpiceDbConfigError({ cause, reason })).pipe(
     Effect.flatMap((fileProvider) =>
@@ -26,8 +26,8 @@ const loadHttpOrigin = (configuration: SpiceDbConfigValue) =>
       ),
     ),
     Effect.map((port) => {
-      const { hostname } = new URL(`http://${configuration.endpoint}`);
-      return new URL(`http://${hostname}:${port}`);
+      const { hostname } = new URL(`https://${configuration.endpoint}`);
+      return new URL(`https://${hostname}:${port}`);
     }),
   );
 
@@ -339,7 +339,15 @@ const transportParityProgram = Effect.gen(function* provesTransportParity() {
   ).toStrictEqual(permissionDenied);
 });
 
-it.layer(Layer.mergeAll(NodeServices.layer, FetchHttpClient.layer), { excludeTestServices: true })(
+/** The gateway HttpClient trusts only SPICEDB_CA_CERT, exactly as the gRPC client does. */
+const GatewayHttpClientLive = Layer.unwrap(
+  loadSpiceDbConfig().pipe(
+    Effect.flatMap((configuration) => Effect.sync(() => spiceDbCaCertificate(configuration))),
+    Effect.map((ca) => Layer.provide(NodeHttpClient.layerNodeHttpNoAgent, NodeHttpClient.layerAgentOptions({ ca }))),
+  ),
+);
+
+it.layer(Layer.mergeAll(NodeServices.layer, GatewayHttpClientLive), { excludeTestServices: true })(
   'SpiceDB transport parity',
   (suite) => {
     suite.effect(
