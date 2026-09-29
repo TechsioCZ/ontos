@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useId, useMemo, useState } from "react";
 import { Button } from "@techsio/ui-kit/atoms/button";
 import { NumericInput } from "@techsio/ui-kit/atoms/numeric-input";
 import { FormCheckbox } from "@techsio/ui-kit/molecules/form-checkbox";
 import { Pagination } from "@techsio/ui-kit/molecules/pagination";
 import { Slider } from "@techsio/ui-kit/molecules/slider";
-import { Table } from "@techsio/ui-kit/organisms/table";
+import { DataTable, type ColumnDef } from "@techsio/ui-kit/organisms/data-table";
 
 import { useCart } from "@/features/cart/cart-provider";
 import { cs } from "@/i18n/cs";
@@ -100,6 +100,97 @@ const formatVariantLabel = (variant: CatalogProductVariant) => {
 
   return `M ${dimension[1]} × ${dimension[2]}`;
 };
+
+const getVariantCartItem = (product: CatalogProduct, variant: CatalogProductVariant) => ({
+  productId: product.id,
+  variantId: variant.id,
+  slug: product.slug,
+  name: product.name,
+  sku: variant.sku,
+  imageSrc: variant.imageSrc ?? product.imageSrc,
+  imageAlt: product.imageAlt,
+  unit: variant.unit,
+  minimumQuantity: variant.minimumQuantity,
+  stockCount: variant.stockCount,
+  priceMinor: variant.priceMinor,
+  variantLabel: formatVariantLabel(variant),
+});
+
+interface VariantOrderControlProps {
+  mode: "minimum" | "package";
+  onAdd: (variant: CatalogProductVariant, quantity: number) => void;
+  product: CatalogProduct;
+  variant: CatalogProductVariant;
+}
+
+function VariantOrderControl({ mode, onAdd, product, variant }: VariantOrderControlProps) {
+  const inputId = useId();
+  const isPackage = mode === "package";
+  const packageQuantity = variant.packageQuantity ?? variant.minimumQuantity;
+  const maximumOrderQuantity = getMaximumOrderQuantity(getVariantCartItem(product, variant));
+  const maximum = isPackage
+    ? Math.floor(maximumOrderQuantity / packageQuantity)
+    : maximumOrderQuantity;
+  const minimum = isPackage ? 0 : variant.minimumQuantity;
+  const step = isPackage ? 1 : variant.minimumQuantity;
+  const [selectedQuantity, setSelectedQuantity] = useState(minimum);
+  const quantityToAdd = isPackage
+    ? Math.max(selectedQuantity, 1) * packageQuantity
+    : selectedQuantity;
+  const label = formatVariantLabel(variant);
+  const disabled = maximum <= 0 || variant.priceMinor <= 0;
+
+  return (
+    <div className={`akros-variant-table__order akros-variant-table__order--${mode}`}>
+      <NumericInput
+        id={inputId}
+        locale="cs-CZ"
+        max={maximum}
+        min={minimum}
+        onChange={setSelectedQuantity}
+        size="sm"
+        step={step}
+        value={selectedQuantity}
+      >
+        <NumericInput.Control className="akros-variant-table__quantity-control">
+          <NumericInput.DecrementTrigger
+            aria-label={isPackage ? "Snížit počet balení" : "Snížit množství"}
+            icon="token-icon-minus"
+          />
+          <NumericInput.Input
+            aria-label={isPackage ? `Počet celých balení ${label}` : `Množství ${label}`}
+          />
+          <NumericInput.IncrementTrigger
+            aria-label={isPackage ? "Zvýšit počet balení" : "Zvýšit množství"}
+            icon="token-icon-plus"
+          />
+        </NumericInput.Control>
+      </NumericInput>
+      <Button
+        aria-label={isPackage ? `Koupit celé balení ${label}` : `Koupit ${label}`}
+        className="akros-variant-table__buy-button"
+        disabled={disabled}
+        onClick={() => onAdd(variant, quantityToAdd)}
+        size="sm"
+        uppercase
+        variant={isPackage ? "secondary" : "primary"}
+      >
+        {isPackage ? (
+          <span>
+            Koupit celé balení
+            <small>
+              ({packageQuantity.toLocaleString("cs-CZ")} {variant.unit})
+            </small>
+          </span>
+        ) : (
+          <span>
+            Koupit <small>({variant.unit})</small>
+          </span>
+        )}
+      </Button>
+    </div>
+  );
+}
 
 export function ProductPurchaseForm({
   product,
@@ -207,28 +298,111 @@ export function ProductPurchaseForm({
     (page - 1) * variantsPerPage,
     page * variantsPerPage,
   );
+  const addVariant = useCallback(
+    (variant: CatalogProductVariant, selectedQuantity: number) => {
+      dispatch({
+        type: "add",
+        item: getVariantCartItem(product, variant),
+        quantity: selectedQuantity,
+      });
+      setConfirmation(`${formatVariantLabel(variant)} bylo přidáno do košíku.`);
+    },
+    [dispatch, product],
+  );
+  const variantColumns = useMemo<ColumnDef<CatalogProductVariant, unknown>[]>(
+    () => [
+      {
+        id: "name",
+        header: "Název",
+        meta: { width: "16%" },
+        cell: ({ row }) => {
+          const label = formatVariantLabel(row.original);
 
-  const addVariant = (variant: CatalogProductVariant, selectedQuantity: number) => {
-    dispatch({
-      type: "add",
-      item: {
-        productId: product.id,
-        variantId: variant.id,
-        slug: product.slug,
-        name: product.name,
-        sku: variant.sku,
-        imageSrc: variant.imageSrc ?? product.imageSrc,
-        imageAlt: product.imageAlt,
-        unit: variant.unit,
-        minimumQuantity: variant.minimumQuantity,
-        stockCount: variant.stockCount,
-        priceMinor: variant.priceMinor,
-        variantLabel: formatVariantLabel(variant),
+          return (
+            <div className="akros-variant-table__name">
+              <span>{product.name}</span>
+              <strong>{label}</strong>
+            </div>
+          );
+        },
       },
-      quantity: selectedQuantity,
-    });
-    setConfirmation(`${formatVariantLabel(variant)} bylo přidáno do košíku.`);
-  };
+      {
+        accessorKey: "sku",
+        header: "Kód",
+        meta: { width: "12%" },
+      },
+      {
+        accessorKey: "unit",
+        header: "M.J.",
+        meta: { align: "center", width: "4%" },
+      },
+      {
+        id: "availability",
+        header: "Dostupnost",
+        meta: { width: "9%" },
+        cell: ({ row }) => {
+          const isAvailable = row.original.stockCount >= row.original.minimumQuantity;
+
+          return (
+            <strong className="akros-variant-table__availability" data-available={isAvailable}>
+              {isAvailable ? "Skladem" : "Není skladem"}
+            </strong>
+          );
+        },
+      },
+      {
+        id: "price",
+        header: "Cena",
+        meta: { width: "12%" },
+        cell: ({ row }) => {
+          const basePriceTier = row.original.priceTiers[0];
+
+          return (
+            <div className="akros-variant-table__price">
+              <strong>{formatPrice(row.original.priceMinor)}</strong>
+              {basePriceTier && (
+                <small>{formatPrice(basePriceTier.priceExcludingVatMinor)} bez DPH</small>
+              )}
+            </div>
+          );
+        },
+      },
+      {
+        id: "quantity",
+        header: "Množství",
+        meta: { align: "center", width: "47%" },
+        cell: ({ row }) => {
+          const item = row.original;
+          const packageQuantity = item.packageQuantity ?? item.minimumQuantity;
+          const hasSeparatePackage = packageQuantity > item.minimumQuantity;
+
+          return (
+            <div className="akros-variant-table__purchase-cell">
+              <VariantOrderControl
+                mode="minimum"
+                onAdd={addVariant}
+                product={product}
+                variant={item}
+              />
+              {hasSeparatePackage ? (
+                <VariantOrderControl
+                  mode="package"
+                  onAdd={addVariant}
+                  product={product}
+                  variant={item}
+                />
+              ) : (
+                <span aria-hidden="true" className="akros-variant-table__no-package">
+                  —
+                </span>
+              )}
+            </div>
+          );
+        },
+      },
+    ],
+    [addVariant, product],
+  );
 
   if (!variants?.length) {
     const purchaseItem = variant ?? product;
@@ -395,87 +569,49 @@ export function ProductPurchaseForm({
         </form>
       </section>
 
-      {paginatedVariants.length > 0 ? (
-        <>
-          <div className="akros-variant-purchase__table-wrap">
-            <Table aria-label="Varianty produktu" size="sm" variant="line">
-              <Table.Header className="akros-visually-hidden">
-                <Table.Row>
-                  <Table.ColumnHeader>Rozměr</Table.ColumnHeader>
-                  <Table.ColumnHeader>Balení</Table.ColumnHeader>
-                  <Table.ColumnHeader>Cena</Table.ColumnHeader>
-                  <Table.ColumnHeader>Koupit minimum</Table.ColumnHeader>
-                  <Table.ColumnHeader>Koupit celé balení</Table.ColumnHeader>
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {paginatedVariants.map((variant) => {
-                  const label = formatVariantLabel(variant);
-                  const packageQuantity = variant.packageQuantity ?? variant.minimumQuantity;
-                  const hasSeparatePackage = packageQuantity > variant.minimumQuantity;
-
-                  return (
-                    <Table.Row key={variant.id}>
-                      <Table.Cell data-label="Rozměr">{label}</Table.Cell>
-                      <Table.Cell data-label="Balení">
-                        {packageQuantity.toLocaleString("cs-CZ")} {variant.unit}
-                      </Table.Cell>
-                      <Table.Cell data-label="Cena">{formatPrice(variant.priceMinor)}</Table.Cell>
-                      <Table.Cell data-label="Koupit minimum">
-                        <Button
-                          aria-label={`Koupit ${label}`}
-                          disabled={
-                            variant.stockCount < variant.minimumQuantity || variant.priceMinor <= 0
-                          }
-                          onClick={() => addVariant(variant, variant.minimumQuantity)}
-                          size="sm"
-                          variant="primary"
-                        >
-                          Koupit
-                        </Button>
-                      </Table.Cell>
-                      <Table.Cell data-label="Koupit celé balení">
-                        {hasSeparatePackage ? (
-                          <Button
-                            aria-label={`Koupit celé balení ${label}`}
-                            disabled={
-                              variant.stockCount < packageQuantity || variant.priceMinor <= 0
-                            }
-                            onClick={() => addVariant(variant, packageQuantity)}
-                            size="sm"
-                            variant="primary"
-                          >
-                            Koupit celé balení ({packageQuantity.toLocaleString("cs-CZ")}{" "}
-                            {variant.unit})
-                          </Button>
-                        ) : (
-                          <span aria-hidden="true">—</span>
-                        )}
-                      </Table.Cell>
-                    </Table.Row>
-                  );
-                })}
-              </Table.Body>
-            </Table>
-          </div>
-          {visibleVariants.length > variantsPerPage && (
-            <Pagination
-              aria-label="Stránkování variant"
-              className="akros-pagination"
-              count={visibleVariants.length}
-              getPageUrl={() => "#product-variants"}
-              onChange={setPage}
-              page={page}
-              pageSize={variantsPerPage}
-              showPrevNext
-              size="md"
-              variant="filled"
-            />
+      <>
+        <DataTable
+          className="akros-variant-data-table"
+          columns={variantColumns}
+          data={paginatedVariants}
+          enableSorting={false}
+          getRowId={(item) => item.id}
+          renderEmpty={() => (
+            <p className="akros-variant-purchase__empty">
+              Pro zadané filtry nebyla nalezena varianta.
+            </p>
           )}
-        </>
-      ) : (
-        <p className="akros-variant-purchase__empty">Pro zadané filtry nebyla nalezena varianta.</p>
-      )}
+          showColumnBorder
+          size="sm"
+          slotProps={{
+            root: {
+              "aria-label": "Varianty produktu",
+              className: "akros-variant-data-table__table",
+            },
+            row: { className: "akros-variant-data-table__row" },
+          }}
+          tableLayout="fixed"
+          translations={{
+            emptyDescription: "Upravte zadané filtry a zkuste to znovu.",
+            emptyTitle: "Nenalezena žádná varianta",
+          }}
+          variant="line"
+        />
+        {visibleVariants.length > variantsPerPage && (
+          <Pagination
+            aria-label="Stránkování variant"
+            className="akros-pagination"
+            count={visibleVariants.length}
+            getPageUrl={() => "#product-variants"}
+            onChange={setPage}
+            page={page}
+            pageSize={variantsPerPage}
+            showPrevNext
+            size="md"
+            variant="filled"
+          />
+        )}
+      </>
 
       <p aria-live="polite" className="akros-visually-hidden">
         {confirmation}

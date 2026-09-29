@@ -1,0 +1,10 @@
+:root {
+  --akros-variant-table-border-color: var(--color-base-dark);
+  --akros-variant-table-cell-separator-color: var(--color-border-primary);
+  --akros-variant-table-header-bg: var(--color-base-dark);
+  --akros-variant-table-header-fg: var(--color-base-light);
+  --akros-variant-table-min-width: 1000px;
+  --akros-variant-table-row-gap: var(--dimension-6);
+  --akros-variant-table-row-radius: var(--radius-sm);
+  --akros-variant-table-stock-fg: var(--color-fg-status-success);
+}
