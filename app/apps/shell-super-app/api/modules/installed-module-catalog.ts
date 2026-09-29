@@ -219,7 +219,8 @@ const fetchContract = Effect.fn('ShellInstalledModuleCatalog.fetchContract')(fun
 
 /**
  * A unit's contract is reached through the unit's own transport: its Worker service binding on
- * Cloudflare (Workers on one account cannot fetch each other's public URLs), its URL on Node.
+ * Cloudflare (a direct call, with no public round trip and no routable hostname needed), its URL on
+ * Node.
  */
 const unitContractFetch = (serviceBinding: string | undefined): ModuleContractFetch =>
   serviceBinding === undefined ? globalThis.fetch : unitServiceFetch(serviceBinding);

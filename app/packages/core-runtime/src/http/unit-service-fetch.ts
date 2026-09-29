@@ -1,8 +1,8 @@
 /**
  * How a runtime reaches other OntOS units. `#unit-service-fetch` selects it by runtime: Node reaches
  * a unit at its URL through the global fetch; a Worker reaches it through the unit's Worker service
- * binding, because Workers on one account cannot fetch each other's public URLs and a binding call
- * stays inside Cloudflare.
+ * binding, which calls the target Worker directly inside Cloudflare instead of taking a public round
+ * trip through its hostname, and needs no routable hostname at all.
  */
 export type UnitServiceFetch = (serviceBinding: string) => typeof globalThis.fetch;
 

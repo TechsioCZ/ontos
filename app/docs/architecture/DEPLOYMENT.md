@@ -276,11 +276,17 @@ Each Worker's runtime configuration is set once, outside CI, before its first de
 (`wrangler secret put`, for example `SPICEDB_PRESHARED_KEY` and `BETTER_AUTH_SECRET`); the
 Hyperdrive config and Workers VPC service the IDs above name are account objects.
 
-Inside the account the Workers reach each other only through service bindings: Workers on one
-account cannot fetch each other's public URLs. The Shell discovers each UI vertical's module
+Inside the account the Workers call each other through service bindings where the topology allows
+it: a binding call goes straight to the target Worker, without a public round trip or a routable
+hostname. The Shell discovers each UI vertical's module
 contract through its `VERTICAL_<UNIT>_WORKER` binding (the reference topology's
 `workerDispatch.serviceBinding`), and Commerce calls Price Group Catalog through
 `VERTICAL_PRICE_GROUP_CATALOG_WORKER` (Core's `#unit-service-fetch`). On Node both keep their URLs.
+Calls a binding cannot carry go by URL: gateway credentials come from the Shell, which binds every
+vertical, so a vertical binding the Shell would be a deploy cycle no first seed can satisfy. Those
+URLs must be the Shell's and verticals' routable custom domains. Every OntOS Worker sets
+`global_fetch_strictly_public`, the flag under which Cloudflare lets a Worker fetch another Worker
+on the same zone.
 
 The `Cloudflare Workerd Artifact Proof` job runs the built Workers together before any deploy:
 `scripts/prove-cloudflare-local-topology.sh` starts each Worker in `wrangler dev` against the job's
