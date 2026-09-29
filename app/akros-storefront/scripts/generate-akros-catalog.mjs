@@ -132,6 +132,7 @@ const directItemFields = new Map([
   ["shop/item/url", "slug"],
   ["shop/item/quantity", "stockCount"],
   ["shop/item/minimum_quantity", "minimumQuantity"],
+  ["shop/item/unit_volume", "packageQuantity"],
   ["shop/item/content/variant_name", "variantName"],
   ["shop/item/content/title", "title"],
   ["shop/item/content/productname", "productName"],
@@ -267,6 +268,7 @@ for (const [groupId, items] of groups) {
     currency: "CZK",
     unit: cleanText(base.unit) || "ks",
     minimumQuantity: Math.max(1, toInteger(base.minimumQuantity, 1)),
+    packageQuantity: Math.max(1, toInteger(base.packageQuantity, 1)),
     stockCount: purchasableItems.reduce(
       (total, item) => total + Math.max(0, toInteger(item.stockCount)),
       0,
@@ -289,6 +291,7 @@ for (const [groupId, items] of groups) {
         sku: cleanText(item.sku),
         label: cleanText(item.variantName || item.title || item.productName) || itemName(item),
         minimumQuantity: Math.max(1, toInteger(item.minimumQuantity, 1)),
+        packageQuantity: Math.max(1, toInteger(item.packageQuantity, 1)),
         priceMinor: itemPrice(item),
         originalPriceMinor: originalPriceFor(item),
         priceTiers: priceTiersFor(item),

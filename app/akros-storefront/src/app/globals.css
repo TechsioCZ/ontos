@@ -406,83 +406,77 @@ body {
 
 .akros-product-detail {
   display: grid;
-  gap: 36px;
+  gap: 24px;
 }
 
 .akros-product-detail__heading {
-  display: grid;
-  gap: 8px;
-}
-
-.akros-product-detail__heading h1,
-.akros-product-detail__heading p {
-  margin: 0;
+  min-width: 0;
 }
 
 .akros-product-detail__heading h1 {
-  font-size: clamp(28px, 3vw, 40px);
-  line-height: 1.1;
+  margin: 0;
+  font-size: 40px;
+  line-height: 1.15;
   text-transform: uppercase;
-}
-
-.akros-product-detail__heading p {
-  color: var(--color-fg-secondary);
-  font-size: 13px;
 }
 
 .akros-product-detail__lead {
   display: grid;
-  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
-  gap: 32px;
+  grid-template-columns: 500px minmax(0, 1fr);
+  gap: 40px;
   align-items: start;
 }
 
 .akros-product-detail__gallery {
   display: grid;
+  width: min(100%, 500px);
   gap: 16px;
+  overflow: hidden;
 }
 
 .akros-product-detail__gallery img {
+  display: block;
   width: 100%;
-  height: auto;
   border-radius: var(--akros-radius-lg);
   background: var(--color-base);
-  object-fit: contain;
-}
-
-.akros-product-detail--variants .akros-product-detail__lead {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  object-fit: cover;
 }
 
 .akros-product-detail--variants .akros-product-detail__image--primary {
-  aspect-ratio: 468 / 412;
+  height: 420px;
 }
 
 .akros-product-detail--variants .akros-product-detail__image--drawing {
-  aspect-ratio: 468 / 91;
+  height: 90px;
 }
 
-.akros-product-detail__sales {
+.akros-product-detail__surface {
   display: grid;
-  align-content: start;
-  justify-items: start;
-  gap: 24px;
-  padding: 48px;
+  gap: 16px;
+  overflow: hidden;
+  border-radius: 12px;
+  padding: 24px;
+  background: var(--color-fill-surface);
 }
 
-.akros-product-detail__sales h2,
-.akros-product-detail__sales p {
+.akros-product-detail__surface h2,
+.akros-product-detail__surface p {
   margin: 0;
 }
 
-.akros-product-detail__sales h2,
-.akros-product-detail--variants .akros-product-detail__section h2 {
+.akros-product-detail__surface h2 {
   font-size: 28px;
   line-height: 1.15;
 }
 
+.akros-product-detail__sales {
+  width: min(100%, 394px);
+  align-content: start;
+  justify-items: start;
+}
+
 .akros-product-detail__sales p {
-  max-width: 42ch;
+  max-width: 346px;
   line-height: 1.5;
 }
 
@@ -498,9 +492,7 @@ body {
   background: var(--color-base);
 }
 
-.akros-product-detail__order p,
-.akros-product-detail__section h2,
-.akros-product-detail__section p {
+.akros-product-detail__order p {
   margin: 0;
 }
 
@@ -516,11 +508,6 @@ body {
 .akros-product-detail__price span {
   font-size: 16px;
   font-weight: 400;
-}
-
-.akros-product-detail__section {
-  border-top: 1px solid var(--color-border-primary);
-  padding-top: 28px;
 }
 
 .akros-purchase-form {
@@ -543,10 +530,11 @@ body {
 
 .akros-price-tiers div {
   display: flex;
+  min-height: 56px;
   justify-content: space-between;
   gap: 24px;
-  border-bottom: 1px solid var(--color-border-primary);
-  padding-block: 12px;
+  align-items: center;
+  padding: 16px;
 }
 
 .akros-price-tiers dt,
@@ -554,30 +542,30 @@ body {
   margin: 0;
 }
 
-.akros-price-tiers dd {
-  font-weight: 700;
-}
-
-.akros-product-detail--variants {
-  gap: 56px;
-}
-
-.akros-product-detail--variants .akros-product-detail__section {
-  gap: 24px;
-  border-top: 0;
-  padding-top: 0;
-}
-
-.akros-product-detail--variants .akros-price-tiers div {
-  border-bottom: 0;
-  padding-block: 18px;
-}
-
 .akros-product-actions {
   display: flex;
-  max-width: 760px;
   flex-wrap: wrap;
   gap: 16px;
+}
+
+.akros-product-actions > :nth-child(1) {
+  flex-basis: 346px;
+}
+
+.akros-product-actions > :nth-child(2) {
+  flex-basis: 286px;
+}
+
+.akros-product-actions > :nth-child(3) {
+  flex-basis: 120px;
+}
+
+.akros-product-actions > :nth-child(4) {
+  flex-basis: 270px;
+}
+
+.akros-product-actions > :nth-child(5) {
+  flex-basis: 283px;
 }
 
 .akros-product-parameters {
@@ -598,7 +586,13 @@ body {
 }
 
 .akros-variant-purchase__search {
-  width: min(100%, 380px);
+  width: min(100%, 420px);
+}
+
+.akros-variant-purchase__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
 }
 
 .akros-variant-purchase__table-wrap {
@@ -606,32 +600,45 @@ body {
 }
 
 .akros-variant-purchase__table-wrap table {
-  min-width: 820px;
+  min-width: 900px;
+  border-collapse: separate;
+  border-spacing: 0 2px;
 }
 
 .akros-variant-purchase__table-wrap tr {
+  height: 66px;
   border-bottom-color: transparent;
+  background: var(--color-fill-surface);
 }
 
 .akros-variant-purchase__table-wrap td {
-  padding-block: 18px;
+  border: 0;
+  padding: 16px;
 }
 
 .akros-variant-purchase__table-wrap td:nth-child(1) {
-  width: 17%;
+  width: 24%;
 }
 
 .akros-variant-purchase__table-wrap td:nth-child(2),
 .akros-variant-purchase__table-wrap td:nth-child(3) {
-  width: 14%;
+  width: 18%;
 }
 
 .akros-variant-purchase__table-wrap td:nth-child(4) {
-  width: 18%;
+  width: 16%;
+}
+
+.akros-variant-purchase__table-wrap td:nth-child(5) {
+  width: 24%;
 }
 
 .akros-variant-purchase__table-wrap button {
   white-space: nowrap;
+}
+
+.akros-variant-purchase .akros-pagination {
+  margin-block-start: 0;
 }
 
 .akros-variant-purchase__empty {
@@ -649,7 +656,8 @@ body {
 }
 
 .akros-section--product-recommendations .akros-product-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(3, 260px);
+  gap: 16px;
 }
 
 .akros-cart-layout {
@@ -885,6 +893,14 @@ body {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .akros-product-detail__lead {
+    grid-template-columns: 1fr;
+  }
+
+  .akros-product-detail__sales {
+    width: 100%;
+  }
+
   .akros-category-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -1066,17 +1082,17 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .akros-product-detail--variants .akros-product-detail__lead {
-    grid-template-columns: 1fr;
-  }
-
   .akros-product-detail__sales {
     gap: 16px;
-    padding: 8px 0 0;
+    padding: 16px;
   }
 
-  .akros-product-detail--variants {
-    gap: 40px;
+  .akros-product-detail__heading h1 {
+    font-size: 30px;
+  }
+
+  .akros-product-detail__surface {
+    padding: 16px;
   }
 
   .akros-product-actions {
@@ -1084,8 +1100,9 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .akros-product-actions > a {
+  .akros-product-actions > * {
     width: 100%;
+    flex-basis: auto;
   }
 
   .akros-section--product-recommendations .akros-product-grid {

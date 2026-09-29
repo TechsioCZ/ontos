@@ -13,6 +13,7 @@ const variants: CatalogProductVariant[] = [
     sku: "10093300020005",
     label: "M 2 × 5",
     minimumQuantity: 10,
+    packageQuantity: 100,
     priceMinor: 84,
     stockCount: 24_000,
     unit: "ks",
@@ -94,15 +95,39 @@ describe("ProductPurchaseForm", () => {
     ]);
   });
 
-  it("does not allow buying an out-of-stock source variant", () => {
+  it("does not allow buying an out-of-stock source variant", async () => {
+    const user = userEvent.setup();
+
     render(
       <CartProvider storage={null}>
         <ProductPurchaseForm product={product} variants={[{ ...variants[0], stockCount: 0 }]} />
       </CartProvider>,
     );
 
+    await user.click(screen.getByRole("checkbox", { name: "Pouze varianty skladem" }));
+
     expect(screen.getByRole("button", { name: "Koupit M 2 × 5" }).hasAttribute("disabled")).toBe(
       true,
     );
+  });
+
+  it("adds the source package quantity when buying a complete package", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={product} variants={variants} />
+        <CartLines />
+      </CartProvider>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Koupit celé balení M 2 × 5" }));
+
+    expect(JSON.parse(screen.getByLabelText("Řádky košíku").textContent ?? "[]")).toEqual([
+      expect.objectContaining({
+        variantId: "item-1",
+        quantity: 100,
+      }),
+    ]);
   });
 });

@@ -35,6 +35,7 @@ export const toProductSummary = (product: CatalogProduct): CatalogProductSummary
   currency: product.currency,
   unit: product.unit,
   minimumQuantity: product.minimumQuantity,
+  packageQuantity: product.packageQuantity,
   stockCount: product.stockCount,
   imageSrc: product.imageSrc,
   imageAlt: product.imageAlt,

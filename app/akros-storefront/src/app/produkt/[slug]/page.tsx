@@ -4,6 +4,7 @@ import NextLink from "next/link";
 import { notFound } from "next/navigation";
 import { buttonVariants } from "@techsio/ui-kit/atoms/button";
 
+import { ProductDetailActions } from "@/components/product-detail-actions";
 import { ProductGrid } from "@/components/product-grid";
 import { StorefrontBreadcrumbs } from "@/components/storefront-breadcrumbs";
 import { StorefrontShell } from "@/components/storefront-shell";
@@ -13,14 +14,17 @@ import { formatPrice } from "@/lib/format";
 import {
   getCategoryById,
   getCategoryTrail,
-  getFeaturedProducts,
   getProductBySlug,
+  getRecommendedProducts,
   toProductSummary,
 } from "@/mock-storefront/catalog";
 
 interface ProductPageProps {
   params: Promise<{ slug: string }>;
 }
+
+const isQuantityPricingCopy = (paragraph: string) =>
+  /množstevních slev|snížená cena|snížení ceny/i.test(paragraph);
 
 export async function generateMetadata({ params }: ProductPageProps): Promise<Metadata> {
   const { slug } = await params;
@@ -37,10 +41,34 @@ export default async function ProductPage({ params }: ProductPageProps) {
   const category = getCategoryById(product.categoryId);
   const categoryTrail = category ? getCategoryTrail(category) : [];
   const detail = product.detail;
-  const hasVariants = detail?.variants.length > 0;
-  const recommendations = getFeaturedProducts()
-    .filter((candidate) => candidate.id !== product.id)
-    .slice(0, 4);
+  const hasVariants = detail.variants.length > 0;
+  const quantityPricingParagraphs = detail.descriptionParagraphs
+    .filter(isQuantityPricingCopy)
+    .flatMap((paragraph) => paragraph.split(/(?=Snížená cena)/i))
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  const productDescriptionParagraphs = detail.descriptionParagraphs.filter(
+    (paragraph) => !isQuantityPricingCopy(paragraph),
+  );
+  const materialMarkers = product.name.match(/\bA[1-5]\b|\b1\.\d{4}\b/gi) ?? [];
+  const recommendationScore = (candidateName: string) =>
+    materialMarkers.filter((marker) =>
+      candidateName.toLocaleUpperCase("cs-CZ").includes(marker.toLocaleUpperCase("cs-CZ")),
+    ).length;
+  const recommendations = getRecommendedProducts()
+    .filter(
+      (candidate) =>
+        candidate.id !== product.id &&
+        candidate.name.trim().toLocaleUpperCase("cs-CZ") !== "AKCE" &&
+        candidate.priceMinor > 0 &&
+        candidate.imageSrc !== "/akros/products/image-unavailable.svg",
+    )
+    .sort(
+      (left, right) =>
+        recommendationScore(right.name) - recommendationScore(left.name) ||
+        left.name.localeCompare(right.name, "cs"),
+    )
+    .slice(0, 3);
 
   return (
     <StorefrontShell activeCategorySlug={category?.slug}>
@@ -59,11 +87,6 @@ export default async function ProductPage({ params }: ProductPageProps) {
         className={`akros-product-detail${hasVariants ? " akros-product-detail--variants" : ""}`}
       >
         <header className="akros-product-detail__heading">
-          {product.sku && (
-            <p>
-              {cs.product.sku}: {product.sku}
-            </p>
-          )}
           <h1>{product.name}</h1>
         </header>
 
@@ -72,11 +95,11 @@ export default async function ProductPage({ params }: ProductPageProps) {
             <Image
               alt={product.imageAlt}
               className="akros-product-detail__image akros-product-detail__image--primary"
-              height={620}
+              height={840}
               priority
-              sizes="(max-width: 760px) 100vw, 42vw"
+              sizes="(max-width: 760px) 100vw, 500px"
               src={product.imageSrc}
-              width={620}
+              width={1000}
             />
             {product.secondaryImageSrc && (
               <Image
@@ -84,28 +107,27 @@ export default async function ProductPage({ params }: ProductPageProps) {
                 className="akros-product-detail__image akros-product-detail__image--drawing"
                 height={180}
                 loading="lazy"
+                sizes="(max-width: 760px) 100vw, 500px"
                 src={product.secondaryImageSrc}
-                width={620}
+                width={1000}
               />
             )}
           </div>
 
           {hasVariants ? (
-            <aside className="akros-product-detail__sales" aria-label={cs.product.productActions}>
-              <h2>Vyberte konkrétní variantu</h2>
-              <p>
-                {product.priceMinor > 0
-                  ? `Cena od ${formatPrice(product.priceMinor, product.currency)} / ${product.unit}`
-                  : "Cena vybraných variant je na dotaz"}
-              </p>
-              <p>
-                Celkem skladem: {product.stockCount.toLocaleString("cs-CZ")} {product.unit}
-              </p>
+            <aside
+              className="akros-product-detail__surface akros-product-detail__sales"
+              aria-label={cs.product.productActions}
+            >
+              <h2>Máte IČO? Chcete lepší cenu? Zavolejte mi!</h2>
+              {quantityPricingParagraphs.map((paragraph) => (
+                <p key={paragraph}>{paragraph}</p>
+              ))}
               <NextLink
-                className={buttonVariants({ size: "lg", variant: "primary" })}
+                className={buttonVariants({ block: true, size: "lg", variant: "primary" })}
                 href="#product-variants"
               >
-                Zobrazit varianty
+                Prosím vyberte variantu
               </NextLink>
             </aside>
           ) : (
@@ -119,15 +141,14 @@ export default async function ProductPage({ params }: ProductPageProps) {
               <p className="akros-product-detail__price">
                 {formatPrice(product.priceMinor, product.currency)} <span>/ {product.unit}</span>
               </p>
-              {product.description && <p>{product.description}</p>}
               <ProductPurchaseForm product={product} />
             </aside>
           )}
         </div>
 
-        {detail.priceTiers.length > 0 && !hasVariants && (
+        {detail.priceTiers.length > 1 && (
           <section
-            className="akros-product-detail__section"
+            className="akros-product-detail__surface"
             aria-labelledby="quantity-pricing-title"
           >
             <h2 id="quantity-pricing-title">{cs.product.quantityPricing}</h2>
@@ -144,10 +165,12 @@ export default async function ProductPage({ params }: ProductPageProps) {
           </section>
         )}
 
-        {(detail.descriptionParagraphs.length > 0 || detail.parameters.length > 0) && (
-          <section className="akros-product-detail__section" aria-labelledby="description-title">
+        {hasVariants && <ProductDetailActions productId={product.id} productName={product.name} />}
+
+        {(productDescriptionParagraphs.length > 0 || detail.parameters.length > 0) && (
+          <section className="akros-product-detail__surface" aria-labelledby="description-title">
             <h2 id="description-title">{cs.product.details}</h2>
-            {detail.descriptionParagraphs.map((paragraph) => (
+            {productDescriptionParagraphs.map((paragraph) => (
               <p key={paragraph}>{paragraph}</p>
             ))}
             {detail.parameters.length > 0 && (
@@ -164,23 +187,21 @@ export default async function ProductPage({ params }: ProductPageProps) {
         )}
 
         {hasVariants && (
-          <section
-            className="akros-product-detail__section"
-            id="product-variants"
-            aria-labelledby="product-variants-title"
-          >
-            <h2 id="product-variants-title">Varianty produktu</h2>
+          <section id="product-variants" aria-label="Varianty produktu">
             <ProductPurchaseForm product={product} variants={detail.variants} />
           </section>
         )}
-      </article>
 
-      {recommendations.length > 0 && (
-        <section className="akros-section" aria-labelledby="product-recommendations-title">
-          <h2 id="product-recommendations-title">{cs.catalog.recommendations}</h2>
-          <ProductGrid action="detail" products={recommendations.map(toProductSummary)} />
-        </section>
-      )}
+        {recommendations.length > 0 && (
+          <section
+            className="akros-product-detail__surface akros-section akros-section--product-recommendations"
+            aria-labelledby="product-recommendations-title"
+          >
+            <h2 id="product-recommendations-title">{cs.catalog.recommendations}</h2>
+            <ProductGrid action="detail" products={recommendations.map(toProductSummary)} />
+          </section>
+        )}
+      </article>
     </StorefrontShell>
   );
 }

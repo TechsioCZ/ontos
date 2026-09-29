@@ -166,6 +166,7 @@ describe("mock catalog gateway", () => {
     expect(variant).toMatchObject({
       sku: "10093300040016",
       minimumQuantity: 10,
+      packageQuantity: 1000,
       priceMinor: 100,
       stockCount: 880,
     });

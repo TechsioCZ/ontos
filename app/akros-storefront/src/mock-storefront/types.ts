@@ -18,6 +18,7 @@ export interface CatalogProductVariant {
   sku: string;
   label: string;
   minimumQuantity: number;
+  packageQuantity?: number;
   priceMinor: number;
   originalPriceMinor?: number;
   stockCount: number;
@@ -62,6 +63,7 @@ export interface CatalogProduct {
   currency: "CZK";
   unit: string;
   minimumQuantity: number;
+  packageQuantity?: number;
   stockCount: number;
   imageSrc: string;
   imageAlt: string;
