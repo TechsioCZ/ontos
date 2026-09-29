@@ -18,6 +18,7 @@ import {
   ensureUniqueMutationPaths,
   insertSortedSlot,
   patchJsonObjectProperty,
+  readJsonEffect,
   requireCanonicalSlug,
   requireTopic,
   resolveContainedPath,
@@ -27,6 +28,7 @@ import {
   updateMutation,
 } from '../shared.mts';
 import type {
+  JsonValue,
   MutableJsonObject,
   Mutation,
   OntosVerticalMetadata,
@@ -242,33 +244,34 @@ const planWorkerHostFile = (filePath: string, consumer: OntosVerticalMetadata, c
     return Option.none<Mutation>();
   });
 
-const patchConsumerPackage = (consumer: OntosVerticalMetadata, producer: OntosVerticalMetadata) =>
-  Effect.gen(function* patchConsumerPackageEffect() {
-    const dependenciesValue = consumer.packageJson['dependencies'];
+const WORKSPACE_DEPENDENCY = 'workspace:*';
+
+/** The dependencies with each named workspace package added, sorted; a different existing range fails. */
+const withWorkspaceDependencies = (dependenciesValue: JsonValue | undefined, names: readonly string[], label: string) =>
+  Effect.gen(function* withWorkspaceDependenciesEffect() {
     const dependencies: MutableJsonObject =
       dependenciesValue === undefined
         ? {}
-        : {
-            ...(yield* trySync(() => asJsonObject(dependenciesValue, `vertical ${consumer.slug} dependencies`))),
-          };
-    for (const [name, version] of [
-      ['@app/core-runtime', 'workspace:*'],
-      [producer.packageName, 'workspace:*'],
-    ] as const) {
-      if (name === consumer.packageName) {
-        continue;
-      }
+        : { ...(yield* trySync(() => asJsonObject(dependenciesValue, `${label} dependencies`))) };
+    for (const name of names) {
       const current = dependencies[name];
-      if (current !== undefined && current !== version) {
+      if (current !== undefined && current !== WORKSPACE_DEPENDENCY) {
         return yield* new OutboxWorkerScaffoldError({
           cause: current,
-          message: `vertical ${consumer.slug} has an incompatible ${name} dependency`,
+          message: `${label} has an incompatible ${name} dependency`,
         });
       }
-      dependencies[name] = version;
+      dependencies[name] = WORKSPACE_DEPENDENCY;
     }
-    const sortedDependencies = Object.fromEntries(
-      Object.entries(dependencies).toSorted(([left], [right]) => left.localeCompare(right)),
+    return Object.fromEntries(Object.entries(dependencies).toSorted(([left], [right]) => left.localeCompare(right)));
+  });
+
+const patchConsumerPackage = (consumer: OntosVerticalMetadata, producer: OntosVerticalMetadata) =>
+  Effect.gen(function* patchConsumerPackageEffect() {
+    const sortedDependencies = yield* withWorkspaceDependencies(
+      consumer.packageJson['dependencies'],
+      ['@app/core-runtime', producer.packageName].filter((name) => name !== consumer.packageName),
+      `vertical ${consumer.slug}`,
     );
     const packageScripts = consumer.packageJson['scripts'];
     if (packageScripts === undefined) {
@@ -309,6 +312,25 @@ const patchConsumerPackage = (consumer: OntosVerticalMetadata, producer: OntosVe
     );
     const withExports = yield* trySync(() => patchJsonObjectProperty(withDependencies, [], 'exports', packageExports));
     return yield* trySync(() => patchJsonObjectProperty(withExports, [], 'scripts', sortedScripts));
+  });
+
+/**
+ * The Outbox Worker host imports each owner's hosted entry from the workspace root, so the root package
+ * depends on every worker owner; pnpm links only direct dependencies.
+ */
+const patchRootPackage = (workspaceRoot: string, consumer: OntosVerticalMetadata) =>
+  Effect.gen(function* patchRootPackageEffect() {
+    const packagePath = yield* trySync(() => resolveContainedPath(workspaceRoot, 'package.json'));
+    const rootPackage = yield* readJsonEffect(packagePath, 'workspace root package');
+    const dependencies = yield* withWorkspaceDependencies(
+      rootPackage.value['dependencies'],
+      ['@app/core-runtime', consumer.packageName],
+      'workspace root package',
+    );
+    const content = yield* trySync(() =>
+      patchJsonObjectProperty(rootPackage.content, [], 'dependencies', dependencies),
+    );
+    return yield* trySync(() => updateMutation(packagePath, rootPackage.content, content));
   });
 
 const patchConsumerTsconfig = (content: string, consumer: OntosVerticalMetadata, producer: OntosVerticalMetadata) =>
@@ -536,6 +558,7 @@ const planOutboxWorkerScaffoldEffect = (
     const tsconfigContent = yield* readRequiredFile(tsconfigPath, `vertical ${consumer.slug} tsconfig`);
     const patchedTsconfig = yield* patchConsumerTsconfig(tsconfigContent, consumer, producer);
     const tsconfigMutation = yield* trySync(() => updateMutation(tsconfigPath, tsconfigContent, patchedTsconfig));
+    const rootPackageMutation = yield* patchRootPackage(workspaceRoot, consumer);
     const mutations = [
       workerMutation,
       registryMutation,
@@ -545,6 +568,7 @@ const planOutboxWorkerScaffoldEffect = (
       ...Option.toArray(workerHostMainMutation),
       ...(packageMutation === undefined ? [] : [packageMutation]),
       ...(tsconfigMutation === undefined ? [] : [tsconfigMutation]),
+      ...(rootPackageMutation === undefined ? [] : [rootPackageMutation]),
     ];
     yield* trySync(() => ensureUniqueMutationPaths(mutations));
     return { mutations, result: { registryPath, workerPath } };

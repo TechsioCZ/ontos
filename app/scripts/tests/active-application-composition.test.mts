@@ -22,7 +22,11 @@ import type {
   ObservedArtifact,
   ObservedModuleDeployment,
 } from '../active-application-composition.mts';
-import { compositionConsumerSetups, serviceIdVariable } from '../publish-active-application-composition.mts';
+import {
+  compositionConsumerSetups,
+  offTargetWorkerSetups,
+  serviceIdVariable,
+} from '../publish-active-application-composition.mts';
 import { shellRuntimeContract } from '../generate-ontos-shell-runtime-contract.mts';
 import { parseZeropsEnvFile } from '../zerops-public-api.mts';
 
@@ -114,6 +118,8 @@ const governedShared = shared([
 const PARTY_REGISTRY = 'party-registry';
 const PARTY_REMOTE = 'verticalPartyRegistry';
 const CUSTOMER_CONTEXT = 'commerce-customer-context';
+const CUSTOMER_CONTEXT_WORKER = 'commerce-customer-context-worker';
+const OUTBOX_WORKER_HOST_SETUP = 'outbox-worker-host';
 const PARTY_MODULE = 'party.registry';
 const PAGE_EXPOSE = './PageContacts';
 const SHELL_MANIFEST_URL = 'https://shell.example/mf-manifest.json';
@@ -327,17 +333,22 @@ it.effect('restarts exactly the deploy target services whose start preflight req
     )(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'));
     expect(yield* compositionConsumerSetups(zeropsYaml, topology, 'zerops')).toEqual([
       CUSTOMER_CONTEXT,
-      'commerce-customer-context-worker',
+      CUSTOMER_CONTEXT_WORKER,
     ]);
     // On Cloudflare the Outbox Worker host runs the Commerce worker in place of its dedicated service.
     expect(yield* compositionConsumerSetups(zeropsYaml, topology, 'cloudflare')).toEqual([
       CUSTOMER_CONTEXT,
-      'outbox-worker-host',
+      OUTBOX_WORKER_HOST_SETUP,
     ]);
-    expect(serviceIdVariable('outbox-worker-host')).toBe('ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID');
-    expect(serviceIdVariable('commerce-customer-context-worker')).toBe(
-      'ZEROPS_COMMERCE_CUSTOMER_CONTEXT_WORKER_SERVICE_ID',
-    );
+    // A switch leaves these running; the deploy detects them to reconcile the workers of both targets.
+    expect(yield* offTargetWorkerSetups(zeropsYaml, topology, 'zerops')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+    expect(yield* offTargetWorkerSetups(zeropsYaml, topology, 'cloudflare')).toEqual([
+      'party-registry-worker',
+      CUSTOMER_CONTEXT_WORKER,
+      'price-group-catalog-worker',
+    ]);
+    expect(serviceIdVariable(OUTBOX_WORKER_HOST_SETUP)).toBe('ZEROPS_OUTBOX_WORKER_HOST_SERVICE_ID');
+    expect(serviceIdVariable(CUSTOMER_CONTEXT_WORKER)).toBe('ZEROPS_COMMERCE_CUSTOMER_CONTEXT_WORKER_SERVICE_ID');
     expect(serviceIdVariable('shellsuperapp')).toBe('ZEROPS_SHELL_SERVICE_ID');
   }),
 );

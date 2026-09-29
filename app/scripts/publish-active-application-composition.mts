@@ -64,6 +64,16 @@ const ZeropsYamlSchema = Schema.Struct({
 const StageVariablesSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 const SetupListJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
 
+const offTargetWorkerSetupNames = (
+  topology: { readonly verticals: readonly { readonly id: string }[] },
+  deployTarget: DeployTarget,
+): ReadonlySet<string> =>
+  new Set(
+    deployTarget === 'zerops'
+      ? [OUTBOX_WORKER_HOST.stageSetup]
+      : topology.verticals.map(({ id }) => dedicatedOutboxWorkerSetup(id)),
+  );
+
 /**
  * Zerops setups whose start preflight requires the published snapshot; they are its consumers. Only
  * the deploy target's Outbox Worker services run: the dedicated owner workers on Zerops, the one
@@ -74,11 +84,7 @@ export const compositionConsumerSetups = (
   topology: { readonly verticals: readonly { readonly id: string }[] },
   deployTarget: DeployTarget,
 ) => {
-  const offTarget = new Set(
-    deployTarget === 'zerops'
-      ? [OUTBOX_WORKER_HOST.stageSetup]
-      : topology.verticals.map(({ id }) => dedicatedOutboxWorkerSetup(id)),
-  );
+  const offTarget = offTargetWorkerSetupNames(topology, deployTarget);
   return Schema.decodeUnknownEffect(ZeropsYamlSchema)(parseYaml(zeropsYamlText)).pipe(
     Effect.map(({ zerops }) =>
       zerops
@@ -386,6 +392,49 @@ const stopServiceCommand = Command.make('stop-service', { setup: Flag.String('se
   }),
 );
 
+/**
+ * The other deploy target's Outbox Worker setups this revision defines: the host on Zerops, the dedicated
+ * owner workers on Cloudflare.
+ */
+export const offTargetWorkerSetups = (
+  zeropsYamlText: string,
+  topology: { readonly verticals: readonly { readonly id: string }[] },
+  deployTarget: DeployTarget,
+) => {
+  const offTarget = offTargetWorkerSetupNames(topology, deployTarget);
+  return Schema.decodeUnknownEffect(ZeropsYamlSchema)(parseYaml(zeropsYamlText)).pipe(
+    Effect.map(({ zerops }) => zerops.filter(({ setup }) => offTarget.has(setup)).map(({ setup }) => setup)),
+  );
+};
+
+/**
+ * Whether any of the other deploy target's Outbox Workers still runs. A `DEPLOY_TARGET` switch changes no
+ * source, so the plan cannot see it; this drift makes the plan reconcile the workers of both targets.
+ */
+const workerTargetDriftCommand = Command.make('worker-target-drift', {}, () =>
+  Effect.gen(function* workerTargetDrift() {
+    const deployTarget = yield* Config.schema(DeployTargetSchema, 'DEPLOY_TARGET').pipe(Config.withDefault('zerops'));
+    const [zeropsYaml, topology] = yield* Effect.all([readWorkspaceText('zerops.yaml'), readTopology], {
+      concurrency: 2,
+    });
+    const api = yield* ZeropsPublicApi;
+    const running = yield* Effect.filter(
+      yield* offTargetWorkerSetups(zeropsYaml, topology, deployTarget),
+      Effect.fnUntraced(function* isRunning(setup) {
+        const serviceId = yield* provisionedStageServiceId(setup);
+        return serviceId !== undefined && (yield* api.serviceStack(serviceId)).status === 'ACTIVE';
+      }),
+      { concurrency: 4 },
+    );
+    yield* Effect.logInfo(
+      running.length === 0
+        ? `No ${deployTarget === 'zerops' ? 'cloudflare' : 'zerops'} deploy target Outbox Worker runs`
+        : `Other deploy target Outbox Workers still run: ${running.join(', ')}`,
+    );
+    return yield* writeGitHubOutput(`drift=${running.length > 0}`);
+  }),
+);
+
 /** The one service-ID lookup the deploy scripts use, so shell and TypeScript never map setups differently. */
 const stageServiceIdCommand = Command.make('stage-service-id', { setup: Flag.String('setup') }, ({ setup }) =>
   stageServiceId(setup).pipe(Effect.flatMap(Console.log)),
@@ -507,6 +556,7 @@ const cli = Command.make('publish-active-application-composition').pipe(
     proveBuildCommand,
     stageServiceIdCommand,
     stopServiceCommand,
+    workerTargetDriftCommand,
   ]),
 );
 

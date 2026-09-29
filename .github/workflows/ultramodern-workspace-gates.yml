@@ -488,21 +488,35 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: mise exec -- pnpm deployment-base:resolve --environment stage
 
+      # A DEPLOY_TARGET switch changes no source, so the diff cannot show it. The other target's workers
+      # still running is that switch, and the plan then deploys every worker of this target and stops those.
+      - name: Detect Outbox Workers left running by the other deploy target
+        id: worker-drift
+        working-directory: app
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: mise exec -- pnpm --silent active-composition:publish worker-target-drift
+
       - name: Generate topology-driven deployment impact plan
         id: impact
         working-directory: app
         env:
           BASE_SHA: ${{ steps.base.outputs.base }}
           FULL_PLAN: ${{ inputs.full }}
+          WORKER_DRIFT: ${{ steps.worker-drift.outputs.drift }}
         run: |
-          base_arguments=()
+          plan_arguments=()
           if [[ "$FULL_PLAN" != 'true' ]]; then
-            base_arguments=(--base "$BASE_SHA")
+            plan_arguments=(--base "$BASE_SHA")
+          fi
+          if [[ "$WORKER_DRIFT" == 'true' ]]; then
+            plan_arguments+=(--reconcile-workers)
           fi
           mise exec -- pnpm deployment-impact:plan \
             --authorization-environment stage \
             --deploy-target "$DEPLOY_TARGET" \
-            "${base_arguments[@]}" \
+            "${plan_arguments[@]}" \
             --head "$GITHUB_SHA"
 
       - name: Record reviewed deployment impact plan
@@ -652,7 +666,7 @@ jobs:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: mise exec -- pnpm active-composition:publish publish --environment stage --restart-consumers
 
-      # Switching DEPLOY_TARGET leaves the other target's Outbox Workers running. The plan names them in the
+      # Switching DEPLOY_TARGET leaves the other target's Outbox Workers running. The plan names them in every
       # run that deploys this target's workers, so exactly one set of workers delivers the outbox.
       - name: Stop the other deploy target's Outbox Workers
         if: steps.impact.outputs.stopped_workers != '' && steps.impact.outputs.stopped_workers != '[]'

@@ -200,6 +200,11 @@ export interface PlanDeploymentImpactOptions {
    * plan passes it on its own so removals are still reconciled.
    */
   readonly placementBaseRevision?: string;
+  /**
+   * The other deploy target's workers still run, so the deploy target changed since its workers last
+   * deployed. The plan deploys every worker of this target, whatever the diff impacts, and stops the others.
+   */
+  readonly reconcileWorkers?: boolean;
   readonly rootDirectory?: string;
 }
 
@@ -1316,7 +1321,11 @@ const validateWorkerStageSetups = (
   }
 };
 
-/** Each impacted owner's dedicated worker on Zerops; on Cloudflare, the one host once any owner is impacted. */
+/**
+ * Each impacted owner's dedicated worker on Zerops; on Cloudflare, the one host once any owner is impacted.
+ * Reconciling a deploy target switch deploys every worker of the target, since the other target's run left
+ * them stopped or on stale artifacts.
+ */
 const planWorkerPhases = (
   workers: readonly {
     readonly id: string;
@@ -1326,8 +1335,9 @@ const planWorkerPhases = (
   }[],
   impacted: ReadonlySet<string>,
   deployTarget: DeployTarget,
+  reconcileWorkers: boolean,
 ): readonly DeploymentPhase[] => {
-  const impactedWorkers = workers.filter((worker) => impacted.has(worker.ownerId));
+  const impactedWorkers = reconcileWorkers ? workers : workers.filter((worker) => impacted.has(worker.ownerId));
   if (deployTarget === 'zerops') {
     return impactedWorkers.map((worker) => ({
       id: worker.id,
@@ -1426,7 +1436,7 @@ export const planDeploymentImpact = (options: PlanDeploymentImpactOptions = {}) 
 
     const selectedUnits = orderedUnits.filter((unit) => impacted.has(unit.id));
     const deployTarget = options.deployTarget ?? 'zerops';
-    const workerPhases = planWorkerPhases(workers, impacted, deployTarget);
+    const workerPhases = planWorkerPhases(workers, impacted, deployTarget, options.reconcileWorkers ?? false);
     const phases: DeploymentPhase[] = [];
     if (migrator) {
       phases.push(INFRASTRUCTURE_PHASES.migrator);
@@ -1555,6 +1565,7 @@ const deploymentImpactCommand = Command.make(
     deployTarget: Flag.Literals('deploy-target', DeployTargetSchema.literals).pipe(Flag.withDefault('zerops')),
     headRevision: Flag.String('head').pipe(Flag.optional),
     placementBaseRevision: Flag.String('placement-base').pipe(Flag.optional),
+    reconcileWorkers: Flag.Boolean('reconcile-workers').pipe(Flag.withDefault(false)),
   },
   ({
     authorizationEnvironment,
@@ -1564,6 +1575,7 @@ const deploymentImpactCommand = Command.make(
     deployTarget,
     headRevision,
     placementBaseRevision,
+    reconcileWorkers,
   }) =>
     Effect.gen(function* deploymentImpactCommandEffect() {
       const rootDirectory = yield* Config.String('PWD').pipe(Effect.orElseSucceed(() => '.'));
@@ -1581,6 +1593,7 @@ const deploymentImpactCommand = Command.make(
         deployTarget,
         headRevision: Option.getOrUndefined(headRevision),
         placementBaseRevision: Option.getOrUndefined(placementBaseRevision),
+        reconcileWorkers,
         rootDirectory,
       };
       const plan =

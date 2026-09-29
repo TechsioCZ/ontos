@@ -23,6 +23,7 @@ import type { StageDeploymentSource } from '../resolve-stage-deployment-base.mts
 const CONTACTS_WORKER_SOURCE = 'verticals/contacts/src/workers/project-contact.worker.ts';
 const CONTACTS_WORKER_SETUP = 'contacts-worker';
 const OUTBOX_WORKER_HOST_SETUP = 'outbox-worker-host';
+const SHELL_ROUTE_SOURCE = 'apps/shell-super-app/src/routes/shell-frame.tsx';
 
 const planningFailure = <A, E>(effect: Effect.Effect<A, E>) =>
   effect.pipe(
@@ -322,7 +323,7 @@ it.live('deploys the one Outbox Worker host instead of dedicated workers on the 
           expect(workerChange.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP]);
           // No hosted owner is impacted, so the host keeps running its current artifact.
           const shellChange = yield* planDeploymentImpact({
-            changedPaths: ['apps/shell-super-app/src/routes/shell-frame.tsx'],
+            changedPaths: [SHELL_ROUTE_SOURCE],
             deployTarget: 'cloudflare',
             rootDirectory: root,
           });
@@ -337,6 +338,35 @@ it.live('deploys the one Outbox Worker host instead of dedicated workers on the 
           });
           expect(hostChange.units.providers).toContain(OUTBOX_WORKER_HOST_SETUP);
           expect(hostChange.units.providers).not.toContain(CONTACTS_WORKER_SETUP);
+        }),
+      { includeWorker: true },
+    );
+  }),
+);
+
+it.live('reconciles every worker of the deploy target after a switch, whatever the diff impacts', () =>
+  Effect.gen(function* reconcileWorkers() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* planReconciliation() {
+          const shellChange = [SHELL_ROUTE_SOURCE];
+          // Back on Zerops, the host ran every owner, so each dedicated worker deploys and the host stops.
+          const toZerops = yield* planDeploymentImpact({
+            changedPaths: shellChange,
+            reconcileWorkers: true,
+            rootDirectory: root,
+          });
+          expect(toZerops.units.providers).toEqual([CONTACTS_WORKER_SETUP]);
+          expect(toZerops.units.stoppedWorkers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+          // On Cloudflare the host deploys and the dedicated workers stop.
+          const toCloudflare = yield* planDeploymentImpact({
+            changedPaths: shellChange,
+            deployTarget: 'cloudflare',
+            reconcileWorkers: true,
+            rootDirectory: root,
+          });
+          expect(toCloudflare.units.providers).toEqual([OUTBOX_WORKER_HOST_SETUP]);
+          expect(toCloudflare.units.stoppedWorkers).toEqual([CONTACTS_WORKER_SETUP]);
         }),
       { includeWorker: true },
     );
@@ -416,7 +446,7 @@ it.live('plans Shell-only changes for the topology-derived Shell owner', () =>
     yield* withFixture((root) =>
       Effect.gen(function* testEffect11() {
         const plan = yield* planDeploymentImpact({
-          changedPaths: ['apps/shell-super-app/src/routes/shell-frame.tsx'],
+          changedPaths: [SHELL_ROUTE_SOURCE],
           rootDirectory: root,
         });
         expect(plan.phases.map((phase) => phase.id)).toEqual([SHELL_ID]);
