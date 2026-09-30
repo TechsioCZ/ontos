@@ -4,18 +4,109 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SiteHeader } from "@/components/site-header";
 import { CartProvider } from "@/features/cart/cart-provider";
+import { getProducts, searchCatalog } from "@/mock-storefront/catalog";
 
 const { push } = vi.hoisted(() => ({ push: vi.fn<(href: string) => void>() }));
+const originalScrollIntoView = Element.prototype.scrollIntoView;
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push }),
 }));
 
 describe("SiteHeader search", () => {
-  afterEach(cleanup);
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    Element.prototype.scrollIntoView = originalScrollIntoView;
+  });
 
   beforeEach(() => {
     push.mockReset();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    Element.prototype.scrollIntoView = vi.fn<Element["scrollIntoView"]>();
+  });
+
+  it("shows catalog suggestions after two characters and closes them with Escape", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+    const input = screen.getByRole("combobox", { name: "Vyhledat v katalogu" });
+
+    await user.type(input, "r");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    await user.type(input, "etez");
+    expect(screen.getAllByRole("option")).toHaveLength(Math.min(6, searchCatalog("retez").length));
+    const allResults = screen.getByRole("link", { name: /Zobrazit všechny výsledky/ });
+    expect(allResults.getAttribute("href")).toBe("/vyhledavani?q=retez");
+
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    expect(input.getAttribute("value")).toBe("retez");
+    await user.clear(input);
+    await user.paste("vruty");
+    expect(screen.getAllByRole("option")).toHaveLength(6);
+  });
+
+  it("opens a highlighted product with Enter without also submitting the search", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+    await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), "retez");
+    const firstHref = screen.getAllByRole("option")[0].getAttribute("href");
+
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(push).toHaveBeenCalledOnce();
+    expect(push).toHaveBeenCalledWith(firstHref);
+  });
+
+  it("submits an unmatched query with Enter and displays the empty state", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+    await user.type(
+      screen.getByRole("combobox", { name: "Vyhledat v katalogu" }),
+      "nenalezenyproduktxyz",
+    );
+    expect(screen.getByRole("status").textContent).toContain("nenašli žádné produkty");
+
+    await user.keyboard("{Enter}");
+    expect(push).toHaveBeenCalledOnce();
+    expect(push).toHaveBeenCalledWith("/vyhledavani?q=nenalezenyproduktxyz");
+  });
+
+  it("preserves the matching variant in the product link when searching by SKU", async () => {
+    const user = userEvent.setup();
+    const product = getProducts().find((entry) => entry.detail.variants.length > 0)!;
+    const variant = product.detail.variants[0];
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+    await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), variant.sku);
+    const option = screen.getByRole("option", { name: `${product.name} – ${variant.label}` });
+    expect(option.getAttribute("href")).toBe(
+      `/produkt/${product.slug}?${new URLSearchParams({ variant: variant.sku })}#product-variants`,
+    );
+    await user.click(option);
+    expect(push).toHaveBeenCalledOnce();
+    expect(push).toHaveBeenCalledWith(option.getAttribute("href"));
   });
 
   it("submits a trimmed query through an accessible icon button", async () => {
@@ -30,7 +121,7 @@ describe("SiteHeader search", () => {
     const submit = screen.getByRole("button", { name: "Hledat" });
     expect(submit.textContent).toBe("");
 
-    await user.type(screen.getByRole("searchbox", { name: "Vyhledat v katalogu" }), "  M8 A4  ");
+    await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), "  M8 A4  ");
     await user.click(submit);
 
     expect(push).toHaveBeenCalledOnce();

@@ -2,11 +2,9 @@
 
 import NextLink from "next/link";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
-import type { FormEvent } from "react";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
-import { SearchForm } from "@techsio/ui-kit/molecules/search-form";
+import { HeaderSearch } from "@/components/header-search";
 
 import { MiniCart } from "@/features/cart/mini-cart";
 import { cs } from "@/i18n/cs";
@@ -28,16 +26,6 @@ const utilityLinks = [
 ];
 
 export function SiteHeader() {
-  const router = useRouter();
-
-  const handleSearch = (event: FormEvent<HTMLFormElement>) => {
-    const query = new FormData(event.currentTarget).get("q");
-
-    if (typeof query === "string" && query.trim()) {
-      router.push(`/vyhledavani?q=${encodeURIComponent(query.trim())}`);
-    }
-  };
-
   return (
     <header className="akros-header">
       <div className="akros-header__utility-bar">
@@ -75,17 +63,7 @@ export function SiteHeader() {
 
         <div className="akros-header__actions">
           <div className="akros-header__search">
-            <SearchForm action="/vyhledavani" method="get" onSubmit={handleSearch} size="md">
-              <SearchForm.Label className="sr-only">{cs.search.label}</SearchForm.Label>
-              <SearchForm.Control>
-                <SearchForm.Input
-                  aria-label={cs.search.label}
-                  name="q"
-                  placeholder={cs.search.placeholder}
-                />
-                <SearchForm.Button aria-label={cs.actions.search} iconSize="lg" showSearchIcon />
-              </SearchForm.Control>
-            </SearchForm>
+            <HeaderSearch />
           </div>
 
           <div className="flex shrink-0 items-center gap-3">

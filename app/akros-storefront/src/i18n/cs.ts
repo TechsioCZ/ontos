@@ -33,6 +33,8 @@ export const cs = {
     placeholder: "hledat na stránce...",
     label: "Vyhledat v katalogu",
     results: "Výsledky hledání",
+    suggestions: "Produkty",
+    allResults: (count: number) => `Zobrazit všechny výsledky (${count.toLocaleString("cs-CZ")})`,
     noResults: "Pro zadaný výraz jsme nenašli žádné produkty.",
   },
   pagination: {

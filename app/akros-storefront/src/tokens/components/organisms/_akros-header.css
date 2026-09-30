@@ -12,4 +12,20 @@
   --radius-button-md: var(--radius-xs);
   --radius-input-md: var(--radius-xs);
   --text-input-md: var(--text-base);
+  --color-combobox-bg-base: var(--color-base);
+  --color-combobox-bg-hover: var(--color-base);
+  --color-combobox-bg-focus: var(--color-base);
+  --color-combobox-border-base: var(--color-fg-primary);
+  --color-combobox-border-hover: var(--color-fg-primary);
+  --color-combobox-border-focus: var(--color-fg-primary);
+  --padding-combobox-input-md: var(--padding-input-md);
+  --radius-combobox-md: var(--radius-input-md);
+  --color-popup-bg: var(--color-base);
+  --color-popup-item-bg-hover: var(--color-primary);
+  --radius-popup-md: var(--radius-sm);
+  --radius-popup-item: var(--radius-xs);
+  --padding-popup-item-x-md: var(--dimension-12);
+  --padding-popup-item-y-md: var(--dimension-8);
+  --size-popup-indicator: 0px;
+  --text-combobox-item-md: var(--text-sm);
 }
