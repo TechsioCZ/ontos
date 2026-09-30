@@ -276,6 +276,53 @@ export const workerSecretPlan = (
 /** Zerops hostnames never contain a hyphen; the verticals' and the Shell's are their IDs without one. */
 const zeropsHostname = (unitId: string) => unitId.replaceAll('-', '');
 
+/** The Shell's Ed25519 gateway signing key, as stored on stage (a private JWK). */
+const GatewayPrivateJwkSchema = Schema.fromJsonString(
+  Schema.Struct({
+    alg: Schema.String,
+    crv: Schema.String,
+    d: Schema.String,
+    kid: Schema.String,
+    kty: Schema.String,
+    use: Schema.String,
+    x: Schema.String,
+  }),
+);
+
+const GatewayPublicJwksSchema = Schema.fromJsonString(
+  Schema.Struct({
+    keys: Schema.Tuple([
+      Schema.Struct({
+        alg: Schema.String,
+        crv: Schema.String,
+        key_ops: Schema.Tuple([Schema.Literal('verify')]),
+        kid: Schema.String,
+        kty: Schema.String,
+        use: Schema.String,
+        x: Schema.String,
+      }),
+    ]),
+  }),
+);
+
+/**
+ * The JWKS every vertical verifies Shell gateway tokens with: the public half of the Shell's
+ * signing key. Deriving it keeps one source of truth, so a vertical without a Zerops service
+ * (or after the Zerops verticals retire) still gets the key the Shell signs with.
+ */
+export const gatewayPublicJwksFor = (privateJwk: Redacted.Redacted) =>
+  Schema.decodeUnknownEffect(GatewayPrivateJwkSchema)(Redacted.value(privateJwk)).pipe(
+    Effect.flatMap(({ alg, crv, kid, kty, use, x }) =>
+      Schema.encodeEffect(GatewayPublicJwksSchema)({
+        keys: [{ alg, crv, key_ops: ['verify'], kid, kty, use, x }],
+      }),
+    ),
+    Effect.map(Redacted.make),
+    Effect.mapError(
+      () => new StageOperationError({ message: 'the Shell ONTOS_GATEWAY_PRIVATE_JWK is not an Ed25519 private JWK' }),
+    ),
+  );
+
 const readWorkerSecretSources = (units: readonly EdgeUnit[]) =>
   Effect.gen(function* readWorkerSecretSourcesEffect() {
     const { projectId } = yield* CutoverConfiguration;
@@ -284,25 +331,11 @@ const readWorkerSecretSources = (units: readonly EdgeUnit[]) =>
       return yield* new StageOperationError({ message: 'the Cloudflare placement does not place the Shell' });
     }
     const shellHost = zeropsHostname(shell.id);
-    // Every vertical verifies the same Shell signing key; refuse to publish one when stage disagrees.
-    const publicJwks = yield* Effect.forEach(
-      units.filter((unit) => unit.kind === 'vertical'),
-      (unit) => readZeropsValue(projectId, `${zeropsHostname(unit.id)}_ONTOS_GATEWAY_PUBLIC_JWKS`),
-      { concurrency: 1 },
-    );
-    const [gatewayPublicJwks] = publicJwks;
-    if (gatewayPublicJwks === undefined) {
-      return yield* new StageOperationError({ message: 'the Cloudflare placement places no vertical' });
-    }
-    if (publicJwks.some((jwks) => Redacted.value(jwks) !== Redacted.value(gatewayPublicJwks))) {
-      return yield* new StageOperationError({
-        message: 'the Zerops verticals do not share one ONTOS_GATEWAY_PUBLIC_JWKS; reconcile stage before the cut-over',
-      });
-    }
+    const gatewayPrivateJwk = yield* readZeropsValue(projectId, `${shellHost}_ONTOS_GATEWAY_PRIVATE_JWK`);
     return {
       betterAuthSecret: yield* readZeropsValue(projectId, `${shellHost}_BETTER_AUTH_SECRET`),
-      gatewayPrivateJwk: yield* readZeropsValue(projectId, `${shellHost}_ONTOS_GATEWAY_PRIVATE_JWK`),
-      gatewayPublicJwks,
+      gatewayPrivateJwk,
+      gatewayPublicJwks: yield* gatewayPublicJwksFor(gatewayPrivateJwk),
       spicedbPresharedKey: yield* readZeropsValue(projectId, 'spicedb_SPICEDB_GRPC_PRESHARED_KEY'),
     } satisfies WorkerSecretSources;
   });

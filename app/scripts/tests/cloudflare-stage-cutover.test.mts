@@ -38,9 +38,23 @@ const SHELL_ORIGIN = 'https://app.stage.example.com';
 const CI_TOKEN = 'ci-token-secret';
 const DATABASE_CREDENTIAL = 'db-password-secret';
 const AUTH_SECRET = 'better-auth-secret';
-const PRIVATE_JWK = '{"kty":"OKP","d":"private-jwk-secret"}';
+const PRIVATE_JWK = JSON.stringify({
+  alg: 'EdDSA',
+  crv: 'Ed25519',
+  d: 'private-jwk-secret',
+  key_ops: ['sign'],
+  kid: 'gateway-1',
+  kty: 'OKP',
+  use: 'sig',
+  x: 'public-x',
+});
 const SPICEDB_KEY = 'spicedb-key-secret';
-const PUBLIC_JWKS = '{"keys":["public"]}';
+// The public half of PRIVATE_JWK, which every vertical verifies Shell gateway tokens with.
+const PUBLIC_JWKS = JSON.stringify({
+  keys: [
+    { alg: 'EdDSA', crv: 'Ed25519', key_ops: ['verify'], kid: 'gateway-1', kty: 'OKP', use: 'sig', x: 'public-x' },
+  ],
+});
 const SNAPSHOT_SECRET = 'ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON';
 const CUSTOMER_CONTEXT_WORKER = 'app-commerce-customer-context';
 const DEPLOYMENT_ENVIRONMENT = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
@@ -482,17 +496,16 @@ it.effect('refuses to reuse a Hyperdrive config that points at another database'
   }),
 );
 
-it.effect('refuses to publish a gateway key the Zerops verticals do not share', () =>
-  Effect.gen(function* refusesDivergentJwks() {
+it.effect('refuses a Shell gateway key that is not an Ed25519 private JWK', () =>
+  Effect.gen(function* refusesMalformedGatewayKey() {
     const account = fakeCloudflareAccount({});
     const stage = newStage({
-      projectValues: { ...SECRET_VALUES, pricing_ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":["other"]}' },
+      projectValues: { ...SECRET_VALUES, shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: '{"kty":"OKP"}' },
     });
-    const files = fakeFiles();
 
-    const error = yield* run(provision, { account, files, stage }).pipe(Effect.flip);
+    const error = yield* run(provision, { account, files: fakeFiles(), stage }).pipe(Effect.flip);
 
-    expect(error.message).toContain('do not share one ONTOS_GATEWAY_PUBLIC_JWKS');
+    expect(error.message).toBe('the Shell ONTOS_GATEWAY_PRIVATE_JWK is not an Ed25519 private JWK');
     expect(stage.commands.filter(({ args }) => args.includes('wrangler'))).toStrictEqual([]);
   }),
 );
