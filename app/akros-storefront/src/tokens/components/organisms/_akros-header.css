@@ -124,7 +124,9 @@
 
 @media (max-width: 1023px) {
   :root {
-    --akros-header-height: var(--dimension-56);
+    --akros-header-height: calc(
+      var(--dimension-56) + var(--dimension-48) + var(--dimension-8) + env(safe-area-inset-top, 0px)
+    );
   }
 
   .akros-header {

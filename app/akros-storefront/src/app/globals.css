@@ -1270,10 +1270,14 @@ body {
     min-height: 100vh;
   }
 
-  /* Only the upper row sticks; search scrolls with the page. */
-  .akros-header,
+  /* Keep both mobile rows in the header's sticky box. */
+  .akros-header {
+    display: block;
+  }
+
   .akros-header__main {
-    display: contents;
+    display: block;
+    padding: 0;
   }
 
   .akros-header__utility-bar,
@@ -1283,9 +1287,6 @@ body {
   }
 
   .akros-header__top-row {
-    position: sticky;
-    z-index: 20;
-    top: 0;
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
@@ -1293,7 +1294,6 @@ body {
     padding: calc(var(--dimension-4) + env(safe-area-inset-top, 0px)) var(--dimension-16)
       var(--dimension-4);
     background: var(--color-base);
-    box-shadow: var(--shadow-sm);
   }
 
   .akros-header__mobile-menu {

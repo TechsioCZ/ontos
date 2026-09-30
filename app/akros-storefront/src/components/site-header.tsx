@@ -67,9 +67,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
           size="sm"
           theme="borderless"
           variant="secondary"
-        >
-          {cs.header.menu}
-        </Drawer.Trigger>
+        />
         <Drawer.Portal>
           <Drawer.Backdrop />
           <Drawer.Positioner>

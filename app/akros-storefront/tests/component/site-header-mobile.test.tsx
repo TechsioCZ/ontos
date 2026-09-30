@@ -38,6 +38,7 @@ describe("SiteHeader mobile navigation", () => {
       </CartProvider>,
     );
     const trigger = screen.getByRole("button", { name: "Otevřít navigaci" });
+    expect(trigger.textContent?.trim()).toBe("");
     expect(screen.queryByRole("dialog")).toBeNull();
     await user.click(trigger);
 
