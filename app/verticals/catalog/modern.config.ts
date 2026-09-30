@@ -82,7 +82,10 @@ const appDevServerHeaders: NonNullable<NonNullable<NonNullable<AppToolsUserConfi
 
 // Only a Worker build binds the private data plane and carries the cost guards; its IDs are required there and unused elsewhere.
 const cloudflareWorkerConfig = cloudflareDeployEnabled
-  ? createCloudflareWorkerConfig(envValue, CLOUDFLARE_WORKER_CPU_MS.vertical)
+  ? createCloudflareWorkerConfig(envValue, {
+      cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical,
+      publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_CATALOG',
+    })
   : undefined;
 const cloudflareDeployment = whenEnabled(cloudflareDeployEnabled, {
   deploy: {

@@ -89,7 +89,10 @@ const getBuildBoolean = (name: string): boolean =>
 const cloudflareDeployEnabled = resolveDeployTarget().target === 'cloudflare';
 // Only a Worker build binds the private data plane and carries the cost guards; its IDs are required there and unused elsewhere.
 const cloudflareWorkerConfig = cloudflareDeployEnabled
-  ? createCloudflareWorkerConfig(envValue, CLOUDFLARE_WORKER_CPU_MS.shell)
+  ? createCloudflareWorkerConfig(envValue, {
+      cpuMs: CLOUDFLARE_WORKER_CPU_MS.shell,
+      publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP',
+    })
   : undefined;
 const cloudflareWorkerRemoteStubPath = fileURLToPath(
   new URL('src/api/cloudflare-worker-remote-stub.ts', import.meta.url),

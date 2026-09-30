@@ -14,6 +14,7 @@ const HYPERDRIVE_ID = 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID';
 const SPICEDB_VPC_SERVICE_ID = 'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID';
 const HYPERDRIVE_CONFIG = 'hyperdrive-id';
 const SPICEDB_VPC_SERVICE = 'vpc-service-id';
+const PUBLIC_URL = 'ULTRAMODERN_PUBLIC_URL_CATALOG';
 
 const reader =
   (values: Readonly<Record<string, string>>) =>
@@ -34,19 +35,39 @@ it('binds every Worker to PostgreSQL through Hyperdrive and to SpiceDB through i
   });
 });
 
-it('keeps every Worker off workers.dev and preview URLs and caps its CPU per request', () => {
-  const values = reader({ [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG, [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE });
+it('serves every Worker only on its custom domain, off workers.dev and preview URLs, and caps its CPU per request', () => {
+  const values = reader({
+    [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG,
+    [PUBLIC_URL]: 'https://ontos-stage-catalog.stage.example.com',
+    [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
+  });
 
-  expect(createCloudflareWorkerConfig(values, CLOUDFLARE_WORKER_CPU_MS.vertical)).toEqual({
+  expect(
+    createCloudflareWorkerConfig(values, { cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical, publicUrlVariable: PUBLIC_URL }),
+  ).toEqual({
     vpcServices: [{ binding: 'SPICEDB', serviceId: SPICEDB_VPC_SERVICE }],
     wrangler: {
       hyperdrive: [{ binding: 'HYPERDRIVE', id: HYPERDRIVE_CONFIG }],
       limits: { cpu_ms: 100 },
       preview_urls: false,
+      routes: [{ custom_domain: true, pattern: 'ontos-stage-catalog.stage.example.com' }],
       workers_dev: false,
     },
   });
-  expect(createCloudflareWorkerConfig(values, CLOUDFLARE_WORKER_CPU_MS.shell).wrangler.limits).toEqual({ cpu_ms: 200 });
+  expect(
+    createCloudflareWorkerConfig(values, { cpuMs: CLOUDFLARE_WORKER_CPU_MS.shell, publicUrlVariable: PUBLIC_URL })
+      .wrangler.limits,
+  ).toEqual({
+    cpu_ms: 200,
+  });
+});
+
+it('refuses a Worker build without its public URL', () => {
+  const values = reader({ [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG, [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE });
+
+  expect(() =>
+    createCloudflareWorkerConfig(values, { cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical, publicUrlVariable: PUBLIC_URL }),
+  ).toThrow(`${PUBLIC_URL} is required for a Cloudflare Worker build`);
 });
 
 it.each([

@@ -408,7 +408,9 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
           ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
           ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
+          ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
+          ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY: https://storefront-registry.invalid
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm cloudflare:build
 

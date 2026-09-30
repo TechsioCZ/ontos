@@ -83,6 +83,7 @@ interface ModernBuildContext {
   buildTarget: 'cloudflare' | 'web';
   buildTempDirectory: string;
   cloudflareDeployEnabled: boolean;
+  cloudflarePublicUrlEnvironmentVariable: string;
   envValue: (name: string) => string | undefined;
   getBuildBoolean: (name: string) => boolean;
   moduleFederationDevServerOrigin: string;
@@ -202,6 +203,7 @@ export const createModernBuildContext = ({
     buildTarget,
     buildTempDirectory,
     cloudflareDeployEnabled,
+    cloudflarePublicUrlEnvironmentVariable,
     envValue,
     getBuildBoolean,
     moduleFederationDevServerOrigin,
@@ -310,14 +312,25 @@ export const CLOUDFLARE_WORKER_CPU_MS = { shell: 200, vertical: 100 } as const;
 
 /**
  * The data plane plus the cost guards every OntOS Worker carries: it answers only on its reviewed
- * custom domain (no `*.workers.dev` route and no preview URLs, which would bypass the stage zone's
- * WAF kill switch) and stops after `cpuMs` of CPU per request.
+ * custom domain, the hostname of `publicUrlVariable` (no `*.workers.dev` route and no preview URLs,
+ * which would bypass the stage zone's WAF kill switch), and stops after `cpuMs` of CPU per request.
+ * Wrangler creates the custom domain's DNS record and certificate on deploy.
  */
-export const createCloudflareWorkerConfig = (envValue: ModernBuildContext['envValue'], cpuMs: number) => {
+export const createCloudflareWorkerConfig = (
+  envValue: ModernBuildContext['envValue'],
+  { cpuMs, publicUrlVariable }: { readonly cpuMs: number; readonly publicUrlVariable: string },
+) => {
   const dataPlane = createCloudflareDataPlaneBindings(envValue);
+  const customDomain = new URL(requiredCloudflareBuildValue(envValue, publicUrlVariable)).hostname;
   return {
     ...dataPlane,
-    wrangler: { ...dataPlane.wrangler, limits: { cpu_ms: cpuMs }, preview_urls: false, workers_dev: false },
+    wrangler: {
+      ...dataPlane.wrangler,
+      limits: { cpu_ms: cpuMs },
+      preview_urls: false,
+      routes: [{ custom_domain: true, pattern: customDomain }],
+      workers_dev: false,
+    },
   };
 };
 
@@ -379,7 +392,10 @@ const createCloudflareDeployment = (
     ? {
         deploy: {
           worker: {
-            ...createCloudflareWorkerConfig(build.envValue, CLOUDFLARE_WORKER_CPU_MS.vertical),
+            ...createCloudflareWorkerConfig(build.envValue, {
+              cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical,
+              publicUrlVariable: build.cloudflarePublicUrlEnvironmentVariable,
+            }),
             compatibilityDate: '2026-06-02',
             name: worker.name,
             security: createCloudflareWorkerSecurity(),

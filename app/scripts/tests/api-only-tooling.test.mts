@@ -2596,8 +2596,9 @@ const withOntosWorkerConfig = (configuration: Schema.Json): Schema.Json => {
       ({
         ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
         ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
+        ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
       })[name],
-    CLOUDFLARE_WORKER_CPU_MS.vertical,
+    { cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical, publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY' },
   );
   return Schema.decodeUnknownSync(Schema.Json)({
     ...Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Json))(configuration),
