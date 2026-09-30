@@ -92,7 +92,7 @@ export function ProductGrid({
                 </NextLink>
               </ProductCard.Name>
 
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center justify-between gap-2 py-1">
                 <ProductCard.Stock
                   className="akros-catalog-product-card__stock m-0 uppercase"
                   status={product.stock.status}
@@ -124,7 +124,7 @@ export function ProductGrid({
                 {priceLabel}
               </ProductCard.Price>
 
-              <ProductCard.Actions className="mt-auto block">
+              <ProductCard.Actions className="mt-auto block [&>*]:w-full">
                 {canAddToCart && product.stock.kind === "quantity" ? (
                   <AddToCartButton
                     item={{

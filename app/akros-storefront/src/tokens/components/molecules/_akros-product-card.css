@@ -1,6 +1,27 @@
 :root {
   --color-product-card-bg: var(--color-base);
-  --aspect-product-card-image: 6 / 5;
-  --text-product-card-name-size: var(--text-sm);
+  --aspect-product-card-image: 373 / 282;
+  --font-weight-product-card-price: var(--font-weight-bold);
+  --radius-product-card: var(--radius-sm);
+  --radius-product-card-image: var(--radius-none);
+  --spacing-product-card-col-layout: var(--dimension-10);
+  --spacing-product-card-padding: var(--dimension-10);
+  --text-product-card-name-size: var(--text-base);
   --text-product-card-price-size: var(--text-md);
+  --text-product-card-stock-size: var(--text-sm);
+}
+
+.akros-product-card {
+  --font-weight-badge-sm: var(--font-weight-medium);
+  --height-form-control-sm: var(--dimension-44);
+  --padding-badge-sm: var(--dimension-2) var(--dimension-6);
+  --radius-badge: var(--radius-full);
+  --radius-button-sm: var(--radius-xs);
+  --text-button-sm: var(--text-sm);
+}
+
+@media (max-width: 760px) {
+  :root {
+    --text-product-card-price-size: var(--text-base);
+  }
 }
