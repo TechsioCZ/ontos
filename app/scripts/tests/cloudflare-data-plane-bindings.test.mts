@@ -60,6 +60,14 @@ it('serves every Worker only on its custom domain, off workers.dev and preview U
   ).toEqual({
     cpu_ms: 200,
   });
+  expect(
+    createCloudflareWorkerConfig(values, {
+      cpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical,
+      publicUrlVariable: PUBLIC_URL,
+    }).wrangler.limits,
+  ).toEqual({
+    cpu_ms: 3000,
+  });
 });
 
 it('refuses a Worker build without its public URL', () => {

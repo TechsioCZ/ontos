@@ -8,6 +8,7 @@ import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 
 import {
+  CLOUDFLARE_WORKER_CPU_MS,
   createModernBuildContext,
   createModernConfig,
   installGlobalRequire,
@@ -36,6 +37,7 @@ export default defineConfig(
         bffPrefix: COMMERCE_CUSTOMER_CONTEXT_API_PREFIX,
         build,
         chunkLoadingGlobal: '__ULTRAMODERN_VERTICAL_COMMERCE_CUSTOMER_CONTEXT_LOADED_CHUNKS__',
+        cloudflareCpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical,
         cloudflareWorkerName,
         moduleUrl: import.meta.url,
         plugins: [

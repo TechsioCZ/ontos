@@ -304,11 +304,18 @@ export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['
 
 /**
  * CPU budgets per invocation. Workers Paid includes 30M CPU ms a month, so a runaway request is cut
- * off here instead of billed. Nothing has been measured yet: an API vertical does a few database and
- * SpiceDB round trips (waiting on I/O is not CPU time), and the Shell also renders SSR, so it gets
- * twice the vertical budget. Raise a cap only with a measured p99 from Workers analytics.
+ * off here instead of billed. An API vertical does a few database and SpiceDB round trips (waiting on
+ * I/O is not CPU time), and the Shell also renders SSR, so it gets twice the vertical budget.
+ *
+ * Every BFF request builds and disposes the whole Effect HTTP API runtime, because workerd ties I/O
+ * objects to the request that created them, so its CPU cost grows with the API's endpoint count.
+ * Catalog (about 200 endpoints) and commerce-customer-context (about 115) spend far more than 100 ms
+ * per request, while the next largest vertical has about 20. Workers analytics on stage (72 h, µs
+ * rounded to ms): successful requests peaked at 1590 ms (Catalog) and 2015 ms (commerce-customer-context),
+ * and the requests Cloudflare cut off had already spent up to 2539 ms. `largeApiVertical` is the
+ * smallest round cap above all of them. Raise a cap only with a measured p99 from Workers analytics.
  */
-export const CLOUDFLARE_WORKER_CPU_MS = { shell: 200, vertical: 100 } as const;
+export const CLOUDFLARE_WORKER_CPU_MS = { largeApiVertical: 3000, shell: 200, vertical: 100 } as const;
 
 /**
  * The data plane plus the cost guards every OntOS Worker carries: it answers only on its reviewed
@@ -386,14 +393,18 @@ const readCloudflareUnitServiceBindings = (appId: string): readonly CloudflareUn
 
 const createCloudflareDeployment = (
   build: ModernBuildContext,
-  worker: { readonly name: string; readonly unitServiceBindings: readonly CloudflareUnitServiceBinding[] },
+  worker: {
+    readonly cpuMs: number;
+    readonly name: string;
+    readonly unitServiceBindings: readonly CloudflareUnitServiceBinding[];
+  },
 ) =>
   build.cloudflareDeployEnabled
     ? {
         deploy: {
           worker: {
             ...createCloudflareWorkerConfig(build.envValue, {
-              cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical,
+              cpuMs: worker.cpuMs,
               publicUrlVariable: build.cloudflarePublicUrlEnvironmentVariable,
             }),
             compatibilityDate: '2026-06-02',
@@ -467,6 +478,7 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
   build,
   builderPlugins,
   chunkLoadingGlobal,
+  cloudflareCpuMs = CLOUDFLARE_WORKER_CPU_MS.vertical,
   cloudflareWorkerName,
   moduleUrl,
   plugins,
@@ -479,6 +491,7 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
   build: ModernBuildContext;
   builderPlugins?: BuilderPlugin[];
   chunkLoadingGlobal: string;
+  cloudflareCpuMs?: number;
   cloudflareWorkerName: string;
   moduleUrl: string;
   plugins: Plugin[];
@@ -507,6 +520,7 @@ export const createModernConfig = <Plugin, BuilderPlugin>({
     // oxlint-disable-next-line anti-slop/no-conditional-empty-object-spread -- This generic optional field retains the public factory's inferred return shape and its position in the emitted configuration.
     ...(builderPlugins === undefined ? {} : { builderPlugins }),
     ...createCloudflareDeployment(build, {
+      cpuMs: cloudflareCpuMs,
       name: cloudflareWorkerName,
       unitServiceBindings: build.cloudflareDeployEnabled ? readCloudflareUnitServiceBindings(appId) : [],
     }),
