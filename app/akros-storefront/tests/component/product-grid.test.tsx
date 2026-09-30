@@ -94,4 +94,50 @@ describe("ProductGrid", () => {
       `/produkt/${product.slug}`,
     );
   });
+
+  it("shows an explicit comparison price next to the current price and its discount", () => {
+    const product = {
+      ...toProductSummary(getActionProducts()[0]),
+      priceMinor: 254,
+      originalPriceMinor: 330,
+      priceIsFrom: false,
+    };
+    const { container } = render(<ProductGrid action="detail" products={[product]} />);
+
+    expect(screen.getByText("-23%")).toBeDefined();
+    expect(screen.getByText("2,54 Kč")).toBeDefined();
+    expect(container.querySelector("del")?.textContent?.replaceAll("\u00a0", " ")).toContain(
+      "3,30 Kč",
+    );
+  });
+
+  it.each([254, 253, 0, Number.NaN, Number.POSITIVE_INFINITY])(
+    "does not show a discount for an invalid or non-reduced comparison price %s",
+    (originalPriceMinor) => {
+      const product = {
+        ...toProductSummary(getActionProducts()[0]),
+        priceMinor: 254,
+        originalPriceMinor,
+        priceIsFrom: false,
+      };
+      const { container } = render(<ProductGrid action="detail" products={[product]} />);
+
+      expect(container.querySelector("del")).toBeNull();
+      expect(screen.queryByText(/^-\d+%$/)).toBeNull();
+    },
+  );
+
+  it("does not compare a group-level from price with a potentially different variant", () => {
+    const product = {
+      ...toProductSummary(getActionProducts()[0]),
+      priceMinor: 254,
+      originalPriceMinor: 330,
+      priceIsFrom: true,
+    };
+    const { container } = render(<ProductGrid action="detail" products={[product]} />);
+
+    expect(screen.getByText("od 2,54 Kč")).toBeDefined();
+    expect(container.querySelector("del")).toBeNull();
+    expect(screen.queryByText("-23%")).toBeNull();
+  });
 });

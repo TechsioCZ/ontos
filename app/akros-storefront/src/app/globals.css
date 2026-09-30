@@ -1032,6 +1032,20 @@ body {
   line-height: 1.4;
 }
 
+.akros-product-card__discount {
+  display: block;
+  margin-bottom: var(--dimension-4);
+  color: var(--color-fg-accent-danger);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+}
+
+.akros-product-card__original-price {
+  color: var(--color-fg-secondary);
+  font-size: var(--text-xs);
+  font-weight: var(--font-weight-regular);
+}
+
 .akros-company-intro {
   display: grid;
   gap: 16px;

@@ -175,7 +175,6 @@ describe("mock catalog gateway", () => {
       variant: {
         id: "item-6066",
         priceMinor: 8332,
-        originalPriceMinor: 10_832,
         isSale: true,
       },
     });
@@ -188,10 +187,9 @@ describe("mock catalog gateway", () => {
     ).toBe(true);
     expect(
       promotedItems.every(({ product, variant }) => {
-        const priceMinor = variant?.priceMinor ?? product.priceMinor;
         const originalPriceMinor = variant?.originalPriceMinor ?? product.originalPriceMinor;
 
-        return originalPriceMinor === Math.round(priceMinor * 1.3);
+        return originalPriceMinor === undefined;
       }),
     ).toBe(true);
   });

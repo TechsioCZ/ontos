@@ -68,6 +68,7 @@ export const cs = {
       "Nabízíme široký sortiment nerezového materiálu, vlastní výrobu a profesionální podporu pro projekty i běžný provoz. Naše nabídka zahrnuje spojovací materiál, hutní materiál, konstrukce pro fotovoltaiku a další specializované kategorie.",
   },
   product: {
+    originalPrice: "Původní cena",
     tags: {
       recommended: "Doporučujeme",
       sale: "Doprodej",

@@ -227,12 +227,6 @@ const parametersFor = (item) =>
     .filter((parameter) => parameter.label && parameter.value);
 
 const itemPrice = (item) => priceTiersFor(item)[0]?.priceMinor ?? 0;
-const originalPriceFor = (item) => {
-  const priceMinor = itemPrice(item);
-  const isPromoted = Number(item.isAction) > 0 || Number(item.isSale) > 0;
-
-  return isPromoted && priceMinor > 0 ? Math.round(priceMinor * 1.3) : undefined;
-};
 const itemImage = (item) => absoluteAssetUrl(item.images?.[0]);
 const itemName = (item) => cleanText(item.productName || item.title) || `Produkt ${item.id}`;
 
@@ -280,7 +274,6 @@ for (const [groupId, items] of groups) {
     sku: cleanText(base.sku),
     description,
     priceMinor: Number.isFinite(lowestPrice) ? lowestPrice : itemPrice(base),
-    originalPriceMinor: variantItems.length === 0 ? originalPriceFor(base) : undefined,
     currency: "CZK",
     unit: cleanText(base.unit) || "ks",
     minimumQuantity: toPositiveNumber(base.minimumQuantity, 1),
@@ -310,7 +303,6 @@ for (const [groupId, items] of groups) {
         minimumQuantity: toPositiveNumber(item.minimumQuantity, 1),
         packageQuantity: toOptionalPositiveNumber(item.packageQuantity),
         priceMinor: itemPrice(item),
-        originalPriceMinor: originalPriceFor(item),
         priceTiers: priceTiersFor(item),
         stockCount: Math.max(0, toNumber(item.stockCount)),
         unit: cleanText(item.unit) || cleanText(base.unit) || "ks",

@@ -3,10 +3,11 @@ import Image from "next/image";
 import NextLink from "next/link";
 import { Badge } from "@techsio/ui-kit/atoms/badge";
 
-import { NewsProductGrid, type NewsProductCardItem } from "@/components/news-product-grid";
+import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { PrimaryLinkButton } from "@/components/primary-link-button";
 import { StorefrontWideShell } from "@/components/storefront-shell";
-import { getNewProducts, getPromotionItems } from "@/mock-storefront/catalog";
+import { getNewProducts, getPromotionItems, toProductSummary } from "@/mock-storefront/catalog";
+import { getProductStockStatus } from "@/lib/product-stock";
 
 export const metadata: Metadata = { title: "Novinky a akce" };
 
@@ -34,41 +35,41 @@ export default function NewsPage() {
       (product) => !promotedProductIds.has(product.id) && !isGenericPromotionGroup(product.name),
     )
     .slice(0, 4);
-  const newItems: NewsProductCardItem[] = newProducts.map((product) => ({
-    id: product.id,
-    productId: product.id,
-    slug: product.slug,
-    name: product.name,
-    productName: product.name,
-    sku: product.sku,
-    imageSrc: product.imageSrc,
-    imageAlt: product.imageAlt,
-    priceMinor: product.priceMinor,
-    currency: product.currency,
-    unit: product.unit,
-    stockCount: product.stockCount,
-    minimumQuantity: product.minimumQuantity,
-    kind: "new",
-  }));
-  const promotionItems: NewsProductCardItem[] = promotedItems.map(({ product, variant, kind }) => ({
-    id: `${product.id}-${variant?.id ?? "product"}`,
-    productId: product.id,
-    variantId: variant?.id,
-    slug: product.slug,
-    name: variant?.label ?? product.name,
-    productName: product.name,
-    sku: variant?.sku ?? product.sku,
-    imageSrc: variant?.imageSrc ?? product.imageSrc,
-    imageAlt: variant?.label ?? product.imageAlt,
-    priceMinor: variant?.priceMinor ?? product.priceMinor,
-    originalPriceMinor: variant?.originalPriceMinor ?? product.originalPriceMinor,
-    currency: product.currency,
-    unit: variant?.unit ?? product.unit,
-    stockCount: variant?.stockCount ?? product.stockCount,
-    minimumQuantity: variant?.minimumQuantity ?? product.minimumQuantity,
-    variantLabel: variant?.label,
-    kind,
-  }));
+  const promotionProducts: ProductGridItem[] = promotedItems.map(({ product, variant }) => {
+    const summary = toProductSummary(product);
+    if (!variant) return summary;
+
+    return {
+      ...summary,
+      variantId: variant.id,
+      variantLabel: variant.label,
+      productName: product.name,
+      name: variant.label,
+      sku: variant.sku,
+      detailHref: `/produkt/${product.slug}?variant=${encodeURIComponent(variant.sku)}`,
+      imageSrc: variant.imageSrc ?? product.imageSrc,
+      imageAlt: variant.label,
+      priceMinor: variant.priceMinor,
+      priceExcludingVatMinor: variant.priceTiers.find(
+        (tier) => tier.priceMinor === variant.priceMinor,
+      )?.priceExcludingVatMinor,
+      originalPriceMinor: variant.originalPriceMinor,
+      priceIsFrom: false,
+      hasVariants: false,
+      isAction: variant.isAction,
+      isSale: variant.isSale,
+      isRecommended: variant.isRecommended,
+      isNew: variant.isNew,
+      stock: {
+        kind: "quantity",
+        status: getProductStockStatus(variant),
+        minimumQuantity: variant.minimumQuantity,
+        packageQuantity: variant.packageQuantity,
+        stockCount: variant.stockCount,
+        unit: variant.unit,
+      },
+    };
+  });
 
   return (
     <StorefrontWideShell>
@@ -101,7 +102,7 @@ export default function NewsPage() {
             <h2 id="new-products-title">Nové nerezové produkty v nabídce</h2>
             <NextLink href="/vyhledavani?q=novinka">Zobrazit všechny novinky</NextLink>
           </div>
-          <NewsProductGrid items={newItems} />
+          <ProductGrid action="detail" products={newProducts.map(toProductSummary)} />
         </section>
         <section
           className="akros-news-section akros-news-section--sale"
@@ -112,7 +113,7 @@ export default function NewsPage() {
             <h2 id="sale-products-title">Akční nabídky a výprodej</h2>
             <NextLink href="/vyhledavani?q=akce">Zobrazit celou akční nabídku</NextLink>
           </div>
-          <NewsProductGrid items={promotionItems} />
+          <ProductGrid products={promotionProducts} />
         </section>
       </article>
     </StorefrontWideShell>

@@ -14,6 +14,9 @@ import type { CatalogProductSummary } from "@/mock-storefront/types";
 export interface ProductGridItem extends CatalogProductSummary {
   detailHref?: string;
   searchMatchLabel?: string;
+  variantId?: string;
+  variantLabel?: string;
+  productName?: string;
 }
 
 const stockLabels = {
@@ -53,9 +56,20 @@ export function ProductGrid({
             ? `${product.priceIsFrom ? `${cs.product.from} ` : ""}${formatPrice(product.priceMinor, product.currency)}`
             : "Cena na dotaz";
         const supportingText = product.description.trim() || `Kód produktu: ${product.sku}`;
+        const comparisonPrice = product.originalPriceMinor;
+        const hasDiscount =
+          !product.priceIsFrom &&
+          Number.isSafeInteger(product.priceMinor) &&
+          product.priceMinor > 0 &&
+          comparisonPrice !== undefined &&
+          Number.isSafeInteger(comparisonPrice) &&
+          comparisonPrice > product.priceMinor;
+        const discountPercentage = hasDiscount
+          ? Math.round((1 - product.priceMinor / comparisonPrice) * 100)
+          : undefined;
 
         return (
-          <article className="min-w-0" key={product.id}>
+          <article className="min-w-0" key={product.variantId ?? product.id}>
             <ProductCard className="akros-product-card akros-catalog-product-card" layout="column">
               <div className="relative">
                 <NextLink
@@ -151,7 +165,22 @@ export function ProductGrid({
               )}
 
               <ProductCard.Price className="mt-auto mb-0 text-center">
-                {priceLabel}
+                {hasDiscount ? (
+                  <>
+                    <span className="akros-product-card__discount">
+                      {discountPercentage === 0 ? "<1%" : `-${discountPercentage}%`}
+                    </span>
+                    <span className="flex flex-wrap items-baseline justify-center gap-1">
+                      <span>{priceLabel}</span>
+                      <del className="akros-product-card__original-price">
+                        <span className="sr-only">{cs.product.originalPrice}: </span>
+                        {formatPrice(comparisonPrice, product.currency)}
+                      </del>
+                    </span>
+                  </>
+                ) : (
+                  priceLabel
+                )}
               </ProductCard.Price>
 
               <ProductCard.Actions className="mt-auto block [&>*]:w-full">
@@ -159,8 +188,9 @@ export function ProductGrid({
                   <AddToCartButton
                     item={{
                       productId: product.id,
+                      variantId: product.variantId,
                       slug: product.slug,
-                      name: product.name,
+                      name: product.productName ?? product.name,
                       sku: product.sku,
                       imageSrc: product.imageSrc,
                       imageAlt: product.imageAlt,
@@ -169,6 +199,7 @@ export function ProductGrid({
                       stockCount: product.stock.stockCount,
                       priceMinor: product.priceMinor,
                       priceExcludingVatMinor: product.priceExcludingVatMinor,
+                      variantLabel: product.variantLabel,
                     }}
                     quantity={product.stock.minimumQuantity}
                   />
