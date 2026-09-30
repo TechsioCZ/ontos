@@ -110,18 +110,29 @@ body {
 }
 
 .akros-header__main {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   justify-content: space-between;
-  gap: var(--dimension-32);
+  gap: var(--dimension-24);
   padding-inline: var(--akros-header-main-gutter);
   padding-block: var(--akros-header-main-padding-y);
+}
+
+.akros-header__top-row {
+  display: contents;
+}
+
+.akros-header__cart-actions {
+  grid-column: 3;
+  grid-row: 1;
 }
 
 .akros-brand {
   display: flex;
   align-items: center;
   text-decoration: none;
+  margin-inline-end: var(--dimension-8);
 }
 
 .akros-brand__logo {
@@ -131,23 +142,14 @@ body {
 }
 
 .akros-header__search {
-  width: var(--akros-header-search-width);
+  width: min(100%, var(--akros-header-search-width));
   min-width: 0;
-  flex: 0 1 var(--akros-header-search-width);
+  grid-column: 2;
+  grid-row: 1;
 }
 
 .akros-header__search form {
   width: 100%;
-}
-
-.akros-header__actions {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--dimension-24);
-  white-space: nowrap;
 }
 
 .akros-header__quick-select {
@@ -189,10 +191,6 @@ body {
   top: var(--akros-header-height);
   align-self: start;
   padding-block: 0;
-}
-
-.akros-sidebar__mobile {
-  display: none;
 }
 
 .akros-sidebar__desktop {
@@ -1195,9 +1193,8 @@ body {
     gap: var(--dimension-24);
   }
 
-  .akros-header__actions,
-  .akros-header__search {
-    flex: 1 1 auto;
+  .akros-brand {
+    margin-inline-end: 0;
   }
 
   .akros-product-grid {
@@ -1267,6 +1264,72 @@ body {
   }
 }
 
+@media (max-width: 1023px) {
+  .akros-shell {
+    margin-block-start: 0;
+    min-height: 100vh;
+  }
+
+  /* Only the upper row sticks; search scrolls with the page. */
+  .akros-header,
+  .akros-header__main {
+    display: contents;
+  }
+
+  .akros-header__utility-bar,
+  .akros-header__personal-navigation,
+  .akros-sidebar {
+    display: none;
+  }
+
+  .akros-header__top-row {
+    position: sticky;
+    z-index: 20;
+    top: 0;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--dimension-8);
+    padding: calc(var(--dimension-4) + env(safe-area-inset-top, 0px)) var(--dimension-16)
+      var(--dimension-4);
+    background: var(--color-base);
+    box-shadow: var(--shadow-sm);
+  }
+
+  .akros-header__mobile-menu {
+    display: block;
+  }
+
+  .akros-brand {
+    justify-self: center;
+    width: 150px;
+    max-width: 100%;
+    min-width: 0;
+    min-height: var(--dimension-44);
+    margin: 0;
+  }
+
+  .akros-brand__logo {
+    width: 100%;
+  }
+
+  .akros-header__cart-actions {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .akros-header__search {
+    display: block;
+    width: auto;
+    padding: 0 var(--dimension-16) var(--dimension-8);
+    background: var(--color-base);
+  }
+
+  .akros-page-grid {
+    display: block;
+  }
+}
+
 @media (max-width: 760px) {
   :root {
     --akros-header-main-gutter: var(--dimension-16);
@@ -1274,31 +1337,8 @@ body {
     --akros-section-gap: 32px;
   }
 
-  .akros-header {
-    position: relative;
-  }
-
-  .akros-header__utility-bar {
-    display: none;
-  }
-
-  .akros-header__main {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    padding-block: 14px;
-  }
-
-  .akros-header__search,
   .akros-header__quick-select {
     display: none;
-  }
-
-  .akros-brand__logo {
-    width: 150px;
-  }
-
-  .akros-header__actions {
-    flex: none;
   }
 
   .akros-header__cart-copy {
@@ -1316,29 +1356,6 @@ body {
     display: none;
   }
 
-  .akros-header__mobile-menu {
-    display: block;
-    grid-column: 1 / -1;
-  }
-
-  .akros-header__mobile-menu summary {
-    min-height: 44px;
-    padding-block: 12px;
-    cursor: pointer;
-    font-weight: 700;
-  }
-
-  .akros-header__mobile-links {
-    display: grid;
-    gap: 4px;
-    padding-bottom: 12px;
-  }
-
-  .akros-header__mobile-links a {
-    min-height: 44px;
-    padding-block: 10px;
-  }
-
   .akros-page-grid {
     display: block;
   }
@@ -1352,29 +1369,8 @@ body {
     display: none;
   }
 
-  .akros-sidebar__mobile {
-    display: block;
-  }
-
-  .akros-sidebar__mobile summary {
-    min-height: 44px;
-    border-radius: var(--akros-radius-md);
-    padding: 11px 16px;
-    background: var(--color-primary);
-    cursor: pointer;
-    font-weight: 700;
-  }
-
-  .akros-sidebar__mobile[open] summary {
-    margin-bottom: 16px;
-  }
-
-  .akros-sidebar__mobile p {
-    margin-bottom: 16px;
-  }
-
   .akros-main {
-    padding-top: 32px;
+    padding-top: 0;
   }
 
   .akros-wide-main {

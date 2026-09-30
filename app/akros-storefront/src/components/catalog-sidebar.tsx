@@ -14,13 +14,20 @@ interface CategoryNavigationItemProps {
   depth?: number;
   navigationId: string;
   categories: CatalogCategory[];
+  expandRoots: boolean;
 }
 
 const akrosProductionUrl = "https://www.akroscz.cz/";
 
-function SpecialCategoriesNavigation({ navigationId }: { navigationId: string }) {
+function SpecialCategoriesNavigation({
+  navigationId,
+  expandRoots,
+}: {
+  navigationId: string;
+  expandRoots: boolean;
+}) {
   return (
-    <VerticalNavigation.Branch defaultOpen id={`${navigationId}-special-categories`}>
+    <VerticalNavigation.Branch defaultOpen={expandRoots} id={`${navigationId}-special-categories`}>
       <VerticalNavigation.Row data-akros-depth={0}>
         <VerticalNavigation.Link as="span">{cs.catalog.specialCategories}</VerticalNavigation.Link>
         <VerticalNavigation.BranchTrigger aria-label={cs.catalog.specialCategories}>
@@ -47,6 +54,7 @@ function CategoryNavigationItem({
   depth = 0,
   navigationId,
   categories,
+  expandRoots,
 }: CategoryNavigationItemProps) {
   const children = categories.filter((candidate) => candidate.parentId === category.id);
   const href = `/kategorie/${category.slug}`;
@@ -94,7 +102,7 @@ function CategoryNavigationItem({
   return (
     <VerticalNavigation.Branch
       containsCurrent={isOnCurrentPath}
-      defaultOpen={depth === 0 || isOnCurrentPath}
+      defaultOpen={(expandRoots && depth === 0) || isOnCurrentPath}
       id={`${navigationId}-${category.id}`}
     >
       <VerticalNavigation.Row data-akros-depth={visualDepth}>
@@ -116,6 +124,7 @@ function CategoryNavigationItem({
               key={child.id}
               navigationId={navigationId}
               categories={categories}
+              expandRoots={expandRoots}
             />
           ))}
         </VerticalNavigation.List>
@@ -124,12 +133,16 @@ function CategoryNavigationItem({
   );
 }
 
-export function CatalogSidebar({
+export function CatalogNavigation({
   activeSlug,
   categories,
+  navigationId,
+  expandRoots = true,
 }: {
   activeSlug?: string;
   categories: CatalogCategory[];
+  navigationId: string;
+  expandRoots?: boolean;
 }) {
   const activeCategory = activeSlug
     ? categories.find((category) => category.slug === activeSlug)
@@ -145,7 +158,7 @@ export function CatalogSidebar({
   const activeIds = new Set(activeTrail.map((category) => category.id));
   const topCategories = categories.filter((category) => category.parentId === null);
 
-  const navigation = (navigationId: "catalog-desktop" | "catalog-mobile") => (
+  return (
     <VerticalNavigation
       aria-label={cs.catalog.title}
       data-akros-catalog=""
@@ -155,7 +168,7 @@ export function CatalogSidebar({
     >
       <VerticalNavigation.Group tone="subtle">
         <VerticalNavigation.List>
-          <SpecialCategoriesNavigation navigationId={navigationId} />
+          <SpecialCategoriesNavigation navigationId={navigationId} expandRoots={expandRoots} />
           {topCategories.map((category) => (
             <CategoryNavigationItem
               activeIds={activeIds}
@@ -164,20 +177,31 @@ export function CatalogSidebar({
               key={category.id}
               navigationId={navigationId}
               categories={categories}
+              expandRoots={expandRoots}
             />
           ))}
         </VerticalNavigation.List>
       </VerticalNavigation.Group>
     </VerticalNavigation>
   );
+}
 
+export function CatalogSidebar({
+  activeSlug,
+  categories,
+}: {
+  activeSlug?: string;
+  categories: CatalogCategory[];
+}) {
   return (
     <aside className="akros-sidebar" aria-label={cs.catalog.title}>
-      <div className="akros-sidebar__desktop">{navigation("catalog-desktop")}</div>
-      <details className="akros-sidebar__mobile">
-        <summary>{cs.catalog.title}</summary>
-        {navigation("catalog-mobile")}
-      </details>
+      <div className="akros-sidebar__desktop">
+        <CatalogNavigation
+          activeSlug={activeSlug}
+          categories={categories}
+          navigationId="catalog-desktop"
+        />
+      </div>
     </aside>
   );
 }

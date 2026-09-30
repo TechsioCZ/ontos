@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -188,7 +188,8 @@ describe("SiteHeader search", () => {
     expect(push).toHaveBeenCalledWith("/vyhledavani?q=M8%20A4");
   });
 
-  it("marks the current page in both desktop and mobile navigation", () => {
+  it("marks the current page in both desktop and mobile navigation", async () => {
+    const user = userEvent.setup();
     const { rerender } = render(
       <CartProvider storage={null}>
         <SiteHeader />
@@ -196,6 +197,8 @@ describe("SiteHeader search", () => {
     );
 
     for (const name of ["Pomocná navigace", "Mobilní navigace"]) {
+      if (name === "Mobilní navigace")
+        await user.click(screen.getByRole("button", { name: "Otevřít navigaci" }));
       const navigation = within(screen.getByRole("navigation", { name }));
       expect(navigation.getByRole("link", { name: "Domů" }).getAttribute("aria-current")).toBe(
         "page",
@@ -205,6 +208,9 @@ describe("SiteHeader search", () => {
       );
     }
 
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
     route.pathname = "/blog";
     rerender(
       <CartProvider storage={null}>
@@ -213,6 +219,8 @@ describe("SiteHeader search", () => {
     );
 
     for (const name of ["Pomocná navigace", "Mobilní navigace"]) {
+      if (name === "Mobilní navigace")
+        await user.click(screen.getByRole("button", { name: "Otevřít navigaci" }));
       const navigation = within(screen.getByRole("navigation", { name }));
       expect(navigation.getByRole("link", { name: "Blog" }).getAttribute("aria-current")).toBe(
         "page",

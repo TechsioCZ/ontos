@@ -3,12 +3,16 @@
 import NextLink from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
+import { Drawer } from "@techsio/ui-kit/molecules/drawer";
+import { CatalogNavigation } from "@/components/catalog-sidebar";
 import { HeaderSearch } from "@/components/header-search";
 
 import { MiniCart } from "@/features/cart/mini-cart";
 import { cs } from "@/i18n/cs";
+import { getSidebarCategories } from "@/mock-storefront/catalog";
 
 const utilityLinks = [
   { href: "/", label: cs.header.home },
@@ -25,6 +29,117 @@ const utilityLinks = [
   { href: "/reklamace", label: cs.header.claims },
   { href: "/kontakty", label: cs.header.contacts },
 ];
+
+function MobileNavigation({ pathname }: { pathname: string }) {
+  const [open, setOpen] = useState(false);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const activeSlug = pathname.startsWith("/kategorie/") ? pathname.split("/")[2] : undefined;
+  const categories = useMemo(() => getSidebarCategories(activeSlug), [activeSlug]);
+
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const desktop = window.matchMedia("(min-width: 1024px)");
+    const closeOnDesktop = () => {
+      if (desktop.matches) setOpen(false);
+    };
+    desktop.addEventListener("change", closeOnDesktop);
+    return () => desktop.removeEventListener("change", closeOnDesktop);
+  }, []);
+
+  return (
+    <div className="akros-header__mobile-menu">
+      <Drawer
+        closeOnEscape
+        closeOnInteractOutside
+        initialFocusEl={() => closeRef.current}
+        modal
+        onOpenChange={({ open: nextOpen }) => setOpen(nextOpen)}
+        open={open}
+        placement="start"
+        preventScroll
+        size="sm"
+        trapFocus
+      >
+        <Drawer.Trigger
+          aria-label={cs.header.openNavigation}
+          icon="icon-[mdi--menu]"
+          iconSize="lg"
+          size="sm"
+          theme="borderless"
+          variant="secondary"
+        >
+          {cs.header.menu}
+        </Drawer.Trigger>
+        <Drawer.Portal>
+          <Drawer.Backdrop />
+          <Drawer.Positioner>
+            <Drawer.Content data-akros-mobile-menu="" draggable={false}>
+              <Drawer.Header className="flex-row items-center justify-between">
+                <Drawer.Title>{cs.header.menu}</Drawer.Title>
+                <Drawer.CloseTrigger
+                  aria-label={cs.header.closeNavigation}
+                  ref={closeRef}
+                  size="lg"
+                />
+              </Drawer.Header>
+              <Drawer.Body
+                data-akros-mobile-menu-body=""
+                onClick={(event) => {
+                  if (event.target instanceof Element && event.target.closest("a[href]"))
+                    setOpen(false);
+                }}
+              >
+                <section>
+                  <h3 className="akros-mobile-menu__section-title">{cs.catalog.title}</h3>
+                  <CatalogNavigation
+                    activeSlug={activeSlug}
+                    categories={categories}
+                    expandRoots={false}
+                    navigationId="catalog-mobile"
+                  />
+                </section>
+                <section>
+                  <h3 className="akros-mobile-menu__section-title">
+                    {cs.header.personalNavigation}
+                  </h3>
+                  <nav
+                    aria-label={cs.header.personalNavigation}
+                    className="akros-mobile-menu__links"
+                  >
+                    <Link as={NextLink} href="/prihlaseni">
+                      {cs.header.login}
+                    </Link>
+                    <Link as={NextLink} href="/muj-ucet">
+                      {cs.header.account}
+                    </Link>
+                    <Link as={NextLink} href="/oblibene">
+                      {cs.header.favorites}
+                    </Link>
+                  </nav>
+                </section>
+                <section>
+                  <h3 className="akros-mobile-menu__section-title">{cs.header.information}</h3>
+                  <nav aria-label="Mobilní navigace" className="akros-mobile-menu__links">
+                    {utilityLinks.map((item) => (
+                      <Link
+                        key={item.href}
+                        as={NextLink}
+                        aria-current={pathname === item.href ? "page" : undefined}
+                        href={item.href}
+                      >
+                        {item.label}
+                      </Link>
+                    ))}
+                  </nav>
+                </section>
+              </Drawer.Body>
+            </Drawer.Content>
+          </Drawer.Positioner>
+        </Drawer.Portal>
+      </Drawer>
+    </div>
+  );
+}
 
 export function SiteHeader() {
   const pathname = usePathname();
@@ -61,26 +176,23 @@ export function SiteHeader() {
       </div>
 
       <div className="akros-header__main">
-        <NextLink className="akros-brand" href="/" aria-label="AKROS – domovská stránka">
-          <Image
-            alt=""
-            className="akros-brand__logo"
-            height={61}
-            priority
-            src="/akros/logo-akros.png"
-            width={380}
-          />
-        </NextLink>
+        <div className="akros-header__top-row">
+          <MobileNavigation key={pathname} pathname={pathname} />
+          <NextLink className="akros-brand" href="/" aria-label="AKROS – domovská stránka">
+            <Image
+              alt=""
+              className="akros-brand__logo"
+              height={61}
+              priority
+              src="/akros/logo-akros.png"
+              width={380}
+            />
+          </NextLink>
 
-        <div className="akros-header__actions">
-          <div className="akros-header__search">
-            <HeaderSearch />
-          </div>
-
-          <div className="flex shrink-0 items-center gap-3">
+          <div className="akros-header__cart-actions flex shrink-0 items-center gap-3">
             <nav
               aria-label={cs.header.personalNavigation}
-              className="flex items-center max-md:hidden"
+              className="akros-header__personal-navigation flex items-center"
             >
               <LinkButton
                 as={NextLink}
@@ -106,23 +218,9 @@ export function SiteHeader() {
             <MiniCart />
           </div>
         </div>
-
-        <details className="akros-header__mobile-menu">
-          <summary>{cs.header.openNavigation}</summary>
-          <nav className="akros-header__mobile-links" aria-label="Mobilní navigace">
-            {utilityLinks.map((item) => (
-              <Link
-                key={item.href}
-                as={NextLink}
-                aria-current={pathname === item.href ? "page" : undefined}
-                className="flex min-h-11 items-center px-3 aria-[current=page]:bg-primary"
-                href={item.href}
-              >
-                {item.label}
-              </Link>
-            ))}
-          </nav>
-        </details>
+        <div className="akros-header__search">
+          <HeaderSearch />
+        </div>
       </div>
     </header>
   );

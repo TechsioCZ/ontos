@@ -28,6 +28,8 @@ export const cs = {
     cart: "Košík",
     openNavigation: "Otevřít navigaci",
     closeNavigation: "Zavřít navigaci",
+    menu: "Menu",
+    information: "Informace",
   },
   search: {
     placeholder: "hledat na stránce...",

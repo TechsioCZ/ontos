@@ -2,7 +2,7 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { CatalogSidebar } from "@/components/catalog-sidebar";
+import { CatalogNavigation, CatalogSidebar } from "@/components/catalog-sidebar";
 import { cs } from "@/i18n/cs";
 import { getSidebarCategories } from "@/mock-storefront/catalog";
 
@@ -38,33 +38,34 @@ describe("CatalogSidebar", () => {
     expect(within(navigation).queryByText("Speciální spojovací materiál")).toBeNull();
   });
 
-  it("keeps the mobile catalog closed while its root categories are ready to browse", async () => {
+  it("supports compact collapsed roots in the shared mobile navigation", async () => {
     const user = userEvent.setup();
     const categories = getSidebarCategories();
-    render(<CatalogSidebar categories={categories} />);
-
-    const summary = screen.getByText(cs.catalog.title, { selector: "summary" });
-    const mobileCatalog = summary.closest("details");
-    expect(mobileCatalog?.open).toBe(false);
-
-    await user.click(summary);
-
-    expect(mobileCatalog?.open).toBe(true);
-    const navigations = screen.getAllByRole("navigation", { name: cs.catalog.title });
-    expect(navigations).toHaveLength(2);
-    const mobileNavigation = navigations[1];
+    render(
+      <CatalogNavigation
+        categories={categories}
+        expandRoots={false}
+        navigationId="catalog-mobile"
+      />,
+    );
+    const mobileNavigation = screen.getByRole("navigation", { name: cs.catalog.title });
     expect(
       within(mobileNavigation)
         .getByRole("button", { name: cs.catalog.specialCategories })
         .getAttribute("aria-expanded"),
-    ).toBe("true");
+    ).toBe("false");
     for (const category of categories.filter((category) => category.parentId === null)) {
       expect(
         within(mobileNavigation)
           .getByRole("button", { name: category.name })
           .getAttribute("aria-expanded"),
-      ).toBe("true");
+      ).toBe("false");
     }
+    const trigger = within(mobileNavigation).getByRole("button", {
+      name: categories.find((category) => category.parentId === null)!.name,
+    });
+    await user.click(trigger);
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("uses the subtle catalog surface without the redundant introduction", () => {

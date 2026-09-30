@@ -7,6 +7,51 @@
   --shadow-sm: 0 1px 4px rgb(0 0 0 / 10%);
 }
 
+.akros-header__mobile-menu {
+  --height-form-control-sm: var(--dimension-44);
+  --color-button-fg-secondary-borderless: var(--color-fg-primary);
+}
+
+[data-akros-mobile-menu] {
+  --color-drawer-content-bg: var(--color-base);
+  --padding-drawer-header: var(--dimension-16);
+  --padding-drawer-body: var(--dimension-16);
+  --spacing-drawer-bleed: var(--dimension-0);
+  --container-drawer-sm: min(var(--container-sm), calc(100vw - var(--dimension-48)));
+  --radius-drawer-content: var(--radius-xs);
+  --spacing-vertical-navigation-item-sm: var(--dimension-44);
+  --text-vertical-navigation-sm: var(--text-base);
+  --text-vertical-navigation-icon-sm: var(--text-xl);
+  max-height: 100dvh;
+}
+
+[data-akros-mobile-menu-body] {
+  gap: var(--dimension-24);
+  padding-bottom: calc(var(--padding-drawer-body) + env(safe-area-inset-bottom, 0px));
+}
+
+.akros-mobile-menu__section-title {
+  margin: 0 0 var(--dimension-8);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-semibold);
+}
+
+.akros-mobile-menu__links {
+  display: grid;
+}
+
+.akros-mobile-menu__links a {
+  display: flex;
+  min-height: var(--dimension-44);
+  align-items: center;
+  padding: var(--dimension-8) var(--dimension-12);
+  font-size: var(--text-base);
+}
+
+.akros-mobile-menu__links a:is(:hover, [aria-current="page"]) {
+  background: var(--color-primary);
+}
+
 [data-akros-header-login] {
   --color-button-bg-secondary-base: var(--color-base-dark);
   --color-button-bg-secondary-hover: var(--color-base-dark);
@@ -64,5 +109,63 @@
   .akros-header__cart-trigger {
     --text-icon-2xl: var(--text-xl);
     --text-md: var(--text-base);
+  }
+}
+
+/* Preserve the former flex shrink at notebook widths: logo basis 256px,
+   search/actions basis 972px. The wider desktop does not shrink its logo. */
+@media (min-width: 1024px) and (max-width: 1100px) {
+  .akros-header {
+    --akros-header-logo-width: calc(
+      (100vw - 2 * var(--akros-header-main-gutter) - var(--dimension-24)) * (256 / 1228)
+    );
+  }
+}
+
+@media (max-width: 1023px) {
+  :root {
+    --akros-header-height: var(--dimension-56);
+  }
+
+  .akros-header {
+    --akros-header-control-height: var(--dimension-48);
+  }
+
+  .akros-header__search {
+    --padding-input-md: var(--dimension-12);
+    --text-input-md: var(--text-base);
+  }
+
+  .akros-header__search [data-part="positioner"] {
+    /* Combobox fixes width inline and exposes no positioning/width prop. */
+    min-width: calc(100vw - 2 * var(--dimension-16));
+  }
+
+  .akros-header__search [data-part="content"] {
+    max-height: min(70dvh, var(--dimension-container-xl), var(--available-height));
+  }
+
+  [data-akros-search-result] {
+    display: grid;
+    grid-template-columns: var(--dimension-48) minmax(0, 1fr) auto;
+    row-gap: var(--dimension-4);
+  }
+
+  [data-akros-search-result] > :first-child {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  [data-akros-search-result-label] {
+    grid-column: 2;
+  }
+
+  [data-akros-search-result] > strong {
+    grid-column: 2 / -1;
+    grid-row: 2;
+  }
+
+  .akros-header__cart-trigger {
+    --text-icon-2xl: var(--text-xl);
   }
 }

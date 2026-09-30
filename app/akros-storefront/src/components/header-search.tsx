@@ -163,7 +163,10 @@ export function HeaderSearch() {
             }
             resultSlot={(item) =>
               item.data && (
-                <span className="flex w-full min-w-0 items-center gap-(--dimension-12)">
+                <span
+                  data-akros-search-result=""
+                  className="flex w-full min-w-0 items-center gap-(--dimension-12)"
+                >
                   {item.data.kind === "category" ? (
                     <span className="flex size-(--dimension-32) shrink-0 items-center justify-center rounded-sm bg-(--color-fill-surface)">
                       <Icon icon="icon-[mdi--folder-outline]" size="lg" />
@@ -177,7 +180,10 @@ export function HeaderSearch() {
                       width={48}
                     />
                   )}
-                  <span className="grid min-w-0 flex-1 gap-(--dimension-4)">
+                  <span
+                    data-akros-search-result-label=""
+                    className="grid min-w-0 flex-1 gap-(--dimension-4)"
+                  >
                     <span className="line-clamp-2 whitespace-normal text-sm leading-tight">
                       {item.label}
                     </span>
