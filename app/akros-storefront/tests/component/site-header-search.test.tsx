@@ -1,10 +1,11 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SiteHeader } from "@/components/site-header";
 import { CartProvider } from "@/features/cart/cart-provider";
-import { getProducts, searchCatalog } from "@/mock-storefront/catalog";
+import { getCategories, getProducts, searchCatalog } from "@/mock-storefront/catalog";
+import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
 
 const { push } = vi.hoisted(() => ({ push: vi.fn<(href: string) => void>() }));
 const originalScrollIntoView = Element.prototype.scrollIntoView;
@@ -45,8 +46,15 @@ describe("SiteHeader search", () => {
     await user.type(input, "r");
     expect(screen.queryByRole("listbox")).toBeNull();
     await user.type(input, "etez");
-    expect(screen.getAllByRole("option")).toHaveLength(Math.min(6, searchCatalog("retez").length));
-    const allResults = screen.getByRole("link", { name: /Zobrazit všechny výsledky/ });
+    expect(
+      within(screen.getByRole("group", { name: "Kategorie" }))
+        .getByRole("option", { name: "Řetězy" })
+        .getAttribute("href"),
+    ).toBe("/kategorie/retezy");
+    expect(
+      within(screen.getByRole("group", { name: "Produkty" })).getAllByRole("option"),
+    ).toHaveLength(Math.min(6, searchCatalog("retez").length));
+    const allResults = screen.getByRole("link", { name: /Zobrazit všechny produkty/ });
     expect(allResults.getAttribute("href")).toBe("/vyhledavani?q=retez");
 
     await user.keyboard("{Escape}");
@@ -54,7 +62,9 @@ describe("SiteHeader search", () => {
     expect(input.getAttribute("value")).toBe("retez");
     await user.clear(input);
     await user.paste("vruty");
-    expect(screen.getAllByRole("option")).toHaveLength(6);
+    expect(
+      within(screen.getByRole("group", { name: "Produkty" })).getAllByRole("option"),
+    ).toHaveLength(6);
   });
 
   it("opens a highlighted product with Enter without also submitting the search", async () => {
@@ -64,12 +74,57 @@ describe("SiteHeader search", () => {
         <SiteHeader />
       </CartProvider>,
     );
-    await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), "retez");
+    await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), "DIN 766");
     const firstHref = screen.getAllByRole("option")[0].getAttribute("href");
 
     await user.keyboard("{ArrowDown}{Enter}");
     expect(push).toHaveBeenCalledOnce();
     expect(push).toHaveBeenCalledWith(firstHref);
+  });
+
+  it("shows products and categories, prioritizes an exact category match and navigates with Enter", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+    await user.type(screen.getByRole("combobox", { name: "Vyhledat v katalogu" }), "vruty");
+    const categories = within(screen.getByRole("group", { name: "Kategorie" })).getAllByRole(
+      "option",
+    );
+    expect(categories).toHaveLength(4);
+    expect(categories[0].getAttribute("href")).toBe("/kategorie/vruty");
+    expect(
+      within(screen.getByRole("group", { name: "Produkty" })).getAllByRole("option"),
+    ).toHaveLength(6);
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(push).toHaveBeenCalledOnce();
+    expect(push).toHaveBeenCalledWith("/kategorie/vruty");
+  });
+
+  it("matches categories without diacritics and supports category-only results", async () => {
+    const user = userEvent.setup();
+    const category = getCategories().find(
+      (entry) => entry.name.length >= 2 && searchCatalog(entry.name).length === 0,
+    )!;
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+    await user.type(
+      screen.getByRole("combobox", { name: "Vyhledat v katalogu" }),
+      normalizeCatalogSearchTerm(category.name),
+    );
+    expect(screen.queryByRole("group", { name: "Produkty" })).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    const option = within(screen.getByRole("group", { name: "Kategorie" }))
+      .getAllByRole("option")
+      .find((entry) => entry.getAttribute("href") === `/kategorie/${category.slug}`)!;
+    await user.click(option);
+    expect(push).toHaveBeenCalledOnce();
+    expect(push).toHaveBeenCalledWith(`/kategorie/${category.slug}`);
   });
 
   it("submits an unmatched query with Enter and displays the empty state", async () => {

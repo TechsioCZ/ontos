@@ -6,12 +6,33 @@ import { useRouter } from "next/navigation";
 import { useId, useMemo, useState, type KeyboardEvent } from "react";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { Label } from "@techsio/ui-kit/atoms/label";
+import { Icon } from "@techsio/ui-kit/atoms/icon";
 import { SearchForm } from "@techsio/ui-kit/molecules/search-form";
-import { SearchSuggestions } from "@techsio/ui-kit/templates/search-suggestions";
+import {
+  SearchSuggestions,
+  type SearchSuggestionGroup,
+} from "@techsio/ui-kit/templates/search-suggestions";
 
 import { cs } from "@/i18n/cs";
 import { formatPrice } from "@/lib/format";
-import { searchCatalog } from "@/mock-storefront/catalog";
+import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
+import { getCategories, getCategoryTrail, searchCatalog } from "@/mock-storefront/catalog";
+
+type SuggestionData =
+  | { kind: "category"; trail: string }
+  | {
+      kind: "product";
+      imageSrc: string;
+      variantSku?: string;
+      priceMinor: number;
+      priceIsFrom: boolean;
+      currency: "CZK";
+    };
+
+const searchableCategories = getCategories().map((category) => ({
+  category,
+  normalizedName: normalizeCatalogSearchTerm(category.name),
+}));
 
 export function HeaderSearch() {
   const router = useRouter();
@@ -21,8 +42,40 @@ export function HeaderSearch() {
   const trimmedQuery = query.trim();
   const ready = trimmedQuery.length >= 2;
   const results = useMemo(() => (ready ? searchCatalog(trimmedQuery) : []), [ready, trimmedQuery]);
-  const groups = useMemo(
+  const categories = useMemo(() => {
+    if (!ready) return [];
+    const normalizedQuery = normalizeCatalogSearchTerm(trimmedQuery);
+    const rank = (normalizedName: string) => {
+      return normalizedName === normalizedQuery
+        ? 0
+        : normalizedName.startsWith(normalizedQuery)
+          ? 1
+          : 2;
+    };
+    return searchableCategories
+      .filter(({ normalizedName }) => normalizedName.includes(normalizedQuery))
+      .sort((left, right) => rank(left.normalizedName) - rank(right.normalizedName))
+      .slice(0, 4)
+      .map(({ category }) => category);
+  }, [ready, trimmedQuery]);
+  const groups = useMemo<SearchSuggestionGroup<SuggestionData>[]>(
     () => [
+      {
+        id: "categories",
+        label: cs.search.categories,
+        items: categories.map((category) => ({
+          value: `category:${category.id}`,
+          label: category.name,
+          href: `/kategorie/${category.slug}`,
+          data: {
+            kind: "category",
+            trail: getCategoryTrail(category)
+              .slice(0, -1)
+              .map((parent) => parent.name)
+              .join(" › "),
+          },
+        })),
+      },
       {
         id: "products",
         label: cs.search.suggestions,
@@ -31,10 +84,11 @@ export function HeaderSearch() {
           const params = new URLSearchParams({ variant: variant?.sku ?? trimmedQuery });
 
           return {
-            value: product.id,
+            value: `product:${product.id}`,
             label: variant ? `${product.name} – ${variant.label}` : product.name,
             href: `/produkt/${product.slug}${matchingVariants.length ? `?${params}#product-variants` : ""}`,
             data: {
+              kind: "product",
               imageSrc: variant?.imageSrc ?? product.imageSrc,
               variantSku: variant?.sku,
               priceMinor: variant?.priceMinor ?? product.priceMinor,
@@ -45,7 +99,7 @@ export function HeaderSearch() {
         }),
       },
     ],
-    [results, trimmedQuery],
+    [categories, results, trimmedQuery],
   );
   const resultsHref = `/vyhledavani?q=${encodeURIComponent(trimmedQuery)}`;
 
@@ -82,7 +136,7 @@ export function HeaderSearch() {
       <input name="q" type="hidden" value={query} />
       <SearchForm.Control>
         {/* SearchSuggestions has no trigger-visibility prop; the existing submit button owns this action. */}
-        <div className="min-w-0 flex-1 [&_[data-part=trigger]]:hidden [&_[data-part=control]]:rounded-e-none">
+        <div className="min-w-0 flex-1 [&_[data-part=trigger]]:hidden [&_[data-part=control]]:rounded-e-none [&_[data-part=content]]:max-h-[min(70vh,var(--dimension-container-xl),var(--available-height))]">
           <SearchSuggestions
             clearable={false}
             groups={groups}
@@ -93,7 +147,7 @@ export function HeaderSearch() {
               const destination = new URL(href, window.location.origin);
               router.push(`${destination.pathname}${destination.search}${destination.hash}`);
             }}
-            noResultsMessage={cs.search.noResults}
+            noResultsMessage={cs.search.noSuggestions}
             onInputValueChange={(value) => {
               setQuery(value);
               setOpen(value.trim().length >= 2);
@@ -110,27 +164,42 @@ export function HeaderSearch() {
             resultSlot={(item) =>
               item.data && (
                 <span className="flex w-full min-w-0 items-center gap-(--dimension-12)">
-                  <Image
-                    alt=""
-                    className="size-(--dimension-48) shrink-0 rounded-sm bg-base object-contain"
-                    height={48}
-                    src={item.data.imageSrc}
-                    width={48}
-                  />
+                  {item.data.kind === "category" ? (
+                    <span className="flex size-(--dimension-32) shrink-0 items-center justify-center rounded-sm bg-(--color-fill-surface)">
+                      <Icon icon="icon-[mdi--folder-outline]" size="lg" />
+                    </span>
+                  ) : (
+                    <Image
+                      alt=""
+                      className="size-(--dimension-48) shrink-0 rounded-sm bg-base object-contain"
+                      height={48}
+                      src={item.data.imageSrc}
+                      width={48}
+                    />
+                  )}
                   <span className="grid min-w-0 flex-1 gap-(--dimension-4)">
                     <span className="line-clamp-2 whitespace-normal text-sm leading-tight">
                       {item.label}
                     </span>
-                    {item.data.variantSku && (
+                    {item.data.kind === "category" && item.data.trail && (
+                      <span className="truncate text-xs text-(--color-fg-secondary)">
+                        {item.data.trail}
+                      </span>
+                    )}
+                    {item.data.kind === "product" && item.data.variantSku && (
                       <span className="truncate text-xs">
                         {cs.product.sku}: {item.data.variantSku}
                       </span>
                     )}
                   </span>
-                  <strong className="shrink-0 whitespace-nowrap text-sm">
-                    {item.data.priceIsFrom && `${cs.product.from} `}
-                    {formatPrice(item.data.priceMinor, item.data.currency)}
-                  </strong>
+                  {item.data.kind === "product" ? (
+                    <strong className="shrink-0 whitespace-nowrap text-sm">
+                      {item.data.priceIsFrom && `${cs.product.from} `}
+                      {formatPrice(item.data.priceMinor, item.data.currency)}
+                    </strong>
+                  ) : (
+                    <Icon className="shrink-0" icon="token-icon-chevron-right" size="sm" />
+                  )}
                 </span>
               )
             }
