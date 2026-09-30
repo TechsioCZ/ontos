@@ -36,10 +36,13 @@ import type { SecretValues } from './ops-shell.mts';
 import { ensureSpicedbTls, spicedbTlsState } from './spicedb-tls.mts';
 import {
   BuildEnvironmentSchema,
+  HYPERDRIVE_ID_VARIABLE,
+  MF_DEV_ORIGIN_VARIABLE,
   PLACEMENT_LABEL,
   PLACEMENT_PATH,
   PlacementSchema,
   readEdgeUnits,
+  SPICEDB_VPC_SERVICE_ID_VARIABLE,
 } from './stage-edge-units.mts';
 import type { BuildEnvironment, EdgeUnit } from './stage-edge-units.mts';
 import { StageOperationError } from './stage-operation-error.mts';
@@ -121,10 +124,6 @@ export const STAGE_VPC_SERVICES = {
 /** The Zerops data-layer services Cloudflare mode adds: the tunnel connector and the combined outbox worker host. */
 export const CLOUDFLARED_SERVICE = { hostname: 'cloudflared', setup: 'cloudflared' } as const;
 export const OUTBOX_WORKER_HOST_SERVICE = { hostname: 'outboxworkerhost', setup: 'outbox-worker-host' } as const;
-
-export const HYPERDRIVE_ID_VARIABLE = 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID';
-export const SPICEDB_VPC_SERVICE_ID_VARIABLE = 'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID';
-export const MF_DEV_ORIGIN_VARIABLE = 'ULTRAMODERN_MF_DEV_ORIGIN';
 
 export interface StageOrigins {
   readonly shellHostname: string;

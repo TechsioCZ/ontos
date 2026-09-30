@@ -376,6 +376,26 @@ The first edge deploy has no previous edge deployment, so seed it with a full ru
 `gh workflow run ultramodern-workspace-gates.yml --ref main -f full=true`. Placement adds the Worker
 delivery; it never removes a Zerops service or any GitHub environment variable or secret.
 
+### Adding a vertical
+
+Stage deploys to Cloudflare, so a vertical that merges without its edge placement never reaches
+stage and fails the stage edge deploy. The `Repository Tooling Tests` check fails the pull request
+first: it needs no secrets, so it also runs for forks. In the same pull request as the vertical:
+
+1. Give the vertical a `cloudflare` block in `topology/reference-topology.json`, with its
+   `workerName` and `publicUrlEnv` (`ULTRAMODERN_PUBLIC_URL_<UNIT>`).
+2. Add its id to `units` in `topology/cloudflare-placement.json`, and add its service-binding
+   targets to `unitServiceBindings` when it calls other placed units.
+3. Set `buildEnvironment.ULTRAMODERN_PUBLIC_URL_<UNIT>` to its stage origin,
+   `https://ontos-stage-<unit>.<STAGE_ZONE>`.
+4. Pick its CPU tier in its `modern.config.ts`: the default is `CLOUDFLARE_WORKER_CPU_MS.vertical`.
+   Pass `cloudflareCpuMs: CLOUDFLARE_WORKER_CPU_MS.largeApiVertical` only when Workers analytics
+   shows its BFF hitting the default cap.
+
+Before the merge, an operator runs `node scripts/ops/cloudflare-stage-cutover.mts worker-secrets`
+from the pull request's checkout, so the new Worker holds its runtime secrets when the stage deploy
+ships it, and runs `verify` after that deploy. A vertical needs no new GitHub variables or secrets.
+
 ## Stage cut-over and Zerops service retirement
 
 Two operator scripts own the one-time account and service changes around the Cloudflare stage. Run

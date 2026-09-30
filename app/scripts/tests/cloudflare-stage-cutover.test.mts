@@ -20,7 +20,7 @@ import {
 import type { CutoverSettings } from '../ops/cloudflare-stage-cutover.mts';
 import { SPICEDB_GRPC_TLS, SPICEDB_HTTP_TLS, spicedbTlsState } from '../ops/spicedb-tls.mts';
 import { ciPolicy, killSwitchRule, peoplePolicy, usageAlert } from '../ops/cloudflare-stage-cost-guard.mts';
-import { edgeUnits } from '../ops/stage-edge-units.mts';
+import { edgeUnits, placementGaps } from '../ops/stage-edge-units.mts';
 import { OpsMode, STAGE_ZEROPS_PROJECT_ID, readZeropsValue } from '../ops/stage-operations.mts';
 import {
   APP_DIRECTORY,
@@ -810,6 +810,40 @@ it.effect('surfaces Cloudflare API errors with their codes', () =>
     );
 
     expect(error.message).toBe('Cloudflare Tunnel read failed: 7003 No route for that URI');
+  }),
+);
+
+// A vertical merged without its placement entry and public URL would pass review and then fail the
+// stage edge deploy after merge; this check runs on every pull request instead.
+it.effect('places every topology unit with its public URL and the shared data-plane variables', () =>
+  Effect.gen(function* placesEveryUnit() {
+    expect(yield* placementGaps(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE))).toStrictEqual(
+      [],
+    );
+  }),
+);
+
+it.effect('names the unplaced units and unset build variables of an incomplete placement', () =>
+  Effect.gen(function* namesPlacementGaps() {
+    const units = yield* edgeUnits(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE));
+    // Every variable but the Hyperdrive ID and Pricing's public URL, with Catalog left unplaced.
+    const buildEnvironment = Object.fromEntries(
+      [
+        'ULTRAMODERN_MF_DEV_ORIGIN',
+        'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID',
+        ...units.map(({ publicUrlEnv }) => publicUrlEnv).filter((key) => key !== 'ULTRAMODERN_PUBLIC_URL_PRICING'),
+      ].map((key) => [key, 'set']),
+    );
+    const incomplete = JSON.stringify({
+      buildEnvironment,
+      units: units.map(({ id }) => id).filter((id) => id !== 'catalog'),
+    });
+
+    expect(yield* placementGaps(readRepositoryFile(TOPOLOGY_FILE), incomplete)).toStrictEqual([
+      'units: catalog',
+      'buildEnvironment.ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID',
+      'buildEnvironment.ULTRAMODERN_PUBLIC_URL_PRICING',
+    ]);
   }),
 );
 
