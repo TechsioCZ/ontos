@@ -3,6 +3,8 @@
 @import "../tokens/_akros-typography.css";
 @import "../tokens/components/molecules/_akros-accordion.css";
 @import "../tokens/components/molecules/_akros-breadcrumb.css";
+/* Homepage carousel color and icon-size mappings stay scoped to its wrapper. */
+@import "../tokens/components/molecules/_akros-carousel.css";
 @import "../tokens/components/molecules/_akros-product-card.css";
 @import "../tokens/components/molecules/_akros-steps.css";
 @import "../tokens/components/molecules/_akros-vertical-navigation.css";
@@ -30,7 +32,6 @@
   --akros-sidebar-width: 280px;
   --akros-radius-lg: 16px;
   --akros-radius-md: 8px;
-  --akros-hero-aspect-ratio: 25 / 8;
   --akros-header-height: 160px;
   --akros-header-search-width: var(--dimension-container-xl);
 }
@@ -229,51 +230,6 @@ body {
 .akros-wide-main.akros-wide-main--full-bleed {
   gap: 0;
   padding: 0;
-}
-
-.akros-benefits {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-
-.akros-benefits img {
-  display: block;
-  width: 100%;
-  height: auto;
-  border-radius: var(--akros-radius-lg);
-}
-
-.akros-hero {
-  position: relative;
-  aspect-ratio: var(--akros-hero-aspect-ratio);
-  overflow: hidden;
-  border-radius: var(--akros-radius-lg);
-  color: var(--color-base);
-}
-
-.akros-hero img {
-  object-fit: cover;
-}
-
-.akros-hero__overlay {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-end;
-  gap: 16px;
-  padding: 32px;
-  background: linear-gradient(166.293deg, transparent 25%, rgb(0 0 0 / 80%) 75%);
-}
-
-.akros-hero h1 {
-  margin: 0;
-  font-size: 32px;
-  font-weight: var(--font-weight-bold);
-  line-height: normal;
 }
 
 .akros-section {
@@ -1430,26 +1386,6 @@ body {
 
   .akros-wide-main {
     padding-block: 24px 48px;
-  }
-
-  .akros-benefits {
-    display: flex;
-    overflow-x: auto;
-    scroll-snap-type: x mandatory;
-  }
-
-  .akros-benefits > * {
-    min-width: min(84vw, 340px);
-    scroll-snap-align: start;
-  }
-
-  .akros-hero__overlay {
-    gap: 8px;
-    padding: 12px;
-  }
-
-  .akros-hero h1 {
-    font-size: 20px;
   }
 
   .akros-product-grid {

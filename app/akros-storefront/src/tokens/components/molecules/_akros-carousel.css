@@ -1,0 +1,23 @@
+[data-akros-home-carousel] {
+  --color-carousel-control-bg: var(--color-transparent);
+  --color-carousel-trigger-bg-base: var(--color-transparent);
+  --color-carousel-trigger-bg-hover: var(--color-transparent);
+  --color-carousel-trigger-fg-base: var(--color-base-light);
+  --color-carousel-trigger-fg-hover: var(--color-base-light);
+  --color-button-bg-primary-active: var(--color-transparent);
+  --color-carousel-ring: var(--color-primary);
+  --color-carousel-indicator-bg-active: var(--color-base-light);
+  --color-carousel-indicator-bg-base: color-mix(in srgb, var(--color-base-light) 50%, transparent);
+  --padding-carousel-control: 0;
+  --radius-carousel: var(--radius-lg);
+  --size-carousel-indicator: var(--dimension-16);
+  --spacing-carousel-indicator: 0;
+  --width-carousel-indicator: var(--dimension-44);
+  --text-carousel-trigger: var(--dimension-44);
+}
+
+@media (max-width: 760px) {
+  [data-akros-home-carousel] {
+    --size-carousel-indicator: var(--dimension-8);
+  }
+}

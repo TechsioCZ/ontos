@@ -56,6 +56,12 @@ export const cs = {
   },
   home: {
     partnerTitle: "Partnerský program",
+    carousel: {
+      prevTrigger: "Předchozí banner",
+      nextTrigger: "Další banner",
+      indicator: (index: number) => `Zobrazit banner ${index + 1}`,
+      item: (index: number, count: number) => `Banner ${index + 1} z ${count}`,
+    },
     featuredTitle: "Doporučujeme",
     companyTitle: "AKROS – partner pro hutní a spojovací materiál",
     companyDescription:
