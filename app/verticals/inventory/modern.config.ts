@@ -13,7 +13,9 @@ import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
 
 import {
-  createCloudflareDataPlaneBindings,
+  CLOUDFLARE_WORKER_CPU_MS,
+  createCloudflareWorkerConfig,
+  createCloudflareWorkerSecurity,
   createModernBuildContext,
   createWorkerSsrPlugins,
   createZephyrRspackPlugin,
@@ -70,46 +72,20 @@ const zephyrRspackPlugin = (): CliPlugin<AppTools> =>
 const whenEnabled = <Configuration>(enabled: boolean, configuration: Configuration) =>
   enabled ? configuration : undefined;
 
-// Only a Worker build binds the private data plane; its IDs are required there and unused elsewhere.
-const cloudflareDataPlaneBindings = cloudflareDeployEnabled ? createCloudflareDataPlaneBindings(envValue) : undefined;
+// Only a Worker build binds the private data plane and carries the cost guards; its IDs are required there and unused elsewhere.
+const cloudflareWorkerConfig = cloudflareDeployEnabled
+  ? createCloudflareWorkerConfig(envValue, {
+      cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical,
+      publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_INVENTORY',
+    })
+  : undefined;
 const cloudflareDeployment = whenEnabled(cloudflareDeployEnabled, {
   deploy: {
     worker: {
-      ...cloudflareDataPlaneBindings,
+      ...cloudflareWorkerConfig,
       compatibilityDate: '2026-06-02',
       name: cloudflareWorkerName,
-      security: {
-        contentSecurityPolicy: {
-          directives: {
-            'base-uri': ["'self'"],
-            'connect-src': ["'self'", 'https:', 'http:', 'wss:', 'ws:'],
-            'default-src': ["'self'"],
-            'font-src': ["'self'", 'data:', 'https:', 'http:'],
-            'form-action': ["'self'"],
-            'frame-ancestors': ["'self'"],
-            'img-src': ["'self'", 'data:', 'blob:', 'https:', 'http:'],
-            'manifest-src': ["'self'", 'https:', 'http:'],
-            'object-src': ["'none'"],
-            'script-src': ["'self'", "'unsafe-inline'", "'unsafe-eval'", 'https:', 'http:', 'blob:'],
-            'style-src': ["'self'", "'unsafe-inline'", 'https:', 'http:'],
-            'worker-src': ["'self'", 'blob:'],
-          },
-          mode: 'report-only' as const,
-          reason:
-            'Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement.',
-        },
-        enabled: true,
-        headers: {
-          contentTypeOptions: 'nosniff' as const,
-          permissionsPolicy: 'camera=(), geolocation=(), microphone=(), payment=(), usb=()',
-          referrerPolicy: 'strict-origin-when-cross-origin' as const,
-        },
-        noindex: {
-          localhost: true,
-          previewHostnames: [],
-          workersDev: true,
-        },
-      },
+      security: createCloudflareWorkerSecurity(),
       ssr: true,
     },
   },

@@ -7,6 +7,7 @@
     "ULTRAMODERN_PUBLIC_URL_CATALOG": "https://ontos-stage-catalog.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT": "https://ontos-stage-commerce-customer-context.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG": "https://ontos-stage-commerce-market-catalog.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_INVENTORY": "https://ontos-stage-inventory.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY": "https://ontos-stage-party-registry.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG": "https://ontos-stage-payment-term-catalog.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG": "https://ontos-stage-price-group-catalog.bleeding.dev",
