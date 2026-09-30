@@ -55,7 +55,8 @@ const PUBLIC_JWKS = JSON.stringify({
     { alg: 'EdDSA', crv: 'Ed25519', key_ops: ['verify'], kid: 'gateway-1', kty: 'OKP', use: 'sig', x: 'public-x' },
   ],
 });
-const SNAPSHOT_SECRET = 'ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON';
+const COMPOSITION_KV = 'ontos-stage-active-application-composition';
+const COMPOSITION_KV_ID = 'kv-1';
 const CUSTOMER_CONTEXT_WORKER = 'app-commerce-customer-context';
 const DEPLOYMENT_ENVIRONMENT = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 const PLACEMENT_FILE = 'topology/cloudflare-placement.json';
@@ -124,7 +125,7 @@ const SPICEDB_TLS = spicedbTlsSecrets({ gatewayHostname: GATEWAY_HOSTNAME });
 
 const PLACEMENT = `${APP_DIRECTORY}/topology/cloudflare-placement.json`;
 const ACCOUNT_PATH = '/client/v4/accounts/account-1';
-const DATA_PLANE_PATH = /^\/(?:cfd_tunnel|connectivity|hyperdrive)/u;
+const DATA_PLANE_PATH = /^\/(?:cfd_tunnel|connectivity|hyperdrive|storage)/u;
 const JsonRecord = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 const PlacementJson = Schema.fromJsonString(
   Schema.Struct({ buildEnvironment: Schema.Record(Schema.String, Schema.String), units: Schema.Array(Schema.String) }),
@@ -248,6 +249,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
           origin_connection_limit: 40,
         },
       ],
+      ['/storage/kv/namespaces', { title: COMPOSITION_KV }],
     ]);
     for (const request of account.requests) {
       expect(request.url.origin).toBe('https://api.cloudflare.com');
@@ -285,6 +287,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
     // The reviewed build environment names the new data-plane IDs; stage-edge gets the account and the CI token.
     const placement = Schema.decodeUnknownSync(PlacementJson)(files.writes.get(PLACEMENT));
     expect(placement.buildEnvironment).toMatchObject({
+      ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: COMPOSITION_KV_ID,
       ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: HYPERDRIVE_ID,
       ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-2',
       ULTRAMODERN_MF_DEV_ORIGIN: SHELL_ORIGIN,
@@ -570,6 +573,7 @@ const provisionedAccount = (
   tunnelStatus: string,
   extraSecrets: Readonly<Record<string, readonly string[]>> = {},
   plannedOverride?: Readonly<Record<string, readonly string[]>>,
+  compositionKeys: readonly string[] = [],
 ) =>
   Effect.gen(function* provisionedAccountEffect() {
     const planned: Readonly<Record<string, readonly string[]>> = plannedOverride ?? (yield* plannedSecretNames);
@@ -584,6 +588,8 @@ const provisionedAccount = (
           origin_connection_limit: 40,
         },
       ],
+      kvKeys: { [COMPOSITION_KV_ID]: compositionKeys },
+      kvNamespaces: [{ id: COMPOSITION_KV_ID, title: COMPOSITION_KV }],
       scripts: [
         'app-assortment',
         'app-party-registry',
@@ -627,6 +633,7 @@ const reviewedPlacementFiles = Effect.gen(function* reviewedPlacementFilesEffect
   const placementText = readRepositoryFile(PLACEMENT_FILE);
   const units = yield* edgeUnits(readRepositoryFile(TOPOLOGY_FILE), placementText);
   const buildEnvironment = stageBuildEnvironment({}, units, settings, {
+    compositionKvNamespaceId: COMPOSITION_KV_ID,
     hyperdriveId: HYPERDRIVE_ID,
     spicedbVpcServiceId: 'vpc-2',
   });
@@ -747,24 +754,26 @@ it.effect('leaves DEPLOY_TARGET unset while the reviewed placement names other d
   }),
 );
 
-it.effect('requires the composition snapshot secret on each placed consumer Worker once stage targets Cloudflare', () =>
-  Effect.gen(function* requiresSnapshotSecret() {
+it.effect('requires the composition snapshot in the composition KV namespace once stage targets Cloudflare', () =>
+  Effect.gen(function* requiresCompositionSnapshot() {
     const activated = () =>
       newStage({
         deployments: [{ id: 7, sha: FAKE_REVISION, state: 'success' }],
         variables: { stage: { DEPLOY_TARGET: 'cloudflare' } },
       });
 
-    // The first Cloudflare-target deploy has not handed the snapshot over yet.
+    // The first Cloudflare-target deploy has not written the snapshot yet.
     const error = yield* run(verifyCutover, {
       account: yield* provisionedAccount('healthy'),
       files: yield* reviewedPlacementFiles,
       stage: activated(),
     }).pipe(Effect.flip);
-    expect(error.message).toContain(`holds its ${SNAPSHOT_SECRET} secret: missing on ${CUSTOMER_CONTEXT_WORKER}`);
+    expect(error.message).toContain(
+      `${COMPOSITION_KV} KV namespace holds the active Application Composition: key active is missing`,
+    );
 
     yield* run(verifyCutover, {
-      account: yield* provisionedAccount('healthy', { [CUSTOMER_CONTEXT_WORKER]: [SNAPSHOT_SECRET] }),
+      account: yield* provisionedAccount('healthy', {}, undefined, ['active']),
       files: yield* reviewedPlacementFiles,
       stage: activated(),
     });
@@ -842,6 +851,7 @@ it.effect('names the unplaced units and unset build variables of an incomplete p
     expect(yield* placementGaps(readRepositoryFile(TOPOLOGY_FILE), incomplete)).toStrictEqual([
       'units: catalog',
       'buildEnvironment.ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID',
+      'buildEnvironment.ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID',
       'buildEnvironment.ULTRAMODERN_PUBLIC_URL_PRICING',
     ]);
   }),

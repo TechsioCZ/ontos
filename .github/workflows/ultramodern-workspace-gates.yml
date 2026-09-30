@@ -379,7 +379,9 @@ jobs:
       ONTOS_GATEWAY_PRIVATE_JWK: '{"crv":"Ed25519","d":"UoaeSCRqtNBHKhIQ-gzuhaTWwch5wyr5JUp0NOV_zR0","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}'
       ONTOS_GATEWAY_PUBLIC_JWKS: '{"keys":[{"crv":"Ed25519","x":"QnsRCV4QqDIWrlIw_7gfUmHsm_VYzkOzxkaaQllPXqg","kty":"OKP","alg":"EdDSA","use":"sig","kid":"ontos-ci"}]}'
       # Placeholder data-plane IDs: locally a Worker's HYPERDRIVE binding connects to the proof's
-      # PostgreSQL and its SPICEDB binding is served by a local gateway Worker.
+      # PostgreSQL, its SPICEDB binding is served by a local gateway Worker and its composition KV
+      # binding is a local namespace.
+      ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 00000000000000000000000000000000
       ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 00000000000000000000000000000000
       ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
     steps:
@@ -899,7 +901,7 @@ jobs:
           # plane: PostgreSQL through its Hyperdrive config, SpiceDB through its Workers VPC service.
           while IFS= read -r key; do
             missing+=("buildEnvironment.$key")
-          done < <(jq -r '.buildEnvironment as $environment | (["ULTRAMODERN_MF_DEV_ORIGIN", "ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID"] + [.units[] | "ULTRAMODERN_PUBLIC_URL_" + (ascii_upcase | gsub("-"; "_"))])[] | select(($environment[.] // "") == "")' app/topology/cloudflare-placement.json)
+          done < <(jq -r '.buildEnvironment as $environment | (["ULTRAMODERN_MF_DEV_ORIGIN", "ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID", "ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID"] + [.units[] | "ULTRAMODERN_PUBLIC_URL_" + (ascii_upcase | gsub("-"; "_"))])[] | select(($environment[.] // "") == "")' app/topology/cloudflare-placement.json)
           if [[ ${#missing[@]} -eq 0 ]]; then
             echo 'configured=true' >>"$GITHUB_OUTPUT"
             exit 0
@@ -1228,9 +1230,9 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm --silent active-composition:publish edge-consumers
 
-  # A placed Worker has no Zerops project variable, so each snapshot consumer among them receives the
-  # publication as the Worker secret it reads. Only stage-edge holds the Cloudflare token, so this runs
-  # there, without creating a deployment. Putting a secret deploys the Worker's current version with it.
+  # A placed Worker has no Zerops project variable, and the snapshot outgrows a Worker secret, so the
+  # placed consumers read the publication from the stage composition KV namespace. Only stage-edge holds
+  # the Cloudflare token, so this runs there, without creating a deployment. Writing the key deploys nothing.
   sync-edge-composition:
     name: Hand the published Application Composition to its Worker consumers
     if: needs.publish-edge-composition.outputs.edge-consumers != '' && needs.publish-edge-composition.outputs.edge-consumers != '[]'
@@ -1256,10 +1258,9 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      - name: Put the snapshot as each consumer Worker's secret
+      - name: Write the snapshot to the composition KV namespace the consumer Workers read
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          EDGE_CONSUMERS_JSON: ${{ needs.publish-edge-composition.outputs.edge-consumers }}
           SNAPSHOT_JSON: ${{ needs.publish-edge-composition.outputs.snapshot }}
         run: app/scripts/put-edge-composition-snapshot.sh

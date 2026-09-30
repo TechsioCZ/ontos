@@ -161,12 +161,14 @@ it('deploys to Cloudflare only when both the account and the deploy token are co
     'ULTRAMODERN_MF_DEV_ORIGIN',
     'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID',
     'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID',
+    'ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID',
     'ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT',
     'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP',
   ]);
   expect(
     missingBuildVariables({
       buildEnvironment: {
+        ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'composition-kv-id',
         ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
         ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
         ULTRAMODERN_MF_DEV_ORIGIN: 'https://stage.example.test',
@@ -480,7 +482,7 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   expect(byName.get('Publish the active Application Composition before its consumers deploy')?.run).toContain(
     'if [[ "$DEPLOY_TARGET" == cloudflare ]]; then',
   );
-  // Placed Worker consumers get each publication as their Worker secret, from the one environment with the token.
+  // Placed Worker consumers read each publication from the composition KV namespace, written from the one environment with the token.
   const sync = jobs['sync-edge-composition'];
   expect(sync.needs).toEqual(['publish-edge-composition']);
   expect(sync.environment).toEqual({ deployment: false, name: EDGE_ENVIRONMENT });

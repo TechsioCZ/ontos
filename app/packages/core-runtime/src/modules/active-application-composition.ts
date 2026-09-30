@@ -1,4 +1,6 @@
-import { Config, Context, DateTime, Effect, Layer, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Schema } from 'effect';
+
+import { encodedActiveApplicationCompositionSnapshot } from '#active-application-composition-source';
 
 import { ApplicationCompositionSchema } from './application-composition.ts';
 import { ActiveApplicationCompositionUnavailableError } from './active-application-composition-errors.ts';
@@ -44,9 +46,7 @@ const unavailableActiveApplicationComposition = (cause: unknown): ActiveApplicat
     reason: 'The active Application Composition snapshot is unavailable or invalid',
   });
 
-const configuredActiveApplicationCompositionSnapshot = Config.String(
-  'ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON',
-).pipe(
+const configuredActiveApplicationCompositionSnapshot = encodedActiveApplicationCompositionSnapshot.pipe(
   Effect.flatMap((encoded) =>
     Schema.decodeEffect(activeApplicationCompositionSnapshotJsonSchema, {
       onExcessProperty: 'error',
@@ -56,9 +56,10 @@ const configuredActiveApplicationCompositionSnapshot = Config.String(
 );
 
 /**
- * Provider-neutral server runtime adapter. Deployment automation publishes the immutable active
- * snapshot as one atomic configuration value; missing, malformed, or expired evidence fails closed
- * in consumers instead of falling back to topology or a last-known-good revision.
+ * Server runtime adapter. Deployment automation publishes the immutable active snapshot as one atomic
+ * value: the Zerops project variable on Node, the Workers KV entry on a placed Worker
+ * (`#active-application-composition-source`). Missing, malformed, or expired evidence fails closed in
+ * consumers instead of falling back to topology or a last-known-good revision.
  */
 export const ActiveApplicationCompositionConfigLive = makeActiveApplicationCompositionLayer(
   configuredActiveApplicationCompositionSnapshot,

@@ -217,6 +217,10 @@ const WORKERS_USAGE_QUERY = `query WorkersUsage($accountTag: string!, $since: Ti
 }`;
 const WorkerSecretSchema = Schema.Struct({ name: Schema.String });
 
+const KvNamespaceSchema = Schema.Struct({ id: Schema.NonEmptyString, title: Schema.String });
+export type CloudflareKvNamespace = typeof KvNamespaceSchema.Type;
+const KvKeySchema = Schema.Struct({ name: Schema.String });
+
 /**
  * How Workers VPC checks an origin certificate: `verify_full` checks its chain and that it names the fetch URL's
  * hostname; `disabled` encrypts without checking, for an origin that only has a self-signed certificate.
@@ -313,6 +317,7 @@ type RequestBody =
   | VpcServiceBody
   | { readonly duration: string; readonly name: string }
   | { readonly rules: readonly RulesetRuleSpec[] }
+  | { readonly title: string }
   | Record<string, never>;
 
 const serviceTokenCredentials = ({
@@ -372,6 +377,7 @@ export interface CloudflareApiService {
   readonly createAccessServiceToken: (name: string) => Effect.Effect<ServiceTokenCredentials, CloudflareApiError>;
   readonly createAlertPolicy: (spec: AlertPolicySpec) => Effect.Effect<string, CloudflareApiError>;
   readonly createHyperdrive: (spec: HyperdriveSpec) => Effect.Effect<CloudflareHyperdrive, CloudflareApiError>;
+  readonly createKvNamespace: (title: string) => Effect.Effect<CloudflareKvNamespace, CloudflareApiError>;
   /** Needs the zone permission "SSL and Certificates: Edit"; the Origin CA API is not account-scoped. */
   readonly createOriginCertificate: (
     spec: OriginCertificateSpec,
@@ -390,6 +396,9 @@ export interface CloudflareApiService {
   readonly findTunnel: (name: string) => Effect.Effect<Option.Option<CloudflareTunnel>, CloudflareApiError>;
   readonly findZoneId: (name: string) => Effect.Effect<Option.Option<string>, CloudflareApiError>;
   readonly hyperdrives: Effect.Effect<readonly CloudflareHyperdrive[], CloudflareApiError>;
+  /** Whether a KV namespace holds `key`; the value is never read. */
+  readonly kvKeyExists: (namespaceId: string, key: string) => Effect.Effect<boolean, CloudflareApiError>;
+  readonly kvNamespaces: Effect.Effect<readonly CloudflareKvNamespace[], CloudflareApiError>;
   /** A new client secret for an existing service token; the client ID stays. */
   readonly rotateAccessServiceToken: (tokenId: string) => Effect.Effect<ServiceTokenCredentials, CloudflareApiError>;
   readonly ruleset: (zoneId: string, rulesetId: string) => Effect.Effect<CloudflareRuleset, CloudflareApiError>;
@@ -571,6 +580,8 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
       ),
     createHyperdrive: (spec) =>
       post('/hyperdrive/configs', hyperdriveBody(spec), HyperdriveSchema, 'Hyperdrive create'),
+    createKvNamespace: (title) =>
+      post('/storage/kv/namespaces', { title }, KvNamespaceSchema, `KV namespace ${title} create`),
     createOriginCertificate: ({ csr, hostnames }) =>
       send(
         HttpClientRequest.post(`${CLOUDFLARE_API_URL}/certificates`),
@@ -605,6 +616,14 @@ const makeCloudflareApi = Effect.gen(function* makeCloudflareApi() {
       );
     },
     hyperdrives: list('/hyperdrive/configs', HyperdriveSchema, 'Hyperdrive list'),
+    kvKeyExists: (namespaceId, key) => {
+      const url = accountUrl(`/storage/kv/namespaces/${namespaceId}/keys`);
+      url.searchParams.set('prefix', key);
+      return call(HttpClientRequest.get(url), Schema.Array(KvKeySchema), `KV namespace ${namespaceId} key list`).pipe(
+        Effect.map((keys) => keys.some(({ name }) => name === key)),
+      );
+    },
+    kvNamespaces: list('/storage/kv/namespaces', KvNamespaceSchema, 'KV namespace list'),
     rotateAccessServiceToken: (tokenId) =>
       post(
         `/access/service_tokens/${tokenId}/rotate`,

@@ -577,6 +577,10 @@ export interface FakeUsage {
   readonly scriptName: string;
 }
 
+const KvNamespaceBodySchema = Schema.Struct({ title: Schema.String });
+const KvNamespaceSchema = Schema.Struct({ id: Schema.String, title: Schema.String });
+export type FakeKvNamespace = typeof KvNamespaceSchema.Type;
+
 export interface FakeCloudflareAccount {
   readonly accessApps: FakeRecord[];
   /** Whether Zero Trust is on; while it is off every Access route answers `access.api.error.not_enabled`. */
@@ -584,6 +588,9 @@ export interface FakeCloudflareAccount {
   readonly accessPolicies: FakeRecord[];
   readonly alertPolicies: FakeRecord[];
   readonly hyperdrives: FakeHyperdrive[];
+  /** Key names per KV namespace id. */
+  readonly kvKeys: Map<string, string[]>;
+  readonly kvNamespaces: FakeKvNamespace[];
   readonly layer: Layer.Layer<HttpClient.HttpClient>;
   readonly requests: FakeCloudflareRequest[];
   readonly rulesets: FakeRuleset[];
@@ -604,6 +611,8 @@ export interface FakeCloudflareInitial {
   readonly accessPolicies?: readonly FakeRecord[];
   readonly alertPolicies?: readonly FakeRecord[];
   readonly hyperdrives?: readonly FakeHyperdrive[];
+  readonly kvKeys?: Readonly<Record<string, readonly string[]>>;
+  readonly kvNamespaces?: readonly FakeKvNamespace[];
   readonly rulesets?: readonly FakeRuleset[];
   readonly scripts?: readonly string[];
   readonly secrets?: Readonly<Record<string, readonly string[]>>;
@@ -813,6 +822,28 @@ const nonAccountAnswer = (
   return zoneResult === undefined ? noRoute() : envelope(zoneResult);
 };
 
+/** The KV namespace list and create routes, and a namespace's key list (names only, by prefix). */
+const kvAnswer = (account: FakeState, method: string, url: URL, path: string, body: Option.Option<Json>): Response => {
+  if (path === '/storage/kv/namespaces') {
+    if (method === 'POST') {
+      const created = {
+        ...decodeBody(KvNamespaceBodySchema, body),
+        id: `kv-${String(account.kvNamespaces.length + 1)}`,
+      };
+      account.kvNamespaces.push(created);
+      return envelope(created);
+    }
+    return firstPage(url, account.kvNamespaces);
+  }
+  const namespace = /^\/storage\/kv\/namespaces\/(?<namespace>[^/]+)\/keys$/u.exec(path)?.groups?.namespace;
+  if (namespace === undefined) {
+    return noRoute();
+  }
+  const prefix = url.searchParams.get('prefix') ?? '';
+  const names = (account.kvKeys.get(namespace) ?? []).filter((name) => name.startsWith(prefix));
+  return envelope(names.map((name) => ({ name })));
+};
+
 export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloudflareAccount => {
   const account: FakeState = {
     accessApps: [...(initial.accessApps ?? [])],
@@ -820,6 +851,8 @@ export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloud
     accessPolicies: [...(initial.accessPolicies ?? [])],
     alertPolicies: [...(initial.alertPolicies ?? [])],
     hyperdrives: [...(initial.hyperdrives ?? [])],
+    kvKeys: new Map(Object.entries(initial.kvKeys ?? {}).map(([namespace, names]) => [namespace, [...names]])),
+    kvNamespaces: [...(initial.kvNamespaces ?? [])],
     requests: [],
     rulesets: (initial.rulesets ?? []).map((ruleset) => ({ ...ruleset, rules: [...ruleset.rules] })),
     scripts: [...(initial.scripts ?? [])],
@@ -864,6 +897,9 @@ export const fakeCloudflareAccount = (initial: FakeCloudflareInitial): FakeCloud
         return envelope(created);
       }
       return firstPage(url, account.hyperdrives);
+    }
+    if (path.startsWith('/storage/kv/namespaces')) {
+      return kvAnswer(account, method, url, path, body);
     }
     const secretScript = /^\/workers\/scripts\/(?<script>[^/]+)\/secrets$/u.exec(path)?.groups?.script;
     if (secretScript !== undefined) {

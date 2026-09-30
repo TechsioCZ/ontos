@@ -30,6 +30,10 @@
     "./workspace-environment": "./src/environment/workspace-environment.ts"
   },
   "imports": {
+    "#active-application-composition-source": {
+      "workerd": "./src/modules/active-application-composition-source.workerd.ts",
+      "default": "./src/modules/active-application-composition-source.node.ts"
+    },
     "#database-runtime": {
       "workerd": "./src/db/database-runtime.workerd.ts",
       "default": "./src/db/database-runtime.node.ts"

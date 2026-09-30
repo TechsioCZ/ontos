@@ -32,12 +32,15 @@ export const PLACEMENT_LABEL = 'topology/cloudflare-placement.json';
 export const HYPERDRIVE_ID_VARIABLE = 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID';
 export const SPICEDB_VPC_SERVICE_ID_VARIABLE = 'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID';
 export const MF_DEV_ORIGIN_VARIABLE = 'ULTRAMODERN_MF_DEV_ORIGIN';
+export const COMPOSITION_KV_ID_VARIABLE = 'ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID';
 // Every placed Worker bakes the Shell origin into its API CORS allowlist and binds the private data
-// plane: PostgreSQL through its Hyperdrive config, SpiceDB through its Workers VPC service.
+// plane: PostgreSQL through its Hyperdrive config, SpiceDB through its Workers VPC service, and the
+// active Application Composition through the composition KV namespace.
 const SHARED_BUILD_VARIABLES = [
   MF_DEV_ORIGIN_VARIABLE,
   HYPERDRIVE_ID_VARIABLE,
   SPICEDB_VPC_SERVICE_ID_VARIABLE,
+  COMPOSITION_KV_ID_VARIABLE,
 ] as const;
 
 /** Every topology unit (Shell first, then the verticals), keyed by id, with its Worker names. */

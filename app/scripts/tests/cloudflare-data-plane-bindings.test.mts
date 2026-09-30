@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { ACTIVE_APPLICATION_COMPOSITION_EDGE_BINDING } from '../../packages/core-runtime/src/modules/active-application-composition-edge.ts';
 import {
   CLOUDFLARE_WORKER_CPU_MS,
   createCloudflareDataPlaneBindings,
@@ -12,7 +13,10 @@ import { PRICE_GROUP_CATALOG_SERVICE_BINDING } from '../../verticals/commerce-cu
 
 const HYPERDRIVE_ID = 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID';
 const SPICEDB_VPC_SERVICE_ID = 'ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID';
+const COMPOSITION_KV_ID = 'ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID';
 const HYPERDRIVE_CONFIG = 'hyperdrive-id';
+const COMPOSITION_KV = 'composition-kv-id';
+const COMPOSITION_BINDING = { binding: ACTIVE_APPLICATION_COMPOSITION_EDGE_BINDING, id: COMPOSITION_KV };
 const SPICEDB_VPC_SERVICE = 'vpc-service-id';
 const PUBLIC_URL = 'ULTRAMODERN_PUBLIC_URL_CATALOG';
 
@@ -21,22 +25,24 @@ const reader =
   (name: string): string | undefined =>
     values[name];
 
-it('binds every Worker to PostgreSQL through Hyperdrive and to SpiceDB through its Workers VPC service', () => {
+it('binds every Worker to PostgreSQL, SpiceDB and the published active Application Composition', () => {
   expect(
     createCloudflareDataPlaneBindings(
       reader({
+        [COMPOSITION_KV_ID]: COMPOSITION_KV,
         [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG,
         [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
       }),
     ),
   ).toEqual({
     vpcServices: [{ binding: 'SPICEDB', serviceId: SPICEDB_VPC_SERVICE }],
-    wrangler: { hyperdrive: [{ binding: 'HYPERDRIVE', id: HYPERDRIVE_CONFIG }] },
+    wrangler: { hyperdrive: [{ binding: 'HYPERDRIVE', id: HYPERDRIVE_CONFIG }], kv_namespaces: [COMPOSITION_BINDING] },
   });
 });
 
 it('serves every Worker only on its custom domain, off workers.dev and preview URLs, and caps its CPU per request', () => {
   const values = reader({
+    [COMPOSITION_KV_ID]: COMPOSITION_KV,
     [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG,
     [PUBLIC_URL]: 'https://ontos-stage-catalog.stage.example.com',
     [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
@@ -48,6 +54,7 @@ it('serves every Worker only on its custom domain, off workers.dev and preview U
     vpcServices: [{ binding: 'SPICEDB', serviceId: SPICEDB_VPC_SERVICE }],
     wrangler: {
       hyperdrive: [{ binding: 'HYPERDRIVE', id: HYPERDRIVE_CONFIG }],
+      kv_namespaces: [COMPOSITION_BINDING],
       limits: { cpu_ms: 100 },
       preview_urls: false,
       routes: [{ custom_domain: true, pattern: 'ontos-stage-catalog.stage.example.com' }],
@@ -71,7 +78,11 @@ it('serves every Worker only on its custom domain, off workers.dev and preview U
 });
 
 it('refuses a Worker build without its public URL', () => {
-  const values = reader({ [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG, [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE });
+  const values = reader({
+    [COMPOSITION_KV_ID]: COMPOSITION_KV,
+    [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG,
+    [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
+  });
 
   expect(() =>
     createCloudflareWorkerConfig(values, { cpuMs: CLOUDFLARE_WORKER_CPU_MS.vertical, publicUrlVariable: PUBLIC_URL }),
@@ -79,8 +90,9 @@ it('refuses a Worker build without its public URL', () => {
 });
 
 it.each([
-  [HYPERDRIVE_ID, { [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE }],
-  [SPICEDB_VPC_SERVICE_ID, { [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG }],
+  [HYPERDRIVE_ID, { [COMPOSITION_KV_ID]: COMPOSITION_KV, [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE }],
+  [SPICEDB_VPC_SERVICE_ID, { [COMPOSITION_KV_ID]: COMPOSITION_KV, [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG }],
+  [COMPOSITION_KV_ID, { [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG, [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE }],
 ] as const)('refuses a Worker build without %s', (name, values) => {
   expect(() => createCloudflareDataPlaneBindings(reader(values))).toThrow(
     `${name} is required for a Cloudflare Worker build`,

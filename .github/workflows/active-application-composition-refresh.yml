@@ -130,8 +130,8 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm --silent active-composition:publish edge-consumers
 
-  # Placed Worker consumers read the snapshot from a Worker secret, not the Zerops project variable, so
-  # they need each re-publication too. Only stage-edge holds the Cloudflare token.
+  # Placed Worker consumers read the snapshot from the composition KV namespace, not the Zerops project
+  # variable, so they need each re-publication too. Only stage-edge holds the Cloudflare token.
   refresh-stage-edge:
     name: Hand the re-published Application Composition to its Worker consumers
     if: needs.refresh-stage.outputs.edge-consumers != '' && needs.refresh-stage.outputs.edge-consumers != '[]'
@@ -157,11 +157,10 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      - name: Put the snapshot as each consumer Worker's secret
+      - name: Write the snapshot to the composition KV namespace the consumer Workers read
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          EDGE_CONSUMERS_JSON: ${{ needs.refresh-stage.outputs.edge-consumers }}
           SNAPSHOT_JSON: ${{ needs.refresh-stage.outputs.snapshot }}
         run: app/scripts/put-edge-composition-snapshot.sh
 

@@ -19,8 +19,7 @@ import {
 import { Command, Flag } from 'effect/unstable/cli';
 import { FetchHttpClient } from 'effect/unstable/http';
 
-import { ACTIVE_APPLICATION_COMPOSITION_POLICY } from '../active-application-composition.mts';
-import { readEdgeConsumers, serviceIdVariable } from '../publish-active-application-composition.mts';
+import { serviceIdVariable } from '../publish-active-application-composition.mts';
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 import {
   CloudflareApi,
@@ -36,6 +35,7 @@ import type { SecretValues } from './ops-shell.mts';
 import { ensureSpicedbTls, spicedbTlsState } from './spicedb-tls.mts';
 import {
   BuildEnvironmentSchema,
+  COMPOSITION_KV_ID_VARIABLE,
   HYPERDRIVE_ID_VARIABLE,
   MF_DEV_ORIGIN_VARIABLE,
   PLACEMENT_LABEL,
@@ -88,6 +88,8 @@ import type { ServiceImport, ZeropsService } from './stage-operations.mts';
  */
 export const STAGE_TUNNEL_NAME = 'ontos-stage';
 export const STAGE_HYPERDRIVE_NAME = 'ontos-stage-runtime';
+/** The KV namespace every placed Worker reads the active Application Composition from. */
+export const STAGE_COMPOSITION_KV_NAME = 'ontos-stage-active-application-composition';
 export const HYPERDRIVE_ORIGIN_CONNECTION_LIMIT = 40;
 export const HYPERDRIVE_RUNTIME_ROLE = 'ontos_runtime';
 const TUNNEL_HEALTH_POLL = Duration.seconds(10);
@@ -172,6 +174,7 @@ export const publicOrigin = (unit: EdgeUnit, origins: StageOrigins) =>
   unit.kind === 'shell' ? shellOrigin(origins) : verticalOrigin(unit.id, origins);
 
 export interface DataPlaneIds {
+  readonly compositionKvNamespaceId: string;
   readonly hyperdriveId: string;
   readonly spicedbVpcServiceId: string;
 }
@@ -185,6 +188,7 @@ export const stageBuildEnvironment = (
 ): BuildEnvironment => {
   const merged = new Map([
     ...Object.entries(current),
+    [COMPOSITION_KV_ID_VARIABLE, ids.compositionKvNamespaceId],
     [HYPERDRIVE_ID_VARIABLE, ids.hyperdriveId],
     [MF_DEV_ORIGIN_VARIABLE, shellOrigin(origins)],
     [SPICEDB_VPC_SERVICE_ID_VARIABLE, ids.spicedbVpcServiceId],
@@ -538,6 +542,21 @@ export const ensureHyperdrive = (db18ServiceId: string) =>
     );
   });
 
+/** The composition KV namespace; CI writes the published snapshot to it, so it starts empty. */
+export const ensureCompositionKvNamespace = Effect.gen(function* ensureCompositionKvNamespaceEffect() {
+  const api = yield* CloudflareApi;
+  const current = (yield* api.kvNamespaces).find(({ title }) => title === STAGE_COMPOSITION_KV_NAME);
+  if (current !== undefined) {
+    yield* Console.log(`KV namespace ${STAGE_COMPOSITION_KV_NAME} exists: ${current.id}`);
+    return current.id;
+  }
+  return yield* mutate(
+    `create KV namespace ${STAGE_COMPOSITION_KV_NAME}`,
+    api.createKvNamespace(STAGE_COMPOSITION_KV_NAME).pipe(Effect.map(({ id }) => id)),
+    `<${STAGE_COMPOSITION_KV_NAME} id>`,
+  );
+});
+
 // ---------------------------------------------------------------------------------------------
 // Zerops data layer: cloudflared and the outbox worker host
 
@@ -743,7 +762,8 @@ export const provision = Effect.gen(function* provisionEffect() {
   yield* awaitTunnelHealthy(tunnel.id);
   const vpc = yield* ensureVpcServices(tunnel.id);
   const hyperdriveId = yield* ensureHyperdrive(vpc.db18);
-  yield* writeBuildEnvironment({ hyperdriveId, spicedbVpcServiceId: vpc.spicedb });
+  const compositionKvNamespaceId = yield* ensureCompositionKvNamespace;
+  yield* writeBuildEnvironment({ compositionKvNamespaceId, hyperdriveId, spicedbVpcServiceId: vpc.spicedb });
   yield* configureStageEdge;
   yield* provisionCostGuards;
   yield* setWorkerSecrets;
@@ -794,46 +814,33 @@ const latestStageEdgeState = Effect.gen(function* latestStageEdgeStateEffect() {
       );
 });
 
-const SNAPSHOT_SECRET = ACTIVE_APPLICATION_COMPOSITION_POLICY.projectVariable;
+const SNAPSHOT_KEY = 'active';
 
 /**
- * A placed Worker that consumes the active Application Composition fails closed without its snapshot
- * secret. CI hands every publication to those Workers only once stage deploys with
+ * A placed Worker that consumes the active Application Composition fails closed without the snapshot in
+ * the composition KV namespace. CI writes every publication there only once stage deploys with
  * DEPLOY_TARGET=cloudflare (`sync-edge-composition`, then `refresh-stage-edge` on each scheduled
- * refresh), so before activation the item is pending, and after it the secret must exist before the
- * stage hostnames move to the Workers.
+ * refresh), so before activation the item is pending, and after it the key must exist before the stage
+ * hostnames move to the Workers.
  */
-const compositionSnapshotState = Effect.gen(function* compositionSnapshotStateEffect() {
-  const api = yield* CloudflareApi;
-  const { repository } = yield* CutoverConfiguration;
-  const consumers = yield* readEdgeConsumers('cloudflare').pipe(
-    Effect.mapError(
-      (cause) => new StageOperationError({ cause, message: 'the placed composition consumers could not be read' }),
-    ),
-  );
-  const label = `every placed composition consumer Worker holds its ${SNAPSHOT_SECRET} secret`;
-  const names = consumers.map(({ workerName }) => workerName);
-  const variables = yield* listGithubVariables(repository, STAGE_ENVIRONMENT);
-  if (variables.get(DEPLOY_TARGET_VARIABLE) !== 'cloudflare') {
-    return yield* Console.log(
-      `wait ${label}: the first ${DEPLOY_TARGET_VARIABLE}=cloudflare deploy after activate hands it to ${names.join(', ') || 'none'}; verify again before moving DNS`,
-    );
-  }
-  const missing: string[] = [];
-  for (const workerName of names) {
-    if (!(yield* api.workerSecretNames(workerName)).has(SNAPSHOT_SECRET)) {
-      missing.push(workerName);
+const compositionSnapshotState = (namespaceId: string) =>
+  Effect.gen(function* compositionSnapshotStateEffect() {
+    const api = yield* CloudflareApi;
+    const { repository } = yield* CutoverConfiguration;
+    const label = `the ${STAGE_COMPOSITION_KV_NAME} KV namespace holds the active Application Composition`;
+    const variables = yield* listGithubVariables(repository, STAGE_ENVIRONMENT);
+    if (variables.get(DEPLOY_TARGET_VARIABLE) !== 'cloudflare') {
+      return yield* Console.log(
+        `wait ${label}: the first ${DEPLOY_TARGET_VARIABLE}=cloudflare deploy after activate writes it; verify again before moving DNS`,
+      );
     }
-  }
-  return yield* check(
-    label,
-    missing.length === 0
-      ? Option.none()
-      : Option.some(
-          `missing on ${missing.join(', ')}; run the full stage deploy so sync-edge-composition hands it over`,
-        ),
-  );
-});
+    return yield* check(
+      label,
+      (yield* api.kvKeyExists(namespaceId, SNAPSHOT_KEY))
+        ? Option.none()
+        : Option.some(`key ${SNAPSHOT_KEY} is missing; run the full stage deploy so sync-edge-composition writes it`),
+    );
+  });
 
 /** Every placed Worker holds each runtime secret `provision` plans for it; values are never read back. */
 const workerSecretsState = Effect.gen(function* workerSecretsStateEffect() {
@@ -896,10 +903,16 @@ export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
           serviceId: vpcIds.get(STAGE_VPC_SERVICES.db18.name) ?? '',
         }),
   );
+  const compositionKv = (yield* api.kvNamespaces).find(({ title }) => title === STAGE_COMPOSITION_KV_NAME);
+  yield* check(
+    `KV namespace ${STAGE_COMPOSITION_KV_NAME} exists`,
+    compositionKv === undefined ? Option.some(NOT_FOUND) : Option.none(),
+  );
   const placement = yield* decodeInput(PlacementSchema, PLACEMENT_LABEL)(yield* readAppText(...PLACEMENT_PATH));
   yield* check(
     `the ${PLACEMENT_LABEL} buildEnvironment names these data-plane IDs`,
     placement.buildEnvironment[HYPERDRIVE_ID_VARIABLE] === hyperdrive?.id &&
+      placement.buildEnvironment[COMPOSITION_KV_ID_VARIABLE] === compositionKv?.id &&
       placement.buildEnvironment[SPICEDB_VPC_SERVICE_ID_VARIABLE] === vpcIds.get(STAGE_VPC_SERVICES.spicedb.name)
       ? Option.none()
       : Option.some('run provision, then merge the build-environment PR and verify from main'),
@@ -920,7 +933,7 @@ export const verifyCutover = Effect.gen(function* verifyCutoverEffect() {
     `the latest ${STAGE_EDGE_ENVIRONMENT} deployment (Worker deploy plus cloudflare:proof) succeeded for the checked-out revision`,
     yield* latestStageEdgeState,
   );
-  yield* compositionSnapshotState;
+  yield* compositionSnapshotState(compositionKv?.id ?? '');
   return yield* Effect.void;
 });
 
@@ -1036,7 +1049,7 @@ const cli = Command.make('cloudflare-stage-cutover').pipe(
   Command.withSubcommands([
     stepCommand(
       'provision',
-      'Create or reuse the SpiceDB TLS secrets, the Tunnel, cloudflared and outbox-worker-host, VPC services, Hyperdrive, build environment, stage-edge, cost guards and Worker secrets',
+      'Create or reuse the SpiceDB TLS secrets, the Tunnel, cloudflared and outbox-worker-host, VPC services, Hyperdrive, the composition KV namespace, build environment, stage-edge, cost guards and Worker secrets',
       provision,
     ),
     stepCommand(

@@ -639,6 +639,10 @@ export {
   makeActiveApplicationCompositionLayer,
 } from './modules/active-application-composition.ts';
 export { ActiveApplicationCompositionUnavailableError } from './modules/active-application-composition-errors.ts';
+export {
+  ACTIVE_APPLICATION_COMPOSITION_EDGE_BINDING,
+  ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY,
+} from './modules/active-application-composition-edge.ts';
 export type {
   ActiveApplicationCompositionServiceContract,
   ActiveApplicationCompositionSnapshot,

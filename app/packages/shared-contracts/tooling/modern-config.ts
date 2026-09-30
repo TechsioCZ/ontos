@@ -286,7 +286,9 @@ const requiredCloudflareBuildValue = (envValue: ModernBuildContext['envValue'], 
 /**
  * Every OntOS Worker reaches the private data plane through two account objects: PostgreSQL through
  * the `HYPERDRIVE` binding (Core's `#database-runtime`) and SpiceDB's HTTP gateway through the
- * `SPICEDB` Workers VPC binding (Core's `#spicedb-transport`). Their IDs are reviewed build inputs.
+ * `SPICEDB` Workers VPC binding (Core's `#spicedb-transport`). It reads the published active
+ * Application Composition from the `ONTOS_ACTIVE_APPLICATION_COMPOSITION` Workers KV binding (Core's
+ * `#active-application-composition-source`). Their IDs are reviewed build inputs.
  */
 export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['envValue']) => ({
   vpcServices: [
@@ -298,6 +300,12 @@ export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['
   wrangler: {
     hyperdrive: [
       { binding: 'HYPERDRIVE', id: requiredCloudflareBuildValue(envValue, 'ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID') },
+    ],
+    kv_namespaces: [
+      {
+        binding: 'ONTOS_ACTIVE_APPLICATION_COMPOSITION',
+        id: requiredCloudflareBuildValue(envValue, 'ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID'),
+      },
     ],
   },
 });

@@ -272,10 +272,12 @@ service on `zerops`, and on `cloudflare` the Worker URL its edge build is given
 only the consumers that remain on Zerops (the Outbox Workers of the environment's mode). `deploy-zerops` does not publish
 on `cloudflare`, because a new or moved Worker is unobservable until `deploy-cloudflare` ships it;
 `publish-edge-composition` publishes from the new Workers afterwards. A placed Worker that consumes
-the snapshot (Commerce Customer Context) has no Zerops project variable, so `sync-edge-composition`,
-and `refresh-stage-edge` after each scheduled refresh, put every publication as its
-`ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON` Worker secret from `stage-edge`
-(`scripts/put-edge-composition-snapshot.sh`).
+the snapshot (Commerce Customer Context) has no Zerops project variable, and the snapshot outgrows
+a Worker secret's 5.1 kB limit. Every placed Worker binds the stage composition KV namespace as
+`ONTOS_ACTIVE_APPLICATION_COMPOSITION` and reads key `active` on each request, failing closed when
+the binding or key is missing. `sync-edge-composition`, and `refresh-stage-edge` after each
+scheduled refresh, write every publication to that key from `stage-edge`
+(`scripts/put-edge-composition-snapshot.sh`). Writing the key deploys nothing.
 
 Switching stage between targets is one variable: set `DEPLOY_TARGET` on `stage` and dispatch
 `full=true`. Its other variables and secrets never change. A stage on `cloudflare` whose edge deploy
@@ -342,7 +344,9 @@ unit (the output verifier requires them), and the private data plane every Worke
 `ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID` (the `HYPERDRIVE` binding, from which Core's
 `#database-runtime` takes the runtime `DATABASE_URL`) and
 `ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID` (the `SPICEDB` Workers VPC binding Core's
-`#spicedb-transport` calls). A Worker build without either fails. It may add `MODERN_ASSET_PREFIX`.
+`#spicedb-transport` calls), and `ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID` (the
+`ONTOS_ACTIVE_APPLICATION_COMPOSITION` KV binding Core's `#active-application-composition-source`
+reads). A Worker build without any of them fails. It may add `MODERN_ASSET_PREFIX`.
 Only `MODERN_`, `ULTRAMODERN_` and `VERTICAL_` keys are accepted. `ULTRAMODERN_SOURCE_REVISION` and
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` are reserved for the run. `VERTICAL_*_WORKER_NAME` and
 `VERTICAL_*_WORKER_BINDING` are rejected: a Worker's name and service-binding name are its topology
@@ -431,7 +435,9 @@ Certificates: Edit" for the Origin CA.
   service's `<hostname>.zerops` name that way. Then it creates Hyperdrive `ontos-stage-runtime`: role
   `ontos_runtime`, caching disabled, origin connection limit 40, and the password read from Zerops
   `db18_password`. Service values such as that password come from the service's data through the
-  Zerops API, because `zcli project env` prints sensitive secrets and generated passwords as `REDACTED`. It writes the IDs
+  Zerops API, because `zcli project env` prints sensitive secrets and generated passwords as `REDACTED`.
+  It creates the KV namespace `ontos-stage-active-application-composition`, empty until CI writes the
+  first publication. It writes the IDs
   and stage origins into this placement's `buildEnvironment` for a reviewed PR. It sets the
   `stage-edge` variable `CLOUDFLARE_ACCOUNT_ID` and secret `CLOUDFLARE_API_TOKEN`. Last, it sets every
   placed Worker's secrets with `wrangler secret bulk`, from the Zerops values the Node services use
@@ -444,12 +450,11 @@ Certificates: Edit" for the Origin CA.
 - `worker-secrets` repeats only the Worker secrets step.
 - `verify` runs the cut-over checklist and changes nothing. The tunnel must be healthy, and both
   SpiceDB TLS pairs must exist and hold. Both VPC
-  services and Hyperdrive must match the runbook, and the reviewed `buildEnvironment` must name
-  them. Every placed Worker must exist and hold each runtime secret `provision` plans for it, and the latest `stage-edge` deployment, which includes
+  services and Hyperdrive must match the runbook, the composition KV namespace must exist, and the
+  reviewed `buildEnvironment` must name them. Every placed Worker must exist and hold each runtime secret `provision` plans for it, and the latest `stage-edge` deployment, which includes
   `cloudflare:proof`, must have succeeded for the checked-out revision. Once `stage` targets
-  Cloudflare, every Worker that consumes the active application composition must also hold the
-  `ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON` secret, which the stage deploy's composition
-  sync writes. Before activation `verify` only reports that check as waiting, so run it again after
+  Cloudflare, the composition KV namespace must also hold key `active`, which the stage deploy's
+  composition sync writes. Before activation `verify` only reports that check as waiting, so run it again after
   `activate` and the full deploy, and move DNS only when it passes.
 - `activate` runs `verify` and, only when every item holds, sets `OUTBOX_WORKER_MODE=host` and
   `DEPLOY_TARGET=cloudflare` on `stage`. `provision` created the host service it needs.

@@ -2493,6 +2493,7 @@ import * as nodePath from 'node:path';
 import * as nodeUrl from 'node:url';
 import { runInNewContext } from 'node:vm';
 const environment = {
+  ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'composition-kv-id',
   ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
   ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
   ULTRAMODERN_MF_DEV_ORIGIN: 'https://shell.example.test',
@@ -2595,6 +2596,7 @@ const withOntosWorkerConfig = (configuration: Schema.Json): Schema.Json => {
   const workerConfig = createCloudflareWorkerConfig(
     (name) =>
       ({
+        ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 'composition-kv-id',
         ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 'hyperdrive-id',
         ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-service-id',
         ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: 'https://party.example.test',
