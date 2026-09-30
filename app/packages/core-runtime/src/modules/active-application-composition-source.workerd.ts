@@ -1,9 +1,11 @@
 import { env } from 'cloudflare:workers';
-import { Duration, Effect, Option, Schema } from 'effect';
+import { Duration, Effect, Schema } from 'effect';
 
 import { ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY } from './active-application-composition-edge.ts';
 
 const KV_READ_TIMEOUT = Duration.seconds(5);
+/** A KV text read resolves null for a missing key. */
+const KvTextSchema = Schema.OptionFromNullOr(Schema.String);
 
 class ActiveApplicationCompositionEdgeReadError extends Schema.TaggedError<ActiveApplicationCompositionEdgeReadError>()(
   'ActiveApplicationCompositionEdgeReadError',
@@ -25,8 +27,7 @@ export const encodedActiveApplicationCompositionSnapshot = Effect.gen(function* 
   const text = yield* Effect.tryPromise({
     catch: (cause) =>
       new ActiveApplicationCompositionEdgeReadError({ cause, reason: 'The Workers KV snapshot read failed' }),
-    // oxlint-disable-next-line typescript/promise-function-async -- Effect owns this workerd KV Promise boundary.
-    try: () => binding.get(ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY, 'text'),
+    try: binding.get.bind(binding, ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY, 'text'),
   }).pipe(
     Effect.timeoutOrElse({
       duration: KV_READ_TIMEOUT,
@@ -36,8 +37,14 @@ export const encodedActiveApplicationCompositionSnapshot = Effect.gen(function* 
         ),
     }),
   );
+  const snapshot = yield* Schema.decodeEffect(KvTextSchema)(text).pipe(
+    Effect.mapError(
+      (cause) =>
+        new ActiveApplicationCompositionEdgeReadError({ cause, reason: 'The Workers KV snapshot is not text' }),
+    ),
+  );
   return yield* Effect.fromOption(
-    Option.fromNullishOr(text),
+    snapshot,
     () =>
       new ActiveApplicationCompositionEdgeReadError({
         reason: 'The ONTOS_ACTIVE_APPLICATION_COMPOSITION Workers KV binding holds no snapshot',

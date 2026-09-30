@@ -519,6 +519,13 @@ export default defineConfig({
       },
     },
     {
+      // workerd's binding declarations mirror its KV API, whose text read resolves null for a missing key.
+      files: ['packages/core-runtime/src/cloudflare-workers.d.ts'],
+      rules: {
+        'effect-native/no-nullable-service-outcome': 'off',
+      },
+    },
+    {
       // UltraModern, Drizzle, generated federation declarations, and service tests mandate dotted filenames.
       files: [
         'apps/shell-super-app/drizzle.auth.config.ts',
