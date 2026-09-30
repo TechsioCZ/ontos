@@ -1,6 +1,7 @@
 import { Console, Context, Effect, FileSystem, Path, Redacted, Schema } from 'effect';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
+import { ZeropsPublicApi } from '../zerops-public-api.mts';
 import { runCommand } from './ops-shell.mts';
 import type { SecretValues } from './ops-shell.mts';
 import { StageOperationError } from './stage-operation-error.mts';
@@ -170,8 +171,6 @@ export const listZeropsServices = (projectId: string) =>
     Effect.map(parseZeropsServiceList),
   );
 
-const ENV_KEY_PATTERN = /^[A-Za-z0-9_]+$/u;
-
 const projectEnvArgs = (projectId: string, template: string, scope: readonly string[]) => [
   'project',
   'env',
@@ -182,25 +181,30 @@ const projectEnvArgs = (projectId: string, template: string, scope: readonly str
   template,
 ];
 
+/** `<hostname>_<KEY>`: a Zerops hostname has no underscore, so the first one splits the service from its key. */
+const SERVICE_VALUE_KEY = /^(?<hostname>[a-z0-9]{1,25})_(?<name>[A-Za-z0-9_]+)$/u;
+
 /**
- * Reads one Zerops variable into memory without printing it. The Go template emits only the named
- * key's value, so no other variable crosses the process boundary. Cross-service values use the
- * project scope's `<hostname>_<KEY>` names (for example `db18_password`).
+ * Reads one service variable into memory without printing it, named the way the project scope names it:
+ * `<hostname>_<KEY>` (for example `db18_password`). The value comes from the service's data through the Zerops
+ * API, because `zcli project env` prints sensitive secrets and generated passwords as `REDACTED`.
  */
 export const readZeropsValue = (projectId: string, key: string) =>
   Effect.gen(function* readZeropsValueEffect() {
-    if (!ENV_KEY_PATTERN.test(key)) {
-      return yield* new StageOperationError({ message: `"${key}" is not a Zerops variable name` });
+    const { hostname, name } = SERVICE_VALUE_KEY.exec(key)?.groups ?? {};
+    if (hostname === undefined || name === undefined) {
+      return yield* new StageOperationError({ message: `"${key}" is not a Zerops <hostname>_<KEY> variable name` });
     }
-    const output = yield* runCommand({
-      args: projectEnvArgs(projectId, `{{if eq .Key "${key}"}}{{.Value}}{{end}}`, []),
-      command: ZCLI,
-    });
-    const value = output.replaceAll(/^\n+|\n+$/gu, '');
-    if (value.length === 0) {
+    const service = (yield* listZeropsServices(projectId)).find((candidate) => candidate.hostname === hostname);
+    if (service === undefined) {
+      return yield* new StageOperationError({ message: `Zerops project ${projectId} has no ${hostname} service` });
+    }
+    const api = yield* ZeropsPublicApi;
+    const value = (yield* api.serviceSecrets(service.id)).get(name);
+    if (value === undefined || Redacted.value(value).length === 0) {
       return yield* new StageOperationError({ message: `Zerops project ${projectId} has no value for ${key}` });
     }
-    return Redacted.make(value);
+    return value;
   });
 
 const keyLines = (output: string) =>

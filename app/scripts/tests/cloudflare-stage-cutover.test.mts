@@ -83,6 +83,15 @@ const SECRET_VALUES = {
   ...Object.fromEntries(VERTICAL_HOSTS.map((host) => [`${host}_ONTOS_GATEWAY_PUBLIC_JWKS`, PUBLIC_JWKS])),
 };
 
+const SPICEDB_VPC_HOST = 'spicedb.zerops';
+
+const SENSITIVE_KEYS = [
+  'db18_password',
+  'shellsuperapp_BETTER_AUTH_SECRET',
+  'shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK',
+  'spicedb_SPICEDB_GRPC_PRESHARED_KEY',
+];
+
 const SECRETS = [
   'lead-token-secret',
   CI_TOKEN,
@@ -118,10 +127,13 @@ const newStage = (overrides: Parameters<typeof fakeStage>[0] = {}, { spicedbTls 
   const tls = spicedbTls ? SPICEDB_TLS : {};
   return fakeStage({
     projectUserKeys: Object.keys(tls),
-    sensitiveKeys: Object.keys(tls),
+    // zcli prints these as REDACTED, so the kit must read them through the Zerops API.
+    sensitiveKeys: [...Object.keys(tls), ...SENSITIVE_KEYS],
     services: [
       { hostname: 'db18', id: 'db18-id', status: 'ACTIVE' },
       { hostname: 'spicedb', id: 'spicedb-id', status: 'ACTIVE' },
+      { hostname: 'shellsuperapp', id: 'shellsuperapp-id', status: 'ACTIVE' },
+      ...VERTICAL_HOSTS.map((hostname) => ({ hostname, id: `${hostname}-id`, status: 'ACTIVE' })),
     ],
     ...overrides,
     projectValues: { ...SECRET_VALUES, ...tls, ...overrides.projectValues },
@@ -189,16 +201,17 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
         '/connectivity/directory/services',
         {
           app_protocol: 'postgresql',
-          host: { hostname: 'db18', resolver_network: { tunnel_id: 'tunnel-1' } },
+          host: { hostname: 'db18.zerops', resolver_network: { tunnel_id: 'tunnel-1' } },
           name: 'ontos-stage-db18',
           tcp_port: 5432,
+          tls_settings: { cert_verification_mode: 'disabled' },
           type: 'tcp',
         },
       ],
       [
         '/connectivity/directory/services',
         {
-          host: { hostname: 'spicedb', resolver_network: { tunnel_id: 'tunnel-1' } },
+          host: { hostname: SPICEDB_VPC_HOST, resolver_network: { tunnel_id: 'tunnel-1' } },
           https_port: 8443,
           name: 'ontos-stage-spicedb',
           tls_settings: { cert_verification_mode: 'verify_full' },
@@ -380,7 +393,7 @@ it('accepts the SpiceDB VPC service only over HTTPS with full certificate verifi
     readonly mode?: string;
   }): CloudflareVpcService => ({
     host: {
-      hostname: Option.some('spicedb'),
+      hostname: Option.some(SPICEDB_VPC_HOST),
       resolver_network: Option.some({ tunnel_id: 'tunnel-1' }),
     },
     http_port: Option.fromNullishOr(fields.http_port),
@@ -560,14 +573,15 @@ const provisionedAccount = (
       vpcServices: [
         {
           app_protocol: 'postgresql',
-          host: { hostname: 'db18', resolver_network: { tunnel_id: 'tunnel-1' } },
+          host: { hostname: 'db18.zerops', resolver_network: { tunnel_id: 'tunnel-1' } },
           name: 'ontos-stage-db18',
           service_id: 'vpc-1',
           tcp_port: 5432,
+          tls_settings: { cert_verification_mode: 'disabled' },
           type: 'tcp',
         },
         {
-          host: { hostname: 'spicedb', resolver_network: { tunnel_id: 'tunnel-1' } },
+          host: { hostname: SPICEDB_VPC_HOST, resolver_network: { tunnel_id: 'tunnel-1' } },
           https_port: 8443,
           name: 'ontos-stage-spicedb',
           service_id: 'vpc-2',

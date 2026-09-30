@@ -218,11 +218,18 @@ const WORKERS_USAGE_QUERY = `query WorkersUsage($accountTag: string!, $since: Ti
 const WorkerSecretSchema = Schema.Struct({ name: Schema.String });
 
 /**
+ * How Workers VPC checks an origin certificate: `verify_full` checks its chain and that it names the fetch URL's
+ * hostname; `disabled` encrypts without checking, for an origin that only has a self-signed certificate.
+ */
+export const VpcCertificateVerificationSchema = Schema.Literals(['disabled', 'verify_full']);
+export type VpcCertificateVerification = typeof VpcCertificateVerificationSchema.Type;
+
+/**
  * A Workers VPC service reached by hostname through the tunnel's resolver network. An `http`
- * service is only ever reached over HTTPS on `port`, verifying the origin certificate in full
- * against the fetch URL's hostname.
+ * service is only ever reached over HTTPS on `port`.
  */
 export interface VpcServiceSpec {
+  readonly certificateVerification: VpcCertificateVerification;
   readonly hostname: string;
   readonly name: string;
   readonly port: number;
@@ -265,12 +272,12 @@ interface VpcServiceBody {
   readonly https_port?: number;
   readonly name: string;
   readonly tcp_port?: number;
-  readonly tls_settings?: { readonly cert_verification_mode: typeof VPC_CERT_VERIFICATION_MODE };
+  readonly tls_settings: { readonly cert_verification_mode: VpcCertificateVerification };
   readonly type: 'http' | 'tcp';
 }
 
-/** Workers VPC checks the origin certificate's chain and that it names the fetch URL's hostname. */
-export const VPC_CERT_VERIFICATION_MODE = 'verify_full';
+/** The check Workers VPC applies when a service names none. */
+export const VPC_CERT_VERIFICATION_MODE: VpcCertificateVerification = 'verify_full';
 
 /** The body Wrangler sends for `hyperdrive create --service-id … --caching-disabled`; secrets are revealed only here. */
 const hyperdriveBody = (spec: HyperdriveSpec) => ({
@@ -421,15 +428,10 @@ export const CloudflareApi = Context.Service<CloudflareApiService>('@app/scripts
 /** The request body Wrangler sends for `vpc service create --hostname … --tunnel-id …` (with `--https-port` for HTTP). */
 export const vpcServiceBody = (spec: VpcServiceSpec): VpcServiceBody => {
   const host = { hostname: spec.hostname, resolver_network: { tunnel_id: spec.tunnelId } };
+  const tlsSettings = { cert_verification_mode: spec.certificateVerification };
   return spec.type === 'tcp'
-    ? { app_protocol: 'postgresql', host, name: spec.name, tcp_port: spec.port, type: 'tcp' }
-    : {
-        host,
-        https_port: spec.port,
-        name: spec.name,
-        tls_settings: { cert_verification_mode: VPC_CERT_VERIFICATION_MODE },
-        type: 'http',
-      };
+    ? { app_protocol: 'postgresql', host, name: spec.name, tcp_port: spec.port, tls_settings: tlsSettings, type: 'tcp' }
+    : { host, https_port: spec.port, name: spec.name, tls_settings: tlsSettings, type: 'http' };
 };
 
 const describeErrors = (errors: Option.Option<readonly { readonly code: number; readonly message: string }[]>) =>

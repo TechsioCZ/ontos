@@ -96,10 +96,26 @@ const DB18_DATABASE_NAME = 'db18_dbName';
 
 type StageVpcService = Omit<VpcServiceSpec, 'tunnelId'>;
 
-/** The two Zerops origins the tunnel exposes, and nothing else. */
+/**
+ * The two Zerops origins the tunnel exposes, and nothing else. cloudflared resolves fully qualified names, and
+ * Zerops only answers a service's `<hostname>.zerops` name that way. Zerops Postgres serves a self-signed
+ * certificate, so db18 is encrypted without a certificate check; the hop stays inside the Tunnel and the project network.
+ */
 export const STAGE_VPC_SERVICES = {
-  db18: { hostname: 'db18', name: 'ontos-stage-db18', port: 5432, type: 'tcp' },
-  spicedb: { hostname: 'spicedb', name: 'ontos-stage-spicedb', port: 8443, type: 'http' },
+  db18: {
+    certificateVerification: 'disabled',
+    hostname: 'db18.zerops',
+    name: 'ontos-stage-db18',
+    port: 5432,
+    type: 'tcp',
+  },
+  spicedb: {
+    certificateVerification: 'verify_full',
+    hostname: 'spicedb.zerops',
+    name: 'ontos-stage-spicedb',
+    port: 8443,
+    type: 'http',
+  },
 } as const satisfies Readonly<Record<'db18' | 'spicedb', StageVpcService>>;
 
 /** The Zerops data-layer services Cloudflare mode adds: the tunnel connector and the combined outbox worker host. */
@@ -388,7 +404,7 @@ export const vpcServiceDrift = (service: CloudflareVpcService, spec: VpcServiceS
     service.type !== spec.type && `type ${service.type}`,
     port !== spec.port && `port ${String(port)}`,
     plaintextPort !== undefined && `plaintext port ${String(plaintextPort)}`,
-    spec.type === 'http' && verification !== VPC_CERT_VERIFICATION_MODE && `certificate verification ${verification}`,
+    verification !== spec.certificateVerification && `certificate verification ${verification}`,
     hostname !== spec.hostname && `hostname ${String(hostname)}`,
     tunnelId !== spec.tunnelId && 'another tunnel',
   ]);
