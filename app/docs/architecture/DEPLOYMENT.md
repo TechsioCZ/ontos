@@ -416,6 +416,8 @@ environment, or else from the dotenv file `~/.cloudflare-ontos-stage-token`. The
 `CLOUDFLARE_API_TOKEN`. The SpiceDB TLS step also needs `ZEROPS_TOKEN`, because `zcli` cannot set
 service secrets, and a `CLOUDFLARE_API_TOKEN` with the stage zone permission "SSL and
 Certificates: Edit" for the Origin CA.
+`provision` creates the composition KV namespace, and CI writes its `active` key with the
+`stage-edge` token, so both tokens need the account permission "Workers KV Storage: Edit".
 
 - `spicedb-tls` creates the SpiceDB TLS material as sensitive secrets on the Zerops `spicedb` service,
   and `provision` runs it first. The gRPC pair `SPICEDB_GRPC_TLS_CERT`/`SPICEDB_GRPC_TLS_KEY` is a
