@@ -18,9 +18,17 @@ export default function HomePage() {
         <FeaturedProductGrid products={getHomepageFeaturedProducts().map(toProductSummary)} />
       </section>
 
-      <section className="akros-company-intro" aria-labelledby="company-title">
-        <h2 id="company-title">{cs.home.companyTitle}</h2>
-        <p>{cs.home.companyDescription}</p>
+      <section
+        aria-label={cs.home.companyIntro.label}
+        className="mt-20 grid gap-3 px-2 text-sm leading-normal max-md:mt-8"
+      >
+        {cs.home.companyIntro.paragraphs.map((paragraph) => (
+          <p className="m-0" key={paragraph.id}>
+            {paragraph.content.map((part) =>
+              typeof part === "string" ? part : <strong key={part.strong}>{part.strong}</strong>,
+            )}
+          </p>
+        ))}
       </section>
     </StorefrontShell>
   );

@@ -64,8 +64,47 @@ export const cs = {
     },
     featuredTitle: "Doporučujeme",
     companyTitle: "AKROS – partner pro hutní a spojovací materiál",
-    companyDescription:
-      "Nabízíme široký sortiment nerezového materiálu, vlastní výrobu a profesionální podporu pro projekty i běžný provoz. Naše nabídka zahrnuje spojovací materiál, hutní materiál, konstrukce pro fotovoltaiku a další specializované kategorie.",
+    companyIntro: {
+      label: "O společnosti AKROS",
+      paragraphs: [
+        {
+          id: "welcome",
+          content: [
+            "Vítejte v internetovém obchodě společnosti AKROS - specialistů v oblasti nerezového materiálu. Nabízíme nejširší sortiment kvalitních nerezových spojovacích a hutních materiálů, jaký můžete na našem trhu nalézt. V kategorii ",
+            { strong: "nerezových spojovacích materiálů" },
+            " najdete např. šrouby, matice, vruty, kolíky, nýty, řetězy, nářadí, maziva nebo příslušenství a doplňky pro jachty. V kategorii ",
+            { strong: "nerezový hutní materiál" },
+            " můžete nakoupit plechy, trubky, tyče, kolena, příruby, armatury a další příslušenství.",
+          ],
+        },
+        {
+          id: "assortment",
+          content: [
+            "Pravidelně pro Vás budeme ",
+            { strong: "rozšiřovat sortiment o nové produkty" },
+            ", které naleznete v sekci Nově nabízené zboží. Doporučujeme také sledovat Výprodej a Zboží v akci.",
+          ],
+        },
+        {
+          id: "production",
+          content: [
+            "Zabýváme se rovněž ",
+            { strong: "seriovou zámečnickou výrobou i výrobou na zakázku" },
+            ". Výroba na zakázku se specializuje také na ",
+            { strong: "výrobky z nerezové oceli" },
+            ", jako jsou zábradlí nebo ",
+            { strong: "schodiště" },
+            ".",
+          ],
+        },
+        {
+          id: "contact",
+          content: [
+            "V případě dotazů nebo připomínek nás neváhejte kontaktovat. Věříme, že neustálé vylepšování poskytovaných služeb a rozšiřování sortimentu poskytne našim zákazníkům prostor k pohodlným nákupům.",
+          ],
+        },
+      ],
+    },
   },
   product: {
     originalPrice: "Původní cena",

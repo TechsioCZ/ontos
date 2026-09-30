@@ -1046,27 +1046,6 @@ body {
   font-weight: var(--font-weight-regular);
 }
 
-.akros-company-intro {
-  display: grid;
-  gap: 16px;
-  border: 1px solid var(--color-border-primary);
-  border-radius: var(--akros-radius-lg);
-  padding: 32px;
-}
-
-.akros-company-intro h2,
-.akros-company-intro p {
-  margin: 0;
-}
-
-.akros-company-intro h2 {
-  font-size: 24px;
-}
-
-.akros-company-intro p {
-  line-height: 1.5;
-}
-
 .akros-footer {
   background: var(--color-base);
   box-shadow: var(--akros-footer-shadow);
@@ -1405,10 +1384,6 @@ body {
   .akros-product-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
-  }
-
-  .akros-company-intro {
-    padding: 24px;
   }
 
   .akros-category-grid {
