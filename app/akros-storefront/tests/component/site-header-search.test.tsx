@@ -7,10 +7,14 @@ import { CartProvider } from "@/features/cart/cart-provider";
 import { getCategories, getProducts, searchCatalog } from "@/mock-storefront/catalog";
 import { normalizeCatalogSearchTerm } from "@/lib/product-variant-search";
 
-const { push } = vi.hoisted(() => ({ push: vi.fn<(href: string) => void>() }));
+const { push, route } = vi.hoisted(() => ({
+  push: vi.fn<(href: string) => void>(),
+  route: { pathname: "/" },
+}));
 const originalScrollIntoView = Element.prototype.scrollIntoView;
 
 vi.mock("next/navigation", () => ({
+  usePathname: () => route.pathname,
   useRouter: () => ({ push }),
 }));
 
@@ -22,6 +26,7 @@ describe("SiteHeader search", () => {
   });
 
   beforeEach(() => {
+    route.pathname = "/";
     push.mockReset();
     vi.stubGlobal(
       "ResizeObserver",
@@ -181,6 +186,55 @@ describe("SiteHeader search", () => {
 
     expect(push).toHaveBeenCalledOnce();
     expect(push).toHaveBeenCalledWith("/vyhledavani?q=M8%20A4");
+  });
+
+  it("marks the current page in both desktop and mobile navigation", () => {
+    const { rerender } = render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+
+    for (const name of ["Pomocná navigace", "Mobilní navigace"]) {
+      const navigation = within(screen.getByRole("navigation", { name }));
+      expect(navigation.getByRole("link", { name: "Domů" }).getAttribute("aria-current")).toBe(
+        "page",
+      );
+      expect(navigation.getByRole("link", { name: "Blog" }).hasAttribute("aria-current")).toBe(
+        false,
+      );
+    }
+
+    route.pathname = "/blog";
+    rerender(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+
+    for (const name of ["Pomocná navigace", "Mobilní navigace"]) {
+      const navigation = within(screen.getByRole("navigation", { name }));
+      expect(navigation.getByRole("link", { name: "Blog" }).getAttribute("aria-current")).toBe(
+        "page",
+      );
+      expect(navigation.getByRole("link", { name: "Domů" }).hasAttribute("aria-current")).toBe(
+        false,
+      );
+    }
+  });
+
+  it("links to sign-in with a decorative lock icon", () => {
+    render(
+      <CartProvider storage={null}>
+        <SiteHeader />
+      </CartProvider>,
+    );
+
+    const login = screen.getByRole("link", { name: "Přihlášení" });
+    expect(login.getAttribute("href")).toBe("/prihlaseni");
+    expect(login.hasAttribute("data-akros-header-login")).toBe(true);
+    const lock = login.querySelector(".icon-\\[mdi--lock\\]");
+    expect(lock?.getAttribute("aria-hidden")).toBe("true");
   });
 
   it("exposes account and favorites as accessible icon links", () => {

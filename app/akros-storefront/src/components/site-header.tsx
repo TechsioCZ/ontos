@@ -2,6 +2,7 @@
 
 import NextLink from "next/link";
 import Image from "next/image";
+import { usePathname } from "next/navigation";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { HeaderSearch } from "@/components/header-search";
@@ -26,23 +27,33 @@ const utilityLinks = [
 ];
 
 export function SiteHeader() {
+  const pathname = usePathname();
+
   return (
     <header className="akros-header">
       <div className="akros-header__utility-bar">
         <div className="akros-header__utility">
           <nav className="akros-header__utility-links" aria-label="Pomocná navigace">
             {utilityLinks.map((item) => (
-              <Link key={item.href} as={NextLink} href={item.href}>
+              <Link
+                key={item.href}
+                as={NextLink}
+                aria-current={pathname === item.href ? "page" : undefined}
+                className="inline-flex h-8 items-center px-2 underline aria-[current=page]:bg-primary"
+                href={item.href}
+              >
                 {item.label}
               </Link>
             ))}
           </nav>
           <LinkButton
             as={NextLink}
-            className="text-xs"
+            data-akros-header-login
             href="/prihlaseni"
+            icon="icon-[mdi--lock]"
+            iconSize="sm"
             size="sm"
-            variant="primary"
+            variant="secondary"
           >
             {cs.header.login}
           </LinkButton>
@@ -100,7 +111,13 @@ export function SiteHeader() {
           <summary>{cs.header.openNavigation}</summary>
           <nav className="akros-header__mobile-links" aria-label="Mobilní navigace">
             {utilityLinks.map((item) => (
-              <Link key={item.href} as={NextLink} href={item.href}>
+              <Link
+                key={item.href}
+                as={NextLink}
+                aria-current={pathname === item.href ? "page" : undefined}
+                className="flex min-h-11 items-center px-3 aria-[current=page]:bg-primary"
+                href={item.href}
+              >
                 {item.label}
               </Link>
             ))}

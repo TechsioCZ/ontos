@@ -9,9 +9,11 @@ export default function HomePage() {
     <StorefrontShell>
       <HomeCarousel />
 
-      <section className="akros-section" aria-labelledby="featured-title">
-        <div className="akros-section__heading">
-          <h2 id="featured-title">{cs.home.featuredTitle}</h2>
+      <section className="grid gap-6" aria-labelledby="featured-title">
+        <div className="bg-base-dark px-4 py-2 text-base-light">
+          <h2 className="m-0 text-base font-bold leading-tight" id="featured-title">
+            {cs.home.featuredTitle}
+          </h2>
         </div>
         <FeaturedProductGrid products={getHomepageFeaturedProducts().map(toProductSummary)} />
       </section>

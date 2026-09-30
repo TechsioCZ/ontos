@@ -3,6 +3,15 @@
   --shadow-sm: 0 1px 4px rgb(0 0 0 / 10%);
 }
 
+[data-akros-header-login] {
+  --color-button-bg-secondary-base: var(--color-base-dark);
+  --color-button-bg-secondary-hover: var(--color-base-dark);
+  --color-button-bg-secondary-active: var(--color-base-dark);
+  --color-button-fg-secondary: var(--color-base-light);
+  --radius-button-sm: var(--radius-none);
+  --text-button-sm: var(--text-xs);
+}
+
 .akros-header__search {
   --color-input-border-base: var(--color-fg-primary);
   --color-input-border-focus: var(--color-fg-primary);
