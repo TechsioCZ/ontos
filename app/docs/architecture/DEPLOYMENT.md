@@ -404,9 +404,14 @@ Certificates: Edit" for the Origin CA.
   `ontos-stage`. It imports `cloudflared` from `zerops-import.yaml`, with the tunnel connector token
   as its `TUNNEL_TOKEN` secret, and imports `outboxworkerhost`. It records their `ZEROPS_*_SERVICE_ID`
   stage variables and deploys `cloudflared`, then waits until the tunnel is healthy. Next it creates
-  the Workers VPC services `ontos-stage-db18` (tcp `db18:5432`) and `ontos-stage-spicedb` (HTTPS
-  `spicedb:8443`, certificate verification `verify_full`), and Hyperdrive `ontos-stage-runtime`: role `ontos_runtime`, caching disabled,
-  origin connection limit 40, and the password read from Zerops `db18_password`. It writes the IDs
+  the Workers VPC services `ontos-stage-db18` (tcp `db18.zerops:5432`, certificate verification
+  `disabled`, because Zerops Postgres serves a self-signed certificate and the hop stays inside the
+  Tunnel and the project network) and `ontos-stage-spicedb` (HTTPS `spicedb.zerops:8443`, certificate
+  verification `verify_full`). cloudflared resolves fully qualified names, and Zerops answers only a
+  service's `<hostname>.zerops` name that way. Then it creates Hyperdrive `ontos-stage-runtime`: role
+  `ontos_runtime`, caching disabled, origin connection limit 40, and the password read from Zerops
+  `db18_password`. Service values such as that password come from the service's data through the
+  Zerops API, because `zcli project env` prints sensitive secrets and generated passwords as `REDACTED`. It writes the IDs
   and stage origins into this placement's `buildEnvironment` for a reviewed PR. It sets the
   `stage-edge` variable `CLOUDFLARE_ACCOUNT_ID` and secret `CLOUDFLARE_API_TOKEN`. Last, it sets every
   placed Worker's secrets with `wrangler secret bulk`, from the Zerops values the Node services use
