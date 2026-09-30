@@ -55,3 +55,4 @@ const ultramodernBuildArtifact = resolveUltramodernBuildArtifact(
 );
 
 export const ultramodernDeliveryUnit = ultramodernBuildArtifact.deliveryUnit;
+export const ultramodernUiMarker = ultramodernBuildArtifact.surfaces.ui;
