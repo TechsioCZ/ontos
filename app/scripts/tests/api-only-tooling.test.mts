@@ -15,6 +15,7 @@ import type {
   verifyBuildOutputReleaseEnvelope,
   verifyNodeReleaseEnvelopeStaging,
 } from '@modern-js/app-tools-extensions/release-envelope/framework-output';
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import type { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { Cause, Effect, Predicate, Schema } from 'effect';
 import { describe, afterEach, expect, it, rs } from 'effect-rstest';
@@ -3685,6 +3686,13 @@ it.live(
       BuildArtifactSchema,
       path.join(workspaceRoot, 'verticals/payment-term-catalog/shared/ultramodern-build.json'),
     );
+    // A deployed Worker serves the release identity of the revision being proven,
+    // which is only the generation marker for an uncommitted workspace.
+    const releaseIdentity = resolveUltramodernReleaseIdentity({
+      generationBuildMarker: build.deliveryUnit.buildMarker,
+      unitId: build.deliveryUnit.unitId,
+      workspaceRoot,
+    });
     const requestedPath = path.join(fixture, 'requested-routes.txt');
     const fetchMockPath = path.join(fixture, 'cloudflare-fetch-mock.mjs');
     yield* Effect.promise(() =>
@@ -3695,7 +3703,7 @@ const requestedPath = ${JSON.stringify(requestedPath)};
 const publicUrl = ${JSON.stringify(publicUrl)};
 const manifestPath = ${JSON.stringify(mfManifestPath)};
 const readinessPath = ${JSON.stringify(apiOnlyReadinessPath)};
-const buildMarker = ${JSON.stringify(build.deliveryUnit.buildMarker)};
+const buildMarker = ${JSON.stringify(releaseIdentity.buildMarker)};
 const headers = {
   'access-control-allow-origin': '*',
   'content-type': 'application/json',
