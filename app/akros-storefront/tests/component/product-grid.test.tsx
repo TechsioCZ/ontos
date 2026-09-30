@@ -9,7 +9,8 @@ describe("ProductGrid", () => {
     const product = getProductBySlug("profilovana-stresni-krytina-product-35919");
 
     expect(product).toBeDefined();
-    render(<ProductGrid products={[toProductSummary(product!)]} />);
+    const { container } = render(<ProductGrid products={[toProductSummary(product!)]} />);
+    expect(container.firstElementChild?.className).toBe("akros-product-grid");
 
     expect(screen.getByText(/^od 10,36 Kč$/)).toBeDefined();
     expect(screen.getByText("Skladem")).toBeDefined();

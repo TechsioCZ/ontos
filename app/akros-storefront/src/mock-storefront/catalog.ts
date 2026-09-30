@@ -223,11 +223,23 @@ export const getFeaturedProducts = (): CatalogProduct[] =>
         (right.featuredPosition ?? Number.MAX_SAFE_INTEGER),
     );
 
-export const getHomepageFeaturedProducts = (): CatalogProduct[] =>
-  catalogData.homepageFeaturedProductIds.flatMap((productId) => {
+export const getHomepageFeaturedProducts = (): CatalogProduct[] => {
+  const configuredProducts = catalogData.homepageFeaturedProductIds.flatMap((productId) => {
     const product = productsById.get(productId);
     return product ? [product] : [];
   });
+  const selectedProducts = new Map<string, CatalogProduct>();
+
+  for (const product of [...configuredProducts, ...getRecommendedProducts()]) {
+    if (product.priceMinor <= 0 || product.name.trim().toLocaleUpperCase("cs-CZ") === "AKCE") {
+      continue;
+    }
+    selectedProducts.set(product.id, product);
+    if (selectedProducts.size === 16) break;
+  }
+
+  return [...selectedProducts.values()];
+};
 
 export const getActionProducts = (): CatalogProduct[] =>
   getProducts().filter((product) => product.isAction);

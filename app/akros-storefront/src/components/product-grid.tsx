@@ -29,16 +29,17 @@ export function ProductGrid({
 }: {
   products: ProductGridItem[];
   action?: "purchase" | "detail";
-  columns?: "catalog" | "checkout";
+  columns?: "catalog" | "checkout" | "featured";
 }) {
+  const gridClassName =
+    columns === "featured"
+      ? "grid grid-cols-1 gap-x-5 gap-y-12 px-4 min-[431px]:grid-cols-2 min-[1101px]:grid-cols-4 max-md:gap-x-3 max-md:gap-y-6 max-md:px-2"
+      : columns === "checkout"
+        ? "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
+        : "akros-product-grid";
+
   return (
-    <div
-      className={
-        columns === "checkout"
-          ? "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3"
-          : "akros-product-grid"
-      }
-    >
+    <div className={gridClassName}>
       {products.map((product, index) => {
         const detailHref = product.detailHref ?? `/produkt/${product.slug}`;
         const canAddToCart =

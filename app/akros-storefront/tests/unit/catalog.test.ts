@@ -103,14 +103,21 @@ describe("mock catalog gateway", () => {
     expect(featured.map((product) => product.featuredPosition)).toEqual([1, 2, 3, 4]);
   });
 
-  it("returns four purchasable homepage products backed by source records", () => {
+  it("returns sixteen distinct purchasable homepage products backed by source records", () => {
     const homepageProducts = getHomepageFeaturedProducts();
 
-    expect(homepageProducts).toHaveLength(4);
+    expect(homepageProducts).toHaveLength(16);
+    expect(new Set(homepageProducts.map((product) => product.id)).size).toBe(16);
     expect(homepageProducts.every((product) => product.priceMinor > 0)).toBe(true);
-    expect(homepageProducts.map((product) => product.id)).toEqual(
+    expect(homepageProducts.slice(0, 4).map((product) => product.id)).toEqual(
       getFeaturedProducts().map((product) => product.id),
     );
+    expect(homepageProducts.slice(4).every((product) => product.isRecommended)).toBe(true);
+    expect(homepageProducts.some((product) => product.name.trim() === "AKCE")).toBe(false);
+    expect(homepageProducts.map((product) => getProductBySlug(product.slug))).toEqual(
+      homepageProducts,
+    );
+    expect(getHomepageFeaturedProducts()).toEqual(homepageProducts);
   });
 
   it("uses a neutral placeholder when the feed does not provide a product image", () => {
@@ -142,7 +149,9 @@ describe("mock catalog gateway", () => {
 
     expect(newProducts).toHaveLength(30);
     expect(newProducts.slice(0, 4).map((product) => product.id)).toEqual(
-      getHomepageFeaturedProducts().map((product) => product.id),
+      getHomepageFeaturedProducts()
+        .slice(0, 4)
+        .map((product) => product.id),
     );
     expect(
       newProducts.every(

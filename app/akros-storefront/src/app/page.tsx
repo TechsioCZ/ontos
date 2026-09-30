@@ -9,7 +9,7 @@ export default function HomePage() {
     <StorefrontShell>
       <HomeCarousel />
 
-      <section className="grid gap-6" aria-labelledby="featured-title">
+      <section className="grid gap-4" aria-labelledby="featured-title">
         <div className="bg-base-dark px-4 py-2 text-base-light">
           <h2 className="m-0 text-base font-bold leading-tight" id="featured-title">
             {cs.home.featuredTitle}
