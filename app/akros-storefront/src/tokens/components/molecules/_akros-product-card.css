@@ -20,6 +20,10 @@
   --text-button-sm: var(--text-sm);
 }
 
+.akros-product-card [data-akros-product-tags] {
+  --color-badge-bg-discount: #e30400;
+}
+
 @media (max-width: 760px) {
   :root {
     --text-product-card-price-size: var(--text-base);

@@ -73,6 +73,35 @@ export function ProductGrid({
                     src={product.imageSrc}
                     width={480}
                   />
+                  {(product.isRecommended || product.isSale || product.isAction) && (
+                    <div
+                      className="absolute top-0 left-0 grid justify-items-start gap-1 pr-11"
+                      data-akros-product-tags
+                    >
+                      {product.isRecommended && (
+                        <Badge size="sm" variant="primary">
+                          {cs.product.tags.recommended}
+                        </Badge>
+                      )}
+                      {product.isSale ? (
+                        <Badge
+                          size="sm"
+                          title={product.hasVariants ? cs.product.tags.saleVariants : undefined}
+                          variant="discount"
+                        >
+                          {cs.product.tags.sale}
+                        </Badge>
+                      ) : product.isAction ? (
+                        <Badge
+                          size="sm"
+                          title={product.hasVariants ? cs.product.tags.actionVariants : undefined}
+                          variant="discount"
+                        >
+                          {cs.product.tags.action}
+                        </Badge>
+                      ) : null}
+                    </div>
+                  )}
                 </NextLink>
                 <LinkButton
                   aria-label="Zobrazit oblíbené produkty"
