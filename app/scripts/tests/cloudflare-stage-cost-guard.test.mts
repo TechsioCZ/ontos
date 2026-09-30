@@ -45,15 +45,15 @@ const settings: CutoverSettings = {
 
 /** Every placed unit's public hostname, in placement order (the Shell deploys last). */
 const HOSTNAMES = [
-  'assortment.stage.example.com',
-  'party-registry.stage.example.com',
-  'commerce-customer-context.stage.example.com',
-  'payment-term-catalog.stage.example.com',
-  'commerce-market-catalog.stage.example.com',
-  'catalog.stage.example.com',
-  'pricing.stage.example.com',
-  'storefront-registry.stage.example.com',
-  'price-group-catalog.stage.example.com',
+  'ontos-stage-assortment.stage.example.com',
+  'ontos-stage-party-registry.stage.example.com',
+  'ontos-stage-commerce-customer-context.stage.example.com',
+  'ontos-stage-payment-term-catalog.stage.example.com',
+  'ontos-stage-commerce-market-catalog.stage.example.com',
+  'ontos-stage-catalog.stage.example.com',
+  'ontos-stage-pricing.stage.example.com',
+  'ontos-stage-storefront-registry.stage.example.com',
+  'ontos-stage-price-group-catalog.stage.example.com',
   SHELL_HOSTNAME,
 ];
 

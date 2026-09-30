@@ -162,9 +162,15 @@ const PlacementDocumentSchema = Schema.fromJsonString(
 
 const shellOrigin = (origins: StageOrigins) => `https://${origins.shellHostname}`;
 
-/** The Shell answers on its own hostname; every vertical on `<unit>.<zone>`. */
+/** The stage zone is shared with other projects, so every vertical hostname carries this prefix. */
+const VERTICAL_HOSTNAME_PREFIX = 'ontos-stage-';
+
+const verticalOrigin = (unitId: string, origins: StageOrigins) =>
+  `https://${VERTICAL_HOSTNAME_PREFIX}${unitId}.${origins.stageZone}`;
+
+/** The Shell answers on its own hostname; every vertical on `ontos-stage-<unit>.<zone>`. */
 export const publicOrigin = (unit: EdgeUnit, origins: StageOrigins) =>
-  unit.kind === 'shell' ? shellOrigin(origins) : `https://${unit.id}.${origins.stageZone}`;
+  unit.kind === 'shell' ? shellOrigin(origins) : verticalOrigin(unit.id, origins);
 
 export interface DataPlaneIds {
   readonly hyperdriveId: string;
@@ -228,7 +234,7 @@ const verticalSecrets = (unit: EdgeUnit, origins: StageOrigins, sources: WorkerS
   const secrets = new Map([['ONTOS_GATEWAY_PUBLIC_JWKS', sources.gatewayPublicJwks]]);
   const dependencies = VERTICAL_DEPENDENCIES.get(unit.id);
   for (const [variable, target] of dependencies ?? []) {
-    secrets.set(variable, Redacted.make(`https://${target}.${origins.stageZone}/${target}-api`));
+    secrets.set(variable, Redacted.make(`${verticalOrigin(target, origins)}/${target}-api`));
   }
   // A vertical that calls another asks the Shell for the gateway credential first.
   if (dependencies !== undefined) {

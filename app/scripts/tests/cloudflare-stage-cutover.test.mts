@@ -273,7 +273,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
       ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: HYPERDRIVE_ID,
       ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 'vpc-2',
       ULTRAMODERN_MF_DEV_ORIGIN: SHELL_ORIGIN,
-      ULTRAMODERN_PUBLIC_URL_PRICING: 'https://pricing.stage.example.com',
+      ULTRAMODERN_PUBLIC_URL_PRICING: 'https://ontos-stage-pricing.stage.example.com',
       ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: SHELL_ORIGIN,
     });
     expect(placement.units).toHaveLength(10);
@@ -797,14 +797,15 @@ it.effect('gives every vertical the Shell key and the callers their stage depend
 
     expect([...plan.keys()]).toHaveLength(10);
     expect(reveal(CUSTOMER_CONTEXT_WORKER)).toMatchObject({
-      ONTOS_CATALOG_BASE_URL: 'https://catalog.stage.example.com/catalog-api',
-      ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'https://price-group-catalog.stage.example.com/price-group-catalog-api',
-      ONTOS_PRICING_BASE_URL: 'https://pricing.stage.example.com/pricing-api',
+      ONTOS_CATALOG_BASE_URL: 'https://ontos-stage-catalog.stage.example.com/catalog-api',
+      ONTOS_PRICE_GROUP_CATALOG_BASE_URL:
+        'https://ontos-stage-price-group-catalog.stage.example.com/price-group-catalog-api',
+      ONTOS_PRICING_BASE_URL: 'https://ontos-stage-pricing.stage.example.com/pricing-api',
       ONTOS_SHELL_GATEWAY_BASE_URL: 'https://app.stage.example.com/shell-super-app-api',
     });
     expect(reveal('app-commerce-market-catalog')).toMatchObject({
       ONTOS_COMMERCE_CUSTOMER_CONTEXT_BASE_URL:
-        'https://commerce-customer-context.stage.example.com/commerce-customer-context-api',
+        'https://ontos-stage-commerce-customer-context.stage.example.com/commerce-customer-context-api',
     });
     expect(Arr.sort(Object.keys(reveal('app-pricing')), Order.String)).toStrictEqual([
       'ONTOS_GATEWAY_ISSUER',
