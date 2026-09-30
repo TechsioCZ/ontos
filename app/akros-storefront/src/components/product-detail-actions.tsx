@@ -30,7 +30,7 @@ export function ProductFavoriteButton({ productId, productName }: ProductDetailA
       icon={isFavorite ? "icon-[mdi--heart]" : "icon-[mdi--heart-outline]"}
       iconSize="lg"
       onClick={toggleFavorite}
-      size="lg"
+      size="md"
       theme="outlined"
       variant="secondary"
     />

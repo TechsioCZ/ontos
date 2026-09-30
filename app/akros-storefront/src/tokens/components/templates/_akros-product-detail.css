@@ -2,8 +2,8 @@
   --akros-product-detail-column-gap: var(--dimension-32);
   --akros-product-detail-content-gap: var(--dimension-24);
   --akros-product-detail-panel-padding: var(--dimension-16);
-  --akros-product-detail-panel-radius: var(--radius-md);
-  --akros-product-detail-image-radius: var(--radius-md);
+  --akros-product-detail-panel-radius: var(--radius-sm);
+  --akros-product-detail-image-radius: var(--radius-sm);
   --akros-product-detail-divider-color: var(--color-border-primary);
   --akros-product-detail-tier-bg: var(--color-fill-surface);
   --akros-product-detail-stock-fg: var(--color-fg-status-success);
@@ -17,8 +17,26 @@
   --akros-variant-filter-label-color: var(--color-fg-primary);
   --akros-variant-filter-separator-color: var(--color-border-primary);
   --akros-variant-filter-padding: var(--dimension-8);
-  --akros-variant-filter-label-font-size: 10px;
+  --akros-variant-filter-label-font-size: var(--text-sm);
   --akros-variant-filter-measurement-width: 185px;
   --akros-variant-filter-material-width: 190px;
   --akros-variant-filter-price-width: 245px;
+}
+
+.akros-purchase-form {
+  --height-form-control-md: var(--dimension-60);
+  --height-form-control-lg: var(--dimension-60);
+  --padding-button-md: var(--padding-button-y-md) var(--dimension-16);
+  --radius-button-md: var(--radius-sm);
+  --radius-numeric-input-lg: var(--radius-sm);
+  --spacing-button-md: var(--dimension-20);
+}
+
+.akros-product-detail__favorite {
+  --height-form-control-md: var(--dimension-60);
+  --radius-button-md: var(--radius-sm);
+}
+
+.akros-variant-purchase__filter-bar {
+  --height-form-control-sm: var(--dimension-40);
 }

@@ -442,13 +442,13 @@ export function ProductPurchaseForm({
           <NumericInput.Control className="akros-purchase-form__quantity-control">
             <NumericInput.DecrementTrigger
               aria-label="Snížit množství"
-              className="akros-purchase-form__quantity-trigger"
+              className="akros-purchase-form__quantity-trigger h-full"
               icon="token-icon-minus"
             />
             <NumericInput.Input aria-label={cs.cart.quantity} />
             <NumericInput.IncrementTrigger
               aria-label="Zvýšit množství"
-              className="akros-purchase-form__quantity-trigger"
+              className="akros-purchase-form__quantity-trigger h-full"
               icon="token-icon-plus"
             />
           </NumericInput.Control>
@@ -465,7 +465,7 @@ export function ProductPurchaseForm({
             });
             setConfirmation(`${variant?.label ?? product.name} bylo přidáno do košíku.`);
           }}
-          size="lg"
+          size="md"
           uppercase
           variant="primary"
         >
@@ -568,7 +568,7 @@ export function ProductPurchaseForm({
             />
           )}
 
-          <Button size="md" type="submit" uppercase variant="primary">
+          <Button size="sm" type="submit" uppercase variant="primary">
             Filtrovat
           </Button>
         </form>
