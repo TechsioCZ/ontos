@@ -183,7 +183,10 @@ export function ProductGrid({
                 )}
               </ProductCard.Price>
 
-              <ProductCard.Actions className="mt-auto block [&>*]:w-full">
+              <ProductCard.Actions
+                className="mt-auto block [&>*]:w-full"
+                data-akros-product-actions
+              >
                 {canAddToCart && product.stock.kind === "quantity" ? (
                   <AddToCartButton
                     item={{

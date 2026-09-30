@@ -33,6 +33,44 @@ const storedQuantity = () =>
   JSON.parse(window.localStorage.getItem("akros-demo-cart-v3") ?? "null").lines[0]?.quantity;
 
 describe("checkout cart quantity", () => {
+  it("preserves grouped four-digit quantities while incrementing and decrementing", async () => {
+    window.localStorage.setItem(
+      "akros-demo-cart-v3",
+      JSON.stringify({
+        version: 3,
+        lines: [
+          {
+            productId: "screw",
+            slug: "screw",
+            name: "Vrut",
+            sku: "A2",
+            imageSrc: "/screw.jpg",
+            imageAlt: "Vrut",
+            unit: "ks",
+            minimumQuantity: 10,
+            stockCount: 10000,
+            priceMinor: 100,
+            quantity: 2000,
+          },
+        ],
+      }),
+    );
+    const user = userEvent.setup();
+    render(
+      <CartProvider>
+        <CartItemsTable />
+      </CartProvider>,
+    );
+    const input = await screen.findByRole("spinbutton");
+    expect(input.getAttribute("aria-valuenow")).toBe("2000");
+    expect(screen.getByDisplayValue(/^2\s000$/)).toBe(input);
+    await user.click(screen.getByRole("button", { name: "Zvýšit množství: Vrut" }));
+    await waitFor(() => expect(storedQuantity()).toBe(2010));
+    await user.click(screen.getByRole("button", { name: "Snížit množství: Vrut" }));
+    await waitFor(() => expect(storedQuantity()).toBe(2000));
+    expect(screen.getByDisplayValue(/^2\s000$/)).toBe(input);
+  });
+
   it("lets a shopper type a multi-digit quantity without clamping the first digit", async () => {
     const user = userEvent.setup({ delay: 40 });
     render(

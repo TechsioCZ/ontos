@@ -115,7 +115,7 @@ body {
   justify-content: space-between;
   gap: var(--dimension-32);
   padding-inline: var(--akros-header-main-gutter);
-  padding-block: var(--dimension-24);
+  padding-block: var(--akros-header-main-padding-y);
 }
 
 .akros-brand {
@@ -126,7 +126,7 @@ body {
 
 .akros-brand__logo {
   display: block;
-  width: var(--dimension-container-2xs);
+  width: var(--akros-header-logo-width);
   height: auto;
 }
 

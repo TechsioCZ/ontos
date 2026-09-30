@@ -1,4 +1,8 @@
 .akros-header {
+  --akros-header-control-height: var(--dimension-64);
+  --akros-header-cart-width: 204px;
+  --akros-header-logo-width: var(--dimension-container-2xs);
+  --akros-header-main-padding-y: var(--dimension-24);
   --akros-header-search-width: var(--dimension-container-2xl);
   --shadow-sm: 0 1px 4px rgb(0 0 0 / 10%);
 }
@@ -16,7 +20,7 @@
   --color-input-border-base: var(--color-fg-primary);
   --color-input-border-focus: var(--color-fg-primary);
   --color-input-border-hover: var(--color-fg-primary);
-  --height-form-control-md: var(--dimension-64);
+  --height-form-control-md: var(--akros-header-control-height);
   --padding-input-md: var(--dimension-20);
   --radius-button-md: var(--radius-xs);
   --radius-input-md: var(--radius-xs);
@@ -37,4 +41,27 @@
   --padding-popup-item-y-md: var(--dimension-8);
   --size-popup-indicator: 0px;
   --text-combobox-item-md: var(--text-sm);
+}
+
+/* The redesign defines the wide desktop header; keep notebooks more compact. */
+@media (min-width: 761px) and (max-width: 1440px) {
+  :root {
+    --akros-header-height: 104px;
+  }
+
+  .akros-header {
+    --akros-header-control-height: var(--dimension-48);
+    --akros-header-cart-width: 176px;
+    --akros-header-logo-width: var(--dimension-container-3xs);
+    --akros-header-main-padding-y: var(--dimension-12);
+  }
+
+  .akros-header__search {
+    --padding-input-md: var(--dimension-12);
+  }
+
+  .akros-header__cart-trigger {
+    --text-icon-2xl: var(--text-xl);
+    --text-md: var(--text-base);
+  }
 }

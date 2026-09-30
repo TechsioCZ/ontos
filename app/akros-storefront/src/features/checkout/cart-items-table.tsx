@@ -49,10 +49,10 @@ function CartQuantity({ line }: { line: CartLine }) {
           setDraftQuantity(null);
         }}
       >
-        <NumericInput.Control className="w-32">
+        <NumericInput.Control className="w-44 shrink-0">
           <NumericInput.DecrementTrigger
             aria-label={`Snížit množství: ${line.variantLabel ?? line.name}`}
-            className="h-full! min-w-9 justify-center"
+            className="h-full! w-11 flex-none justify-center"
             icon="token-icon-minus"
           />
           <NumericInput.Input
@@ -67,7 +67,7 @@ function CartQuantity({ line }: { line: CartLine }) {
           />
           <NumericInput.IncrementTrigger
             aria-label={`Zvýšit množství: ${line.variantLabel ?? line.name}`}
-            className="h-full! min-w-9 justify-center"
+            className="h-full! w-11 flex-none justify-center"
             icon="token-icon-plus"
           />
         </NumericInput.Control>
@@ -110,7 +110,7 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
       {
         id: "quantity",
         header: "Množství",
-        meta: { width: "10rem", align: "center" },
+        meta: { width: "12rem", align: "center" },
         cell: ({ row }) => <CartQuantity line={row.original} />,
       },
       {

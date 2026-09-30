@@ -104,7 +104,7 @@ export function MiniCart() {
           aria-expanded={open}
           aria-haspopup="dialog"
           aria-label={triggerLabel}
-          className="inline-flex h-16 w-[204px] shrink-0 cursor-pointer items-center justify-center gap-5 rounded-sm border-0 bg-(--color-primary) px-4 text-(--color-fg-primary) hover:bg-(--color-primary-hover) data-[state=open]:bg-(--color-primary-hover) max-lg:w-16 max-lg:px-2"
+          className="akros-header__cart-trigger inline-flex h-(--akros-header-control-height) w-(--akros-header-cart-width) shrink-0 cursor-pointer items-center justify-center gap-5 rounded-sm border-0 bg-(--color-primary) px-4 text-(--color-fg-primary) hover:bg-(--color-primary-hover) data-[state=open]:bg-(--color-primary-hover) max-lg:w-16 max-lg:px-2"
           data-state={open ? "open" : "closed"}
           href="/kosik"
           id={`${id}-trigger`}

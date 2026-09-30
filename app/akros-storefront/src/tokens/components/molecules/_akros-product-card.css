@@ -12,6 +12,8 @@
 }
 
 .akros-product-card {
+  /* Close to Figma's #28a745, with AA contrast for small text on white. */
+  --color-product-card-stock-fg-in-stock: #218838;
   --font-weight-badge-sm: var(--font-weight-medium);
   --height-form-control-sm: var(--dimension-44);
   --padding-badge-sm: var(--dimension-2) var(--dimension-6);
@@ -22,6 +24,11 @@
 
 .akros-product-card [data-akros-product-tags] {
   --color-badge-bg-discount: #e30400;
+}
+
+/* Button uses font-medium directly; keep this alias confined to card CTAs. */
+.akros-product-card [data-akros-product-actions] {
+  --font-weight-medium: var(--font-weight-bold);
 }
 
 @media (max-width: 760px) {
