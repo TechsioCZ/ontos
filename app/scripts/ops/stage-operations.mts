@@ -201,8 +201,15 @@ export const readZeropsValue = (projectId: string, key: string) =>
     }
     const api = yield* ZeropsPublicApi;
     const value = (yield* api.serviceSecrets(service.id)).get(name);
-    if (value === undefined || Redacted.value(value).length === 0) {
+    const content = value === undefined ? '' : Redacted.value(value);
+    if (value === undefined || content.length === 0) {
       return yield* new StageOperationError({ message: `Zerops project ${projectId} has no value for ${key}` });
+    }
+    // A read-only Zerops token sees sensitive values masked as this marker.
+    if (content === 'REDACTED') {
+      return yield* new StageOperationError({
+        message: `the Zerops token can only read ${key} masked; use a full-access token`,
+      });
     }
     return value;
   });

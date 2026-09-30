@@ -21,7 +21,7 @@ import type { CutoverSettings } from '../ops/cloudflare-stage-cutover.mts';
 import { SPICEDB_GRPC_TLS, SPICEDB_HTTP_TLS, spicedbTlsState } from '../ops/spicedb-tls.mts';
 import { ciPolicy, killSwitchRule, peoplePolicy, usageAlert } from '../ops/cloudflare-stage-cost-guard.mts';
 import { edgeUnits } from '../ops/stage-edge-units.mts';
-import { OpsMode, STAGE_ZEROPS_PROJECT_ID } from '../ops/stage-operations.mts';
+import { OpsMode, STAGE_ZEROPS_PROJECT_ID, readZeropsValue } from '../ops/stage-operations.mts';
 import {
   APP_DIRECTORY,
   FAKE_REVISION,
@@ -347,6 +347,22 @@ it.effect('creates the SpiceDB TLS secrets first on a stage without them', () =>
       stage,
     });
     expect(state).toStrictEqual(Option.none());
+  }),
+);
+
+it.effect('refuses a Zerops value a read-only token sees masked', () =>
+  Effect.gen(function* refusesMaskedValue() {
+    const stage = newStage();
+    stage.projectValues.set('db18_password', 'REDACTED');
+
+    const error = yield* run(readZeropsValue(settings.projectId, 'db18_password'), {
+      account: fakeCloudflareAccount({}),
+      files: fakeFiles(),
+      stage,
+      zerops: fakeZeropsApi(stage),
+    }).pipe(Effect.flip);
+
+    expect(error.message).toBe('the Zerops token can only read db18_password masked; use a full-access token');
   }),
 );
 
