@@ -15,7 +15,10 @@ const utilityLinks = [
   { href: "/", label: cs.header.home },
   { href: "/obchodni-podminky", label: cs.header.terms },
   { href: "/o-nas", label: cs.header.about },
-  { href: "/kategorie/nerezovy-spojovaci-material", label: cs.header.fasteners },
+  {
+    href: "/kategorie/nerezovy-spojovaci-material",
+    label: cs.header.fasteners,
+  },
   { href: "/kategorie/nerezovy-hutni-material", label: cs.header.steel },
   { href: "/blog", label: cs.header.blog },
   { href: "/partnersky-program", label: cs.header.partnerProgram },
@@ -77,29 +80,23 @@ export function SiteHeader() {
               <SearchForm.Control>
                 <SearchForm.Input
                   aria-label={cs.search.label}
-                  className="rounded-s-xs border-(--color-fg-primary) hover:border-(--color-fg-primary) focus:border-(--color-fg-primary)"
                   name="q"
                   placeholder={cs.search.placeholder}
                 />
-                <SearchForm.Button
-                  aria-label={cs.actions.search}
-                  className="rounded-e-xs"
-                  iconSize="lg"
-                  showSearchIcon
-                />
+                <SearchForm.Button aria-label={cs.actions.search} iconSize="lg" showSearchIcon />
               </SearchForm.Control>
             </SearchForm>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-3">
             <nav
               aria-label={cs.header.personalNavigation}
-              className="flex items-center gap-2 max-md:hidden"
+              className="flex items-center max-md:hidden"
             >
               <LinkButton
                 as={NextLink}
                 aria-label={cs.header.account}
-                className="h-12 w-12 rounded-sm p-2"
+                className="h-12 w-10 rounded-sm p-2"
                 href="/muj-ucet"
                 icon="icon-[mdi-light--account]"
                 iconSize="xl"

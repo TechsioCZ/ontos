@@ -1,0 +1,15 @@
+.akros-header {
+  --akros-header-search-width: var(--dimension-container-2xl);
+  --shadow-sm: 0 1px 4px rgb(0 0 0 / 10%);
+}
+
+.akros-header__search {
+  --color-input-border-base: var(--color-fg-primary);
+  --color-input-border-focus: var(--color-fg-primary);
+  --color-input-border-hover: var(--color-fg-primary);
+  --height-form-control-md: var(--dimension-64);
+  --padding-input-md: var(--dimension-20);
+  --radius-button-md: var(--radius-xs);
+  --radius-input-md: var(--radius-xs);
+  --text-input-md: var(--text-base);
+}

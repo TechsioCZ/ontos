@@ -7,6 +7,7 @@
 @import "../tokens/components/molecules/_akros-steps.css";
 @import "../tokens/components/molecules/_akros-vertical-navigation.css";
 @import "../tokens/components/organisms/_akros-data-table.css";
+@import "../tokens/components/organisms/_akros-header.css";
 @import "../tokens/components/organisms/_akros-footer.css";
 @import "../tokens/components/templates/_akros-product-detail.css";
 @import "../tokens/components/templates/_akros-checkout.css";
@@ -22,8 +23,9 @@
   --color-textarea-bg: var(--color-base);
   --color-textarea-bg-hover: var(--color-base);
   --color-textarea-bg-focus: var(--color-base);
-  --akros-content-max: 1440px;
-  --akros-page-gutter: 64px;
+  --akros-content-max: 1663px;
+  --akros-header-main-gutter: var(--dimension-44);
+  --akros-page-gutter: 12px;
   --akros-section-gap: 48px;
   --akros-sidebar-width: 280px;
   --akros-radius-lg: 16px;
@@ -68,7 +70,7 @@ body {
 }
 
 .akros-header__utility-bar {
-  border-bottom: 1px solid var(--color-border-primary);
+  border-bottom: 0;
   background: var(--color-fill-surface);
 }
 
@@ -111,6 +113,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: var(--dimension-32);
+  padding-inline: var(--akros-header-main-gutter);
   padding-block: var(--dimension-24);
 }
 
@@ -1229,7 +1232,8 @@ body {
 
 @media (max-width: 1100px) {
   :root {
-    --akros-page-gutter: 32px;
+    --akros-header-main-gutter: var(--dimension-32);
+    --akros-page-gutter: 16px;
     --akros-sidebar-width: 240px;
   }
 
@@ -1316,6 +1320,7 @@ body {
 
 @media (max-width: 760px) {
   :root {
+    --akros-header-main-gutter: var(--dimension-16);
     --akros-page-gutter: 16px;
     --akros-section-gap: 32px;
   }

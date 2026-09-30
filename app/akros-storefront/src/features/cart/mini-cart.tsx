@@ -104,7 +104,7 @@ export function MiniCart() {
           aria-expanded={open}
           aria-haspopup="dialog"
           aria-label={triggerLabel}
-          className="inline-flex h-12 w-auto shrink-0 cursor-pointer items-center justify-center gap-3 rounded-sm border-0 bg-(--color-primary) px-3 py-2 text-(--color-fg-primary) hover:bg-(--color-primary-hover) data-[state=open]:bg-(--color-primary-hover) max-lg:w-12 max-lg:px-2"
+          className="inline-flex h-16 w-[204px] shrink-0 cursor-pointer items-center justify-center gap-5 rounded-sm border-0 bg-(--color-primary) px-4 text-(--color-fg-primary) hover:bg-(--color-primary-hover) data-[state=open]:bg-(--color-primary-hover) max-lg:w-16 max-lg:px-2"
           data-state={open ? "open" : "closed"}
           href="/kosik"
           id={`${id}-trigger`}
@@ -123,13 +123,13 @@ export function MiniCart() {
           size="current"
           theme="unstyled"
         >
-          <strong className="min-w-0 truncate text-sm leading-tight max-lg:hidden">
+          <strong className="shrink-0 whitespace-nowrap text-md leading-tight font-medium uppercase max-lg:hidden">
             {formatPrice(subtotal)}
           </strong>
           <span className="relative inline-flex shrink-0 items-center justify-center">
-            <Icon icon="token-icon-cart-button" size="xl" />
+            <Icon icon="token-icon-cart-button" size="2xl" />
             <span
-              className="absolute -top-1 -right-1 grid h-5 min-w-5 place-items-center rounded-full bg-(--color-fg-primary) px-1 text-xs leading-none font-bold text-(--color-base-light)"
+              className="absolute -top-1 -right-1 grid h-5 min-w-5 place-items-center rounded-full bg-(--color-fg-primary) px-1 text-sm leading-none font-bold text-(--color-base-light)"
               aria-live="polite"
             >
               {itemCount}
