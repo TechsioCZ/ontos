@@ -1,4 +1,4 @@
-import { Effect, Predicate } from 'effect';
+import { Effect, Fiber, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
@@ -271,6 +271,39 @@ it.effect('recovers a deployment on a later read and caches only the fully healt
     ]);
     expect(cached).toBe(recovered);
     expect(requests).toBe(2);
+  }),
+);
+
+it.effect('keeps a shared load running for concurrent readers when the reader that started it is interrupted', () =>
+  Effect.gen(function* verifySharedLoadInterruption() {
+    let requests = 0;
+    const released = Promise.withResolvers<boolean>();
+    const loader = makeInstalledModuleCatalogLoader(
+      allowlist([
+        {
+          appId: 'property-registry',
+          contractUrl: 'https://property.example.test/.well-known/ontos-module-manifest.json',
+        },
+      ]),
+      async () => {
+        requests += 1;
+        await released.promise;
+        return response(contract('property-registry', 'property.registry'));
+      },
+    );
+
+    // The first reader starts the load, and a second request for another page joins it.
+    const starter = yield* Effect.forkChild(loader);
+    yield* Effect.yieldNow;
+    const joiner = yield* Effect.forkChild(loader);
+    yield* Effect.yieldNow;
+    // The first page is abandoned, as when a browser navigates away mid-request.
+    yield* Fiber.interrupt(starter);
+    yield* Effect.sync(() => released.resolve(true));
+
+    const catalog = yield* Fiber.join(joiner);
+    expect(catalog.moduleIds).toEqual(['property.registry']);
+    expect(requests).toBe(1);
   }),
 );
 

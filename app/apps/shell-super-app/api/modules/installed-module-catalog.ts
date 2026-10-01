@@ -10,7 +10,7 @@ import type {
   InstalledModuleCatalog,
 } from '@app/core-runtime';
 import { unitServiceFetch } from '@app/core-runtime/unit-service-fetch';
-import { Cause, Chunk, Context, Duration, Effect, Function as Fn, Layer, Schema, Semaphore } from 'effect';
+import { Cause, Chunk, Context, Duration, Effect, Fiber, Function as Fn, Layer, Schema, Semaphore } from 'effect';
 
 import type { DeploymentAllowlist } from './deployment-allowlist.ts';
 import { deploymentAllowlist } from './deployment-allowlist.ts';
@@ -269,10 +269,14 @@ export const makeInstalledModuleCatalogLoader = (
     if (loading !== undefined) {
       return Effect.succeed(loading);
     }
-    return Effect.cached(loadCatalog).pipe(
-      Effect.tap((memoizedLoad) =>
+    // The shared load runs on its own fiber so a reader that gives up (for
+    // example an aborted request) interrupts only its own join, never the
+    // load other readers are waiting on. Per-contract timeouts bound the load.
+    return Effect.forkDetach(loadCatalog).pipe(
+      Effect.map((fiber) => Fiber.join(fiber)),
+      Effect.tap((sharedLoad) =>
         Effect.sync(() => {
-          loading = memoizedLoad;
+          loading = sharedLoad;
         }),
       ),
     );
