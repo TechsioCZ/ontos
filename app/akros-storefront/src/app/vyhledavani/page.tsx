@@ -68,7 +68,10 @@ export default async function SearchPage({
       <StorefrontBreadcrumbs
         items={[{ href: "/", label: cs.header.home }, { label: cs.search.results }]}
       />
-      <section className="akros-section" aria-labelledby="search-results-title">
+      <section
+        className="akros-section akros-product-listing-section"
+        aria-labelledby="search-results-title"
+      >
         <div className="akros-category-heading">
           <h1 id="search-results-title">{cs.search.results}</h1>
           {q && <p>Dotaz: „{q}“</p>}

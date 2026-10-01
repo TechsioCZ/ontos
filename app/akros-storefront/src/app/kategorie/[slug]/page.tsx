@@ -66,7 +66,10 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
   return (
     <StorefrontShell activeCategorySlug={category.slug}>
       <StorefrontBreadcrumbs items={breadcrumbItems} />
-      <section className="akros-section" aria-labelledby="category-title">
+      <section
+        className="akros-section akros-product-listing-section"
+        aria-labelledby="category-title"
+      >
         <div className="akros-category-heading">
           <h1 id="category-title">{category.name}</h1>
           {category.description && <p>{category.description}</p>}
@@ -75,7 +78,10 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
       </section>
 
       {products.length > 0 ? (
-        <section className="akros-section" aria-label={`Produkty: ${category.name}`}>
+        <section
+          className="akros-section akros-product-listing-section"
+          aria-label={`Produkty: ${category.name}`}
+        >
           <ProductGrid products={visibleProducts.map(toProductSummary)} />
           <CatalogPagination
             currentPage={currentPage}
@@ -89,7 +95,10 @@ export default async function CategoryPage({ params, searchParams }: CategoryPag
       )}
 
       {recommendations.length > 0 && (
-        <section className="akros-section" aria-labelledby="recommendations-title">
+        <section
+          className="akros-section akros-product-listing-section"
+          aria-labelledby="recommendations-title"
+        >
           <h2 id="recommendations-title">{cs.catalog.recommendations}</h2>
           <ProductGrid products={recommendations.slice(0, 4).map(toProductSummary)} />
         </section>

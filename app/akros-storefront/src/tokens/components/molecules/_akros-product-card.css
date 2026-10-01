@@ -35,4 +35,12 @@
   :root {
     --text-product-card-price-size: var(--text-base);
   }
+
+  [data-akros-product-listing] .akros-product-card {
+    --spacing-product-card-col-layout: var(--dimension-8);
+    --spacing-product-card-padding: var(--dimension-8);
+    --text-product-card-name-size: var(--text-sm);
+    --text-product-card-stock-size: var(--text-xs);
+    --padding-button-sm: var(--dimension-4) var(--dimension-6);
+  }
 }

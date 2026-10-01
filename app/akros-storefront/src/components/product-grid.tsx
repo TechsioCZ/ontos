@@ -32,8 +32,12 @@ export function ProductGrid({
 }: {
   products: ProductGridItem[];
   action?: "purchase" | "detail";
-  columns?: "catalog" | "checkout" | "featured";
+  columns?: "catalog" | "checkout" | "featured" | "related";
 }) {
+  const isListing = columns === "catalog" || columns === "featured";
+  const imageSizes = isListing
+    ? "(max-width: 359px) 100vw, (max-width: 1100px) 50vw, 234px"
+    : "(max-width: 430px) 100vw, (max-width: 1100px) 50vw, 234px";
   const gridClassName =
     columns === "featured"
       ? "grid grid-cols-1 gap-x-5 gap-y-12 px-4 min-[431px]:grid-cols-2 min-[1101px]:grid-cols-4 max-md:gap-x-3 max-md:gap-y-6 max-md:px-2"
@@ -42,7 +46,7 @@ export function ProductGrid({
         : "akros-product-grid";
 
   return (
-    <div className={gridClassName}>
+    <div className={gridClassName} data-akros-product-listing={isListing ? columns : undefined}>
       {products.map((product, index) => {
         const detailHref = product.detailHref ?? `/produkt/${product.slug}`;
         const canAddToCart =
@@ -83,7 +87,7 @@ export function ProductGrid({
                     className="akros-catalog-product-card__image object-contain"
                     height={480}
                     loading={index < 4 ? "eager" : "lazy"}
-                    sizes="(max-width: 430px) 100vw, (max-width: 1100px) 50vw, 234px"
+                    sizes={imageSizes}
                     src={product.imageSrc}
                     width={480}
                   />
@@ -136,7 +140,7 @@ export function ProductGrid({
                 </NextLink>
               </ProductCard.Name>
 
-              <div className="flex items-center justify-between gap-2 py-1">
+              <div className="akros-product-card__stock-row flex items-center justify-between gap-2 py-1">
                 <ProductCard.Stock
                   className="akros-catalog-product-card__stock m-0 uppercase"
                   status={product.stock.status}
@@ -157,7 +161,7 @@ export function ProductGrid({
                 )}
               </div>
 
-              <p className="m-0 line-clamp-2 min-h-[2.8em] text-sm leading-normal text-(--color-fg-secondary)">
+              <p className="akros-product-card__description m-0 line-clamp-2 min-h-[2.8em] text-sm leading-normal text-(--color-fg-secondary)">
                 {supportingText}
               </p>
               {product.searchMatchLabel && (

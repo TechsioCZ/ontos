@@ -28,7 +28,7 @@ export function CatalogPagination({
 
   return (
     <Pagination
-      className="akros-pagination"
+      className="akros-pagination akros-catalog-pagination"
       count={itemCount}
       getPageUrl={getPageUrl}
       linkAs={NextLink}

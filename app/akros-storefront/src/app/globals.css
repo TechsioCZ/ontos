@@ -5,6 +5,7 @@
 @import "../tokens/components/molecules/_akros-breadcrumb.css";
 /* Homepage carousel color and icon-size mappings stay scoped to its wrapper. */
 @import "../tokens/components/molecules/_akros-carousel.css";
+@import "../tokens/components/molecules/_akros-pagination.css";
 @import "../tokens/components/molecules/_akros-product-card.css";
 @import "../tokens/components/molecules/_akros-steps.css";
 @import "../tokens/components/molecules/_akros-vertical-navigation.css";
@@ -1544,6 +1545,90 @@ body {
 @media (max-width: 430px) {
   .akros-product-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 760px) {
+  [data-akros-product-listing] {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--dimension-12);
+  }
+
+  [data-akros-product-listing="featured"] {
+    padding-inline: 0;
+  }
+
+  [data-akros-product-listing] .akros-catalog-product-card__image-link {
+    max-block-size: calc(var(--dimension-80) * 2);
+  }
+
+  [data-akros-product-listing] .akros-catalog-product-card__image {
+    object-fit: contain;
+  }
+
+  [data-akros-product-listing] .akros-product-card__stock-row {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: var(--dimension-4) var(--dimension-8);
+    padding-block: 0;
+  }
+
+  [data-akros-product-listing] .akros-product-card__description {
+    font-size: var(--text-xs);
+  }
+
+  [data-akros-product-listing] [data-akros-product-actions] > * {
+    min-height: var(--dimension-44);
+    height: auto;
+    white-space: normal;
+    line-height: 1.2;
+    text-align: center;
+  }
+
+  .akros-product-listing-section {
+    min-width: 0;
+    gap: var(--dimension-16);
+  }
+
+  .akros-product-listing-section h1,
+  .akros-product-listing-section h2 {
+    font-size: var(--text-lg);
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+  }
+
+  .akros-product-listing-section .akros-section__heading {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--dimension-8);
+  }
+
+  .akros-product-listing-section .akros-section__heading > a {
+    display: inline-flex;
+    min-height: var(--dimension-44);
+    align-items: center;
+    font-size: var(--text-sm);
+  }
+
+  .akros-news-section.akros-product-listing-section {
+    padding-block: var(--dimension-24);
+  }
+
+  .akros-catalog-pagination {
+    max-width: 100%;
+    margin-block-start: var(--dimension-8);
+  }
+
+  .akros-catalog-pagination > ul {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--dimension-8);
+  }
+}
+
+@media (max-width: 359px) {
+  [data-akros-product-listing] {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

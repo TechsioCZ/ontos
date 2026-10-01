@@ -97,7 +97,10 @@ export default function NewsPage() {
             </div>
           </div>
         </header>
-        <section className="akros-news-section" aria-labelledby="new-products-title">
+        <section
+          className="akros-news-section akros-product-listing-section"
+          aria-labelledby="new-products-title"
+        >
           <div className="akros-section__heading">
             <h2 id="new-products-title">Nové nerezové produkty v nabídce</h2>
             <NextLink href="/vyhledavani?q=novinka">Zobrazit všechny novinky</NextLink>
@@ -105,7 +108,7 @@ export default function NewsPage() {
           <ProductGrid action="detail" products={newProducts.map(toProductSummary)} />
         </section>
         <section
-          className="akros-news-section akros-news-section--sale"
+          className="akros-news-section akros-news-section--sale akros-product-listing-section"
           id="action-products"
           aria-labelledby="sale-products-title"
         >

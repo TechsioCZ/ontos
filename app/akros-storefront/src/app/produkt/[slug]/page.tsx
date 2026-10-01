@@ -304,7 +304,11 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
             aria-labelledby="product-recommendations-title"
           >
             <h2 id="product-recommendations-title">{cs.catalog.recommendations}</h2>
-            <ProductGrid action="detail" products={recommendations.map(toProductSummary)} />
+            <ProductGrid
+              action="detail"
+              columns="related"
+              products={recommendations.map(toProductSummary)}
+            />
           </section>
         )}
       </article>
