@@ -534,9 +534,9 @@ jobs:
   # the units build in shards on parallel runners, one unit at a time per shard: parallel builds on one
   # runner fight over its cores, and every unit's TS-Go declaration pass then runs several times slower.
   # The proof jobs below download every shard and prove the whole topology, exactly as one build did.
-  # Shards are balanced by measured build time; a new unit joins one shard of each target (a test checks).
+  # A new unit joins one shard of each target (a test checks).
   artifact-build:
-    name: Build ${{ matrix.target }} artifacts (${{ matrix.shard }})
+    name: Build ${{ matrix.target }} artifacts (${{ matrix.shard }}/5)
     needs: [queue-proof]
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
     runs-on: ubuntu-latest
@@ -545,18 +545,25 @@ jobs:
       fail-fast: false
       matrix:
         target: [node, cloudflare]
-        shard: [shell, catalog, commerce-customer-context, commerce-market-catalog, inventory-assortment]
+        shard: [1, 2, 3, 4, 5]
+        # Each target's units in five shards, balanced by that target's measured build time.
         include:
-          - shard: shell
-            units: apps/shell-super-app verticals/price-group-catalog
-          - shard: catalog
-            units: verticals/catalog verticals/pricing
-          - shard: commerce-customer-context
-            units: verticals/commerce-customer-context verticals/storefront-registry verticals/payment-term-catalog
-          - shard: commerce-market-catalog
-            units: verticals/commerce-market-catalog verticals/party-registry
-          - shard: inventory-assortment
-            units: verticals/inventory verticals/assortment
+          - { target: node, shard: 1, units: verticals/catalog }
+          - { target: node, shard: 2, units: verticals/commerce-customer-context verticals/storefront-registry }
+          - { target: node, shard: 3, units: verticals/assortment apps/shell-super-app }
+          - { target: node, shard: 4, units: verticals/party-registry verticals/inventory }
+          - target: node
+            shard: 5
+            units: >-
+              verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing
+              verticals/payment-term-catalog
+          - { target: cloudflare, shard: 1, units: verticals/assortment verticals/pricing }
+          - { target: cloudflare, shard: 2, units: verticals/party-registry verticals/price-group-catalog }
+          - { target: cloudflare, shard: 3, units: verticals/catalog verticals/storefront-registry }
+          - { target: cloudflare, shard: 4, units: verticals/commerce-customer-context apps/shell-super-app }
+          - target: cloudflare
+            shard: 5
+            units: verticals/inventory verticals/commerce-market-catalog verticals/payment-term-catalog
           - target: node
             script: build
             public-site-url: http://localhost:8080

@@ -388,7 +388,7 @@ builds a few units for one target (`node` with `build`, `cloudflare` with `cloud
 unit at a time, and uploads their git-ignored outputs. The `Node Backend Federation Artifact Proof`
 and `Cloudflare Workerd Artifact Proof` jobs download every shard
 (`scripts/unpack-unit-build-outputs.sh` fails naming any unit no shard built) and prove the whole
-topology from those outputs. A new unit joins one shard of the matrix; `Repository Tooling Tests`
+topology from those outputs. A new unit joins one shard of each target; `Repository Tooling Tests`
 fails until it does. The Cloudflare proof runs as two jobs over the same outputs: one verifies the
 Worker outputs and their SSR, the other proves the Worker topology below.
 

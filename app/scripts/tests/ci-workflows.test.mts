@@ -806,12 +806,12 @@ const ArtifactBuildWorkflowSchema = Schema.Struct({
           include: Schema.Array(
             Schema.Struct({
               script: Schema.optional(Schema.String),
-              shard: Schema.optional(Schema.String),
+              shard: Schema.optional(Schema.Number),
               target: Schema.optional(Schema.String),
               units: Schema.optional(Schema.String),
             }),
           ),
-          shard: Schema.Array(Schema.String),
+          shard: Schema.Array(Schema.Number),
           target: Schema.Array(Schema.String),
         }),
       }),
@@ -827,7 +827,7 @@ const TopologyUnitsSchema = Schema.Struct({
 
 const sorted = (values: readonly string[]) => EffectArray.sort(values, Order.String);
 
-it('builds every delivery unit of the topology in exactly one artifact-build shard, for both targets', () => {
+it('builds every delivery unit of the topology in exactly one artifact-build shard of each target', () => {
   const { jobs } = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(
     parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')),
   );
@@ -835,15 +835,16 @@ it('builds every delivery unit of the topology in exactly one artifact-build sha
     JSON.parse(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
   );
   const { matrix } = jobs[ARTIFACT_BUILD_JOB].strategy;
-  const shardUnits = matrix.include.flatMap((entry) =>
-    entry.shard !== undefined && entry.units !== undefined ? [entry] : [],
-  );
-  expect(sorted(shardUnits.flatMap((entry) => (entry.shard === undefined ? [] : [entry.shard])))).toEqual(
-    sorted(matrix.shard),
-  );
-  const built = shardUnits.flatMap((entry) => entry.units?.split(/\s+/u).filter(Boolean) ?? []);
   const units = [topology.shell, ...topology.verticals].map((unit) => unit.path);
-  expect(sorted(built)).toEqual(sorted(units));
+  for (const target of matrix.target) {
+    const shards = matrix.include.flatMap((entry) =>
+      entry.target === target && entry.units !== undefined ? [entry] : [],
+    );
+    // Every shard of the target builds units, and the target's shards build every unit once.
+    expect(shards.map(({ shard }) => shard)).toEqual(matrix.shard);
+    const built = shards.flatMap((entry) => entry.units?.split(/\s+/u).filter(Boolean) ?? []);
+    expect(sorted(built)).toEqual(sorted(units));
+  }
   // Each target builds with its own script, and both proofs wait for every shard.
   expect(
     Object.fromEntries(
