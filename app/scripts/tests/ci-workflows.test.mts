@@ -240,7 +240,11 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   expect(edge.environment).toBe(EDGE_ENVIRONMENT);
   // The edge waits only for the migrations, and deploys beside the Zerops units.
   expect(edge.needs).toEqual([DEPLOY_TARGET_JOB, MIGRATIONS_JOB, EDGE_READINESS_JOB]);
-  expect(edge.if).toBe("needs.edge-deploy-readiness.outputs.configured == 'true'");
+  expect(edge.if).toBe(
+    expression(
+      "!cancelled() && needs.deploy-migrations.result == 'success' && needs.edge-deploy-readiness.outputs.configured == 'true'",
+    ),
+  );
   expect(edge.env).toBeUndefined();
   const byName = new Map(edge.steps.map((step) => [step.name, step]));
   expect(byName.get('Resolve the last successful edge deployment')?.run).toContain('--environment stage-edge');
@@ -574,7 +578,11 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   expect(jobs['deploy-cloudflare'].needs).toEqual([DEPLOY_TARGET_JOB, MIGRATIONS_JOB, EDGE_READINESS_JOB]);
   // On Cloudflare the snapshot is published again from the new Workers, outside the deploy history.
   const publish = jobs['publish-edge-composition'];
-  expect(publish.if).toBe("needs.deploy-target.outputs.target == 'cloudflare'");
+  expect(publish.if).toBe(
+    expression(
+      "!cancelled() && needs.deploy-zerops.result == 'success' && needs.deploy-cloudflare.result == 'success' && needs.deploy-target.outputs.target == 'cloudflare'",
+    ),
+  );
   // It restarts the Zerops consumers, so it waits for deploy-zerops too.
   expect(publish.needs).toEqual(['deploy-target', 'deploy-zerops', 'deploy-cloudflare']);
   expect(publish.environment).toEqual({ deployment: false, name: 'stage' });
@@ -701,6 +709,21 @@ it('requires every gate, or the merge queue proof, in the one Workspace gates ch
   expect(stepPasses(script, { NEEDS_JSON: needs({ proven: 'false', result: 'success' }, allPassed) })).toBe(true);
   expect(stepPasses(script, { NEEDS_JSON: needs({ proven: 'false', result: 'success' }, allSkipped) })).toBe(false);
   expect(stepPasses(script, { NEEDS_JSON: needs({ result: 'failure' }, allPassed) })).toBe(false);
+});
+
+it('runs every job after the gates even when a merge-queue-proven run skipped them', () => {
+  const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  const ancestors = (job: string): ReadonlySet<string> =>
+    new Set((jobs[job]?.needs ?? []).flatMap((parent) => [parent, ...ancestors(parent)]));
+  // A skipped ancestor skips a job whose `if` relies on the implicit success(), so every job that the
+  // skipped gates precede must decide with !cancelled() (or always()) and check its own needs' results.
+  const afterGates = Object.keys(jobs).filter((job) => GATE_JOBS.some((gate) => ancestors(job).has(gate)));
+  expect(afterGates).toContain('deploy-cloudflare');
+  expect(afterGates).toContain('sync-edge-composition');
+  for (const job of afterGates) {
+    // The job name leads the subject, so a failure names the job.
+    expect(`${job}: ${jobs[job]?.if ?? ''}`).toMatch(/^[a-z-]+: \$\{\{ (?:!cancelled\(\)|always\(\))/u);
+  }
 });
 
 const ArtifactBuildWorkflowSchema = Schema.Struct({

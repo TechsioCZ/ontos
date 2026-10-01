@@ -1302,7 +1302,9 @@ jobs:
   # Zerops one. Unconfigured repositories skip it, so it records nothing.
   deploy-cloudflare:
     name: Deploy edge units to Cloudflare Workers after the stage migration
-    if: needs.edge-deploy-readiness.outputs.configured == 'true'
+    # Results are checked explicitly: a merge-queue-proven run skips the gates, and a skipped ancestor would
+    # otherwise skip every job below it through the implicit success().
+    if: ${{ !cancelled() && needs.deploy-migrations.result == 'success' && needs.edge-deploy-readiness.outputs.configured == 'true' }}
     needs: [deploy-target, deploy-migrations, edge-deploy-readiness]
     runs-on: ubuntu-latest
     # One edge deploy at a time; a newer pending run replaces an older one, and it plans from the last
@@ -1662,7 +1664,9 @@ jobs:
   # deploy has replaced them, and the consumers left on Zerops (the outbox workers) restart on it.
   publish-edge-composition:
     name: Publish the active Application Composition after the edge deploy
-    if: needs.deploy-target.outputs.target == 'cloudflare'
+    if: >-
+      ${{ !cancelled() && needs.deploy-zerops.result == 'success' && needs.deploy-cloudflare.result == 'success'
+      && needs.deploy-target.outputs.target == 'cloudflare' }}
     # It restarts the Zerops consumers, so it also waits for deploy-zerops to finish deploying them.
     needs: [deploy-target, deploy-zerops, deploy-cloudflare]
     runs-on: ubuntu-latest
@@ -1720,7 +1724,9 @@ jobs:
   # the Cloudflare token, so this runs there, without creating a deployment. Writing the key deploys nothing.
   sync-edge-composition:
     name: Hand the published Application Composition to its Worker consumers
-    if: needs.publish-edge-composition.outputs.edge-consumers != '' && needs.publish-edge-composition.outputs.edge-consumers != '[]'
+    if: >-
+      ${{ !cancelled() && needs.publish-edge-composition.result == 'success'
+      && needs.publish-edge-composition.outputs.edge-consumers != '' && needs.publish-edge-composition.outputs.edge-consumers != '[]' }}
     needs: [publish-edge-composition]
     runs-on: ubuntu-latest
     timeout-minutes: 15
