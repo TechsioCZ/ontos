@@ -803,7 +803,7 @@ it.live('executes the tenant-only Price Group lifecycle through the six governed
       );
       const actionDbGroup = actionDbGroupOutcome.businessResult.initialDefinition;
       const actionRetirementPayload = Schema.decodeUnknownSync(RetirePriceGroupPayloadSchema)({
-        effectiveAt: '2026-10-01T00:00:00.000Z',
+        effectiveAt: '2099-01-01T00:00:00.000Z',
         expectedCurrent: {
           catalogRevision: actionDbGroup.acceptedCatalogRevision,
           definitionRevisionId: actionDbGroup.definitionRevisionId,

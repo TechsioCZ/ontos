@@ -4,7 +4,7 @@
   "baselineSourceRevision": "59fa020f5f63f37d44622f71978b726725132e3e",
   "compatibilityEligibleEntrypoints": [],
   "decisionReference": "https://github.com/TechsioCZ/ontos/issues/173",
-  "expiresAt": "2026-09-30T23:59:59.000Z",
+  "expiresAt": "2026-10-31T23:59:59.000Z",
   "mode": "report_only",
   "schemaVersion": 1
 }
