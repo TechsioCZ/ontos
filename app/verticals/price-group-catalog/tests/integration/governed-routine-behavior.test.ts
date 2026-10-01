@@ -3,8 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { sql } from 'drizzle-orm';
-import { Effect, Result, Schema } from 'effect';
+import { DateTime, Effect, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 
 import {
   makeTestDatabaseFromClient,
@@ -802,8 +803,12 @@ it.live('executes the tenant-only Price Group lifecycle through the six governed
         }),
       );
       const actionDbGroup = actionDbGroupOutcome.businessResult.initialDefinition;
+      // The Action reads its trusted operation time from the Effect Clock. Pin that clock so the
+      // scheduled retirement stays in the Action's future no matter when the suite runs.
+      const actionTrustedOperationAt = '2026-09-20T00:00:00.000Z';
+      const actionRetirementEffectiveAt = '2026-10-01T00:00:00.000Z';
       const actionRetirementPayload = Schema.decodeUnknownSync(RetirePriceGroupPayloadSchema)({
-        effectiveAt: '2026-10-01T00:00:00.000Z',
+        effectiveAt: actionRetirementEffectiveAt,
         expectedCurrent: {
           catalogRevision: actionDbGroup.acceptedCatalogRevision,
           definitionRevisionId: actionDbGroup.definitionRevisionId,
@@ -813,23 +818,28 @@ it.live('executes the tenant-only Price Group lifecycle through the six governed
         },
         reason: 'Schedule retirement through the real Action and database path.',
       });
-      const actionDbRetirement = yield* inScope((invoker) => {
-        const collector = createActionCollector(
-          retirePriceGroupAction.descriptor.domainEvents,
-          'pricing.price-group-catalog',
-          retirePriceGroupAction.descriptor.accessEvidencePolicy,
-          retirePriceGroupAction.descriptor.auditEvidenceSchema,
-        );
-        return handleRetirePriceGroup(actionRetirementPayload, {
-          actionInvocationId: actionDbRetireInvocationId,
-          addDomainEvent: collector.addDomainEvent,
-          addOutboxMessage: collector.addOutboxMessage,
-          recordAuditEvidence: collector.recordAuditEvidence,
-          recordDataAccess: collector.recordDataAccess,
-          scope,
-          services: priceGroupCatalogPersistenceFromRoutineInvoker(invoker, scope),
+      const actionDbRetirement = yield* Effect.gen(function* retireThroughActionAtPinnedClock() {
+        yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(actionTrustedOperationAt)));
+        return yield* inScope((invoker) => {
+          const collector = createActionCollector(
+            retirePriceGroupAction.descriptor.domainEvents,
+            'pricing.price-group-catalog',
+            retirePriceGroupAction.descriptor.accessEvidencePolicy,
+            retirePriceGroupAction.descriptor.auditEvidenceSchema,
+          );
+          return handleRetirePriceGroup(actionRetirementPayload, {
+            actionInvocationId: actionDbRetireInvocationId,
+            addDomainEvent: collector.addDomainEvent,
+            addOutboxMessage: collector.addOutboxMessage,
+            recordAuditEvidence: collector.recordAuditEvidence,
+            recordDataAccess: collector.recordDataAccess,
+            scope,
+            services: priceGroupCatalogPersistenceFromRoutineInvoker(invoker, scope),
+          });
         });
-      });
+      }).pipe(Effect.provide(TestClock.layer()));
+      expect(actionDbRetirement.trustedOperationAt).toBe(actionTrustedOperationAt);
+      expect(actionDbRetirement.retirementEffectiveAt).toBe(actionRetirementEffectiveAt);
       expect(Date.parse(actionDbRetirement.trustedOperationAt)).toBeLessThanOrEqual(
         Date.parse(actionDbRetirement.verifiedAt),
       );
