@@ -572,8 +572,10 @@ applications:
   `cloudflare:proof` sends the token as `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`.
 - `ontos-stage-public-paths` bypasses Access for the paths that must work without a login. On the
   Shell that is `/shell-super-app-api/auth/api-key/gateway-context`, which verticals call with an API
-  key. On every vertical it is `/mf-manifest.json`, `/remoteEntry.js`, `/static/*` and `/locales/*`,
-  because the browser loads federated remotes cross-origin without credentials. Cloudflare applies
+  key, plus `/.well-known/ontos-shell-runtime.json` and `/mf-manifest.json`. On every vertical it is
+  `/mf-manifest.json`, `/.well-known/ontos-module-manifest.json`, `/remoteEntry.js`, `/static/*` and
+  `/locales/*`, because the browser loads federated remotes cross-origin without credentials and the
+  composition publish step reads the contract files without a login. Cloudflare applies
   the more specific path application before the hostname one. Pages and BFF calls still need a login;
   the browser reaches the BFFs through the Shell, which calls verticals over service bindings.
 

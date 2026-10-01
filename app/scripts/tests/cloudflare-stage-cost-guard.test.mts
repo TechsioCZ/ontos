@@ -151,7 +151,18 @@ it.effect('provisions every cost guard on an empty account and hands CI the zone
 );
 
 const PEOPLE_POLICY = 'ontos-stage-people';
-const FEDERATION_PATHS = ['/mf-manifest.json', '/remoteEntry.js', '/static/*', '/locales/*'];
+const FEDERATION_PATHS = [
+  '/mf-manifest.json',
+  '/remoteEntry.js',
+  '/static/*',
+  '/locales/*',
+  '/.well-known/ontos-module-manifest.json',
+];
+const SHELL_PUBLIC_PATHS = [
+  '/shell-super-app-api/auth/api-key/gateway-context',
+  '/.well-known/ontos-shell-runtime.json',
+  '/mf-manifest.json',
+];
 
 it.effect('gates every stage hostname behind one Access application only when enforced', () =>
   Effect.gen(function* enforcesAccess() {
@@ -181,7 +192,7 @@ it.effect('gates every stage hostname behind one Access application only when en
       app(
         'ontos-stage-public-paths',
         [
-          `${SHELL_HOSTNAME}/shell-super-app-api/auth/api-key/gateway-context`,
+          ...SHELL_PUBLIC_PATHS.map((path) => `${SHELL_HOSTNAME}${path}`),
           ...verticals.flatMap((hostname) => FEDERATION_PATHS.map((path) => `${hostname}${path}`)),
         ],
         [{ id: 'policy-3', precedence: 1 }],

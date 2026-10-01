@@ -64,6 +64,13 @@ export const GATEWAY_CONTEXT_PATH = '/shell-super-app-api/auth/api-key/gateway-c
  * built bundle every visitor downloads anyway; HTML, SSR and APIs stay behind Access.
  */
 export const FEDERATION_ASSET_PATHS = ['/mf-manifest.json', '/remoteEntry.js', '/static/*', '/locales/*'] as const;
+/**
+ * The deployment contracts the Active Application Composition publisher observes on each unit's own
+ * hostname. CI reads them without an Access session, and like the federation manifest they are
+ * static build metadata, so they bypass Access too. The Shell has no remote entry, only these.
+ */
+export const VERTICAL_CONTRACT_PATHS = ['/.well-known/ontos-module-manifest.json'] as const;
+export const SHELL_CONTRACT_PATHS = ['/.well-known/ontos-shell-runtime.json', '/mf-manifest.json'] as const;
 export const ACCESS_CLIENT_ID_SECRET = 'CLOUDFLARE_ACCESS_CLIENT_ID';
 export const ACCESS_CLIENT_SECRET_SECRET = 'CLOUDFLARE_ACCESS_CLIENT_SECRET';
 export const ZONE_ID_VARIABLE = 'CLOUDFLARE_STAGE_ZONE_ID';
@@ -384,9 +391,12 @@ export const stageAccessApps = (
   {
     destinations: [
       `${plan.shellHostname}${GATEWAY_CONTEXT_PATH}`,
+      ...SHELL_CONTRACT_PATHS.map((path) => `${plan.shellHostname}${path}`),
       ...plan.hostnames
         .filter((hostname) => hostname !== plan.shellHostname)
-        .flatMap((hostname) => FEDERATION_ASSET_PATHS.map((path) => `${hostname}${path}`)),
+        .flatMap((hostname) =>
+          [...FEDERATION_ASSET_PATHS, ...VERTICAL_CONTRACT_PATHS].map((path) => `${hostname}${path}`),
+        ),
     ],
     name: PUBLIC_PATHS_APP,
     policies: [{ id: ids.bypass, precedence: 1 }],
