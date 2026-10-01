@@ -91,11 +91,10 @@ console.log([
    DNS at it. Or keep the `*.zerops.app` subdomain and make sure it matches the origin you used in
    the secrets file and step 5.
 
-7. **Pass the authorization gate (blocks step 8).** The deploy plan refuses production while
-   `topology/authorization-rollout.json` is `report_only` and `topology/authorization-contexts/`
-   has no production context. Production needs its own enforced authorization evidence and an
-   approved production context: issue #173 (implementation) and issue #369 (approval). Until both
-   are done, step 8 fails. See
+7. **Pass the authorization gate (blocks step 8).** The deploy plan refuses production until
+   production has exact-build enforced authorization evidence and an approved production context
+   in `topology/authorization-contexts/`. Neither exists yet: issue #173 (implementation) and
+   issue #369 (approval). Until both are done, step 8 fails. See
    [Fail-closed authorization promotion](DEPLOYMENT.md#fail-closed-authorization-promotion).
 
 8. **Dispatch the first deploy (1 min).** The first deploy has no base, so it must be `full=true`:
