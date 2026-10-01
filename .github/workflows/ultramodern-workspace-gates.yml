@@ -75,7 +75,8 @@ jobs:
           fi
 
   # The only job that saves the caches the gates restore, on main, where every pull request and merge
-  # group can read them: the pnpm store, the TS-Go typecheck build, and the Playwright Chromium build.
+  # group can read them: the pnpm store, the TS-Go typecheck build, the Playwright Chromium build, and
+  # the apt packages of Chromium's system libraries.
   # It is no gate and gates nothing; a later run without its caches only installs and builds from scratch.
   warm-caches:
     name: Warm the gate caches on main
@@ -129,6 +130,38 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
+
+      # Chromium's system libraries come from apt, whose mirror can serve them at 100 kB/s; their downloaded
+      # packages are cached per runner image. apt reuses a cached package only when it matches the index.
+      - name: Name the Chromium system-library package cache
+        id: chromium-debs
+        run: echo "key=playwright-apt-debs-$ImageOS-$ImageVersion-${{ hashFiles('app/pnpm-lock.yaml') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Check for the Chromium system-library packages
+        id: chromium-debs-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/playwright-apt-debs
+          key: ${{ steps.chromium-debs.outputs.key }}
+          lookup-only: true
+
+      - name: Download the Chromium system-library packages
+        if: steps.chromium-debs-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        run: |
+          mise exec -- pnpm --filter @app/shell-super-app exec playwright install-deps chromium
+          mkdir -p ~/.cache/playwright-apt-debs
+          # The marker keeps the cache saveable on an image that already has every library.
+          touch ~/.cache/playwright-apt-debs/.downloaded
+          find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} ~/.cache/playwright-apt-debs/ \;
+          echo "Cached $(find ~/.cache/playwright-apt-debs -name '*.deb' | wc -l) packages."
+
+      - name: Save the Chromium system-library packages
+        if: steps.chromium-debs-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/playwright-apt-debs
+          key: ${{ steps.chromium-debs.outputs.key }}
 
   # Each entry runs its commands one after another and reports every one that fails. Entries group a few
   # minutes of checks each, so each runner pays one install for them: the org runs at most 20 jobs at
@@ -415,6 +448,21 @@ jobs:
           path: ~/.cache/ms-playwright
           key: playwright-chromium-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
 
+      # Chromium's system libraries come from apt, whose mirror can serve them at 100 kB/s; their downloaded
+      # packages are cached per runner image. apt reuses a cached package only when it matches the index.
+      - name: Name the Chromium system-library package cache
+        id: chromium-debs
+        if: matrix.suite == 'browser'
+        run: echo "key=playwright-apt-debs-$ImageOS-$ImageVersion-${{ hashFiles('app/pnpm-lock.yaml') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Chromium system-library packages
+        if: matrix.suite == 'browser'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/playwright-apt-debs
+          key: ${{ steps.chromium-debs.outputs.key }}
+          restore-keys: playwright-apt-debs-
+
       # The system-library install goes through apt and can take minutes on a slow mirror, so it runs in the
       # background while the services start and the migrations run; the browser tests wait for it below.
       - name: Start installing Chromium and its runtime dependencies in the background
@@ -423,6 +471,9 @@ jobs:
         env:
           CHROMIUM_CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
         run: |
+          if [ -d ~/.cache/playwright-apt-debs ]; then
+            sudo find ~/.cache/playwright-apt-debs -maxdepth 1 -name '*.deb' -exec cp {} /var/cache/apt/archives/ \;
+          fi
           if [ "$CHROMIUM_CACHED" = true ]; then
             set -- install-deps chromium
           else
