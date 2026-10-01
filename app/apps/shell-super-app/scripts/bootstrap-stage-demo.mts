@@ -1,16 +1,38 @@
 // @effect-diagnostics nodeBuiltinImport:off processEnv:off -- Existing compatibility boundary; expires: 2026-12-31.
-import { Console, Effect, Exit, Layer } from 'effect';
+import { NodeServices } from '@effect/platform-node';
+import { Console, Effect, Exit, FileSystem, Layer } from 'effect';
 
 import { AuthConfig } from '../api/auth/config.ts';
 import { AuthDatabaseLive } from '../api/auth/db/client.ts';
 import { StageDemoBootstrapError } from '../api/auth/stage-demo-bootstrap-contract.ts';
+import type { StageAccountsFileReader } from '../api/auth/stage-demo-bootstrap-contract.ts';
 import {
   bootstrapStageDemo,
   loadStageDemoConfiguration,
 } from '../api/auth/stage-demo-bootstrap-runtime-infrastructure.ts';
 
+/** Reads the operator accounts file named by `ONTOS_STAGE_ACCOUNTS_FILE`; its values are never logged. */
+const readAccountsFile: StageAccountsFileReader = (path) =>
+  Effect.gen(function* readStageAccountsFile() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const [{ mode }, source] = yield* Effect.all([fileSystem.stat(path), fileSystem.readFileString(path, 'utf-8')], {
+      concurrency: 2,
+    });
+    return { mode, source };
+  }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new StageDemoBootstrapError({
+          cause,
+          code: 'stage_demo_configuration_invalid',
+          reason: 'The stage accounts file could not be read',
+        }),
+    ),
+    Effect.provide(NodeServices.layer),
+  );
+
 const program = Effect.gen(function* bootstrapStageDemoProgram() {
-  const configuration = yield* loadStageDemoConfiguration();
+  const configuration = yield* loadStageDemoConfiguration(readAccountsFile);
   const result = yield* bootstrapStageDemo(configuration).pipe(
     Effect.provide(
       AuthDatabaseLive.pipe(

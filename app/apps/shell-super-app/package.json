@@ -20,7 +20,7 @@
     "db:check": "drizzle-kit check --config drizzle.auth.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.auth.config.ts",
     "db:verify": "node scripts/verify-auth-db-schema.mts",
-    "stage:bootstrap-demo": "sh scripts/bootstrap-stage-demo.sh",
+    "stage:bootstrap-demo": "node scripts/bootstrap-stage-demo.mts",
     "test:e2e": "playwright test",
     "test:integration": "rstest --project integration",
     "test:unit": "rstest --project unit"
@@ -68,6 +68,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260923.1",
+    "@effect/platform-node": "4.0.0-rc.117",
     "@modern-js/adapter-rstest": "catalog:ultramodern",
     "@modern-js/app-tools": "catalog:ultramodern",
     "@modern-js/app-tools-extensions": "catalog:ultramodern",

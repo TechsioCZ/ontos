@@ -50,6 +50,7 @@ describe('stage-demo-bootstrap', () => {
           authBaseUrl: baseConfiguration.baseUrl,
           authSecret: baseConfiguration.secret,
           databaseAdminUrl: baseConfiguration.connectionString,
+          retiredAccountEmails: [],
         } as const;
         const cleanup = Effect.gen(function* cleanupPasswordFixture() {
           const users = yield* database.select({ id: user.id }).from(user).where(eq(user.email, email));
@@ -158,6 +159,7 @@ describe('stage-demo-bootstrap', () => {
               authBaseUrl: configuration.baseUrl,
               authSecret: configuration.secret,
               databaseAdminUrl: configuration.connectionString,
+              retiredAccountEmails: [],
             }).pipe(
               Effect.provideService(AuthDatabase, {
                 adapter: (options) => {

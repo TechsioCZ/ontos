@@ -57,7 +57,7 @@ Use these files to implement the feature:
 - `scripts/tests/initialize-local-development.test.mts` — fixed local context and relationship tests.
 - `packages/core-runtime/src/install/stage-context-bootstrap.ts` — fixed stage Tenant/Principal contexts and membership relationships.
 - `apps/shell-super-app/api/auth/stage-demo-bootstrap-runtime-infrastructure.ts` — existing operator-invoked stage context boundary that must remain ordered before Action grants.
-- `apps/shell-super-app/scripts/bootstrap-stage-demo.sh` — existing secret-safe operator workflow; it must not make Action provisioning an automatic startup effect.
+- `apps/shell-super-app/scripts/bootstrap-stage-demo.mts` — existing secret-safe operator workflow (identities from the operator accounts file); it must not make Action provisioning an automatic startup effect.
 - `package.json` — root operator command and focused validation scripts.
 - `scripts/validate-ultramodern-workspace.mts` — repository contract proving provisioning remains explicit and is not wired into startup/deploy paths.
 - `packages/core-runtime/tests/unit/action-permission.test.ts` — low-level request, decision, sanitization, and compatibility tests.

@@ -11,7 +11,7 @@ import { AuthDatabase } from './db/client.ts';
 import { account, session, user } from './db/schema.ts';
 import type { AuthDatabaseExecutor } from './db/types.ts';
 import {
-  STAGE_DEMO_RETIRED_ACCOUNT_EMAILS,
+  STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY,
   StageDemoBootstrapError,
   classifyExactStageDemoRecord,
   parseStageDemoBootstrapConfig,
@@ -20,6 +20,7 @@ import type {
   StageDemoAccountConfig,
   StageDemoAccountResult,
   StageDemoBootstrapConfig,
+  StageAccountsFileReader,
   StageDemoBootstrapResult,
   StageDemoEnvironment,
 } from './stage-demo-bootstrap-contract.ts';
@@ -169,10 +170,7 @@ const loadStageDemoEnvironment = Effect.fn('StageDemoBootstrapRuntimeInfrastruct
         BETTER_AUTH_SECRET: optionalSecret('BETTER_AUTH_SECRET'),
         BETTER_AUTH_URL: optionalString('BETTER_AUTH_URL'),
         DATABASE_ADMIN_URL: optionalSecret('DATABASE_ADMIN_URL'),
-        STAGE_AKROS_ADMIN_PASSWORD: optionalSecret('STAGE_AKROS_ADMIN_PASSWORD'),
-        STAGE_AKROS_DEMO_PASSWORD: optionalSecret('STAGE_AKROS_DEMO_PASSWORD'),
-        STAGE_TECHSIO_ADMIN_PASSWORD: optionalSecret('STAGE_TECHSIO_ADMIN_PASSWORD'),
-        STAGE_TECHSIO_DEMO_PASSWORD: optionalSecret('STAGE_TECHSIO_DEMO_PASSWORD'),
+        [STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY]: optionalString(STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY),
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: optionalString('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'),
       },
       { concurrency: 8 },
@@ -182,6 +180,7 @@ const loadStageDemoEnvironment = Effect.fn('StageDemoBootstrapRuntimeInfrastruct
 );
 
 export const loadStageDemoConfiguration = Effect.fn('StageDemoBootstrap.loadConfiguration')(function* loadConfiguration(
+  readAccountsFile: StageAccountsFileReader,
   environment?: StageDemoEnvironment,
 ) {
   const runtimeEnvironment =
@@ -195,7 +194,7 @@ export const loadStageDemoConfiguration = Effect.fn('StageDemoBootstrap.loadConf
           }),
       ),
     ));
-  return yield* parseStageDemoBootstrapConfig(runtimeEnvironment);
+  return yield* parseStageDemoBootstrapConfig(runtimeEnvironment, readAccountsFile);
 });
 
 /**
@@ -277,7 +276,7 @@ export const bootstrapStageDemo = Effect.fn('StageDemoBootstrap.bootstrap')(func
         }),
     ),
   );
-  const retiredAccounts = yield* Effect.forEach(STAGE_DEMO_RETIRED_ACCOUNT_EMAILS, retireAuthUser, {
+  const retiredAccounts = yield* Effect.forEach(configuration.retiredAccountEmails, retireAuthUser, {
     concurrency: 1,
   });
   const accounts: StageDemoAccountResult[] = [

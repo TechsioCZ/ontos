@@ -627,7 +627,6 @@ export default defineConfig({
     {
       // These files define intentionally non-production demo/test credentials.
       files: [
-        'apps/shell-super-app/api/auth/stage-demo-bootstrap-contract.ts',
         'apps/shell-super-app/tests/e2e/auth-fixture.ts',
         'apps/shell-super-app/tests/integration/auth-runtime.test.ts',
         'apps/shell-super-app/tests/integration/identity-modes-runtime.test.ts',
