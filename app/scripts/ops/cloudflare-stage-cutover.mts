@@ -83,8 +83,9 @@ import type { ServiceImport, ZeropsService } from './stage-operations.mts';
  * STAGE_SHELL_HOSTNAME, STAGE_ACCESS_EMAILS (comma-separated people Access admits and the usage
  * notification emails) and, optionally, CLOUDFLARE_STAGE_EDGE_API_TOKEN (the narrower CI token;
  * without it CI receives CLOUDFLARE_API_TOKEN) and STAGE_ACCESS_ENFORCE_SHELL (default false),
- * plus ZEROPS_TOKEN for the SpiceDB TLS secrets. Secret values are read from Zerops with the
- * locally authenticated `zcli` and never printed.
+ * plus ZEROPS_TOKEN for the SpiceDB TLS secrets and the Shell's secrets shellsuperapp_BETTER_AUTH_SECRET
+ * and shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK. Other secret values are read from Zerops with the
+ * locally authenticated `zcli`. No secret value is ever printed.
  */
 export const STAGE_TUNNEL_NAME = 'ontos-stage';
 export const STAGE_HYPERDRIVE_NAME = 'ontos-stage-runtime';
@@ -276,8 +277,14 @@ export const workerSecretPlan = (
     }),
   );
 
-/** Zerops hostnames never contain a hyphen; the verticals' and the Shell's are their IDs without one. */
-const zeropsHostname = (unitId: string) => unitId.replaceAll('-', '');
+/**
+ * The Shell's own secrets, read from the settings file (or the environment) under the names the vault
+ * export of the retired Zerops Shell uses, so the same file also feeds `stage-zerops-services.mts restore`.
+ * Zerops no longer holds them: the Shell service was retired, and Zerops returns sensitive project
+ * variables only masked.
+ */
+export const SHELL_AUTH_SECRET_SETTING = 'shellsuperapp_BETTER_AUTH_SECRET';
+export const SHELL_GATEWAY_PRIVATE_JWK_SETTING = 'shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK';
 
 /** The Shell's Ed25519 gateway signing key, as stored on stage (a private JWK). */
 const GatewayPrivateJwkSchema = Schema.fromJsonString(
@@ -326,22 +333,27 @@ export const gatewayPublicJwksFor = (privateJwk: Redacted.Redacted) =>
     ),
   );
 
-const readWorkerSecretSources = (units: readonly EdgeUnit[]) =>
-  Effect.gen(function* readWorkerSecretSourcesEffect() {
-    const { projectId } = yield* CutoverConfiguration;
-    const shell = units.find((unit) => unit.kind === 'shell');
-    if (shell === undefined) {
-      return yield* new StageOperationError({ message: 'the Cloudflare placement does not place the Shell' });
-    }
-    const shellHost = zeropsHostname(shell.id);
-    const gatewayPrivateJwk = yield* readZeropsValue(projectId, `${shellHost}_ONTOS_GATEWAY_PRIVATE_JWK`);
-    return {
-      betterAuthSecret: yield* readZeropsValue(projectId, `${shellHost}_BETTER_AUTH_SECRET`),
-      gatewayPrivateJwk,
-      gatewayPublicJwks: yield* gatewayPublicJwksFor(gatewayPrivateJwk),
-      spicedbPresharedKey: yield* readZeropsValue(projectId, 'spicedb_SPICEDB_GRPC_PRESHARED_KEY'),
-    } satisfies WorkerSecretSources;
-  });
+const shellSecretSetting = (name: string) =>
+  Config.Redacted(name).pipe(
+    Effect.mapError(
+      (cause) =>
+        new StageOperationError({
+          cause,
+          message: `the Shell secret ${name} is missing; set it in the settings file (see DEPLOYMENT.md, Stage cut-over)`,
+        }),
+    ),
+  );
+
+const readWorkerSecretSources = Effect.gen(function* readWorkerSecretSourcesEffect() {
+  const { projectId } = yield* CutoverConfiguration;
+  const gatewayPrivateJwk = yield* shellSecretSetting(SHELL_GATEWAY_PRIVATE_JWK_SETTING);
+  return {
+    betterAuthSecret: yield* shellSecretSetting(SHELL_AUTH_SECRET_SETTING),
+    gatewayPrivateJwk,
+    gatewayPublicJwks: yield* gatewayPublicJwksFor(gatewayPrivateJwk),
+    spicedbPresharedKey: yield* readZeropsValue(projectId, 'spicedb_SPICEDB_GRPC_PRESHARED_KEY'),
+  } satisfies WorkerSecretSources;
+});
 
 const SecretDocumentSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
 
@@ -357,7 +369,7 @@ const secretDocument = (secrets: SecretValues) =>
 export const setWorkerSecrets = Effect.gen(function* setWorkerSecretsEffect() {
   const settings = yield* CutoverConfiguration;
   const units = yield* readEdgeUnits;
-  const plan = workerSecretPlan(units, settings, yield* readWorkerSecretSources(units));
+  const plan = workerSecretPlan(units, settings, yield* readWorkerSecretSources);
   const cwd = yield* appDirectory;
   for (const [workerName, secrets] of plan) {
     const stdin = yield* secretDocument(secrets);
@@ -847,7 +859,7 @@ const workerSecretsState = Effect.gen(function* workerSecretsStateEffect() {
   const api = yield* CloudflareApi;
   const settings = yield* CutoverConfiguration;
   const units = yield* readEdgeUnits;
-  const plan = workerSecretPlan(units, settings, yield* readWorkerSecretSources(units));
+  const plan = workerSecretPlan(units, settings, yield* readWorkerSecretSources);
   const gaps: string[] = [];
   for (const [workerName, secrets] of plan) {
     const present = yield* api.workerSecretNames(workerName);
@@ -1062,7 +1074,11 @@ const cli = Command.make('cloudflare-stage-cutover').pipe(
       'Create or converge Access, the disabled kill switch and the usage notification',
       provisionCostGuards,
     ),
-    stepCommand('worker-secrets', "Set every placed Worker's runtime secrets from Zerops", setWorkerSecrets),
+    stepCommand(
+      'worker-secrets',
+      "Set every placed Worker's runtime secrets from the settings file and Zerops",
+      setWorkerSecrets,
+    ),
     stepCommand('verify', 'Run the cut-over verification checklist without changing anything', verifyCutover),
     stepCommand(
       'activate',

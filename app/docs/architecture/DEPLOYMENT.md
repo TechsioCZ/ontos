@@ -421,6 +421,20 @@ Certificates: Edit" for the Origin CA.
 `provision` creates the composition KV namespace, and CI writes its `active` key with the
 `stage-edge` token, so both tokens need the account permission "Workers KV Storage: Edit".
 
+The same file holds the Shell's two secrets, because the Zerops Shell they used to live on is
+retired: `shellsuperapp_BETTER_AUTH_SECRET` (at least 32 characters) and
+`shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK` (the Shell's Ed25519 gateway signing key as a private JWK,
+in single quotes). They use the vault export's `<hostname>_<KEY>` names, so the file also serves
+`stage-zerops-services.mts restore --secrets-file`. Zerops is no place for them: it returns a
+sensitive project variable only masked, and every service would inherit it. The Worker secrets step
+and `verify` fail when either is missing. A new value takes effect only after `worker-secrets`, which
+gives the Shell the new key and every vertical its derived public JWKS in the same run. To create
+them:
+
+```sh
+node -e "const c=require('node:crypto');const k=c.generateKeyPairSync('ed25519').privateKey.export({format:'jwk'});const kid=c.createHash('sha256').update(JSON.stringify({crv:k.crv,kty:k.kty,x:k.x})).digest('base64url');console.log('shellsuperapp_BETTER_AUTH_SECRET='+c.randomBytes(48).toString('base64url'));console.log(\"shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK='\"+JSON.stringify({alg:'EdDSA',crv:k.crv,d:k.d,kid,kty:k.kty,use:'sig',x:k.x})+\"'\")" >> ~/.cloudflare-ontos-stage-token
+```
+
 - `spicedb-tls` creates the SpiceDB TLS material as sensitive secrets on the Zerops `spicedb` service,
   and `provision` runs it first. The gRPC pair `SPICEDB_GRPC_TLS_CERT`/`SPICEDB_GRPC_TLS_KEY` is a
   self-signed certificate for `spicedb`, `localhost` and `127.0.0.1` that Node clients pin. The HTTP
@@ -444,8 +458,8 @@ Certificates: Edit" for the Origin CA.
   first publication. It writes the IDs
   and stage origins into this placement's `buildEnvironment` for a reviewed PR. It sets the
   `stage-edge` variable `CLOUDFLARE_ACCOUNT_ID` and secret `CLOUDFLARE_API_TOKEN`. Last, it sets every
-  placed Worker's secrets with `wrangler secret bulk`, from the Zerops values the Node services use
-  today, plus `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`, because the Worker build's environment never
+  placed Worker's secrets with `wrangler secret bulk`: the Shell's secrets from the settings file, the
+  SpiceDB preshared key from Zerops, plus `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT=stage`, because the Worker build's environment never
   reaches the Worker's runtime. A Worker's `SPICEDB_ENDPOINT` is the gateway name
   `ontos-stage-spicedb.<STAGE_ZONE>`, which the VPC service verifies. An existing object that differs from the runbook fails the step instead of being reused.
 - `cost-guards` repeats only the cost-guard step, which `provision` runs after the `stage-edge`

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 
-import { Array as Arr, Effect, Layer, Option, Order, Redacted, Schema } from 'effect';
+import { Array as Arr, ConfigProvider, Effect, Layer, Option, Order, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from '../ops/cloudflare-api.mts';
@@ -93,20 +93,19 @@ const VERTICAL_HOSTS = [
 const SECRET_VALUES = {
   db18_dbName: 'ontos',
   db18_password: DATABASE_CREDENTIAL,
-  shellsuperapp_BETTER_AUTH_SECRET: AUTH_SECRET,
-  shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK,
   spicedb_SPICEDB_GRPC_PRESHARED_KEY: SPICEDB_KEY,
   ...Object.fromEntries(VERTICAL_HOSTS.map((host) => [`${host}_ONTOS_GATEWAY_PUBLIC_JWKS`, PUBLIC_JWKS])),
 };
 
 const SPICEDB_VPC_HOST = 'spicedb.zerops';
 
-const SENSITIVE_KEYS = [
-  'db18_password',
-  'shellsuperapp_BETTER_AUTH_SECRET',
-  'shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK',
-  'spicedb_SPICEDB_GRPC_PRESHARED_KEY',
-];
+const SENSITIVE_KEYS = ['db18_password', 'spicedb_SPICEDB_GRPC_PRESHARED_KEY'];
+
+/** The Shell's secrets, which the settings file holds since the Zerops Shell retired. */
+const SHELL_SETTINGS = {
+  shellsuperapp_BETTER_AUTH_SECRET: AUTH_SECRET,
+  shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK,
+};
 
 const SECRETS = [
   'lead-token-secret',
@@ -148,7 +147,6 @@ const newStage = (overrides: Parameters<typeof fakeStage>[0] = {}, { spicedbTls 
     services: [
       { hostname: 'db18', id: 'db18-id', status: 'ACTIVE' },
       { hostname: 'spicedb', id: 'spicedb-id', status: 'ACTIVE' },
-      { hostname: 'shellsuperapp', id: 'shellsuperapp-id', status: 'ACTIVE' },
       ...VERTICAL_HOSTS.map((hostname) => ({ hostname, id: `${hostname}-id`, status: 'ACTIVE' })),
     ],
     ...overrides,
@@ -164,6 +162,7 @@ const run = <A, E, R>(
     readonly account: FakeCloudflareAccount;
     readonly dryRun?: boolean;
     readonly files: FakeFiles;
+    readonly settingsFile?: Readonly<Record<string, string>>;
     readonly stage: FakeStage;
     readonly zerops?: FakeZeropsApi;
   },
@@ -182,6 +181,7 @@ const run = <A, E, R>(
         fakes.stage.layer,
         (fakes.zerops ?? fakeZeropsApi(fakes.stage)).layer,
         fakes.files.layer,
+        ConfigProvider.layer(ConfigProvider.fromUnknown(fakes.settingsFile ?? SHELL_SETTINGS)),
       ),
     ),
   );
@@ -503,13 +503,27 @@ it.effect('refuses to reuse a Hyperdrive config that points at another database'
 it.effect('refuses a Shell gateway key that is not an Ed25519 private JWK', () =>
   Effect.gen(function* refusesMalformedGatewayKey() {
     const account = fakeCloudflareAccount({});
-    const stage = newStage({
-      projectValues: { ...SECRET_VALUES, shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: '{"kty":"OKP"}' },
-    });
+    const stage = newStage();
+    const settingsFile = { ...SHELL_SETTINGS, shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: '{"kty":"OKP"}' };
 
-    const error = yield* run(provision, { account, files: fakeFiles(), stage }).pipe(Effect.flip);
+    const error = yield* run(provision, { account, files: fakeFiles(), settingsFile, stage }).pipe(Effect.flip);
 
     expect(error.message).toBe('the Shell ONTOS_GATEWAY_PRIVATE_JWK is not an Ed25519 private JWK');
+    expect(stage.commands.filter(({ args }) => args.includes('wrangler'))).toStrictEqual([]);
+  }),
+);
+
+it.effect('fails before setting any Worker secret when the settings file lacks a Shell secret', () =>
+  Effect.gen(function* requiresShellSecrets() {
+    const account = fakeCloudflareAccount({});
+    const stage = newStage();
+    const settingsFile = { shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK };
+
+    const error = yield* run(provision, { account, files: fakeFiles(), settingsFile, stage }).pipe(Effect.flip);
+
+    expect(error.message).toBe(
+      'the Shell secret shellsuperapp_BETTER_AUTH_SECRET is missing; set it in the settings file (see DEPLOYMENT.md, Stage cut-over)',
+    );
     expect(stage.commands.filter(({ args }) => args.includes('wrangler'))).toStrictEqual([]);
   }),
 );
