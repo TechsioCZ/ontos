@@ -109,6 +109,10 @@ pipeline. Later deploys only push what changed.
 
 ## Before it can serve real users
 
+- **Release gates.** The first deploy stops after publishing the composition; it doesn't run the
+  authenticated smoke suite. Before sending real traffic, run the
+  [required smoke suite](../../app/docs/architecture/DEPLOYMENT.md#required-smoke-suite), then canary, observe, expand and close as the
+  [release sequence](../../app/docs/architecture/DEPLOYMENT.md#release-sequence) (steps 8–12) requires.
 - **Composition refresh.** The scheduled `refresh-production` lane starts publishing once production
   has deployed.
 
