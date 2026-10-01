@@ -105,6 +105,8 @@ type StageVpcService = Omit<VpcServiceSpec, 'tunnelId'>;
  * The two Zerops origins the tunnel exposes, and nothing else. cloudflared resolves fully qualified names, and
  * Zerops only answers a service's `<hostname>.zerops` name that way. Zerops Postgres serves a self-signed
  * certificate, so db18 is encrypted without a certificate check; the hop stays inside the Tunnel and the project network.
+ * A CA check isn't possible yet: Workers VPC trusts no custom CA and Hyperdrive rejects `mtls` with a VPC
+ * `service_id`. DEPLOYMENT.md, "Why db18 TLS is not CA-verified", has the evidence.
  */
 export const STAGE_VPC_SERVICES = {
   db18: {

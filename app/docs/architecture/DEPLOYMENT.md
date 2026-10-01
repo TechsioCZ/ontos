@@ -448,6 +448,7 @@ Certificates: Edit" for the Origin CA.
   `ontos_runtime`, caching disabled, origin connection limit 40, and the password read from Zerops
   `db18_password`. Service values such as that password come from the service's data through the
   Zerops API, because `zcli project env` prints sensitive secrets and generated passwords as `REDACTED`.
+  The db18 hop is encrypted but not certificate-checked; see "Why db18 TLS is not CA-verified" below.
   It creates the KV namespace `ontos-stage-active-application-composition`, empty until CI writes the
   first publication. It writes the IDs
   and stage origins into this placement's `buildEnvironment` for a reviewed PR. It sets the
@@ -470,6 +471,32 @@ Certificates: Edit" for the Origin CA.
   `activate` and the full deploy, and move DNS only when it passes.
 - `activate` runs `verify` and, only when every item holds, sets `OUTBOX_WORKER_MODE=host` and
   `DEPLOY_TARGET=cloudflare` on `stage`. `provision` created the host service it needs.
+
+### Why db18 TLS is not CA-verified
+
+Checked on stage on 2026-10-01 with throwaway Workers VPC services and Hyperdrive configs, since
+removed. Hyperdrive tests the connection when a config is created, so each result below is real.
+
+| Path                                                                    | Result                                                                            |
+| ----------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `db18.zerops:5432`, VPC `verify_ca`                                     | TLS works, self-signed certificate, so the check fails                            |
+| `db18.zerops:6432` (pgBouncer), VPC `disabled`                          | TLS works; `db` logs in, `ontos_runtime` gets "password authentication failed"    |
+| `db18.zerops:6432`, VPC `verify_ca` or `verify_full`                    | "unable to get local issuer certificate": Workers VPC doesn't trust the Zerops CA |
+| Hyperdrive `mtls` (CA id + `sslmode verify-ca`) with a VPC `service_id` | rejected: "mtls cannot be used with service_id"                                   |
+
+So the stage hop stays as it is: TLS to the 5432 self-signed certificate, with VPC verification
+`disabled`, inside the Tunnel and the Zerops project network. The Node services on Zerops connect to
+`db18:5432` over the private network with no `sslmode`. The Zerops CA (`https://app.zerops.io/ca`, an
+intermediate valid until 2027-09-01, also at `/etc/zerops-zembed/ca.crt` in every container) signs
+only pgBouncer on 6432, and `ontos_runtime` can't log in there.
+
+What would unblock a verified hop:
+
+- Hyperdrive: Workers VPC trusts a custom CA, or Hyperdrive allows `mtls` with `service_id`. It also
+  needs a Zerops-CA certificate on the port it reaches: 5432, or 6432 once pgBouncer accepts
+  `ontos_runtime`.
+- Node services: pgBouncer accepts `ontos_runtime`, or 5432 gets a Zerops-CA certificate. Then
+  `sslmode=verify-full` with `sslrootcert=/etc/zerops-zembed/ca.crt`.
 
 ### Stage cost guards
 
