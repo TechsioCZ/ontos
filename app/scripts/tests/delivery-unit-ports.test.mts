@@ -152,3 +152,28 @@ it('runs each unit and its outbox worker on the unit overlay port in stage zerop
     expect(`${setup} ${port}`).toBe(`${setup} ${portOf(unitId)}`);
   }
 });
+
+it('serves each vertical development module contract the Shell discovers', () => {
+  const PackageScriptsSchema = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) });
+  const discovered = new Set(Object.keys(overlay.ontosModuleManifests));
+  const missing = verticals.flatMap(({ id, path }) => {
+    const { dev } = Schema.decodeUnknownSync(Schema.fromJsonString(PackageScriptsSchema))(
+      readText(`${path}/package.json`),
+    ).scripts;
+    if (dev === undefined || !discovered.has(id)) {
+      return [];
+    }
+    const config = readText(`${path}/modern.config.ts`);
+    return [
+      ...(dev.startsWith(`node ../../scripts/prepare-dev-module-contract.mts ${id} && `)
+        ? []
+        : [`${id} dev script does not prepare its module contract`]),
+      ...(/createModernConfig\(|createDevelopmentContractMiddleware\(|'\/\.well-known\/ontos-module-manifest\.json'/u.test(
+        config,
+      )
+        ? []
+        : [`${id} dev server does not serve /.well-known/ontos-module-manifest.json`]),
+    ];
+  });
+  expect(missing).toEqual([]);
+});

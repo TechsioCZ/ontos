@@ -16,6 +16,7 @@ import {
   CLOUDFLARE_WORKER_CPU_MS,
   createCloudflareWorkerConfig,
   createCloudflareWorkerSecurity,
+  createDevelopmentContractMiddleware,
   createModernBuildContext,
   createWorkerSsrPlugins,
   createZephyrRspackPlugin,
@@ -133,6 +134,7 @@ export default defineConfig(
             'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
           },
         },
+        setupMiddlewares: [createDevelopmentContractMiddleware(import.meta.url)],
       },
       html: {
         outputStructure: 'flat',
@@ -187,7 +189,7 @@ export default defineConfig(
       ],
       server: {
         port,
-        publicDir: ['./locales', './assets'],
+        publicDir: ['./locales', './assets', './.dev-public'],
       },
       source: {
         alias: {

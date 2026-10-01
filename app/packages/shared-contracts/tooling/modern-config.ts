@@ -226,7 +226,8 @@ interface DevelopmentMiddlewareSetup {
   ) => void;
 }
 
-const createDevelopmentContractMiddleware = (moduleUrl: string) => {
+/** Serves the unit's prepared development module contract ahead of locale redirects. */
+export const createDevelopmentContractMiddleware = (moduleUrl: string) => {
   const contractPath = fileURLToPath(new URL('.dev-public/.well-known/ontos-module-manifest.json', moduleUrl));
   return ({ unshift }: DevelopmentMiddlewareSetup) => {
     unshift((request, response, next) => {

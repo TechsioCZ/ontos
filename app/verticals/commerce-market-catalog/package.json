@@ -23,7 +23,7 @@
     "./Route": "./src/federation-entry.tsx"
   },
   "scripts": {
-    "dev": "modern dev",
+    "dev": "node ../../scripts/prepare-dev-module-contract.mts commerce-market-catalog && modern dev",
     "db:check": "drizzle-kit check --config drizzle.config.ts",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
