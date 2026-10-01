@@ -604,7 +604,7 @@ Before running it:
 ```sh
 cd app
 printf %s "$PRODUCTION_ZEROPS_TOKEN" | node scripts/ops/production-environment.mts provision \
-  --spicedb-endpoint spicedb:50051 --secrets-file <vault export> --zerops-token-stdin --dry-run
+  --secrets-file <vault export> --zerops-token-stdin --dry-run
 # review the plan, then run the same command without --dry-run
 ```
 
@@ -622,15 +622,15 @@ printf %s "$PRODUCTION_ZEROPS_TOKEN" | node scripts/ops/production-environment.m
    names a different service fails the run.
 4. Sets only the `production` variables that differ, once Zerops lists every service:
 
-   | Variable                                                  | Value                                                                            |
-   | --------------------------------------------------------- | -------------------------------------------------------------------------------- |
-   | `ZEROPS_PROJECT_ID`                                       | the production project                                                           |
-   | `ZEROPS_MIGRATOR_SERVICE_ID`, `ZEROPS_SPICEDB_SERVICE_ID` | the migrator and SpiceDB                                                         |
-   | `ZEROPS_SHELL_SERVICE_ID`                                 | the Shell                                                                        |
-   | `ZEROPS_<SETUP>_SERVICE_ID`                               | each vertical and each outbox worker, named after its `zerops.yaml` setup        |
-   | `SPICEDB_ENDPOINT`                                        | `--spicedb-endpoint`, `spicedb:50051`: the only host the gRPC certificate covers |
-   | `DEPLOY_TARGET`                                           | `zerops`                                                                         |
-   | `OUTBOX_WORKER_MODE`                                      | `dedicated`, one worker service per owner                                        |
+   | Variable                                                  | Value                                                                       |
+   | --------------------------------------------------------- | --------------------------------------------------------------------------- |
+   | `ZEROPS_PROJECT_ID`                                       | the production project                                                      |
+   | `ZEROPS_MIGRATOR_SERVICE_ID`, `ZEROPS_SPICEDB_SERVICE_ID` | the migrator and SpiceDB                                                    |
+   | `ZEROPS_SHELL_SERVICE_ID`                                 | the Shell                                                                   |
+   | `ZEROPS_<SETUP>_SERVICE_ID`                               | each vertical and each outbox worker, named after its `zerops.yaml` setup   |
+   | `SPICEDB_ENDPOINT`                                        | `spicedb:50051`, the in-project SpiceDB whose gRPC certificate runtimes pin |
+   | `DEPLOY_TARGET`                                           | `zerops`                                                                    |
+   | `OUTBOX_WORKER_MODE`                                      | `dedicated`, one worker service per owner                                   |
 
 5. Sets the `ZEROPS_TOKEN` secret from standard input when `--zerops-token-stdin` is given. Until
    `production` holds that secret, the flag is required and the run fails before changing anything.

@@ -13,7 +13,7 @@ Cloudflare target.
 target and the shared outbox worker host. Nothing below touches stage or `stage-edge`.
 
 **Cost.** Running this creates paid resources: a Serious-core project, an HA database and about 2×
-the runtime containers stage had. Check Zerops pricing for 18 services before step 3.
+the runtime containers stage had. Check Zerops pricing for 18 services before step 2.
 
 ## What you need (10 min)
 
@@ -21,7 +21,7 @@ the runtime containers stage had. Check Zerops pricing for 18 services before st
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `zcli` logged in                    | an account allowed to create projects in the stage project's organization (BDA Platform)                       |
 | Production Zerops token             | Zerops → Settings → Access tokens. Keep it separate from stage's token                                         |
-| Production Shell origin             | a custom domain you control, e.g. `https://ontos.<domain>`. Decide it now: step 3 imports it as a secret       |
+| Production Shell origin             | a custom domain you control, e.g. `https://ontos.<domain>`. Decide it now: step 2 imports it as a secret       |
 | Cloudflare token + account ID       | only for the SpiceDB gateway certificate: "SSL and Certificates: Edit" on a zone you own (e.g. `bleeding.dev`) |
 | Production gateway signing key pair | generated below. Never reuse stage's                                                                           |
 
@@ -31,8 +31,7 @@ gateway private key: it is created owner-only (`umask 077`). Keep it in the vaul
 
 ```sh
 cd app
-NAMES=$(node scripts/ops/production-environment.mts provision --dry-run --spicedb-endpoint spicedb:50051 \
-  | sed -n 's/.*needs --secrets-file with //p')
+NAMES=$(node scripts/ops/production-environment.mts provision --dry-run | sed -n 's/.*needs --secrets-file with //p')
 (umask 077; NAMES="$NAMES" SHELL_ORIGIN=https://ontos.example.com node --input-type=module -e '
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
@@ -62,23 +61,20 @@ doesn't know yet: add its value to the file by hand.
    ```sh
    cd app && git switch --detach origin/main
    node scripts/ops/production-environment.mts render-import
-   node scripts/ops/production-environment.mts provision --dry-run --spicedb-endpoint spicedb:50051
+   node scripts/ops/production-environment.mts provision --dry-run
    ```
 
-2. **SpiceDB endpoint.** Always `spicedb:50051`, the in-project SpiceDB. Runtimes pin its gRPC
-   certificate (step 4), which covers only `spicedb`, so `provision` refuses any other host.
-
-3. **Provision (15–20 min, mostly Zerops importing).** Creates the project, imports the 18 services
+2. **Provision (15–20 min, mostly Zerops importing).** Creates the project, imports the 18 services
    with their secrets, then sets the `production` GitHub variables and the `ZEROPS_TOKEN` secret.
 
    ```sh
    printf %s "$PRODUCTION_ZEROPS_TOKEN" | node scripts/ops/production-environment.mts provision \
-     --spicedb-endpoint spicedb:50051 --secrets-file ~/ontos-production-secrets.env --zerops-token-stdin
+     --secrets-file ~/ontos-production-secrets.env --zerops-token-stdin
    ```
 
    If it stops halfway, run the same command again. It reads first and finishes what's missing.
 
-4. **SpiceDB TLS (2 min).** SpiceDB won't start without its gRPC and HTTP gateway certificates.
+3. **SpiceDB TLS (2 min).** SpiceDB won't start without its gRPC and HTTP gateway certificates.
    The gateway name only has to be inside a zone of the Cloudflare account. It needs no DNS record.
 
    ```sh
@@ -88,26 +84,26 @@ doesn't know yet: add its value to the file by hand.
    # then the same command without --dry-run
    ```
 
-5. **Project variables (5 min).** In the Zerops UI, open `ontos-production` → Environment
+4. **Project variables (5 min).** In the Zerops UI, open `ontos-production` → Environment
    variables and set the 3 project variables stage holds, each to production's Shell origin:
    `MODERN_PUBLIC_SITE_URL`, `ONTOS_GATEWAY_ISSUER` and `ULTRAMODERN_MF_DEV_ORIGIN`.
 
-6. **Domain (5 min).** Add the custom domain to the `shellsuperapp` service in Zerops and point
-   DNS at it. It must be the origin you used in the secrets file and step 5.
+5. **Domain (5 min).** Add the custom domain to the `shellsuperapp` service in Zerops and point
+   DNS at it. It must be the origin you used in the secrets file and step 4.
 
-7. **Pass the authorization gate (blocks step 8).** The deploy plan refuses production until
+6. **Pass the authorization gate (blocks step 7).** The deploy plan refuses production until
    production has exact-build enforced authorization evidence and an approved production context
    in `topology/authorization-contexts/`. Neither exists yet: issue #173 (implementation) and
-   issue #369 (approval). Until both are done, step 8 fails. See
+   issue #369 (approval). Until both are done, step 7 fails. See
    [Fail-closed authorization promotion](../../app/docs/architecture/DEPLOYMENT.md#fail-closed-authorization-promotion).
 
-8. **Dispatch the first deploy (1 min).** The first deploy has no base, so it must be `full=true`:
+7. **Dispatch the first deploy (1 min).** The first deploy has no base, so it must be `full=true`:
 
    ```sh
    gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true
    ```
 
-Steps 1–6 and 8 take about 45–60 minutes; step 7 is a separate governance task. The first full deploy then runs on its own: each Zerops unit
+Steps 1–5 and 7 take about 45–60 minutes; step 6 is a separate governance task. The first full deploy then runs on its own: each Zerops unit
 builds remotely and units deploy one by one, so expect it to take a few hours on the current
 pipeline. Later deploys only push what changed.
 

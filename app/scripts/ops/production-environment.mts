@@ -23,7 +23,7 @@ import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 import { CloudflareApiLive, CloudflareCredentials } from './cloudflare-api.mts';
 import { OpsShellLive, runCommand } from './ops-shell.mts';
 import type { SecretValues } from './ops-shell.mts';
-import { SPICEDB_GRPC_TLS_NAMES, ensureSpicedbTls } from './spicedb-tls.mts';
+import { ensureSpicedbTls } from './spicedb-tls.mts';
 import { StageOperationError } from './stage-operation-error.mts';
 import { readVaultSecrets } from './stage-zerops-services.mts';
 import {
@@ -421,7 +421,11 @@ const readTokenFromStdin = Effect.gen(function* readTokenFromStdinEffect() {
   ),
 );
 
-const SPICEDB_ENDPOINT_PATTERN = /^[A-Za-z0-9.-]+:[0-9]{1,5}$/u;
+/**
+ * The in-project SpiceDB every production runtime reaches. Runtimes pin the gRPC certificate
+ * `spicedb-tls` creates for `spicedb`, so no other endpoint can work.
+ */
+export const PRODUCTION_SPICEDB_ENDPOINT = 'spicedb:50051';
 
 // ---------------------------------------------------------------------------------------------
 // Provision
@@ -429,7 +433,6 @@ const SPICEDB_ENDPOINT_PATTERN = /^[A-Za-z0-9.-]+:[0-9]{1,5}$/u;
 export interface ProvisionOptions {
   readonly orgId: Option.Option<string>;
   readonly secretsFile: Option.Option<string>;
-  readonly spicedbEndpoint: string;
   /** Read the `ZEROPS_TOKEN` secret from standard input; required until production holds one. */
   readonly zeropsTokenStdin: boolean;
 }
@@ -494,18 +497,6 @@ export const provision = (options: ProvisionOptions) =>
   Effect.gen(function* provisionEffect() {
     const { repository } = yield* ProductionEnvironmentConfiguration;
     const { dryRun } = yield* OpsMode;
-    if (!SPICEDB_ENDPOINT_PATTERN.test(options.spicedbEndpoint)) {
-      return yield* new StageOperationError({
-        message: `--spicedb-endpoint must be production's TLS SpiceDB endpoint as host:port, got "${options.spicedbEndpoint}"`,
-      });
-    }
-    // Runtimes pin the gRPC certificate `spicedb-tls` creates, which covers only these names.
-    const spicedbHost = options.spicedbEndpoint.slice(0, options.spicedbEndpoint.lastIndexOf(':'));
-    if (!SPICEDB_GRPC_TLS_NAMES.some((name) => name === spicedbHost)) {
-      return yield* new StageOperationError({
-        message: `--spicedb-endpoint must name a host the SpiceDB gRPC certificate covers (${SPICEDB_GRPC_TLS_NAMES.join(', ')}), got "${options.spicedbEndpoint}"`,
-      });
-    }
     const services = yield* productionServices;
     // A dry run that only plans the environment cannot read it; a new environment holds nothing.
     const environmentExists = yield* ensureGithubEnvironment;
@@ -544,7 +535,7 @@ export const provision = (options: ProvisionOptions) =>
     const desired: readonly (readonly [string, string])[] = [
       [ZEROPS_PROJECT_ID_VARIABLE, project.id],
       ...planned.map(({ hostname, id, variable }) => [variable, id ?? `<new ${hostname} service id>`] as const),
-      [SPICEDB_ENDPOINT_VARIABLE, options.spicedbEndpoint],
+      [SPICEDB_ENDPOINT_VARIABLE, PRODUCTION_SPICEDB_ENDPOINT],
       [DEPLOY_TARGET_VARIABLE, 'zerops'],
       [OUTBOX_WORKER_MODE_VARIABLE, 'dedicated'],
     ];
@@ -635,11 +626,9 @@ const provisionCommand = Command.make(
     dryRun: Flag.Boolean('dry-run').pipe(Flag.withDefault(false)),
     orgId: Flag.String('org-id').pipe(Flag.optional),
     secretsFile: Flag.String('secrets-file').pipe(Flag.optional),
-    spicedbEndpoint: Flag.String('spicedb-endpoint'),
     zeropsTokenStdin: Flag.Boolean('zerops-token-stdin').pipe(Flag.withDefault(false)),
   },
-  ({ orgId, secretsFile, spicedbEndpoint, zeropsTokenStdin }) =>
-    provision({ orgId, secretsFile, spicedbEndpoint, zeropsTokenStdin }),
+  ({ orgId, secretsFile, zeropsTokenStdin }) => provision({ orgId, secretsFile, zeropsTokenStdin }),
 ).pipe(
   Command.withDescription(
     'Create or reuse the HA production Zerops project, import its missing services and wire the production GitHub environment',

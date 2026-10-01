@@ -42,7 +42,6 @@ const STAGE_PROJECT = { id: STAGE_ZEROPS_PROJECT_ID, name: 'ontos', orgId: STAGE
 const options = (overrides: Partial<ProvisionOptions> = {}): ProvisionOptions => ({
   orgId: Option.none(),
   secretsFile: Option.some(`${APP_DIRECTORY}/${SECRETS_FILE}`),
-  spicedbEndpoint: SPICEDB_ENDPOINT,
   zeropsTokenStdin: true,
   ...overrides,
 });
@@ -281,34 +280,6 @@ it.effect('fails before any change when production has no Zerops token and none 
 
     expect(error.message).toContain('has no ZEROPS_TOKEN secret');
     expect(mutatingCommands(stage.commands)).toStrictEqual([]);
-  }),
-);
-
-it.effect('rejects a SpiceDB endpoint that is not host:port', () =>
-  Effect.gen(function* rejectsEndpoint() {
-    const stage = fakeStage({ projects: [STAGE_PROJECT] });
-
-    const error = yield* run(provision(options({ spicedbEndpoint: 'https://spicedb' })), {
-      files: yield* secretsFiles,
-      stage,
-    }).pipe(Effect.flip);
-
-    expect(error.message).toContain('--spicedb-endpoint');
-    expect(stage.commands).toStrictEqual([]);
-  }),
-);
-
-it.effect('rejects a SpiceDB endpoint whose host the gRPC certificate does not cover', () =>
-  Effect.gen(function* rejectsUncoveredEndpoint() {
-    const stage = fakeStage({ projects: [STAGE_PROJECT] });
-
-    const error = yield* run(provision(options({ spicedbEndpoint: 'spicedb.ontos.example:443' })), {
-      files: yield* secretsFiles,
-      stage,
-    }).pipe(Effect.flip);
-
-    expect(error.message).toContain('gRPC certificate covers');
-    expect(stage.commands).toStrictEqual([]);
   }),
 );
 
