@@ -23,7 +23,7 @@ import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 import { CloudflareApiLive, CloudflareCredentials } from './cloudflare-api.mts';
 import { OpsShellLive, runCommand } from './ops-shell.mts';
 import type { SecretValues } from './ops-shell.mts';
-import { ensureSpicedbTls } from './spicedb-tls.mts';
+import { SPICEDB_GRPC_TLS_NAMES, ensureSpicedbTls } from './spicedb-tls.mts';
 import { StageOperationError } from './stage-operation-error.mts';
 import { readVaultSecrets } from './stage-zerops-services.mts';
 import {
@@ -497,6 +497,13 @@ export const provision = (options: ProvisionOptions) =>
     if (!SPICEDB_ENDPOINT_PATTERN.test(options.spicedbEndpoint)) {
       return yield* new StageOperationError({
         message: `--spicedb-endpoint must be production's TLS SpiceDB endpoint as host:port, got "${options.spicedbEndpoint}"`,
+      });
+    }
+    // Runtimes pin the gRPC certificate `spicedb-tls` creates, which covers only these names.
+    const spicedbHost = options.spicedbEndpoint.slice(0, options.spicedbEndpoint.lastIndexOf(':'));
+    if (!SPICEDB_GRPC_TLS_NAMES.some((name) => name === spicedbHost)) {
+      return yield* new StageOperationError({
+        message: `--spicedb-endpoint must name a host the SpiceDB gRPC certificate covers (${SPICEDB_GRPC_TLS_NAMES.join(', ')}), got "${options.spicedbEndpoint}"`,
       });
     }
     const services = yield* productionServices;

@@ -1,7 +1,7 @@
-# Stand up production in under an hour
+# Runbook: stand up production in under an hour
 
 Production doesn't exist yet. This page gets it from nothing to a dispatched first deploy. The
-details behind each step are in [Create production](DEPLOYMENT.md#create-production).
+details behind each step are in [Create production](../../app/docs/architecture/DEPLOYMENT.md#create-production).
 
 **What you get.** A separate Serious-core Zerops project `ontos-production` that runs the same
 topology as stage, in high availability: `db18` becomes `postgresql:ha@18`, and every runtime
@@ -21,33 +21,38 @@ the runtime containers stage had. Check Zerops pricing for 18 services before st
 | ----------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | `zcli` logged in                    | an account allowed to create projects in the stage project's organization (BDA Platform)                       |
 | Production Zerops token             | Zerops → Settings → Access tokens. Keep it separate from stage's token                                         |
-| Production Shell origin             | a domain for the Shell, e.g. `https://ontos.<domain>`, or the Zerops subdomain you get after step 3            |
+| Production Shell origin             | a custom domain you control, e.g. `https://ontos.<domain>`. Decide it now: step 3 imports it as a secret       |
 | Cloudflare token + account ID       | only for the SpiceDB gateway certificate: "SSL and Certificates: Edit" on a zone you own (e.g. `bleeding.dev`) |
 | Production gateway signing key pair | generated below. Never reuse stage's                                                                           |
 
-Generate the gateway key pair and the secrets file. Keep the file in the vault, not in the repo:
+Generate the gateway key pair and the secrets file. The secret names come from
+`provision --dry-run`, so the list always matches the services in the repo. The file holds the
+gateway private key: it is created owner-only (`umask 077`). Keep it in the vault, not in the repo:
 
 ```sh
 cd app
-SHELL_ORIGIN=https://ontos.example.com node --input-type=module -e '
+NAMES=$(node scripts/ops/production-environment.mts provision --dry-run --spicedb-endpoint spicedb:50051 \
+  | sed -n 's/.*needs --secrets-file with //p')
+(umask 077; NAMES="$NAMES" SHELL_ORIGIN=https://ontos.example.com node --input-type=module -e '
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-const kid = randomUUID().replaceAll("-", "");
-const meta = { kid, alg: "EdDSA", use: "sig" };
+const meta = { kid: randomUUID().replaceAll("-", ""), alg: "EdDSA", use: "sig" };
 const priv = JSON.stringify({ ...privateKey.export({ format: "jwk" }), ...meta });
 const jwks = JSON.stringify({ keys: [{ ...publicKey.export({ format: "jwk" }), ...meta }] });
-const origin = process.env.SHELL_ORIGIN;
-const verticals = ["partyregistry","commercecustomercontext","paymenttermcatalog","commercemarketcatalog","catalog","assortment","pricing","storefrontregistry","pricegroupcatalog","inventory"];
-console.log([
-  `shellsuperapp_BETTER_AUTH_URL=${origin}`,
-  `shellsuperapp_BETTER_AUTH_TRUSTED_ORIGINS=${origin}`,
-  `shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK=\x27${priv}\x27`,
-  ...verticals.map((v) => `${v}_ONTOS_GATEWAY_PUBLIC_JWKS=\x27${jwks}\x27`),
-].join("\n"));
-' > ~/ontos-production-secrets.env
+const value = (name) => {
+  if (name.endsWith("_ONTOS_GATEWAY_PRIVATE_JWK")) return `\x27${priv}\x27`;
+  if (name.endsWith("_ONTOS_GATEWAY_PUBLIC_JWKS")) return `\x27${jwks}\x27`;
+  if (name.endsWith("_BETTER_AUTH_URL") || name.endsWith("_BETTER_AUTH_TRUSTED_ORIGINS")) return process.env.SHELL_ORIGIN;
+  throw new Error(`no generator for ${name}; add its value by hand`);
+};
+const names = process.env.NAMES.split(", ").filter(Boolean);
+if (names.length === 0) throw new Error("provision --dry-run listed no secret names");
+console.log(names.map((name) => `${name}=${value(name)}`).join("\n"));
+' > ~/ontos-production-secrets.env)
 ```
 
-`provision --dry-run` prints the exact list of secret names it needs, so check it against the file.
+If the script stops on a name it has no generator for, a new service needs a secret this page
+doesn't know yet: add its value to the file by hand.
 
 ## Steps
 
@@ -60,8 +65,8 @@ console.log([
    node scripts/ops/production-environment.mts provision --dry-run --spicedb-endpoint spicedb:50051
    ```
 
-2. **Pick the SpiceDB endpoint.** Use `spicedb:50051`, the in-project SpiceDB. Its gRPC certificate
-   (step 4) covers `spicedb`, and runtimes pin it.
+2. **SpiceDB endpoint.** Always `spicedb:50051`, the in-project SpiceDB. Runtimes pin its gRPC
+   certificate (step 4), which covers only `spicedb`, so `provision` refuses any other host.
 
 3. **Provision (15–20 min, mostly Zerops importing).** Creates the project, imports the 18 services
    with their secrets, then sets the `production` GitHub variables and the `ZEROPS_TOKEN` secret.
@@ -88,14 +93,13 @@ console.log([
    `MODERN_PUBLIC_SITE_URL`, `ONTOS_GATEWAY_ISSUER` and `ULTRAMODERN_MF_DEV_ORIGIN`.
 
 6. **Domain (5 min).** Add the custom domain to the `shellsuperapp` service in Zerops and point
-   DNS at it. Or keep the `*.zerops.app` subdomain and make sure it matches the origin you used in
-   the secrets file and step 5.
+   DNS at it. It must be the origin you used in the secrets file and step 5.
 
 7. **Pass the authorization gate (blocks step 8).** The deploy plan refuses production until
    production has exact-build enforced authorization evidence and an approved production context
    in `topology/authorization-contexts/`. Neither exists yet: issue #173 (implementation) and
    issue #369 (approval). Until both are done, step 8 fails. See
-   [Fail-closed authorization promotion](DEPLOYMENT.md#fail-closed-authorization-promotion).
+   [Fail-closed authorization promotion](../../app/docs/architecture/DEPLOYMENT.md#fail-closed-authorization-promotion).
 
 8. **Dispatch the first deploy (1 min).** The first deploy has no base, so it must be `full=true`:
 

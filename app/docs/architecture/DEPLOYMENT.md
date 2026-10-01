@@ -604,7 +604,7 @@ Before running it:
 ```sh
 cd app
 printf %s "$PRODUCTION_ZEROPS_TOKEN" | node scripts/ops/production-environment.mts provision \
-  --spicedb-endpoint <host:port> --secrets-file <vault export> --zerops-token-stdin --dry-run
+  --spicedb-endpoint spicedb:50051 --secrets-file <vault export> --zerops-token-stdin --dry-run
 # review the plan, then run the same command without --dry-run
 ```
 
@@ -622,15 +622,15 @@ printf %s "$PRODUCTION_ZEROPS_TOKEN" | node scripts/ops/production-environment.m
    names a different service fails the run.
 4. Sets only the `production` variables that differ, once Zerops lists every service:
 
-   | Variable                                                  | Value                                                                           |
-   | --------------------------------------------------------- | ------------------------------------------------------------------------------- |
-   | `ZEROPS_PROJECT_ID`                                       | the production project                                                          |
-   | `ZEROPS_MIGRATOR_SERVICE_ID`, `ZEROPS_SPICEDB_SERVICE_ID` | the migrator and SpiceDB                                                        |
-   | `ZEROPS_SHELL_SERVICE_ID`                                 | the Shell                                                                       |
-   | `ZEROPS_<SETUP>_SERVICE_ID`                               | each vertical and each outbox worker, named after its `zerops.yaml` setup       |
-   | `SPICEDB_ENDPOINT`                                        | `--spicedb-endpoint`, the `host:port` of production's TLS SpiceDB gRPC endpoint |
-   | `DEPLOY_TARGET`                                           | `zerops`                                                                        |
-   | `OUTBOX_WORKER_MODE`                                      | `dedicated`, one worker service per owner                                       |
+   | Variable                                                  | Value                                                                            |
+   | --------------------------------------------------------- | -------------------------------------------------------------------------------- |
+   | `ZEROPS_PROJECT_ID`                                       | the production project                                                           |
+   | `ZEROPS_MIGRATOR_SERVICE_ID`, `ZEROPS_SPICEDB_SERVICE_ID` | the migrator and SpiceDB                                                         |
+   | `ZEROPS_SHELL_SERVICE_ID`                                 | the Shell                                                                        |
+   | `ZEROPS_<SETUP>_SERVICE_ID`                               | each vertical and each outbox worker, named after its `zerops.yaml` setup        |
+   | `SPICEDB_ENDPOINT`                                        | `--spicedb-endpoint`, `spicedb:50051`: the only host the gRPC certificate covers |
+   | `DEPLOY_TARGET`                                           | `zerops`                                                                         |
+   | `OUTBOX_WORKER_MODE`                                      | `dedicated`, one worker service per owner                                        |
 
 5. Sets the `ZEROPS_TOKEN` secret from standard input when `--zerops-token-stdin` is given. Until
    `production` holds that secret, the flag is required and the run fails before changing anything.
@@ -641,10 +641,13 @@ production's `spicedb` service with `spicedb-tls`, which reads `CLOUDFLARE_ACCOU
 
 ```sh
 node scripts/ops/production-environment.mts spicedb-tls --gateway-hostname <name in a Cloudflare zone> --dry-run
+node scripts/ops/production-environment.mts spicedb-tls --gateway-hostname <name in a Cloudflare zone>
 ```
 
+The first command only previews; the second creates the secrets.
+
 `provision --dry-run` needs neither the token nor the secrets file; it lists what the real run needs.
-[Stand up production in under an hour](PRODUCTION_RUNBOOK.md) walks the whole sequence.
+[Stand up production in under an hour](../../../docs/runbooks/production-fresh-deploy.md) walks the whole sequence.
 
 `provision` does not set Zerops project variables. Before the first deploy, set on the production
 project the values stage holds at project scope, with production's own origins:

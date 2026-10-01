@@ -27,7 +27,7 @@ import type { FakeFiles, FakeStage } from './stage-operations-fixture.mts';
 
 const PRODUCTION = 'production';
 const STAGE_ORG_ID = 'org-techsio';
-const SPICEDB_ENDPOINT = 'spicedb.ontos.example:443';
+const SPICEDB_ENDPOINT = 'spicedb:50051';
 const ZEROPS_TOKEN = 'production-zerops-token';
 const SECRETS_FILE = 'production-secrets.env';
 const DB_HOSTNAME = 'db18';
@@ -294,6 +294,20 @@ it.effect('rejects a SpiceDB endpoint that is not host:port', () =>
     }).pipe(Effect.flip);
 
     expect(error.message).toContain('--spicedb-endpoint');
+    expect(stage.commands).toStrictEqual([]);
+  }),
+);
+
+it.effect('rejects a SpiceDB endpoint whose host the gRPC certificate does not cover', () =>
+  Effect.gen(function* rejectsUncoveredEndpoint() {
+    const stage = fakeStage({ projects: [STAGE_PROJECT] });
+
+    const error = yield* run(provision(options({ spicedbEndpoint: 'spicedb.ontos.example:443' })), {
+      files: yield* secretsFiles,
+      stage,
+    }).pipe(Effect.flip);
+
+    expect(error.message).toContain('gRPC certificate covers');
     expect(stage.commands).toStrictEqual([]);
   }),
 );
