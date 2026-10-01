@@ -763,6 +763,10 @@ body {
   gap: var(--dimension-2);
 }
 
+.akros-variant-table__mobile-label {
+  display: none;
+}
+
 .akros-variant-table__name span {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1540,6 +1544,182 @@ body {
 @media (max-width: 430px) {
   .akros-product-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 1023px) {
+  .akros-product-detail,
+  .akros-product-detail-breadcrumb,
+  .akros-product-detail-breadcrumb ol,
+  .akros-variant-purchase .akros-pagination {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .akros-product-detail-breadcrumb [aria-current="page"] {
+    overflow-wrap: anywhere;
+  }
+
+  .akros-variant-purchase .akros-pagination > ul {
+    flex-wrap: wrap;
+  }
+
+  #product-variants {
+    scroll-margin-top: calc(var(--akros-header-height) + var(--dimension-16));
+  }
+
+  .akros-variant-purchase__filter-group--slider [data-part="control"] {
+    margin-inline: var(--dimension-8);
+  }
+
+  .akros-product-detail__purchase-row {
+    grid-template-columns: minmax(0, 1fr) var(--dimension-48);
+    align-items: end;
+  }
+
+  .akros-purchase-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .akros-purchase-form__quantity-control {
+    grid-template-columns: var(--dimension-44) minmax(0, 1fr) var(--dimension-44);
+  }
+
+  .akros-product-detail__favorite {
+    min-width: var(--dimension-48);
+  }
+
+  .akros-variant-data-table__table {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    border-spacing: 0;
+  }
+
+  .akros-variant-data-table__table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .akros-variant-data-table__table tbody {
+    display: grid;
+    min-width: 0;
+    gap: var(--dimension-12);
+  }
+
+  .akros-variant-data-table__row {
+    display: grid;
+    height: auto;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--dimension-8);
+    align-items: center;
+    border: 1px solid var(--akros-variant-table-border-color);
+    border-radius: var(--akros-variant-table-row-radius);
+    padding: var(--dimension-12);
+    background: var(--color-base);
+  }
+
+  .akros-variant-data-table__row td,
+  .akros-variant-data-table__row td:first-child,
+  .akros-variant-data-table__row td:last-child {
+    display: block;
+    /* DataTable sets desktop column percentages inline. */
+    width: auto !important;
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    background: transparent;
+  }
+
+  .akros-variant-data-table__row td:nth-child(1),
+  .akros-variant-data-table__row td:nth-child(2),
+  .akros-variant-data-table__row td:nth-child(6) {
+    grid-column: 1 / -1;
+  }
+
+  .akros-variant-data-table__row td:nth-child(3) {
+    display: none;
+  }
+
+  .akros-variant-data-table__row td:nth-child(4) {
+    grid-area: 3 / 2;
+  }
+
+  .akros-variant-data-table__row td:nth-child(5) {
+    grid-area: 3 / 1;
+  }
+
+  .akros-variant-data-table__row td:nth-child(6) {
+    border-block-start: 1px solid var(--akros-variant-table-cell-separator-color);
+    padding-block-start: var(--dimension-12);
+  }
+
+  .akros-variant-table__name > span,
+  .akros-variant-table__no-package {
+    display: none;
+  }
+
+  .akros-variant-table__name strong,
+  .akros-variant-table__price strong {
+    font-size: var(--text-base);
+    overflow-wrap: anywhere;
+  }
+
+  .akros-variant-table__mobile-label {
+    display: inline;
+  }
+
+  .akros-variant-table__sku,
+  .akros-variant-table__price small,
+  .akros-variant-table__price .akros-variant-table__mobile-label,
+  .akros-variant-table__availability {
+    font-size: var(--text-xs);
+    font-weight: var(--font-weight-normal);
+  }
+
+  .akros-variant-table__sku {
+    color: var(--color-fg-secondary);
+    overflow-wrap: anywhere;
+  }
+
+  .akros-variant-table__purchase-cell {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--dimension-8);
+  }
+
+  .akros-variant-table__order {
+    grid-template-columns: 152px minmax(0, 1fr);
+    gap: var(--dimension-8);
+    border: 0;
+    padding: 0;
+  }
+
+  .akros-variant-table__quantity-control {
+    grid-template-columns: var(--dimension-44) minmax(0, 1fr) var(--dimension-44);
+  }
+
+  .akros-variant-table__buy-button {
+    height: auto;
+    min-height: var(--dimension-44);
+    padding-block: var(--dimension-6);
+    padding-inline: var(--dimension-6);
+    white-space: normal;
+  }
+
+  .akros-variant-table__buy-button > span {
+    flex-direction: column;
+    align-items: center;
+    line-height: 1.2;
+  }
+
+  .akros-variant-table__buy-button small {
+    font-size: var(--text-xs);
   }
 }
 

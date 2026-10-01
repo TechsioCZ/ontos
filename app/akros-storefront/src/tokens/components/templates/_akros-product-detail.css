@@ -40,3 +40,15 @@
 .akros-variant-purchase__filter-bar {
   --height-form-control-sm: var(--dimension-40);
 }
+
+@media (max-width: 1023px) {
+  .akros-purchase-form {
+    --height-form-control-md: var(--dimension-48);
+    --height-form-control-lg: var(--dimension-48);
+    --text-numeric-input-lg: var(--text-base);
+  }
+
+  .akros-product-detail__favorite {
+    --height-form-control-md: var(--dimension-48);
+  }
+}

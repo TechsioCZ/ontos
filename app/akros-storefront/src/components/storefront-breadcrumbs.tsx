@@ -9,9 +9,15 @@ interface BreadcrumbItem {
   label: string;
 }
 
-export function StorefrontBreadcrumbs({ items }: { items: BreadcrumbItem[] }) {
+export function StorefrontBreadcrumbs({
+  items,
+  className,
+}: {
+  items: BreadcrumbItem[];
+  className?: string;
+}) {
   return (
-    <Breadcrumb aria-label="Drobečková navigace" size="sm">
+    <Breadcrumb aria-label="Drobečková navigace" className={className} size="sm">
       <Breadcrumb.List>
         {items.map((item, index) => {
           const isCurrent = index === items.length - 1;

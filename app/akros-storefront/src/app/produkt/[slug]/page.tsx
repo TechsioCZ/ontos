@@ -108,6 +108,7 @@ export default async function ProductPage({ params, searchParams }: ProductPageP
   return (
     <StorefrontShell activeCategorySlug={category?.slug}>
       <StorefrontBreadcrumbs
+        className="akros-product-detail-breadcrumb"
         items={[
           { href: "/", label: cs.header.home },
           ...categoryTrail.map((item) => ({

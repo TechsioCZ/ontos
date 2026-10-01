@@ -332,6 +332,12 @@ export function ProductPurchaseForm({
         accessorKey: "sku",
         header: "Kód",
         meta: { width: "12%" },
+        cell: ({ row }) => (
+          <span className="akros-variant-table__sku">
+            <span className="akros-variant-table__mobile-label">Kód: </span>
+            <span>{row.original.sku}</span>
+          </span>
+        ),
       },
       {
         accessorKey: "unit",
@@ -361,7 +367,10 @@ export function ProductPurchaseForm({
 
           return (
             <div className="akros-variant-table__price">
-              <strong>{formatPrice(row.original.priceMinor)}</strong>
+              <strong>
+                {formatPrice(row.original.priceMinor)}
+                <span className="akros-variant-table__mobile-label"> / {row.original.unit}</span>
+              </strong>
               {basePriceTier && (
                 <small>{formatPrice(basePriceTier.priceExcludingVatMinor)} bez DPH</small>
               )}

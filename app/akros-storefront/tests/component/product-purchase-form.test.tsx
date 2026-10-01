@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -72,6 +72,19 @@ function CartLines() {
 afterEach(cleanup);
 
 describe("ProductPurchaseForm", () => {
+  it("keeps source SKU and the unit of the price in each responsive variant row", () => {
+    render(
+      <CartProvider storage={null}>
+        <ProductPurchaseForm product={product} variants={variants} />
+      </CartProvider>,
+    );
+
+    const row = screen.getByRole("button", { name: "Koupit M 2 × 5" }).closest("tr")!;
+    expect(within(row).getByText("Kód:")).toBeTruthy();
+    expect(within(row).getByText(variants[0].sku)).toBeTruthy();
+    expect(within(row).getByText("/ ks")).toBeTruthy();
+  });
+
   it("renders the source variants through the purchase data table", () => {
     render(
       <CartProvider storage={null}>

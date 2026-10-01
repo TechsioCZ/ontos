@@ -9,3 +9,11 @@
   --akros-variant-table-row-radius: var(--radius-sm);
   --akros-variant-table-stock-fg: var(--color-fg-status-success);
 }
+
+@media (max-width: 1023px) {
+  .akros-variant-data-table {
+    --akros-variant-table-button-font-size: var(--text-sm);
+    --height-form-control-sm: var(--dimension-48);
+    --text-numeric-input-sm: var(--text-base);
+  }
+}
