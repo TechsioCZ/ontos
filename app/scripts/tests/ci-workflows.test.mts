@@ -240,7 +240,13 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   expect(edge.environment).toBe(EDGE_ENVIRONMENT);
   // The edge waits only for the migrations, and deploys beside the Zerops units.
   expect(edge.needs).toEqual([DEPLOY_TARGET_JOB, MIGRATIONS_JOB, EDGE_READINESS_JOB]);
-  expect(edge.if).toBe("needs.edge-deploy-readiness.outputs.configured == 'true'");
+  // A merge-queue-proven push skips the gate jobs, so the edge states its own success condition
+  // instead of inheriting that skip.
+  expect(edge.if).toBe(
+    expression(
+      "!cancelled() && needs.deploy-migrations.result == 'success' && needs.edge-deploy-readiness.outputs.configured == 'true'",
+    ),
+  );
   expect(edge.env).toBeUndefined();
   const byName = new Map(edge.steps.map((step) => [step.name, step]));
   expect(byName.get('Resolve the last successful edge deployment')?.run).toContain('--environment stage-edge');
@@ -574,7 +580,11 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   expect(jobs['deploy-cloudflare'].needs).toEqual([DEPLOY_TARGET_JOB, MIGRATIONS_JOB, EDGE_READINESS_JOB]);
   // On Cloudflare the snapshot is published again from the new Workers, outside the deploy history.
   const publish = jobs['publish-edge-composition'];
-  expect(publish.if).toBe("needs.deploy-target.outputs.target == 'cloudflare'");
+  expect(publish.if).toBe(
+    expression(
+      "!cancelled() && needs.deploy-target.outputs.target == 'cloudflare' && needs.deploy-zerops.result == 'success' && needs.deploy-cloudflare.result == 'success'",
+    ),
+  );
   // It restarts the Zerops consumers, so it waits for deploy-zerops too.
   expect(publish.needs).toEqual(['deploy-target', 'deploy-zerops', 'deploy-cloudflare']);
   expect(publish.environment).toEqual({ deployment: false, name: 'stage' });
@@ -596,6 +606,11 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   // Placed Worker consumers read each publication from the composition KV namespace, written from the one environment with the token.
   const sync = jobs['sync-edge-composition'];
   expect(sync.needs).toEqual(['publish-edge-composition']);
+  expect(sync.if).toBe(
+    expression(
+      "!cancelled() && needs.publish-edge-composition.result == 'success' && needs.publish-edge-composition.outputs.edge-consumers != '' && needs.publish-edge-composition.outputs.edge-consumers != '[]'",
+    ),
+  );
   expect(sync.environment).toEqual({ deployment: false, name: EDGE_ENVIRONMENT });
   expect(sync.steps.at(-1)?.run).toBe('app/scripts/put-edge-composition-snapshot.sh');
 });
