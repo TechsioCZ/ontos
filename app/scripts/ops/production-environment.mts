@@ -371,12 +371,16 @@ const ensureProject = (variables: ReadonlyMap<string, string>, orgId: Option.Opt
 // ---------------------------------------------------------------------------------------------
 // The production GitHub environment
 
-/** Creates `production` when missing, deployable only from `main` and without required reviewers. */
+/**
+ * Creates `production` when missing, deployable only from `main` and without required reviewers.
+ * Succeeds with whether the environment exists afterwards: a dry run only plans its creation.
+ */
 const ensureGithubEnvironment = Effect.gen(function* ensureGithubEnvironmentEffect() {
   const { repository } = yield* ProductionEnvironmentConfiguration;
+  const { dryRun } = yield* OpsMode;
   const environments = yield* githubApi([`repos/${repository}/environments`, '--jq', '.environments[].name']);
   if (environments.split('\n').includes(PRODUCTION_ENVIRONMENT)) {
-    return;
+    return true;
   }
   yield* perform(
     `create the GitHub environment ${PRODUCTION_ENVIRONMENT}, deployable only from ${PRODUCTION_BRANCH}`,
@@ -401,6 +405,7 @@ const ensureGithubEnvironment = Effect.gen(function* ensureGithubEnvironmentEffe
       ]);
     }),
   );
+  return !dryRun;
 });
 
 const readTokenFromStdin = Effect.gen(function* readTokenFromStdinEffect() {
@@ -495,9 +500,14 @@ export const provision = (options: ProvisionOptions) =>
       });
     }
     const services = yield* productionServices;
-    yield* ensureGithubEnvironment;
-    const variables = yield* listGithubVariables(repository, PRODUCTION_ENVIRONMENT);
-    const secretNames = yield* listGithubSecretNames(repository, PRODUCTION_ENVIRONMENT);
+    // A dry run that only plans the environment cannot read it; a new environment holds nothing.
+    const environmentExists = yield* ensureGithubEnvironment;
+    const variables = environmentExists
+      ? yield* listGithubVariables(repository, PRODUCTION_ENVIRONMENT)
+      : new Map<string, string>();
+    const secretNames = environmentExists
+      ? yield* listGithubSecretNames(repository, PRODUCTION_ENVIRONMENT)
+      : new Set<string>();
     if (!options.zeropsTokenStdin && !secretNames.has(ZEROPS_TOKEN_SECRET)) {
       if (!dryRun) {
         return yield* new StageOperationError({

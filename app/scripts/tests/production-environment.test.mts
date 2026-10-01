@@ -313,6 +313,24 @@ it.effect('plans a dry run without the Zerops token or the secrets file and chan
   }),
 );
 
+it.effect('plans a dry run before the production environment exists without reading it', () =>
+  Effect.gen(function* dryRunWithoutEnvironment() {
+    const stage = fakeStage({ environments: ['stage'], projects: [STAGE_PROJECT] });
+
+    yield* run(provision(options({ secretsFile: Option.none(), zeropsTokenStdin: false })), {
+      dryRun: true,
+      files: fakeFiles(),
+      stage,
+    });
+
+    expect(stage.environments.has(PRODUCTION)).toBe(false);
+    expect(mutatingCommands(stage.commands)).toStrictEqual([]);
+    expect(
+      rendered(stage).filter((command) => /(?:variable|secret) list .*--env production/u.test(command)),
+    ).toStrictEqual([]);
+  }),
+);
+
 const GATEWAY_HOSTNAME = 'ontos-production-spicedb.ontos.example';
 const PRODUCTION_PROJECT_ID = 'prod-id';
 
