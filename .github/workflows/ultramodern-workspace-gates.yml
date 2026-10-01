@@ -1496,6 +1496,9 @@ jobs:
         timeout-minutes: 15
         working-directory: app
         env:
+          # The Access service token, so the proof passes once stage sits behind Cloudflare Access.
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}
           CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}

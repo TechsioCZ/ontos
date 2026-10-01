@@ -110,10 +110,11 @@ const ServiceTokenCredentialsSchema = Schema.Struct({
 });
 
 const AccessAppSchema = Schema.Struct({
-  domain: Schema.String,
+  destinations: optional(Schema.Array(Schema.Struct({ uri: optional(Schema.String) }))),
   id: Schema.NonEmptyString,
   name: Schema.String,
   policies: optional(Schema.Array(Schema.Struct({ id: Schema.String }))),
+  session_duration: optional(Schema.String),
 });
 export type CloudflareAccessApp = typeof AccessAppSchema.Type;
 
@@ -186,9 +187,12 @@ export interface AccessPolicySpec {
 
 /** A self-hosted Access application in front of a hostname, or one path of it. */
 export interface AccessAppSpec {
-  readonly domain: string;
+  /** Each public hostname, with an optional path, the application covers; at most 50. */
+  readonly destinations: readonly string[];
   readonly name: string;
   readonly policies: readonly { readonly id: string; readonly precedence: number }[];
+  /** How long a login lasts, as a Cloudflare duration such as `720h`. */
+  readonly sessionDuration: string;
 }
 
 export interface AlertPolicySpec {
@@ -298,10 +302,11 @@ const hyperdriveBody = (spec: HyperdriveSpec) => ({
 });
 
 const accessAppBody = (spec: AccessAppSpec) => ({
-  domain: spec.domain,
+  app_launcher_visible: false,
+  destinations: spec.destinations.map((uri) => ({ type: 'public', uri })),
   name: spec.name,
   policies: spec.policies,
-  session_duration: '24h',
+  session_duration: spec.sessionDuration,
   type: 'self_hosted',
 });
 

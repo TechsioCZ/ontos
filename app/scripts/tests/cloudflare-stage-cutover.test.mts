@@ -69,7 +69,7 @@ const settings: CutoverSettings = {
   accessEmails: ['ops@example.com'],
   accountId: 'account-1',
   apiToken: Redacted.make('lead-token-secret'),
-  enforceShellAccess: false,
+  enforceAccess: false,
   projectId: STAGE_ZEROPS_PROJECT_ID,
   repository: 'TechsioCZ/ontos',
   shellHostname: 'app.stage.example.com',
@@ -566,7 +566,7 @@ const guardedAccount = Effect.gen(function* guardedAccountEffect() {
   const hostnames = units.map((unit) => new URL(publicOrigin(unit, settings)).hostname);
   return {
     accessPolicies: [
-      { ...peoplePolicy(settings.accessEmails), id: 'policy-1' },
+      { ...peoplePolicy, id: 'policy-1' },
       { ...ciPolicy('token-1'), id: 'policy-2' },
     ],
     alertPolicies: [{ ...usageAlert(settings.accessEmails), id: 'alert-1' }],

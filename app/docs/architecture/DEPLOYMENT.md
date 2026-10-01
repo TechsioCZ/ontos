@@ -490,8 +490,7 @@ node -e "const c=require('node:crypto');const k=c.generateKeyPairSync('ed25519')
 Stage runs on Workers Paid ($5 a month, which includes 10M requests and 30M CPU ms). That allowance
 covers the whole Cloudflare account, which also runs other projects' Workers, and the stage zone is
 shared with them. So the guards measure account-wide usage but only ever change OntOS stage objects. The cut-over script also reads `STAGE_ACCESS_EMAILS` (required, a comma-separated
-list of the people Access admits and the usage notification emails) and `STAGE_ACCESS_ENFORCE_SHELL`
-(default `false`).
+list of the usage notification emails) and `STAGE_ACCESS_ENFORCE` (default `false`).
 
 - Every Worker config sets `workers_dev: false` and `preview_urls: false`, so the only way in is the
   zone routes the guards cover, and caps CPU per request at 200 ms for the Shell, 100 ms for a
@@ -513,25 +512,34 @@ list of the people Access admits and the usage notification emails) and `STAGE_A
   (default 24M), it enables the kill switch and fails the run. All three are optional `stage-edge`
   variables. The kill switch only stops OntOS stage traffic: if the breakdown shows other projects
   drive the usage, they need their own action.
-- The Workers requests usage notification `ontos-stage-workers-requests` emails the Access people at
+- The Workers requests usage notification `ontos-stage-workers-requests` emails `STAGE_ACCESS_EMAILS` at
   5M requests. Cloudflare offers usage notifications to Pay-as-you-go accounts, which a Workers Paid
   account is. If the API still rejects the policy, `cost-guards` and `provision` stop there with the
   Cloudflare error; the notification is the last guard, so the kill switch and Access are already in
   place.
-- Access: a reusable people policy `ontos-stage-people`, a service token `ontos-stage-ci` (one-year
-  duration) and a policy `ontos-stage-ci-token` for it. `stage-edge` holds the token as the secrets
-  `CLOUDFLARE_ACCESS_CLIENT_ID` and `CLOUDFLARE_ACCESS_CLIENT_SECRET`; when they are missing, a
-  re-run rotates the token to recover the secret. Enable Zero Trust once in the dashboard (the Free
-  plan covers 50 people) before the first run; until then Cloudflare answers
+- Access: a reusable people policy `ontos-stage-people` that admits anyone who signs in, a service
+  token `ontos-stage-ci` (one-year duration) and a policy `ontos-stage-ci-token` for it. `stage-edge`
+  holds the token as the secrets `CLOUDFLARE_ACCESS_CLIENT_ID` and `CLOUDFLARE_ACCESS_CLIENT_SECRET`;
+  when they are missing, a re-run rotates the token to recover the secret. Enable Zero Trust once in
+  the dashboard (the Free plan covers 50 people) before the first run; until then Cloudflare answers
   `access.api.error.not_enabled`, `cost-guards` stops with that to-do, and `verify` reports it.
 
-Only with `STAGE_ACCESS_ENFORCE_SHELL=true` does `cost-guards` put the Shell hostname behind the
-Access application `ontos-stage-shell`, with `ontos-stage-shell-gateway` bypassing
-`/shell-super-app-api/auth/api-key/gateway-context`, which verticals call with an API key. Keep it
-off for now: `cloudflare:proof` probes the Shell with plain `fetch`, cannot send the service token
-headers, and would fail every stage deploy. Vertical hostnames stay outside Access for good, since the
-browser loads their federated remotes cross-origin without credentials; the CPU caps and the kill
-switch cover them.
+Only with `STAGE_ACCESS_ENFORCE=true` does `cost-guards` put stage behind Access. Its job is to keep
+bots and crawlers from spending the Workers allowance, not to pick who may look: anyone who proves an
+email address gets in, through a one-time PIN or the GitHub and Google logins set up in Zero Trust,
+and a login lasts 30 days (`720h`). It manages two applications:
+
+- `ontos-stage` covers every placed stage hostname with the people policy and the CI token policy.
+  `cloudflare:proof` sends the token as `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`.
+- `ontos-stage-public-paths` bypasses Access for the paths that must work without a login. On the
+  Shell that is `/shell-super-app-api/auth/api-key/gateway-context`, which verticals call with an API
+  key. On every vertical it is `/mf-manifest.json`, `/remoteEntry.js`, `/static/*` and `/locales/*`,
+  because the browser loads federated remotes cross-origin without credentials. Cloudflare applies
+  the more specific path application before the hostname one. Pages and BFF calls still need a login;
+  the browser reaches the BFFs through the Shell, which calls verticals over service bindings.
+
+To turn it off, set `STAGE_ACCESS_ENFORCE=false` and delete both applications in the Zero Trust
+dashboard; `cost-guards` never deletes them.
 
 To resume after the kill switch trips, find out why, then run
 `node scripts/ops/cloudflare-stage-cutover.mts resume` (the check trips it again within the hour if

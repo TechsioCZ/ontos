@@ -37,23 +37,33 @@ import {
  * cut-over provisions the guards; the hourly `stage-edge-cost-guard` workflow runs `check`, which
  * trips the kill switch once the billing cycle's usage crosses the threshold.
  *
- * - Access: a reusable people policy (STAGE_ACCESS_EMAILS), a CI service token whose credentials
- *   stage-edge holds, and, only with STAGE_ACCESS_ENFORCE_SHELL=true, an Access application on the
- *   Shell hostname with a bypass for the API-key authenticated gateway-context route the verticals call.
+ * - Access: a reusable policy admitting anyone who signs in, a CI service token whose credentials
+ *   stage-edge holds, and, only with STAGE_ACCESS_ENFORCE=true, one Access application on every
+ *   stage hostname plus a bypass application for the paths a browser loads cross-origin without an
+ *   Access session (federated remotes) or a vertical calls with an API key (gateway context).
  * - A WAF custom rule blocking exactly the OntOS stage hostnames, provisioned disabled. The WAF
  *   answers before a Worker runs, so blocked requests are never billed. There is no rate-limit
  *   rule: the stage zone is shared and on the Free plan, whose rate-limit expressions cannot match
  *   a hostname, so one would throttle every other project in the zone.
- * - A Workers requests usage notification to the same people.
+ * - A Workers requests usage notification to STAGE_ACCESS_EMAILS.
  */
 export const ACCESS_PEOPLE_POLICY = 'ontos-stage-people';
 export const ACCESS_CI_POLICY = 'ontos-stage-ci-token';
 export const ACCESS_BYPASS_POLICY = 'ontos-stage-gateway-bypass';
 export const ACCESS_SERVICE_TOKEN = 'ontos-stage-ci';
-export const SHELL_ACCESS_APP = 'ontos-stage-shell';
-export const GATEWAY_BYPASS_APP = 'ontos-stage-shell-gateway';
+export const STAGE_ACCESS_APP = 'ontos-stage';
+export const PUBLIC_PATHS_APP = 'ontos-stage-public-paths';
+/** A login lasts 30 days. */
+export const ACCESS_SESSION_DURATION = '720h';
 /** Verticals call this route on the Shell with an API key, never with an Access session. */
 export const GATEWAY_CONTEXT_PATH = '/shell-super-app-api/auth/api-key/gateway-context';
+/**
+ * What the Shell page loads from each vertical's own hostname: the federation manifest, the remote
+ * entry, its chunks and styles, and its locale JSON. The browser fetches them cross-origin, where
+ * the Access cookie of the vertical's hostname does not exist, so they bypass Access. They are the
+ * built bundle every visitor downloads anyway; HTML, SSR and APIs stay behind Access.
+ */
+export const FEDERATION_ASSET_PATHS = ['/mf-manifest.json', '/remoteEntry.js', '/static/*', '/locales/*'] as const;
 export const ACCESS_CLIENT_ID_SECRET = 'CLOUDFLARE_ACCESS_CLIENT_ID';
 export const ACCESS_CLIENT_SECRET_SECRET = 'CLOUDFLARE_ACCESS_CLIENT_SECRET';
 export const ZONE_ID_VARIABLE = 'CLOUDFLARE_STAGE_ZONE_ID';
@@ -74,8 +84,10 @@ export const ENABLE_ZERO_TRUST =
   'Cloudflare Access is not enabled on this account: open Zero Trust in the Cloudflare dashboard once, choose a team name and the Free plan, then run cost-guards again';
 
 export interface CostGuardPlan {
+  /** Who gets the usage notification. */
   readonly accessEmails: readonly string[];
-  readonly enforceShellAccess: boolean;
+  /** Puts every stage hostname behind Access; off until cloudflare:proof sends the CI token. */
+  readonly enforceAccess: boolean;
   /** Every placed unit's public stage hostname: the Shell's and one per vertical. */
   readonly hostnames: readonly string[];
   readonly repository: string;
@@ -94,11 +106,12 @@ export const killSwitchRule = (hostnames: readonly string[], enabled: boolean): 
   ref: KILL_SWITCH_RULE_REF,
 });
 
-export const peoplePolicy = (emails: readonly string[]): AccessPolicySpec => ({
+/** Anyone who signs in with a login method of the Zero Trust organization gets in. */
+export const peoplePolicy: AccessPolicySpec = {
   decision: 'allow',
-  include: emails.map((email) => ({ email: { email } })),
+  include: [{ everyone: {} }],
   name: ACCESS_PEOPLE_POLICY,
-});
+};
 
 export const ciPolicy = (tokenId: string): AccessPolicySpec => ({
   decision: 'non_identity',
@@ -253,21 +266,39 @@ const ensureAccessPolicy = (existing: readonly CloudflareAccessPolicy[], spec: A
     return current.id;
   });
 
+/** The application covers exactly the spec's destinations, with its session duration. */
+const accessAppCovers = (current: CloudflareAccessApp, spec: AccessAppSpec) =>
+  same(
+    Option.getOrElse(current.destinations, () => []).map(({ uri }) => Option.getOrElse(uri, () => '')),
+    [...spec.destinations],
+  ) && Option.getOrUndefined(current.session_duration) === spec.sessionDuration;
+
+/** What is wrong with the provisioned application, if anything. */
+const accessAppProblem = (current: CloudflareAccessApp | undefined, spec: AccessAppSpec): Option.Option<string> => {
+  if (current === undefined) {
+    return Option.some(NOT_FOUND);
+  }
+  return accessAppCovers(current, spec) ? Option.none() : Option.some('it drifted; run cost-guards');
+};
+
+const accessAppMatches = (current: CloudflareAccessApp, spec: AccessAppSpec) =>
+  accessAppCovers(current, spec) &&
+  same(
+    Option.getOrElse(current.policies, () => []).map(({ id }) => id),
+    spec.policies.map(({ id }) => id),
+  );
+
 const ensureAccessApp = (existing: readonly CloudflareAccessApp[], spec: AccessAppSpec) =>
   Effect.gen(function* ensureAccessAppEffect() {
     const api = yield* CloudflareApi;
     const current = existing.find(({ name }) => name === spec.name);
     if (current === undefined) {
-      return yield* perform(`create the Access application ${spec.name} on ${spec.domain}`, api.createAccessApp(spec));
+      return yield* perform(
+        `create the Access application ${spec.name} on ${spec.destinations.length} destinations`,
+        api.createAccessApp(spec),
+      );
     }
-    const policyIds = Option.getOrElse(current.policies, () => []).map(({ id }) => id);
-    if (
-      current.domain !== spec.domain ||
-      !same(
-        policyIds,
-        spec.policies.map(({ id }) => id),
-      )
-    ) {
+    if (!accessAppMatches(current, spec)) {
       return yield* perform(`update the Access application ${spec.name}`, api.updateAccessApp(current.id, spec));
     }
     return yield* Console.log(`Access application ${spec.name} is current`);
@@ -329,19 +360,33 @@ const ensureServiceToken = (repository: string) =>
     return token.id;
   });
 
-const shellApps = (plan: CostGuardPlan, ids: { bypass: string; ci: string; people: string }): AccessAppSpec[] => [
+/**
+ * One application covers every stage hostname, so a login on one is a login on all of them. The
+ * bypass application's paths are the more specific match, so Access lets them through.
+ */
+export const stageAccessApps = (
+  plan: CostGuardPlan,
+  ids: { bypass: string; ci: string; people: string },
+): AccessAppSpec[] => [
   {
-    domain: `${plan.shellHostname}${GATEWAY_CONTEXT_PATH}`,
-    name: GATEWAY_BYPASS_APP,
+    destinations: [
+      `${plan.shellHostname}${GATEWAY_CONTEXT_PATH}`,
+      ...plan.hostnames
+        .filter((hostname) => hostname !== plan.shellHostname)
+        .flatMap((hostname) => FEDERATION_ASSET_PATHS.map((path) => `${hostname}${path}`)),
+    ],
+    name: PUBLIC_PATHS_APP,
     policies: [{ id: ids.bypass, precedence: 1 }],
+    sessionDuration: ACCESS_SESSION_DURATION,
   },
   {
-    domain: plan.shellHostname,
-    name: SHELL_ACCESS_APP,
+    destinations: [...plan.hostnames],
+    name: STAGE_ACCESS_APP,
     policies: [
       { id: ids.people, precedence: 1 },
       { id: ids.ci, precedence: 2 },
     ],
+    sessionDuration: ACCESS_SESSION_DURATION,
   },
 ];
 
@@ -350,18 +395,16 @@ const ensureAccess = (plan: CostGuardPlan) =>
     const api = yield* CloudflareApi;
     // The first Access read fails with the operator's to-do while Zero Trust is off.
     const policies = yield* requireAccess(api.accessPolicies);
-    const people = yield* ensureAccessPolicy(policies, peoplePolicy(plan.accessEmails));
+    const people = yield* ensureAccessPolicy(policies, peoplePolicy);
     const tokenId = yield* ensureServiceToken(plan.repository);
     const ci = yield* ensureAccessPolicy(policies, ciPolicy(tokenId));
-    if (!plan.enforceShellAccess) {
-      return yield* Console.log(
-        `the Shell stays outside Access: STAGE_ACCESS_ENFORCE_SHELL is off until cloudflare:proof can send ${ACCESS_SERVICE_TOKEN}'s headers`,
-      );
+    if (!plan.enforceAccess) {
+      return yield* Console.log('the stage hostnames stay outside Access: STAGE_ACCESS_ENFORCE is off');
     }
     const bypass = yield* ensureAccessPolicy(policies, bypassPolicy);
     const apps = yield* api.accessApps;
-    // The path application is the more specific match, so it must exist before the hostname is gated.
-    for (const spec of shellApps(plan, { bypass, ci, people })) {
+    // The bypass paths must exist before the hostnames are gated.
+    for (const spec of stageAccessApps(plan, { bypass, ci, people })) {
       yield* ensureAccessApp(apps, spec);
     }
     return yield* Effect.void;
@@ -455,12 +498,16 @@ export const costGuardChecks = (plan: CostGuardPlan) =>
       ],
       [`the notification ${USAGE_ALERT_NAME} is on`, present(alert?.enabled === true)],
     ];
-    if (plan.enforceShellAccess && Option.isSome(access)) {
-      const apps = new Set((yield* api.accessApps).map(({ name }) => name));
-      checks.push([
-        `the Access applications ${SHELL_ACCESS_APP} and ${GATEWAY_BYPASS_APP} guard the Shell`,
-        present(apps.has(SHELL_ACCESS_APP) && apps.has(GATEWAY_BYPASS_APP)),
-      ]);
+    if (plan.enforceAccess && Option.isSome(access)) {
+      const apps = yield* api.accessApps;
+      // Policy ids are the provisioned ones; the check compares what each application covers.
+      for (const spec of stageAccessApps(plan, { bypass: '', ci: '', people: '' })) {
+        const current = apps.find(({ name }) => name === spec.name);
+        checks.push([
+          `the Access application ${spec.name} covers its ${spec.destinations.length} destinations`,
+          accessAppProblem(current, spec),
+        ]);
+      }
     }
     return checks;
   });

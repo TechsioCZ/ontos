@@ -35,7 +35,7 @@ const settings: CutoverSettings = {
   accessEmails: PEOPLE,
   accountId: 'account-1',
   apiToken: Redacted.make('lead-token-secret'),
-  enforceShellAccess: false,
+  enforceAccess: false,
   projectId: STAGE_ZEROPS_PROJECT_ID,
   repository: 'TechsioCZ/ontos',
   shellHostname: SHELL_HOSTNAME,
@@ -120,7 +120,7 @@ it.effect('provisions every cost guard on an empty account and hands CI the zone
       {
         body: {
           decision: 'allow',
-          include: [{ email: { email: OPS_EMAIL } }, { email: { email: LEAD_EMAIL } }],
+          include: [{ everyone: {} }],
           name: 'ontos-stage-people',
         },
         method: 'POST',
@@ -159,43 +159,63 @@ it.effect('provisions every cost guard on an empty account and hands CI the zone
   }),
 );
 
-it.effect('gates the Shell behind Access only when enforced, keeping the gateway-context route open', () =>
-  Effect.gen(function* enforcesShellAccess() {
+const FEDERATION_PATHS = ['/mf-manifest.json', '/remoteEntry.js', '/static/*', '/locales/*'];
+
+it.effect('gates every stage hostname behind one Access application only when enforced', () =>
+  Effect.gen(function* enforcesAccess() {
     const account = fakeCloudflareAccount({});
+    const stage = fakeStage({});
 
     yield* run(provisionCostGuards, {
       account,
-      settings: { ...settings, enforceShellAccess: true },
-      stage: fakeStage({}),
+      settings: { ...settings, enforceAccess: true },
+      stage,
     });
 
+    const verticals = HOSTNAMES.filter((hostname) => hostname !== SHELL_HOSTNAME);
+    const app = (name: string, destinations: string[], policies: { id: string; precedence: number }[]) => ({
+      body: {
+        app_launcher_visible: false,
+        destinations: destinations.map((uri) => ({ type: 'public', uri })),
+        name,
+        policies,
+        session_duration: '720h',
+        type: 'self_hosted',
+      },
+      method: 'POST',
+      path: ACCESS_APPS,
+    });
     expect(writes(account).filter(({ path }) => path === ACCESS_APPS)).toStrictEqual([
-      {
-        body: {
-          domain: `${SHELL_HOSTNAME}/shell-super-app-api/auth/api-key/gateway-context`,
-          name: 'ontos-stage-shell-gateway',
-          policies: [{ id: 'policy-3', precedence: 1 }],
-          session_duration: '24h',
-          type: 'self_hosted',
-        },
-        method: 'POST',
-        path: ACCESS_APPS,
-      },
-      {
-        body: {
-          domain: SHELL_HOSTNAME,
-          name: 'ontos-stage-shell',
-          policies: [
-            { id: 'policy-1', precedence: 1 },
-            { id: 'policy-2', precedence: 2 },
-          ],
-          session_duration: '24h',
-          type: 'self_hosted',
-        },
-        method: 'POST',
-        path: ACCESS_APPS,
-      },
+      app(
+        'ontos-stage-public-paths',
+        [
+          `${SHELL_HOSTNAME}/shell-super-app-api/auth/api-key/gateway-context`,
+          ...verticals.flatMap((hostname) => FEDERATION_PATHS.map((path) => `${hostname}${path}`)),
+        ],
+        [{ id: 'policy-3', precedence: 1 }],
+      ),
+      app('ontos-stage', HOSTNAMES, [
+        { id: 'policy-1', precedence: 1 },
+        { id: 'policy-2', precedence: 2 },
+      ]),
     ]);
+    expect(account.accessPolicies.find(({ name }) => name === 'ontos-stage-people')).toMatchObject({
+      decision: 'allow',
+      include: [{ everyone: {} }],
+    });
+
+    // A re-run finds both applications current and changes nothing.
+    const before = writes(account).length;
+    yield* run(provisionCostGuards, {
+      account,
+      settings: { ...settings, enforceAccess: true },
+      stage,
+    });
+    expect(
+      writes(account)
+        .slice(before)
+        .filter(({ path }) => path.startsWith('/access')),
+    ).toStrictEqual([]);
     expect(account.accessPolicies.find(({ name }) => name === 'ontos-stage-gateway-bypass')).toMatchObject({
       decision: 'bypass',
       include: [{ everyone: {} }],

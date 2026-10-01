@@ -80,9 +80,9 @@ import type { ServiceImport, ZeropsService } from './stage-operations.mts';
  *
  * Settings come from the environment, else from the dotenv file `--env-file` names (default
  * `~/.cloudflare-ontos-stage-token`): CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, STAGE_ZONE,
- * STAGE_SHELL_HOSTNAME, STAGE_ACCESS_EMAILS (comma-separated people Access admits and the usage
- * notification emails) and, optionally, CLOUDFLARE_STAGE_EDGE_API_TOKEN (the narrower CI token;
- * without it CI receives CLOUDFLARE_API_TOKEN) and STAGE_ACCESS_ENFORCE_SHELL (default false),
+ * STAGE_SHELL_HOSTNAME, STAGE_ACCESS_EMAILS (comma-separated usage notification emails; Access
+ * admits anyone who signs in) and, optionally, CLOUDFLARE_STAGE_EDGE_API_TOKEN (the narrower CI token;
+ * without it CI receives CLOUDFLARE_API_TOKEN) and STAGE_ACCESS_ENFORCE (default false),
  * plus ZEROPS_TOKEN for the SpiceDB TLS secrets and the Shell's secrets shellsuperapp_BETTER_AUTH_SECRET
  * and shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK. Other secret values are read from Zerops with the
  * locally authenticated `zcli`. No secret value is ever printed.
@@ -138,10 +138,10 @@ export interface CutoverSettings extends StageOrigins {
   readonly accountId: string;
   readonly apiToken: Redacted.Redacted;
   /**
-   * Gates the Shell hostname behind Access. Off until the framework's `cloudflare:proof` can send the
-   * CI service token's headers: until then every stage-edge proof would fail and roll back.
+   * Gates every stage hostname behind Access. Turn it on only once the deploy's `cloudflare:proof`
+   * sends the CI service token's headers; without them every stage-edge proof fails and rolls back.
    */
-  readonly enforceShellAccess: boolean;
+  readonly enforceAccess: boolean;
   readonly projectId: string;
   readonly repository: string;
   readonly stageEdgeApiToken: Redacted.Redacted;
@@ -739,7 +739,7 @@ const costGuardPlan = Effect.gen(function* costGuardPlanEffect() {
   const units = yield* readEdgeUnits;
   const plan: CostGuardPlan = {
     accessEmails: settings.accessEmails,
-    enforceShellAccess: settings.enforceShellAccess,
+    enforceAccess: settings.enforceAccess,
     hostnames: units.map((unit) => new URL(publicOrigin(unit, settings)).hostname),
     repository: settings.repository,
     shellHostname: settings.shellHostname,
@@ -987,7 +987,7 @@ export const loadCutoverSettings = Effect.gen(function* loadCutoverSettingsEffec
       .filter((email) => email !== ''),
     accountId: yield* Config.String('CLOUDFLARE_ACCOUNT_ID'),
     apiToken,
-    enforceShellAccess: yield* Config.Boolean('STAGE_ACCESS_ENFORCE_SHELL').pipe(Config.withDefault(false)),
+    enforceAccess: yield* Config.Boolean('STAGE_ACCESS_ENFORCE').pipe(Config.withDefault(false)),
     projectId: STAGE_ZEROPS_PROJECT_ID,
     repository: ONTOS_REPOSITORY,
     shellHostname: yield* Config.String('STAGE_SHELL_HOSTNAME'),
