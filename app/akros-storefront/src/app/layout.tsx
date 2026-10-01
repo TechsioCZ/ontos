@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 import { CartProvider } from "@/features/cart/cart-provider";
+import { CartNotifications } from "@/features/cart/cart-notifications";
 
 export const metadata: Metadata = {
   title: {
@@ -17,7 +18,10 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
   return (
     <html lang="cs" className="light" data-scroll-behavior="smooth">
       <body>
-        <CartProvider>{children}</CartProvider>
+        <CartProvider>
+          {children}
+          <CartNotifications />
+        </CartProvider>
       </body>
     </html>
   );

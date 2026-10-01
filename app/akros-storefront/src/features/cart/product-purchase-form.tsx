@@ -242,7 +242,6 @@ export function ProductPurchaseForm({
   const initialDiameterRange: NumericRange = dimensionBounds?.diameter ?? [0, 0];
   const initialLengthRange: NumericRange = dimensionBounds?.length ?? [0, 0];
   const initialPriceRange: NumericRange = priceBounds ?? [0, 0];
-  const [confirmation, setConfirmation] = useState("");
   const [quantity, setQuantity] = useState(variant?.minimumQuantity ?? product.minimumQuantity);
   const [page, setPage] = useState(1);
   const [selectedMaterials, setSelectedMaterials] = useState(materialOptions);
@@ -307,7 +306,6 @@ export function ProductPurchaseForm({
         item: getVariantCartItem(product, variant),
         quantity: selectedQuantity,
       });
-      setConfirmation(`${formatVariantLabel(variant)} bylo přidáno do košíku.`);
     },
     [dispatch, product],
   );
@@ -472,7 +470,6 @@ export function ProductPurchaseForm({
               item: productCartItem,
               quantity,
             });
-            setConfirmation(`${variant?.label ?? product.name} bylo přidáno do košíku.`);
           }}
           size="md"
           uppercase
@@ -480,9 +477,6 @@ export function ProductPurchaseForm({
         >
           Koupit
         </Button>
-        <p aria-live="polite" className="akros-visually-hidden">
-          {confirmation}
-        </p>
       </div>
     );
   }
@@ -626,10 +620,6 @@ export function ProductPurchaseForm({
           />
         )}
       </>
-
-      <p aria-live="polite" className="akros-visually-hidden">
-        {confirmation}
-      </p>
     </div>
   );
 }

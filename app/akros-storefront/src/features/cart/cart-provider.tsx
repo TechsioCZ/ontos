@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  useCallback,
   type Dispatch,
   type ReactNode,
   useContext,
@@ -13,6 +14,7 @@ import {
 import {
   type CartAction,
   type CartState,
+  type CartLine,
   cartReducer,
   createEmptyCart,
   getCartItemCount,
@@ -26,22 +28,126 @@ interface CartContextValue {
   dispatch: Dispatch<CartAction>;
   itemCount: number;
   ready: boolean;
+  feedback: CartFeedback | null;
+  removedItem: RemovedCartItem | null;
+  undoRemove: (id: number) => void;
+  dismissRemove: (id: number) => void;
+}
+
+interface CartFeedback {
+  id: number;
+  kind: "added" | "restored" | "limited";
+  line: CartLine;
+  quantity: number;
+  limited: boolean;
+}
+
+interface RemovedCartItem {
+  id: number;
+  line: CartLine;
+  index: number;
 }
 
 const CartContext = createContext<CartContextValue | null>(null);
 
+// Cart quantities support six decimal places; ignore subtraction's floating-point noise.
+const getAddedQuantity = (line: CartLine, previous?: CartLine) =>
+  Math.round((line.quantity - (previous?.quantity ?? 0)) * 1_000_000) / 1_000_000;
+
 interface CartProviderState {
   cart: CartState;
   ready: boolean;
+  feedback: CartFeedback | null;
+  removedItem: RemovedCartItem | null;
+  sequence: number;
 }
 
-type CartProviderAction = CartAction | { type: "hydrate"; cart: CartState };
+type CartProviderAction =
+  | CartAction
+  | { type: "hydrate"; cart: CartState }
+  | { type: "undo-remove"; id: number }
+  | { type: "dismiss-remove"; id: number };
 
 const providerReducer = (
   state: CartProviderState,
   action: CartProviderAction,
 ): CartProviderState => {
-  if (action.type === "hydrate") return { cart: action.cart, ready: true };
+  if (action.type === "hydrate") return { ...state, cart: action.cart, ready: true };
+  if (action.type === "dismiss-remove") {
+    return state.removedItem?.id === action.id ? { ...state, removedItem: null } : state;
+  }
+  if (action.type === "undo-remove") {
+    const removed = state.removedItem;
+    if (!removed || removed.id !== action.id) return state;
+    const matches = (line: CartLine) =>
+      line.productId === removed.line.productId && line.variantId === removed.line.variantId;
+    const previous = state.cart.lines.find(matches);
+    let cart = cartReducer(state.cart, {
+      type: "add",
+      item: removed.line,
+      quantity: removed.line.quantity,
+    });
+    const line = cart.lines.find(matches);
+    if (!line) return { ...state, removedItem: null };
+    if (!previous) {
+      const lines = cart.lines.filter((item) => !matches(item));
+      lines.splice(Math.min(removed.index, lines.length), 0, line);
+      cart = { ...cart, lines };
+    }
+    const quantity = getAddedQuantity(line, previous);
+    const id = state.sequence + 1;
+    return {
+      ...state,
+      cart,
+      removedItem: null,
+      sequence: id,
+      feedback: {
+        id,
+        kind: quantity > 0 ? "restored" : "limited",
+        line,
+        quantity,
+        limited: quantity < removed.line.quantity,
+      },
+    };
+  }
+  if (action.type === "clear") {
+    return { ...state, cart: createEmptyCart(), feedback: null, removedItem: null };
+  }
+  if (action.type === "remove") {
+    const index = state.cart.lines.findIndex(
+      (line) => line.productId === action.productId && line.variantId === action.variantId,
+    );
+    if (index < 0) return state;
+    const id = state.sequence + 1;
+    return {
+      ...state,
+      cart: cartReducer(state.cart, action),
+      sequence: id,
+      feedback: null,
+      removedItem: { id, index, line: state.cart.lines[index] },
+    };
+  }
+  if (action.type === "add") {
+    const matches = (line: CartLine) =>
+      line.productId === action.item.productId && line.variantId === action.item.variantId;
+    const previous = state.cart.lines.find(matches);
+    const cart = cartReducer(state.cart, action);
+    const line = cart.lines.find(matches) ?? { ...action.item, quantity: 0 };
+    const quantity = getAddedQuantity(line, previous);
+    const id = state.sequence + 1;
+    return {
+      ...state,
+      cart,
+      sequence: id,
+      feedback: {
+        id,
+        kind: quantity > 0 ? "added" : "limited",
+        line,
+        quantity,
+        limited: quantity < action.quantity,
+      },
+    };
+  }
 
   return { ...state, cart: cartReducer(state.cart, action) };
 };
@@ -115,11 +221,19 @@ export function CartProvider({
   children: ReactNode;
   storage?: Storage | null;
 }) {
-  const [{ cart, ready }, providerDispatch] = useReducer(providerReducer, {
+  const [{ cart, ready, feedback, removedItem }, providerDispatch] = useReducer(providerReducer, {
     cart: createEmptyCart(),
     ready: false,
+    feedback: null,
+    removedItem: null,
+    sequence: 0,
   });
   const dispatch: Dispatch<CartAction> = providerDispatch;
+  const undoRemove = useCallback((id: number) => providerDispatch({ type: "undo-remove", id }), []);
+  const dismissRemove = useCallback(
+    (id: number) => providerDispatch({ type: "dismiss-remove", id }),
+    [],
+  );
   const resolvedStorage =
     storage === undefined && typeof window !== "undefined" ? window.localStorage : storage;
 
@@ -139,8 +253,17 @@ export function CartProvider({
   }, [cart, ready, resolvedStorage]);
 
   const value = useMemo(
-    () => ({ cart, dispatch, itemCount: getCartItemCount(cart), ready }),
-    [cart, dispatch, ready],
+    () => ({
+      cart,
+      dispatch,
+      itemCount: getCartItemCount(cart),
+      ready,
+      feedback,
+      removedItem,
+      undoRemove,
+      dismissRemove,
+    }),
+    [cart, dispatch, ready, feedback, removedItem, undoRemove, dismissRemove],
   );
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;

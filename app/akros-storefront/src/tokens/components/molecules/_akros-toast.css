@@ -1,0 +1,24 @@
+/* Cart notifications reuse the storefront's white cards and yellow actions. */
+:root {
+  --size-toast-width: min(var(--dimension-container-sm), calc(100vw - var(--dimension-48)));
+  --padding-toast-root: var(--dimension-16);
+  --radius-toast-root: var(--akros-radius-md);
+  --text-toast-title: var(--text-sm);
+  --text-toast-description: var(--text-sm);
+  --font-weight-toast-title: var(--font-weight-bold);
+  --color-toast-success-bg: var(--color-base);
+  --color-toast-success-border: var(--color-border-primary);
+  --color-toast-success-icon: var(--color-fg-status-success);
+  --color-toast-info-bg: var(--color-base);
+  --color-toast-info-border: var(--color-border-primary);
+  --color-toast-warning-bg: var(--color-base);
+  --color-toast-warning-border: var(--color-primary);
+}
+
+[data-scope="toast"][data-part="root"] {
+  --size-icon-control-sm: var(--dimension-44);
+}
+
+[data-akros-cart-notification] {
+  --height-form-control-sm: var(--dimension-44);
+}
