@@ -489,6 +489,7 @@ export const fakeZeropsApi = (stage: FakeStage): FakeZeropsApi => {
           stage.sensitiveKeys.add(`${hostname}_${key}`);
         }),
       enableSubdomainAccess: notFaked('enableSubdomainAccess'),
+      findServiceStack: notFaked('findServiceStack'),
       projectEnvFile: notFaked('projectEnvFile'),
       projectEnvs: notFaked('projectEnvs'),
       restartService: notFaked('restartService'),

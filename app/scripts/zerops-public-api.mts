@@ -1,4 +1,4 @@
-import { Config, Context, Duration, Effect, Layer, Redacted, Schedule, Schema } from 'effect';
+import { Config, Context, Duration, Effect, Layer, Option, Redacted, Schedule, Schema } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
 import { ZeropsApiError } from './zerops-public-api-error.mts';
@@ -44,6 +44,9 @@ const ServiceStackSchema = Schema.Struct({
   status: Schema.String,
   subdomainAccess: Schema.Boolean,
 });
+/** Zerops answers a read of a deleted or unknown service with HTTP 400 and this error code. */
+const SERVICE_STACK_NOT_FOUND = 'serviceStackNotFound';
+const ErrorBodySchema = Schema.Struct({ error: Schema.Struct({ code: Schema.String }) });
 const EnvFileSchema = Schema.Struct({ envFile: Schema.String });
 const ServiceUserDataPageSchema = Schema.Struct({
   list: Schema.Array(Schema.Struct({ content: Schema.String, key: Schema.String })),
@@ -90,6 +93,8 @@ export interface ZeropsPublicApiService {
     content: string,
   ) => Effect.Effect<void, ZeropsApiError>;
   readonly enableSubdomainAccess: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
+  /** Reads a service like `serviceStack`, but a deleted or unknown service is `None` rather than an error. */
+  readonly findServiceStack: (serviceId: string) => Effect.Effect<Option.Option<ZeropsServiceStack>, ZeropsApiError>;
   readonly projectEnvFile: (projectId: string) => Effect.Effect<ReadonlyMap<string, string>, ZeropsApiError>;
   readonly projectEnvs: (projectId: string) => Effect.Effect<readonly ZeropsProjectEnv[], ZeropsApiError>;
   readonly restartService: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
@@ -115,14 +120,14 @@ export class ZeropsPublicApi extends Context.Service<ZeropsPublicApi, ZeropsPubl
 
 const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
   const baseClient = yield* HttpClient.HttpClient;
-  const client = baseClient.pipe(
+  const authorizedClient = baseClient.pipe(
     HttpClient.mapRequestEffect((request) =>
       Config.Redacted('ZEROPS_TOKEN').pipe(
         Effect.map((token) => HttpClientRequest.bearerToken(request, Redacted.value(token))),
       ),
     ),
-    HttpClient.filterStatusOk,
   );
+  const client = authorizedClient.pipe(HttpClient.filterStatusOk);
 
   const send = <A, I>(request: HttpClientRequest.HttpClientRequest, schema: Schema.Codec<A, I>, label: string) =>
     client.execute(request).pipe(
@@ -261,9 +266,34 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     yield* awaitProcess(process, `service ${action}`);
   });
 
+  const findServiceStack = Effect.fn('ZeropsPublicApi.findServiceStack')(function* findServiceStack(serviceId: string) {
+    const readFailed = failure('Zerops service read failed');
+    const response = yield* authorizedClient
+      .execute(HttpClientRequest.get(`${ZEROPS_PUBLIC_API_URL}/service-stack/${serviceId}`))
+      .pipe(
+        Effect.mapError(readFailed),
+        Effect.timeoutOrElse({
+          duration: REQUEST_TIMEOUT,
+          orElse: () => Effect.fail(new ZeropsApiError({ message: 'Zerops service read timed out' })),
+        }),
+      );
+    const body = yield* response.json.pipe(Effect.mapError(readFailed));
+    if (response.status >= 200 && response.status < 300) {
+      return Option.some(yield* Schema.decodeUnknownEffect(ServiceStackSchema)(body).pipe(Effect.mapError(readFailed)));
+    }
+    const notFound = Schema.decodeUnknownOption(ErrorBodySchema)(body).pipe(
+      Option.exists(({ error }) => error.code === SERVICE_STACK_NOT_FOUND),
+    );
+    if (notFound) {
+      return Option.none();
+    }
+    return yield* new ZeropsApiError({ message: `Zerops service read failed with HTTP ${String(response.status)}` });
+  });
+
   return ZeropsPublicApi.of({
     createServiceSecret,
     enableSubdomainAccess: (serviceId) => serviceAction(serviceId, 'enable-subdomain-access'),
+    findServiceStack,
     projectEnvFile: (projectId) =>
       get(`/project/${projectId}/env-file?${PROJECT_ENV_FILE_QUERY}`, EnvFileSchema, 'project env file').pipe(
         Effect.map(({ envFile }) => parseZeropsEnvFile(envFile)),

@@ -547,6 +547,30 @@ their status to reconcile Outbox Workers after an Outbox Worker mode switch. The
   `ZEROPS_*_SERVICE_ID` at the new service (and fails, changing no variable, if Zerops does not list one), sets `DEPLOY_TARGET=zerops` and dispatches the full
   Zerops deploy. Moving the Shell hostname back to Zerops remains a DNS step.
 
+## Stage cost profile
+
+Stage on the Cloudflare target keeps only the data plane and its helpers on Zerops, each in one
+container with a hard ceiling, so a runaway process cannot grow the bill:
+
+| Service                         | Runs                 | CPU (shared) | RAM          | Disk    |
+| ------------------------------- | -------------------- | ------------ | ------------ | ------- |
+| `db18` (`postgresql:single@18`) | always               | 1-2 cores    | 1-2 GB       | 1-10 GB |
+| `spicedb`                       | always               | 1 core       | 1 GB         | 5 GB    |
+| `cloudflared`                   | always, 1 connector  | 1 core       | 0.125-0.5 GB | 1 GB    |
+| `outboxworkerhost`              | always               | 1 core       | 0.125-1 GB   | 1-2 GB  |
+| `migrator`                      | only during a deploy | 1-2 cores    | 0.5-2 GB     | 5 GB    |
+
+`zerops-import.yaml` declares the ceilings of the stage-only services. The `db18`, `spicedb` and
+`migrator` ceilings are set on the stage services only, so production's derived import keeps Zerops'
+defaults. The dedicated per-vertical outbox workers do not exist on stage while
+`OUTBOX_WORKER_MODE=host`; each deploy reads a deleted worker as stopped. To switch stage back to
+`dedicated`, import their `zerops-import.yaml` entries again and point the
+`ZEROPS_*_WORKER_SERVICE_ID` stage variables at the new services before the deploy.
+
+High availability stays one command away: `production-environment.mts` (below) derives `:ha` managed
+services and at least two containers per runtime service from the same import, and production runs the
+dedicated outbox workers instead of the host.
+
 ## Create production
 
 Stage stays cheap: `zerops-import.yaml` declares its services in single-container mode

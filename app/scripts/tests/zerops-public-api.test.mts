@@ -1,4 +1,4 @@
-import { ConfigProvider, Effect, Layer, Match } from 'effect';
+import { ConfigProvider, Effect, Layer, Match, Option } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
 
@@ -88,5 +88,41 @@ it.effect('creates a sensitive service secret and waits for its process to finis
       'POST /api/rest/public/service-stack/spicedb-service/user-data {"content":"pem","key":"SPICEDB_GRPC_TLS_KEY","sensitive":true}',
       'GET /api/rest/public/process/secret-process',
     ]);
+  }),
+);
+
+it.effect('reads a deleted service as absent and any other failed read as an error', () =>
+  Effect.gen(function* findsServices() {
+    const client = HttpClient.make((request, url) => {
+      const answer = Match.value(url.pathname).pipe(
+        Match.when('/api/rest/public/service-stack/live', () =>
+          Response.json({ name: 'worker', status: 'STOPPED', subdomainAccess: false }),
+        ),
+        Match.when('/api/rest/public/service-stack/deleted', () =>
+          Response.json(
+            { error: { code: 'serviceStackNotFound', message: 'Service stack not found.' } },
+            { status: 400 },
+          ),
+        ),
+        Match.orElse(() => Response.json({ error: { code: 'forbidden', message: 'Forbidden' } }, { status: 403 })),
+      );
+      return Effect.succeed(HttpClientResponse.fromWeb(request, answer));
+    });
+    const layer = Layer.merge(
+      ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
+      ConfigProvider.layer(ConfigProvider.fromUnknown({ ZEROPS_TOKEN: TEST_TOKEN })),
+    );
+    const [live, deleted, forbidden] = yield* Effect.gen(function* findAll() {
+      const api = yield* ZeropsPublicApi;
+      return yield* Effect.all([
+        api.findServiceStack('live'),
+        api.findServiceStack('deleted'),
+        api.findServiceStack('forbidden').pipe(Effect.flip),
+      ]);
+    }).pipe(Effect.provide(layer));
+
+    expect(live.pipe(Option.map(({ status }) => status))).toStrictEqual(Option.some('STOPPED'));
+    expect(Option.isNone(deleted)).toBe(true);
+    expect(forbidden.message).toBe('Zerops service read failed with HTTP 403');
   }),
 );

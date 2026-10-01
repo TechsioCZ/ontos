@@ -259,7 +259,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
     const imported = stage.inputs.find(({ command }) => command.startsWith('zcli project service-import -'));
     expect(imported?.stdin).toContain('hostname: cloudflared');
     expect(imported?.stdin).toContain('TUNNEL_TOKEN: tunnel-connector-token');
-    expect(imported?.stdin).toContain('minContainers: 2');
+    expect(imported?.stdin).toContain('maxContainers: 1');
     expect(imported?.stdin).toContain('hostname: outboxworkerhost');
     expect(stage.variables.get('stage')).toStrictEqual(
       new Map([

@@ -48,9 +48,10 @@ import type { ServiceImport, ZeropsImportEntry, ZeropsService } from './stage-op
 /**
  * Retires and restores the stage Zerops services Cloudflare mode no longer uses (design section
  * 11a): the 10 application services the Workers replace. The migrator, SpiceDB and the Outbox Worker
- * host keep running on the Cloudflare target. The per-vertical outbox workers stay too, stopped: each
- * deploy reads their status to detect an OUTBOX_WORKER_MODE switch, and a switch to `dedicated`
- * redeploys them. `app/zerops.yaml`, `app/zerops-import.yaml`, every GitHub variable and every deploy script
+ * host keep running on the Cloudflare target. The per-vertical outbox workers are not needed in `host`
+ * mode and may be deleted: each deploy treats a deleted worker like a stopped one when it detects an
+ * OUTBOX_WORKER_MODE switch. A switch back to `dedicated` first re-imports them from `zerops-import.yaml`
+ * and points their `ZEROPS_*_WORKER_SERVICE_ID` variables at the new services. `app/zerops.yaml`, `app/zerops-import.yaml`, every GitHub variable and every deploy script
  * stay untouched, so production and a switch back keep working.
  *
  * `retire` records, per service, its ID, status, `zerops-import.yaml` entry, stage service-ID

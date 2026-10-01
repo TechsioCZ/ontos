@@ -523,8 +523,9 @@ const ensurePublicAccessCommand = Command.make('ensure-public-access', { setup: 
 );
 
 /**
- * Stops a setup's stage service when it runs. A stage that never provisioned the service, or whose service
- * already stopped, needs nothing, so the deploy can stop the other Outbox Worker mode's workers on every switch.
+ * Stops a setup's stage service when it runs. A stage that never provisioned the service, deleted it, or whose
+ * service already stopped, needs nothing, so the deploy can stop the other Outbox Worker mode's workers on every
+ * switch.
  */
 const stopServiceCommand = Command.make('stop-service', { setup: Flag.String('setup') }, ({ setup }) =>
   Effect.gen(function* stopService() {
@@ -533,7 +534,11 @@ const stopServiceCommand = Command.make('stop-service', { setup: Flag.String('se
       return yield* Effect.logInfo(`${setup} has no stage service, so there is nothing to stop`);
     }
     const api = yield* ZeropsPublicApi;
-    const service = yield* api.serviceStack(serviceId);
+    const found = yield* api.findServiceStack(serviceId);
+    if (Option.isNone(found)) {
+      return yield* Effect.logInfo(`${setup}'s stage service was deleted, so there is nothing to stop`);
+    }
+    const service = found.value;
     if (service.status !== 'ACTIVE') {
       return yield* Effect.logInfo(`${setup} is ${service.status}, so there is nothing to stop`);
     }
@@ -567,7 +572,7 @@ export const modeWorkerSetups = (
 /**
  * Whether the Outbox Workers still reflect another Outbox Worker mode. An `OUTBOX_WORKER_MODE` switch changes
  * no source, so the plan cannot see it. The switch shows as the other mode's workers still running, or as
- * one of this mode's workers not running (never deployed, or stopped by an earlier switch). Either way the
+ * one of this mode's workers not running (never deployed, deleted, or stopped by an earlier switch). Either way the
  * plan reconciles the workers of both modes. The deploy target plays no part: both run the workers on Zerops.
  */
 const workerModeDriftCommand = Command.make('worker-mode-drift', {}, () =>
@@ -579,7 +584,10 @@ const workerModeDriftCommand = Command.make('worker-mode-drift', {}, () =>
     const api = yield* ZeropsPublicApi;
     const isRunning = Effect.fnUntraced(function* isRunning(setup: string) {
       const serviceId = yield* provisionedStageServiceId(setup);
-      return serviceId !== undefined && (yield* api.serviceStack(serviceId)).status === 'ACTIVE';
+      if (serviceId === undefined) {
+        return false;
+      }
+      return Option.exists(yield* api.findServiceStack(serviceId), ({ status }) => status === 'ACTIVE');
     });
     const [otherMode, ownMode] = yield* Effect.all([
       otherModeWorkerSetups(zeropsYaml, topology, mode),
