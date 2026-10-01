@@ -208,9 +208,20 @@ test('loads localized English and Czech Contacts pages only after login', async 
   await expect(page.getByRole('heading', { name: 'Contacts' })).toHaveCount(0);
 
   await login(page, 'cs', authentication.credentials);
-  await expect(page.getByText('Nasazení modulu je dočasně nedostupné.')).toHaveCount(0);
+  // The module links and the unavailable deployments render together from one composition, so the
+  // Party Registry link is the point where the deployment list is final. Asserting before it checked
+  // whatever had rendered yet. This browser stack serves Party Registry and Inventory only, so the other
+  // allowlisted deployments are listed unavailable; the module under test must not be among them.
+  const dashboardNavigation = page.getByRole('navigation', { name: 'Navigace přehledu' });
+  const contactsLink = dashboardNavigation.getByRole('link', { name: 'Party Registry' });
+  await expect(contactsLink).toBeVisible();
+  await expect(
+    dashboardNavigation
+      .getByRole('listitem')
+      .filter({ hasText: 'Nasazení modulu je dočasně nedostupné.' })
+      .filter({ hasText: 'party-registry' }),
+  ).toHaveCount(0);
 
-  const contactsLink = page.locator('a[href="/cs/contacts"]');
   await expect(contactsLink).toHaveAttribute('href', '/cs/contacts');
   await contactsLink.click();
 
