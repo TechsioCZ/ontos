@@ -687,7 +687,8 @@ it('hands the edge deployment planner the Outbox Worker mode it requires', () =>
 });
 
 const QUEUE_PROOF_JOB = 'queue-proof';
-const ARTIFACT_BUILD_JOB = 'artifact-build';
+const NODE_ARTIFACT_BUILD_JOB = 'node-artifact-build';
+const CLOUDFLARE_ARTIFACT_BUILD_JOB = 'cloudflare-artifact-build';
 const WORKSPACE_GATE_JOB = 'workspace-gate';
 const FORMAT_AND_LINT_JOB = 'format-and-lint';
 /** The gates that start once the merge queue proof is checked. */
@@ -696,12 +697,13 @@ const ROOT_GATE_JOBS = [
   'static-contracts',
   FORMAT_AND_LINT_JOB,
   'service-integration',
-  ARTIFACT_BUILD_JOB,
+  NODE_ARTIFACT_BUILD_JOB,
+  CLOUDFLARE_ARTIFACT_BUILD_JOB,
 ] as const;
-/** The proofs of the built artifacts, which also wait for the shard builds. */
+/** The proofs of the built artifacts, which also wait for the shard builds of their own target only. */
 const ARTIFACT_PROOF_JOBS = {
-  'cloudflare-runtime': [QUEUE_PROOF_JOB, ARTIFACT_BUILD_JOB],
-  'node-runtime': [QUEUE_PROOF_JOB, ARTIFACT_BUILD_JOB],
+  'cloudflare-runtime': [QUEUE_PROOF_JOB, CLOUDFLARE_ARTIFACT_BUILD_JOB],
+  'node-runtime': [QUEUE_PROOF_JOB, NODE_ARTIFACT_BUILD_JOB],
 } as const;
 const GATE_JOBS = [...ROOT_GATE_JOBS, 'node-runtime', 'cloudflare-runtime'];
 const GatedJobsSchema = Schema.Struct({
@@ -798,26 +800,19 @@ it('runs every job after the gates even when a merge-queue-proven run skipped th
   }
 });
 
+const ArtifactBuildJobSchema = Schema.Struct({
+  steps: Schema.Array(Schema.Struct({ run: Schema.optional(Schema.String) })),
+  strategy: Schema.Struct({
+    matrix: Schema.Struct({
+      include: Schema.Array(Schema.Struct({ shard: Schema.Number, units: Schema.String })),
+      shard: Schema.Array(Schema.Number),
+    }),
+  }),
+});
 const ArtifactBuildWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
-    [ARTIFACT_BUILD_JOB]: Schema.Struct({
-      strategy: Schema.Struct({
-        matrix: Schema.Struct({
-          include: Schema.Array(
-            Schema.Struct({
-              script: Schema.optional(Schema.String),
-              shard: Schema.optional(Schema.Number),
-              target: Schema.optional(Schema.String),
-              units: Schema.optional(Schema.String),
-            }),
-          ),
-          shard: Schema.Array(Schema.Number),
-          target: Schema.Array(Schema.String),
-        }),
-      }),
-    }),
-    'cloudflare-runtime': Schema.Struct({ needs: Schema.Array(Schema.String) }),
-    'node-runtime': Schema.Struct({ needs: Schema.Array(Schema.String) }),
+    [CLOUDFLARE_ARTIFACT_BUILD_JOB]: ArtifactBuildJobSchema,
+    [NODE_ARTIFACT_BUILD_JOB]: ArtifactBuildJobSchema,
   }),
 });
 const TopologyUnitsSchema = Schema.Struct({
@@ -827,33 +822,25 @@ const TopologyUnitsSchema = Schema.Struct({
 
 const sorted = (values: readonly string[]) => EffectArray.sort(values, Order.String);
 
-it('builds every delivery unit of the topology in exactly one artifact-build shard of each target', () => {
+it('builds every delivery unit of the topology in exactly one build shard of each target', () => {
   const { jobs } = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(
     parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')),
   );
   const topology = Schema.decodeUnknownSync(TopologyUnitsSchema)(
     JSON.parse(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
   );
-  const { matrix } = jobs[ARTIFACT_BUILD_JOB].strategy;
   const units = [topology.shell, ...topology.verticals].map((unit) => unit.path);
-  for (const target of matrix.target) {
-    const shards = matrix.include.flatMap((entry) =>
-      entry.target === target && entry.units !== undefined ? [entry] : [],
-    );
-    // Every shard of the target builds units, and the target's shards build every unit once.
-    expect(shards.map(({ shard }) => shard)).toEqual(matrix.shard);
-    const built = shards.flatMap((entry) => entry.units?.split(/\s+/u).filter(Boolean) ?? []);
+  for (const [job, script] of [
+    [NODE_ARTIFACT_BUILD_JOB, 'build'],
+    [CLOUDFLARE_ARTIFACT_BUILD_JOB, 'cloudflare:build'],
+  ] as const) {
+    const { steps, strategy } = jobs[job];
+    // Every shard builds units, and the target's shards build every unit once, with the target's script.
+    expect(strategy.matrix.include.map(({ shard }) => shard)).toEqual(strategy.matrix.shard);
+    const built = strategy.matrix.include.flatMap(({ units: shardUnits }) => shardUnits.split(/\s+/u).filter(Boolean));
     expect(sorted(built)).toEqual(sorted(units));
+    expect(steps.some(({ run }) => run?.includes(`"\${filters[@]}" run ${script}\n`) === true)).toBe(true);
   }
-  // Each target builds with its own script, and both proofs wait for every shard.
-  expect(
-    Object.fromEntries(
-      matrix.include.flatMap((entry) => (entry.script === undefined ? [] : [[entry.target, entry.script]])),
-    ),
-  ).toEqual({ cloudflare: 'cloudflare:build', node: 'build' });
-  expect(sorted(matrix.target)).toEqual(['cloudflare', 'node']);
-  expect(jobs['node-runtime'].needs).toContain(ARTIFACT_BUILD_JOB);
-  expect(jobs['cloudflare-runtime'].needs).toContain(ARTIFACT_BUILD_JOB);
 });
 
 const GateCommandsWorkflowSchema = Schema.Struct({

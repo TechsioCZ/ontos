@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Unpack the build outputs that the artifact-build shards packed (one `units.tar.zst` per shard,
+# Unpack the build outputs that the node- and cloudflare-artifact-build shards packed (one `units.tar.zst` per shard,
 # each in its own downloaded artifact directory) into this app workspace, then check that every
 # delivery unit of the topology has its built output directory, so a unit missing from every shard
 # fails here, by name, instead of later in a proof.
@@ -30,7 +30,7 @@ for unit in $(node -e '
   for (const unit of [topology.shell, ...topology.verticals]) console.log(unit.path);
 '); do
   if [ ! -d "$unit/$output_name" ]; then
-    echo "Delivery unit $unit has no $output_name: no artifact-build shard built it." >&2
+    echo "Delivery unit $unit has no $output_name: no build shard built it." >&2
     missing=1
   fi
 done

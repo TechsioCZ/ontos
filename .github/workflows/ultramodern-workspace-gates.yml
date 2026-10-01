@@ -533,10 +533,11 @@ jobs:
   # Each delivery unit builds from source exports only (scripts/tests/vertical-build-order.test.mts), so
   # the units build in shards on parallel runners, one unit at a time per shard: parallel builds on one
   # runner fight over its cores, and every unit's TS-Go declaration pass then runs several times slower.
-  # The proof jobs below download every shard and prove the whole topology, exactly as one build did.
-  # A new unit joins one shard of each target (a test checks).
-  artifact-build:
-    name: Build ${{ matrix.target }} artifacts (${{ matrix.shard }}/5)
+  # Each target's proof job below downloads every shard of its own target and proves the whole topology,
+  # exactly as one build did, as soon as that target's shards are built. Each target balances its shards
+  # by its own measured build times; a new unit joins one shard of each target (a test checks).
+  node-artifact-build:
+    name: Build node artifacts (${{ matrix.shard }}/5)
     needs: [queue-proof]
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
     runs-on: ubuntu-latest
@@ -544,34 +545,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [node, cloudflare]
         shard: [1, 2, 3, 4, 5]
-        # Each target's units in five shards, balanced by that target's measured build time.
         include:
-          - { target: node, shard: 1, units: verticals/catalog }
-          - { target: node, shard: 2, units: verticals/commerce-customer-context verticals/storefront-registry }
-          - { target: node, shard: 3, units: verticals/assortment apps/shell-super-app }
-          - { target: node, shard: 4, units: verticals/party-registry verticals/inventory }
-          - target: node
-            shard: 5
-            units: >-
-              verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing
-              verticals/payment-term-catalog
-          - { target: cloudflare, shard: 1, units: verticals/assortment verticals/pricing }
-          - { target: cloudflare, shard: 2, units: verticals/party-registry verticals/price-group-catalog }
-          - { target: cloudflare, shard: 3, units: verticals/catalog verticals/storefront-registry }
-          - { target: cloudflare, shard: 4, units: verticals/commerce-customer-context apps/shell-super-app }
-          - target: cloudflare
-            shard: 5
-            units: verticals/inventory verticals/commerce-market-catalog verticals/payment-term-catalog
-          - target: node
-            script: build
-            public-site-url: http://localhost:8080
-          - target: cloudflare
-            script: cloudflare:build
-            public-site-url: https://shell-super-app.invalid
+          - { shard: 1, units: verticals/catalog }
+          - { shard: 2, units: verticals/commerce-customer-context verticals/storefront-registry }
+          - { shard: 3, units: verticals/assortment apps/shell-super-app }
+          - { shard: 4, units: verticals/party-registry verticals/inventory }
+          - { shard: 5, units: verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog }
     env:
-      MODERN_PUBLIC_SITE_URL: ${{ matrix.public-site-url }}
+      MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
     steps:
       - name: Harden Runner
@@ -589,10 +571,8 @@ jobs:
         uses: ./.github/actions/install-app
 
       - name: Build the shard's Node artifacts one unit at a time
-        if: matrix.target == 'node'
         working-directory: app
         env:
-          BUILD_SCRIPT: ${{ matrix.script }}
           SHARD_UNITS: ${{ matrix.units }}
         run: |
           read -ra units <<<"$SHARD_UNITS"
@@ -602,13 +582,66 @@ jobs:
           done
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          mise exec -- pnpm -r --no-sort --workspace-concurrency=1 "${filters[@]}" run "$BUILD_SCRIPT"
+          mise exec -- pnpm -r --no-sort --workspace-concurrency=1 "${filters[@]}" run build
 
-      - name: Build the shard's Cloudflare artifacts one unit at a time
-        if: matrix.target == 'cloudflare'
+      # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
+      - name: Pack the shard's build outputs
         working-directory: app
         env:
-          BUILD_SCRIPT: ${{ matrix.script }}
+          SHARD_UNITS: ${{ matrix.units }}
+        run: |
+          read -ra units <<<"$SHARD_UNITS"
+          git ls-files --others --ignored --exclude-standard --directory -z -- "${units[@]}" \
+            | grep -zv '/node_modules/$' \
+            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
+
+      - name: Upload the shard's build outputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: node-units-${{ matrix.shard }}
+          path: ${{ runner.temp }}/units.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
+
+  cloudflare-artifact-build:
+    name: Build cloudflare artifacts (${{ matrix.shard }}/5)
+    needs: [queue-proof]
+    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
+        include:
+          - { shard: 1, units: verticals/assortment verticals/pricing }
+          - { shard: 2, units: verticals/party-registry verticals/price-group-catalog }
+          - { shard: 3, units: verticals/catalog verticals/storefront-registry }
+          - { shard: 4, units: verticals/commerce-customer-context apps/shell-super-app }
+          - { shard: 5, units: verticals/inventory verticals/commerce-market-catalog verticals/payment-term-catalog }
+    env:
+      MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
+      ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Build the shard's Cloudflare artifacts one unit at a time
+        working-directory: app
+        env:
           SHARD_UNITS: ${{ matrix.units }}
           # Placeholder data-plane IDs the Cloudflare build requires in each Worker's bindings, as in cloudflare-runtime.
           ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 00000000000000000000000000000000
@@ -633,7 +666,7 @@ jobs:
           done
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
           mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          mise exec -- pnpm -r --no-sort --workspace-concurrency=1 "${filters[@]}" run "$BUILD_SCRIPT"
+          mise exec -- pnpm -r --no-sort --workspace-concurrency=1 "${filters[@]}" run cloudflare:build
 
       # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
       - name: Pack the shard's build outputs
@@ -649,7 +682,7 @@ jobs:
       - name: Upload the shard's build outputs
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ matrix.target }}-units-${{ matrix.shard }}
+          name: cloudflare-units-${{ matrix.shard }}
           path: ${{ runner.temp }}/units.tar.zst
           compression-level: 0
           if-no-files-found: error
@@ -657,8 +690,8 @@ jobs:
 
   node-runtime:
     name: Node Backend Federation Artifact Proof
-    needs: [queue-proof, artifact-build]
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' && needs.artifact-build.result == 'success' }}
+    needs: [queue-proof, node-artifact-build]
+    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' && needs.node-artifact-build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -713,8 +746,10 @@ jobs:
   # their SSR, and the whole Worker topology against real services, which reads only the built outputs.
   cloudflare-runtime:
     name: Cloudflare Workerd Artifact Proof (${{ matrix.part }})
-    needs: [queue-proof, artifact-build]
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' && needs.artifact-build.result == 'success' }}
+    needs: [queue-proof, cloudflare-artifact-build]
+    if: >-
+      ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true'
+      && needs.cloudflare-artifact-build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -852,7 +887,8 @@ jobs:
         static-contracts,
         format-and-lint,
         service-integration,
-        artifact-build,
+        node-artifact-build,
+        cloudflare-artifact-build,
         node-runtime,
         cloudflare-runtime,
       ]

@@ -383,12 +383,13 @@ URLs must be the Shell's and verticals' routable custom domains. Every OntOS Wor
 `global_fetch_strictly_public`, the flag under which Cloudflare lets a Worker fetch another Worker
 on the same zone.
 
-The gate workflow builds the delivery units in parallel shards: each `artifact-build` matrix job
-builds a few units for one target (`node` with `build`, `cloudflare` with `cloudflare:build`), one
-unit at a time, and uploads their git-ignored outputs. The `Node Backend Federation Artifact Proof`
-and `Cloudflare Workerd Artifact Proof` jobs download every shard
-(`scripts/unpack-unit-build-outputs.sh` fails naming any unit no shard built) and prove the whole
-topology from those outputs. A new unit joins one shard of each target; `Repository Tooling Tests`
+The gate workflow builds the delivery units in parallel shards: each `node-artifact-build` or
+`cloudflare-artifact-build` matrix job builds a few units for its target (`node` with `build`,
+`cloudflare` with `cloudflare:build`), one unit at a time, and uploads their git-ignored outputs. The
+`Node Backend Federation Artifact Proof` and `Cloudflare Workerd Artifact Proof` jobs each download
+every shard of their target as soon as it is built (`scripts/unpack-unit-build-outputs.sh` fails
+naming any unit no shard built) and prove the whole topology from those outputs. A new unit joins
+one shard of each target; `Repository Tooling Tests`
 fails until it does. The Cloudflare proof runs as two jobs over the same outputs: one verifies the
 Worker outputs and their SSR, the other proves the Worker topology below.
 
