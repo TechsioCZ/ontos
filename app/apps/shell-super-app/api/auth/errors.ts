@@ -22,11 +22,25 @@ export const TenantAccessForbiddenError = Schema.TaggedError<TenantAccessForbidd
   {},
 );
 
-const AuthenticationUnavailableErrorSchema = Schema.TaggedStruct('AuthenticationUnavailableError', {});
+/** Why authentication was unavailable. Only logged; the HTTP problem never carries it. */
+const AuthenticationUnavailableReasonSchema = Schema.Literals([
+  'auth_api_error',
+  'auth_api_unavailable',
+  'database_unavailable',
+  'legal_entity_selection_unavailable',
+  'principal_resolver_unavailable',
+  'timeout',
+]);
+export type AuthenticationUnavailableReason = typeof AuthenticationUnavailableReasonSchema.Type;
+const authenticationUnavailableErrorFields = { reason: Schema.optionalKey(AuthenticationUnavailableReasonSchema) };
+const AuthenticationUnavailableErrorSchema = Schema.TaggedStruct(
+  'AuthenticationUnavailableError',
+  authenticationUnavailableErrorFields,
+);
 export type AuthenticationUnavailableFailure = typeof AuthenticationUnavailableErrorSchema.Type;
 export const AuthenticationUnavailableError = Schema.TaggedError<AuthenticationUnavailableFailure>()(
   'AuthenticationUnavailableError',
-  {},
+  authenticationUnavailableErrorFields,
 );
 
 const AuthenticationInternalErrorSchema = Schema.TaggedStruct('AuthenticationInternalError', {});

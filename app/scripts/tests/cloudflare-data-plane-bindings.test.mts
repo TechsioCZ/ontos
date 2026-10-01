@@ -1,13 +1,17 @@
 import { readFileSync } from 'node:fs';
 
+import { createWranglerConfig } from '@modern-js/app-tools-extensions/cloudflare/wrangler-config';
 import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { ACTIVE_APPLICATION_COMPOSITION_EDGE_BINDING } from '../../packages/core-runtime/src/modules/active-application-composition-edge.ts';
 import {
   CLOUDFLARE_WORKER_CPU_MS,
+  CLOUDFLARE_WORKER_OBSERVABILITY,
   createCloudflareDataPlaneBindings,
   createCloudflareWorkerConfig,
+  createModernBuildContext,
+  createModernConfig,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
 import { PRICE_GROUP_CATALOG_SERVICE_BINDING } from '../../verticals/commerce-customer-context/shared/deployment-paths.ts';
 
@@ -19,6 +23,10 @@ const COMPOSITION_KV = 'composition-kv-id';
 const COMPOSITION_BINDING = { binding: ACTIVE_APPLICATION_COMPOSITION_EDGE_BINDING, id: COMPOSITION_KV };
 const SPICEDB_VPC_SERVICE = 'vpc-service-id';
 const PUBLIC_URL = 'ULTRAMODERN_PUBLIC_URL_CATALOG';
+const DEPLOYMENT_ENVIRONMENT = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
+const PRICING_PUBLIC_URL = 'ULTRAMODERN_PUBLIC_URL_PRICING';
+const PRICING_WORKER = 'app-pricing';
+const GeneratedWranglerObservabilitySchema = Schema.Struct({ name: Schema.String, observability: Schema.Unknown });
 
 const reader =
   (values: Readonly<Record<string, string>>) =>
@@ -56,6 +64,7 @@ it('serves every Worker only on its custom domain, off workers.dev and preview U
       hyperdrive: [{ binding: 'HYPERDRIVE', id: HYPERDRIVE_CONFIG }],
       kv_namespaces: [COMPOSITION_BINDING],
       limits: { cpu_ms: 100 },
+      observability: { enabled: false },
       preview_urls: false,
       routes: [{ custom_domain: true, pattern: 'ontos-stage-catalog.stage.example.com' }],
       workers_dev: false,
@@ -75,6 +84,74 @@ it('serves every Worker only on its custom domain, off workers.dev and preview U
   ).toEqual({
     cpu_ms: 3000,
   });
+});
+
+const workerConfigFor = (deploymentEnvironment: Readonly<Record<string, string>>) =>
+  createCloudflareWorkerConfig(
+    reader({
+      [COMPOSITION_KV_ID]: COMPOSITION_KV,
+      [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG,
+      [PUBLIC_URL]: 'https://ontos-stage-catalog.stage.example.com',
+      [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
+      ...deploymentEnvironment,
+    }),
+    { cpuMs: CLOUDFLARE_WORKER_CPU_MS.shell, publicUrlVariable: PUBLIC_URL },
+  ).wrangler.observability;
+
+it('keeps every stage Worker invocation in Workers Logs', () => {
+  expect(workerConfigFor({ [DEPLOYMENT_ENVIRONMENT]: 'stage' })).toEqual({ enabled: true, head_sampling_rate: 1 });
+});
+
+it('states Workers Logs off for production and for builds that deploy nowhere', () => {
+  // Explicit `enabled: false`, never an omitted key, so a deploy also undoes a dashboard toggle.
+  expect(workerConfigFor({ [DEPLOYMENT_ENVIRONMENT]: 'production' })).toEqual({ enabled: false });
+  expect(workerConfigFor({})).toEqual({ enabled: false });
+  expect(CLOUDFLARE_WORKER_OBSERVABILITY).toStrictEqual({
+    development: { enabled: false },
+    production: { enabled: false },
+    stage: { enabled: true, head_sampling_rate: 1 },
+  });
+});
+
+it('refuses a Worker build for an unknown deployment environment', () => {
+  expect(() => workerConfigFor({ [DEPLOYMENT_ENVIRONMENT]: 'staging' })).toThrow();
+});
+
+it.each([
+  ['stage', { enabled: true, head_sampling_rate: 1 }],
+  ['production', { enabled: false }],
+] as const)('writes the %s Workers Logs setting into the generated wrangler.json', (environment, observability) => {
+  const build = createModernBuildContext({
+    appId: 'pricing',
+    cloudflarePublicUrlEnvironmentVariable: PRICING_PUBLIC_URL,
+    cloudflareWorkerName: PRICING_WORKER,
+    defaultPort: 3999,
+    deployTarget: 'cloudflare',
+    getBuildConfigEnvironment: reader({
+      [COMPOSITION_KV_ID]: COMPOSITION_KV,
+      [DEPLOYMENT_ENVIRONMENT]: environment,
+      [HYPERDRIVE_ID]: HYPERDRIVE_CONFIG,
+      [PRICING_PUBLIC_URL]: 'https://ontos-stage-pricing.stage.example.com',
+      [SPICEDB_VPC_SERVICE_ID]: SPICEDB_VPC_SERVICE,
+    }),
+    portEnvironmentVariable: 'PRICING_PORT',
+  });
+  const modernConfig = createModernConfig({
+    appId: 'pricing',
+    bffPrefix: '/pricing-api',
+    build,
+    chunkLoadingGlobal: '__PRICING__',
+    cloudflareWorkerName: PRICING_WORKER,
+    moduleUrl: import.meta.url,
+    plugins: [],
+    uniqueName: 'pricing',
+  });
+  const { deploy } = modernConfig;
+  expect(deploy).toBeDefined();
+  const wrangler = Schema.decodeUnknownSync(GeneratedWranglerObservabilitySchema)(
+    createWranglerConfig(process.cwd(), deploy === undefined ? {} : { deploy }),
+  );
+  expect(wrangler).toEqual({ name: PRICING_WORKER, observability });
 });
 
 it('refuses a Worker build without its public URL', () => {

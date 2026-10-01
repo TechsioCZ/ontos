@@ -327,10 +327,41 @@ export const createCloudflareDataPlaneBindings = (envValue: ModernBuildContext['
 export const CLOUDFLARE_WORKER_CPU_MS = { largeApiVertical: 3000, shell: 200, vertical: 100 } as const;
 
 /**
+ * Workers Logs per deployment environment. Every Worker build states its setting, so a deploy never
+ * keeps whatever the dashboard last had. The edge deploy sets `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT`;
+ * a build without it (a local preview or a CI proof) deploys nowhere and keeps logs off.
+ *
+ * Stage keeps every invocation: Workers Paid includes 20M log events a month for the account, and
+ * stage served about 7.8k Worker invocations a day on its busiest day (Workers analytics,
+ * 2026-09-30), about 0.25M a month. Even at ten log lines per invocation that stays near 2.5M events.
+ * Lower `head_sampling_rate` only with a measured event count from the Workers Logs telemetry API.
+ * Production does not run on Cloudflare yet; its cutover must choose a measured rate here.
+ */
+export const CLOUDFLARE_WORKER_OBSERVABILITY = {
+  development: { enabled: false },
+  production: { enabled: false },
+  stage: { enabled: true, head_sampling_rate: 1 },
+} as const;
+
+const CloudflareDeploymentEnvironmentSchema = OptionFromUndefinedOr(Literals(['stage', 'production']));
+
+/** The Workers Logs setting for the deployment environment this Worker build is for. */
+const resolveCloudflareWorkerObservability = (envValue: ModernBuildContext['envValue']) =>
+  CLOUDFLARE_WORKER_OBSERVABILITY[
+    getOptionOrElse(
+      getResultOrThrow(
+        decodeUnknownResult(CloudflareDeploymentEnvironmentSchema)(envValue('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT')),
+      ),
+      () => 'development' as const,
+    )
+  ];
+
+/**
  * The data plane plus the cost guards every OntOS Worker carries: it answers only on its reviewed
  * custom domain, the hostname of `publicUrlVariable` (no `*.workers.dev` route and no preview URLs,
  * which would bypass the stage zone's WAF kill switch), and stops after `cpuMs` of CPU per request.
- * Wrangler creates the custom domain's DNS record and certificate on deploy.
+ * Wrangler creates the custom domain's DNS record and certificate on deploy. Workers Logs follow
+ * the deployment environment (`CLOUDFLARE_WORKER_OBSERVABILITY`).
  */
 export const createCloudflareWorkerConfig = (
   envValue: ModernBuildContext['envValue'],
@@ -343,6 +374,7 @@ export const createCloudflareWorkerConfig = (
     wrangler: {
       ...dataPlane.wrangler,
       limits: { cpu_ms: cpuMs },
+      observability: resolveCloudflareWorkerObservability(envValue),
       preview_urls: false,
       routes: [{ custom_domain: true, pattern: customDomain }],
       workers_dev: false,

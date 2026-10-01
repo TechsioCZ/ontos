@@ -338,6 +338,8 @@ it('builds each planned edge unit on its own runner from the reviewed placement,
     UNIT_ID: expression('matrix.unit.id'),
     UNIT_PACKAGE: expression('matrix.unit.packageName'),
     UNIT_WORKER: expression('matrix.unit.workerName'),
+    // Picks the Worker's stage Workers Logs setting (CLOUDFLARE_WORKER_OBSERVABILITY).
+    ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
   });
   // The build step is the unit's `cloudflare:deploy` without its final `wrangler deploy`.
   expect(build?.run).toContain('run cloudflare:build');
