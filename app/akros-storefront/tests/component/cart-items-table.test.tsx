@@ -33,6 +33,21 @@ const storedQuantity = () =>
   JSON.parse(window.localStorage.getItem("akros-demo-cart-v3") ?? "null").lines[0]?.quantity;
 
 describe("checkout cart quantity", () => {
+  it("shows the SKU and unit price separately from the changing line total", async () => {
+    const user = userEvent.setup();
+    render(
+      <CartProvider>
+        <CartItemsTable />
+      </CartProvider>,
+    );
+    expect(await screen.findByText("Kód produktu: A2")).not.toBeNull();
+    expect(screen.getByText(/1,00\sKč \/ ks/)).not.toBeNull();
+    expect(screen.getByText(/30,00\sKč/)).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Zvýšit množství: Vrut" }));
+    await waitFor(() => expect(screen.getByText(/40,00\sKč/)).not.toBeNull());
+    expect(screen.getByText(/1,00\sKč \/ ks/)).not.toBeNull();
+  });
+
   it("preserves grouped four-digit quantities while incrementing and decrementing", async () => {
     window.localStorage.setItem(
       "akros-demo-cart-v3",

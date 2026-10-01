@@ -23,27 +23,24 @@ export function CartContent() {
       </section>
     );
   return (
-    <>
-      <section className="rounded-sm bg-(--color-base) p-4 md:p-6" aria-labelledby="cart-title">
-        <h1 id="cart-title" className="mb-4 text-md font-medium">
-          Obsah košíku
-        </h1>
-        <CartItemsTable />
-      </section>
-      <div className="mt-6 flex flex-wrap justify-between gap-4">
-        <LinkButton as={NextLink} href="/" variant="secondary" size="sm" uppercase>
-          Zpět do obchodu
-        </LinkButton>
-        <LinkButton
-          as={NextLink}
-          href="/kosik/doprava-platba"
-          variant="primary"
-          size="sm"
-          uppercase
-        >
-          Vybrat dopravu a platbu
-        </LinkButton>
-      </div>
-    </>
+    <section className="rounded-sm bg-(--color-base) p-4 md:p-6" aria-labelledby="cart-title">
+      <h1 id="cart-title" className="mb-4 text-md font-medium">
+        Obsah košíku
+      </h1>
+      <CartItemsTable />
+    </section>
+  );
+}
+
+export function CartNavigation() {
+  return (
+    <div className="flex flex-wrap justify-between gap-4 xl:col-start-1">
+      <LinkButton as={NextLink} href="/" variant="secondary" size="sm" uppercase>
+        Zpět do obchodu
+      </LinkButton>
+      <LinkButton as={NextLink} href="/kosik/doprava-platba" variant="primary" size="sm" uppercase>
+        Vybrat dopravu a platbu
+      </LinkButton>
+    </div>
   );
 }

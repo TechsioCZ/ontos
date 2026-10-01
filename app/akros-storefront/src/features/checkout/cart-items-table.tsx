@@ -85,17 +85,22 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
         id: "product",
         header: "Položka",
         cell: ({ row: { original: line } }) => (
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 whitespace-normal">
+          <div className="grid gap-1 whitespace-normal">
             <Link
               as={NextLink}
               href={`/produkt/${line.slug}`}
-              className="text-inherit no-underline"
+              className="wrap-anywhere text-inherit no-underline"
             >
               {line.name}
             </Link>
             {line.variantLabel && (
-              <span className="text-xs text-(--color-fg-secondary)">{line.variantLabel}</span>
+              <span className="wrap-anywhere text-xs text-(--color-fg-secondary)">
+                {line.variantLabel}
+              </span>
             )}
+            <span className="wrap-anywhere text-xs text-(--color-fg-secondary)">
+              Kód produktu: {line.sku}
+            </span>
           </div>
         ),
       },
@@ -117,8 +122,13 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
         id: "price",
         header: "Cena",
         meta: { width: "var(--dimension-100)", align: "end" },
-        cell: ({ row }) => (
-          <strong className="whitespace-nowrap">{formatPrice(getLineTotal(row.original))}</strong>
+        cell: ({ row: { original: line } }) => (
+          <div className="grid justify-items-start gap-1 text-left md:justify-items-end md:text-right">
+            <strong className="whitespace-nowrap">{formatPrice(getLineTotal(line))}</strong>
+            <span className="whitespace-nowrap text-xs text-(--color-fg-secondary)">
+              {formatPrice(line.priceMinor)} / {line.unit}
+            </span>
+          </div>
         ),
       },
       {
@@ -155,7 +165,7 @@ export function CartItemsTable({ showHeader = false }: { showHeader?: boolean })
         root: {
           "aria-label": "Položky objednávky",
           className:
-            "max-md:[&_thead]:sr-only max-md:[&_tbody]:grid max-md:[&_td]:w-auto! max-md:[&_td:first-child]:col-span-2 max-md:[&_td:last-child]:justify-self-end",
+            "max-md:[&_thead]:sr-only max-md:[&_tbody]:grid max-md:[&_td]:w-auto! max-md:[&_td:first-child]:col-span-2 max-md:[&_td:last-child]:justify-self-end max-[360px]:[&_td:nth-child(2)]:col-span-2 max-[360px]:[&_td:nth-child(2)]:text-start max-[360px]:[&_td:nth-child(3)]:col-span-2 max-[360px]:[&_td:nth-child(3)]:justify-self-start",
         },
         row: { className: "max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:items-center" },
       }}

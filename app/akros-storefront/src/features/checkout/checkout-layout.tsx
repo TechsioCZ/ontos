@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { Steps, useSteps } from "@techsio/ui-kit/molecules/steps";
 import { ProductGrid, type ProductGridItem } from "@/components/product-grid";
 import { useCart } from "@/features/cart/cart-provider";
+import { CartNavigation } from "@/features/cart/cart-content";
 import { checkoutSteps, getReachableStep } from "@/mock-storefront/checkout";
 import { useCheckout } from "./checkout-provider";
 import { CheckoutSummary } from "./checkout-summary";
@@ -72,6 +73,7 @@ export function CheckoutLayout({
             )}
           </div>
           {ready && cart.lines.length > 0 && step < 3 && <CheckoutSummary />}
+          {ready && cart.lines.length > 0 && step === 0 && <CartNavigation />}
           {ready && cart.lines.length > 0 && step < 3 && (
             <section className="min-w-0 xl:col-start-1" aria-labelledby="checkout-recommendations">
               <h2 id="checkout-recommendations" className="mt-4 mb-6 text-lg font-bold">
