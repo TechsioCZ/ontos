@@ -1460,6 +1460,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
           EDGE_DEPLOY_STATE: ${{ runner.temp }}/edge-deploy-state.tsv
+          EDGE_DEPLOYED_VERSIONS: ${{ runner.temp }}/edge-deployed-versions.tsv
           EDGE_PROVEN_MARKER: 'Proven by cloudflare:proof at '
         run: |
           # Snapshot every planned Worker's rollback target before changing any of them: the version
@@ -1492,11 +1493,17 @@ jobs:
           done
           # Each Worker is recorded with its snapshot before its deploy starts, so the restore step
           # covers a deploy that fails halfway.
+          # The version each deploy creates is read from Wrangler's output file, so the proof marks
+          # exactly the versions this run deployed.
           : >"$EDGE_DEPLOY_STATE"
+          : >"$EDGE_DEPLOYED_VERSIONS"
           for unit in "${units[@]}"; do
             IFS=$'\t' read -r package worker <<<"$unit"
             printf '%s\t%s\t%s\n' "$package" "$worker" "${previous_versions[$worker]}" >>"$EDGE_DEPLOY_STATE"
-            mise exec -- pnpm --filter "$package" exec wrangler deploy --config .output/wrangler.json
+            deploy_output="$RUNNER_TEMP/wrangler-deploy-$worker.ndjson"
+            WRANGLER_OUTPUT_FILE_PATH="$deploy_output" mise exec -- pnpm --filter "$package" exec wrangler deploy --config .output/wrangler.json
+            deployed_version="$(jq -ser 'map(select(.type == "deploy")) | last | .version_id' "$deploy_output")"
+            printf '%s\t%s\t%s\n' "$package" "$worker" "$deployed_version" >>"$EDGE_DEPLOYED_VERSIONS"
           done
 
       - name: Prove the deployed edge units on their public URLs
@@ -1534,23 +1541,28 @@ jobs:
             exit 1
           fi
 
-      # The version each Worker serves once its proof passed is recorded as proven by redeploying it
-      # at 100% with the proven marker as the deployment message. Traffic does not change; a later
-      # failed run rolls back to the newest version recorded this way.
+      # Each version this run deployed is recorded as proven once its proof passed, by redeploying it
+      # at 100% with the proven marker as the deployment message. It must still be the active
+      # version: anything that replaced it since the proof was never proven. Traffic does not
+      # change; a later failed run rolls back to the newest version recorded this way.
       - name: Record the proven edge Worker versions
         timeout-minutes: 5
         working-directory: app
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
+          EDGE_DEPLOYED_VERSIONS: ${{ runner.temp }}/edge-deployed-versions.tsv
           EDGE_PROVEN_MARKER: 'Proven by cloudflare:proof at '
         run: |
-          mapfile -t units < <(jq -r '.[] | [.packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
-          for unit in "${units[@]}"; do
-            IFS=$'\t' read -r package worker <<<"$unit"
-            proven_version="$(mise exec -- pnpm --filter "$package" exec wrangler deployments status --name "$worker" --json \
+          mapfile -t deployed <"$EDGE_DEPLOYED_VERSIONS"
+          for unit in "${deployed[@]}"; do
+            IFS=$'\t' read -r package worker proven_version <<<"$unit"
+            active="$(mise exec -- pnpm --filter "$package" exec wrangler deployments status --name "$worker" --json \
               | jq -er '.versions | map(select(.percentage == 100)) | .[0].version_id')"
+            if [[ "$active" != "$proven_version" ]]; then
+              echo "$worker serves $active, not the proven $proven_version; it is not recorded as proven." >&2
+              exit 1
+            fi
             mise exec -- pnpm --filter "$package" exec wrangler versions deploy "$proven_version@100" --name "$worker" --message "$EDGE_PROVEN_MARKER$GITHUB_SHA" --yes
           done
 
@@ -1594,7 +1606,10 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           EDGE_DEPLOY_STATE: ${{ runner.temp }}/edge-deploy-state.tsv
+          EDGE_PROVEN_MARKER: 'Proven by cloudflare:proof at '
         run: |
+          # A restore deploys a proven version, so its deployment carries the proven marker too:
+          # failed runs never push the newest proven deployment out of the listed history.
           active_version() {
             mise exec -- pnpm --filter "$1" exec wrangler deployments status --name "$2" --json \
               | jq -er '.versions | map(select(.percentage == 100)) | .[0].version_id'
@@ -1631,7 +1646,7 @@ jobs:
             fi
             if [[ "$(active_version "$deployed_package" "$deployed_worker" 2>/dev/null)" == "$previous_version" ]]; then
               echo "$deployed_worker still serves $previous_version"
-            elif mise exec -- pnpm --filter "$deployed_package" exec wrangler rollback "$previous_version" --name "$deployed_worker" --message "Rollback of $GITHUB_SHA after a failed edge deploy" --yes \
+            elif mise exec -- pnpm --filter "$deployed_package" exec wrangler rollback "$previous_version" --name "$deployed_worker" --message "${EDGE_PROVEN_MARKER}an earlier run; restored after $GITHUB_SHA failed" --yes \
               && [[ "$(active_version "$deployed_package" "$deployed_worker")" == "$previous_version" ]]; then
               echo "Restored $deployed_worker to $previous_version"
             else

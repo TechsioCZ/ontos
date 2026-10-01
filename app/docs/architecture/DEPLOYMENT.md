@@ -304,19 +304,29 @@ when either holds, the plan deploys every worker of this mode, whatever the diff
 The `deploy-cloudflare` job runs once `deploy-migrations` has migrated the database and SpiceDB, beside
 `deploy-zerops`, in its own `stage-edge` environment, one edge deploy at a time (`edge-stage` concurrency
 group). It resolves the last successful `stage-edge` deployment, plans the diff from there, and ships
-the planned units in three passes: build and verify every unit (each unit's `cloudflare:deploy` up to
+the planned units in four passes: build and verify every unit (each unit's `cloudflare:deploy` up to
 its final `wrangler deploy`, three units side by side), deploy them with Wrangler one by one in plan
-order, then run every unit's `cloudflare:proof` side by side. Only the Wrangler steps receive `CLOUDFLARE_API_TOKEN`; the
-build, verification and proof run dependency code and never see it. Every Worker's active version
-is recorded before the first deploy. A failed deploy or proof returns each Worker this run deployed
-to that state: the recorded version, or no Worker at all when the run created it. A cancelled run
-restores the same way, because its deploy may have stopped after some Workers changed. The restore
-step verifies that state, and any Worker left on the candidate is reported and fails the job. A
+order, run every unit's `cloudflare:proof` side by side, then record each deployed version as proven.
+Only the Wrangler steps receive `CLOUDFLARE_API_TOKEN`; the build, verification and proof run
+dependency code and never see it.
+
+A version is recorded as proven by redeploying it at 100% with a deployment message starting
+`Proven by cloudflare:proof at`; traffic does not change. Only such a version is a rollback target.
+The active version by itself is not: a secret change or a manual deploy creates a version nobody
+proved, and the provisioning secrets once left every Worker on a version without its ASSETS or
+Hyperdrive bindings. Before the first deploy each Worker's rollback target is read from its
+deployment history: the version of its newest proven deployment, `unproven` when it has none, or no
+Worker at all. A failed deploy or proof returns each Worker this run deployed to its proven version,
+and that restore carries the proven marker too, so failed runs never push the newest proven
+deployment out of the listed history. A Worker the run created is deleted. A Worker with no proven
+version is not rolled back; it is reported and fails the job. A cancelled run restores the same
+way, because its deploy may have stopped after some Workers changed. The restore step verifies that
+state, and any Worker left on the candidate is reported and fails the job. A
 change to the edge workflow or the install action replans every placed unit, and a change to the
 planner itself replans every unit on Zerops and the edge. Because the history is separate, a failed
 edge deploy is replanned by the next run even when Zerops succeeded for the same revision.
 
-Build, deploy, proof and retirement-check steps each have a timeout that leaves the restore step
+Build, deploy, proof, proven-record and retirement-check steps each have a timeout that leaves the restore step
 its own budget inside the job deadline, so a hung deploy still ends with every changed Worker
 restored.
 

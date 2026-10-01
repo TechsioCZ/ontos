@@ -196,6 +196,15 @@ it('deploys to Cloudflare only when both the account and the deploy token are co
   ).toEqual([]);
 });
 
+// A Worker that was never proven is not rolled back to a possibly broken version; the run fails.
+const expectProvenRestore = (restore: typeof WorkflowStepSchema.Type | undefined, marker: string | undefined) => {
+  expect(restore?.run).toContain('"$previous_version" == unproven');
+  expect(restore?.run).toContain('no proven version to restore; not rolled back');
+  // A restore is marked proven, so failed runs cannot push the proven deployment out of history.
+  expect(restore?.env?.EDGE_PROVEN_MARKER).toBe(marker);
+  expect(restore?.run).toContain('EDGE_PROVEN_MARKER}an earlier run; restored after $GITHUB_SHA failed');
+};
+
 // The active version is no rollback target: a secret change or manual deploy is never proven.
 // Only a version recorded after its proof is restored; a never-proven Worker is not rolled back.
 const expectProvenRollbackTargets = (steps: readonly (typeof WorkflowStepSchema.Type)[]) => {
@@ -209,12 +218,15 @@ const expectProvenRollbackTargets = (steps: readonly (typeof WorkflowStepSchema.
   expect(deploy?.run).toContain('wrangler deployments list --name "$worker" --json');
   expect(deploy?.run).toContain('startswith($marker)');
   expect(deploy?.run).not.toContain('wrangler deployments status');
+  // The proof marks the exact versions this run's deploys created, never a later active version.
+  expect(deploy?.run).toContain('WRANGLER_OUTPUT_FILE_PATH="$deploy_output"');
+  expect(proven?.env?.EDGE_DEPLOYED_VERSIONS).toBe(deploy?.env?.EDGE_DEPLOYED_VERSIONS);
+  expect(proven?.run).toContain('"$active" != "$proven_version"');
   expect(proven?.run).toContain('wrangler versions deploy "$proven_version@100"');
   expect(proven?.run).toContain('--message "$EDGE_PROVEN_MARKER$GITHUB_SHA"');
   const names = steps.map((step) => step.name);
   expect(names.indexOf(PROVEN_STEP)).toBe(names.indexOf(PROOF_STEP) + 1);
-  expect(restore?.run).toContain('"$previous_version" == unproven');
-  expect(restore?.run).toContain('no proven version to restore; not rolled back');
+  expectProvenRestore(restore, marker);
 };
 
 const WRANGLER_COMMAND = /^pnpm --filter "\$(?:[a-z_]+|\d)" exec wrangler /u;
