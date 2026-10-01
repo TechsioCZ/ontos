@@ -79,7 +79,7 @@ export default defineConfig({
         ULTRAMODERN_MF_DEV_ORIGIN: origin,
       },
       reuseExistingServer: !continuousIntegration,
-      url: 'http://127.0.0.1:4109/inventory-api/inventory/readiness',
+      url: 'http://127.0.0.1:4110/inventory-api/inventory/readiness',
     },
     {
       command: 'pnpm dev',

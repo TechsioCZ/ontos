@@ -45,7 +45,7 @@ const {
   appId,
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG',
   cloudflareWorkerName,
-  defaultPort: 4104,
+  defaultPort: 4109,
   deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,
   portEnvironmentVariable: 'VERTICAL_COMMERCE_MARKET_CATALOG_PORT',

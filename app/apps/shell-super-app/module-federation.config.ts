@@ -76,7 +76,7 @@ const moduleFederationConfig: Parameters<typeof createModuleFederationConfig>[0]
     inventory: createRemoteManifestUrl({
       manifestEnv: 'VERTICAL_INVENTORY_MF_MANIFEST',
       mfName: 'verticalInventory',
-      port: 4109,
+      port: 4110,
       publicUrlEnv: 'ULTRAMODERN_PUBLIC_URL_INVENTORY',
       workerName: 'app-inventory',
     }),

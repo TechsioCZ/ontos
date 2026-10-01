@@ -35,7 +35,7 @@ describe('module-federation-i18n-runtime', () => {
     Effect.gen(function* registersInventoryRemote() {
       const { default: shellConfig } = yield* Effect.promise(() => import(shellConfigUrl.href));
 
-      expect(shellConfig.remotes?.inventory).toBe('verticalInventory@http://localhost:4109/mf-manifest.json');
+      expect(shellConfig.remotes?.inventory).toBe('verticalInventory@http://localhost:4110/mf-manifest.json');
     }),
   );
 

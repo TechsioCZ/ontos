@@ -43,7 +43,7 @@ const {
   appId,
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_INVENTORY',
   cloudflareWorkerName,
-  defaultPort: 4109,
+  defaultPort: 4110,
   deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,
   portEnvironmentVariable: 'VERTICAL_INVENTORY_PORT',
