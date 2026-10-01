@@ -1,12 +1,29 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Console, Context, Effect, FileSystem, Layer, Option, Redacted, Schema, Stdio, Stream } from 'effect';
+import {
+  Config,
+  ConfigProvider,
+  Console,
+  Context,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Redacted,
+  Schema,
+  Stdio,
+  Stream,
+} from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
+import { FetchHttpClient } from 'effect/unstable/http';
 import { parse as parseYaml, stringify as stringifyYaml } from 'yaml';
 
 import { serviceIdVariable } from '../publish-active-application-composition.mts';
+import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
+import { CloudflareApiLive, CloudflareCredentials } from './cloudflare-api.mts';
 import { OpsShellLive, runCommand } from './ops-shell.mts';
 import type { SecretValues } from './ops-shell.mts';
+import { ensureSpicedbTls } from './spicedb-tls.mts';
 import { StageOperationError } from './stage-operation-error.mts';
 import { readVaultSecrets } from './stage-zerops-services.mts';
 import {
@@ -42,6 +59,9 @@ import type { ZeropsImportEntry, ZeropsService } from './stage-operations.mts';
  * secrets, and sets the production variables `ZEROPS_PROJECT_ID`, every `ZEROPS_*_SERVICE_ID`,
  * `SPICEDB_ENDPOINT`, `DEPLOY_TARGET=zerops` and `OUTBOX_WORKER_MODE=dedicated`, plus the
  * `ZEROPS_TOKEN` secret read from standard input. It never deletes a service, variable or secret, and never touches stage.
+ *
+ * `spicedb-tls` then creates the TLS material SpiceDB refuses to start without on production's
+ * `spicedb` service, exactly as the stage cut-over does for stage.
  */
 export const PRODUCTION_ENVIRONMENT = 'production';
 export const PRODUCTION_PROJECT_NAME = 'ontos-production';
@@ -194,6 +214,11 @@ const readSuppliedSecrets = (secretsFile: Option.Option<string>, names: readonly
       return new Map<string, Redacted.Redacted>();
     }
     if (Option.isNone(secretsFile)) {
+      const { dryRun } = yield* OpsMode;
+      if (dryRun) {
+        yield* Console.log(`[dry-run] the real run needs --secrets-file with ${names.join(', ')}`);
+        return new Map<string, Redacted.Redacted>();
+      }
       return yield* new StageOperationError({
         message: `the new services need ${names.join(', ')}; pass them with --secrets-file`,
       });
@@ -474,9 +499,14 @@ export const provision = (options: ProvisionOptions) =>
     const variables = yield* listGithubVariables(repository, PRODUCTION_ENVIRONMENT);
     const secretNames = yield* listGithubSecretNames(repository, PRODUCTION_ENVIRONMENT);
     if (!options.zeropsTokenStdin && !secretNames.has(ZEROPS_TOKEN_SECRET)) {
-      return yield* new StageOperationError({
-        message: `${PRODUCTION_ENVIRONMENT} has no ${ZEROPS_TOKEN_SECRET} secret; pipe a production Zerops token and add --zerops-token-stdin`,
-      });
+      if (!dryRun) {
+        return yield* new StageOperationError({
+          message: `${PRODUCTION_ENVIRONMENT} has no ${ZEROPS_TOKEN_SECRET} secret; pipe a production Zerops token and add --zerops-token-stdin`,
+        });
+      }
+      yield* Console.log(
+        `[dry-run] ${PRODUCTION_ENVIRONMENT} has no ${ZEROPS_TOKEN_SECRET} secret; the real run needs a production Zerops token piped with --zerops-token-stdin`,
+      );
     }
     const token = options.zeropsTokenStdin ? Option.some(yield* readTokenFromStdin) : Option.none();
 
@@ -516,7 +546,7 @@ export const provision = (options: ProvisionOptions) =>
       );
     }
     yield* Console.log(
-      `Production is wired to ${project.id}. Set its project variables, then deploy: gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true`,
+      `Production is wired to ${project.id}. Create its SpiceDB TLS secrets (spicedb-tls --gateway-hostname <name>), set its project variables, then deploy: gh workflow run ultramodern-workspace-gates.yml --ref main -f environment=production -f full=true`,
     );
     return yield* Effect.void;
   });
@@ -534,6 +564,41 @@ export const renderImport = productionServices.pipe(
     ),
   ),
 );
+
+// ---------------------------------------------------------------------------------------------
+// SpiceDB TLS
+
+const HOSTNAME_PATTERN = /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/u;
+
+/**
+ * Creates the SpiceDB gRPC and HTTP gateway TLS secrets on production's `spicedb` service when they are
+ * missing, as `cloudflare-stage-cutover.mts spicedb-tls` does for stage. SpiceDB starts only with both
+ * pairs. The gateway certificate comes from the Cloudflare Origin CA for `gatewayHostname`, a name in a
+ * zone of the Cloudflare account; it is only a TLS server name and needs no DNS record. The project is
+ * the one the `production` variable `ZEROPS_PROJECT_ID` names, so run `provision` first.
+ */
+export const ensureProductionSpicedbTls = (gatewayHostname: string) =>
+  Effect.gen(function* ensureProductionSpicedbTlsEffect() {
+    const { repository, stageProjectId } = yield* ProductionEnvironmentConfiguration;
+    if (!HOSTNAME_PATTERN.test(gatewayHostname)) {
+      return yield* new StageOperationError({
+        message: `--gateway-hostname must be a DNS hostname, got "${gatewayHostname}"`,
+      });
+    }
+    const variables = yield* listGithubVariables(repository, PRODUCTION_ENVIRONMENT);
+    const projectId = variables.get(ZEROPS_PROJECT_ID_VARIABLE) ?? '';
+    if (projectId === '') {
+      return yield* new StageOperationError({
+        message: `${PRODUCTION_VARIABLES_LABEL} ${ZEROPS_PROJECT_ID_VARIABLE} is not set; run provision first`,
+      });
+    }
+    if (projectId === stageProjectId) {
+      return yield* new StageOperationError({
+        message: `${PRODUCTION_VARIABLES_LABEL} ${ZEROPS_PROJECT_ID_VARIABLE} names the stage project; production needs its own`,
+      });
+    }
+    return yield* ensureSpicedbTls({ gatewayHostname, projectId });
+  });
 
 // ---------------------------------------------------------------------------------------------
 // Composition root
@@ -565,20 +630,76 @@ const provisionCommand = Command.make(
   Command.provide((input) => productionLayer(input)),
 );
 
+/** Cloudflare and Zerops API access from the environment, or else from the optional dotenv file. */
+const spicedbTlsLayer = ({
+  dryRun,
+  envFile,
+}: {
+  readonly dryRun: boolean;
+  readonly envFile: Option.Option<string>;
+}) => {
+  const settingsFile = Effect.gen(function* settingsFileEffect() {
+    if (Option.isNone(envFile)) {
+      return ConfigProvider.fromUnknown({});
+    }
+    return yield* ConfigProvider.fromDotEnv({ path: envFile.value });
+  });
+  const credentials = Layer.effect(
+    CloudflareCredentials,
+    Effect.gen(function* cloudflareCredentials() {
+      return {
+        accountId: yield* Config.String('CLOUDFLARE_ACCOUNT_ID'),
+        apiToken: yield* Config.Redacted('CLOUDFLARE_API_TOKEN'),
+      };
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StageOperationError({
+            cause,
+            message: `CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN must be set in the environment or --env-file (${cause.message}); nothing was changed`,
+          }),
+      ),
+    ),
+  );
+  // The settings stay in the step's context: the Zerops API reads ZEROPS_TOKEN per request.
+  return Layer.mergeAll(CloudflareApiLive.pipe(Layer.provide(credentials)), ZeropsPublicApiLive).pipe(
+    Layer.provideMerge(productionLayer({ dryRun })),
+    Layer.provideMerge(ConfigProvider.layerAdd(settingsFile)),
+  );
+};
+
+const spicedbTlsCommand = Command.make(
+  'spicedb-tls',
+  {
+    dryRun: Flag.Boolean('dry-run').pipe(Flag.withDefault(false)),
+    envFile: Flag.String('env-file').pipe(Flag.optional),
+    gatewayHostname: Flag.String('gateway-hostname'),
+  },
+  ({ gatewayHostname }) => ensureProductionSpicedbTls(gatewayHostname),
+).pipe(
+  Command.withDescription(
+    "Create the SpiceDB gRPC and HTTP gateway TLS certificates as secrets on production's Zerops spicedb service when missing",
+  ),
+  Command.provide((input) => spicedbTlsLayer(input)),
+);
+
 const renderImportCommand = Command.make('render-import', {}, () => renderImport).pipe(
   Command.withDescription('Print the production import derived from app/zerops-import.yaml, without secrets'),
 );
 
 const cli = Command.make('production-environment').pipe(
-  Command.withSubcommands([provisionCommand, renderImportCommand]),
+  Command.withSubcommands([provisionCommand, spicedbTlsCommand, renderImportCommand]),
 );
 
 export const main = Command.run({ version: '1.0.0' })(cli);
 
 if (import.meta.main) {
   NodeRuntime.runMain(
-    Layer.build(Layer.effectDiscard(main).pipe(Layer.provide(OpsShellLive), Layer.provide(NodeServices.layer))).pipe(
-      Effect.scoped,
-    ),
+    Layer.build(
+      Layer.effectDiscard(main).pipe(
+        Layer.provide(OpsShellLive),
+        Layer.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer)),
+      ),
+    ).pipe(Effect.scoped),
   );
 }

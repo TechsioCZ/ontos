@@ -7,10 +7,10 @@ set -eu
 SPICEDB_DATASTORE_CONN_URI="$(sh "$(dirname "$0")/spicedb-datastore-uri.sh")"
 export SPICEDB_DATASTORE_CONN_URI
 
-# Both listeners serve TLS. The certificates are this service's secrets, written by
-# `node scripts/ops/cloudflare-stage-cutover.mts spicedb-tls`: gRPC uses a self-signed certificate
-# the runtimes pin through SPICEDB_CA_CERT, and the HTTP gateway uses a Cloudflare Origin CA
-# certificate that Workers VPC verifies.
+# Both listeners serve TLS. The certificates are this service's secrets, written by the `spicedb-tls`
+# step of `scripts/ops/cloudflare-stage-cutover.mts` (stage) or `scripts/ops/production-environment.mts`
+# (production): gRPC uses a self-signed certificate the runtimes pin through SPICEDB_CA_CERT, and the
+# HTTP gateway uses a Cloudflare Origin CA certificate that Workers VPC verifies.
 for name in SPICEDB_GRPC_TLS_CERT SPICEDB_GRPC_TLS_KEY SPICEDB_HTTP_TLS_CERT SPICEDB_HTTP_TLS_KEY; do
   eval "value=\${$name:-}"
   if [ -z "$value" ]; then

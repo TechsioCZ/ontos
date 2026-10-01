@@ -635,6 +635,17 @@ printf %s "$PRODUCTION_ZEROPS_TOKEN" | node scripts/ops/production-environment.m
 5. Sets the `ZEROPS_TOKEN` secret from standard input when `--zerops-token-stdin` is given. Until
    `production` holds that secret, the flag is required and the run fails before changing anything.
 
+SpiceDB starts only with its gRPC and HTTP gateway TLS secrets. After `provision`, create them on
+production's `spicedb` service with `spicedb-tls`, which reads `CLOUDFLARE_ACCOUNT_ID`,
+`CLOUDFLARE_API_TOKEN` and `ZEROPS_TOKEN` from the environment or `--env-file`:
+
+```sh
+node scripts/ops/production-environment.mts spicedb-tls --gateway-hostname <name in a Cloudflare zone> --dry-run
+```
+
+`provision --dry-run` needs neither the token nor the secrets file; it lists what the real run needs.
+[Stand up production in under an hour](PRODUCTION_RUNBOOK.md) walks the whole sequence.
+
 `provision` does not set Zerops project variables. Before the first deploy, set on the production
 project the values stage holds at project scope, with production's own origins:
 `MODERN_PUBLIC_SITE_URL`, `ONTOS_GATEWAY_ISSUER` and `ULTRAMODERN_MF_DEV_ORIGIN`. Production also needs its own enforced authorization evidence and

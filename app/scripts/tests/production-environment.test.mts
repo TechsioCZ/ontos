@@ -1,9 +1,11 @@
 import { Effect, Layer, Option, Redacted, Stdio, Stream } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { CloudflareApiLive, CloudflareCredentials } from '../ops/cloudflare-api.mts';
 import {
   PRODUCTION_PROJECT_NAME,
   ProductionEnvironmentConfiguration,
+  ensureProductionSpicedbTls,
   parseZeropsProjectList,
   productionServices,
   provision,
@@ -13,7 +15,14 @@ import {
 import type { ProvisionOptions } from '../ops/production-environment.mts';
 import { renderCommand } from '../ops/ops-shell.mts';
 import { OpsMode, STAGE_ZEROPS_PROJECT_ID } from '../ops/stage-operations.mts';
-import { APP_DIRECTORY, fakeFiles, fakeStage, mutatingCommands } from './stage-operations-fixture.mts';
+import {
+  APP_DIRECTORY,
+  fakeCloudflareAccount,
+  fakeFiles,
+  fakeStage,
+  fakeZeropsApi,
+  mutatingCommands,
+} from './stage-operations-fixture.mts';
 import type { FakeFiles, FakeStage } from './stage-operations-fixture.mts';
 
 const PRODUCTION = 'production';
@@ -286,5 +295,93 @@ it.effect('rejects a SpiceDB endpoint that is not host:port', () =>
 
     expect(error.message).toContain('--spicedb-endpoint');
     expect(stage.commands).toStrictEqual([]);
+  }),
+);
+
+it.effect('plans a dry run without the Zerops token or the secrets file and changes nothing', () =>
+  Effect.gen(function* dryRunWithoutInputs() {
+    const stage = fakeStage({ environments: ['stage', PRODUCTION], projects: [STAGE_PROJECT] });
+
+    yield* run(provision(options({ secretsFile: Option.none(), zeropsTokenStdin: false })), {
+      dryRun: true,
+      files: fakeFiles(),
+      stage,
+    });
+
+    expect(mutatingCommands(stage.commands)).toStrictEqual([]);
+    expect(stage.variables.get(PRODUCTION)?.size ?? 0).toBe(0);
+  }),
+);
+
+const GATEWAY_HOSTNAME = 'ontos-production-spicedb.ontos.example';
+const PRODUCTION_PROJECT_ID = 'prod-id';
+
+const runSpicedbTls = (stage: FakeStage) => {
+  const zerops = fakeZeropsApi(stage);
+  const account = fakeCloudflareAccount({});
+  return {
+    account,
+    effect: run(ensureProductionSpicedbTls(GATEWAY_HOSTNAME), { files: fakeFiles(), stage }).pipe(
+      Effect.provide(
+        Layer.merge(
+          CloudflareApiLive.pipe(
+            Layer.provide(
+              Layer.succeed(CloudflareCredentials, { accountId: 'account-1', apiToken: Redacted.make('api-token') }),
+            ),
+            Layer.provide(account.layer),
+          ),
+          zerops.layer,
+        ),
+      ),
+    ),
+    zerops,
+  };
+};
+
+it.effect("creates the SpiceDB TLS pairs on the production project's spicedb service", () =>
+  Effect.gen(function* createsProductionSpicedbTls() {
+    const stage = fakeStage({
+      environments: ['stage', PRODUCTION],
+      services: [{ hostname: 'spicedb', id: 'prod-spicedb-id', status: 'ACTIVE' }],
+      variables: { [PRODUCTION]: { [PROJECT_ID_VARIABLE]: PRODUCTION_PROJECT_ID } },
+    });
+    const { effect, zerops } = runSpicedbTls(stage);
+
+    yield* effect;
+
+    expect(zerops.serviceSecrets.map(({ key, serviceId }) => `${serviceId} ${key}`)).toStrictEqual([
+      'prod-spicedb-id SPICEDB_GRPC_TLS_KEY',
+      'prod-spicedb-id SPICEDB_GRPC_TLS_CERT',
+      'prod-spicedb-id SPICEDB_HTTP_TLS_KEY',
+      'prod-spicedb-id SPICEDB_HTTP_TLS_CERT',
+    ]);
+    expect(rendered(stage).some((command) => command.includes(`--project-id ${PRODUCTION_PROJECT_ID}`))).toBe(true);
+  }),
+);
+
+it.effect('refuses SpiceDB TLS before provision records the production project', () =>
+  Effect.gen(function* refusesWithoutProject() {
+    const stage = fakeStage({ environments: ['stage', PRODUCTION] });
+    const { effect, zerops } = runSpicedbTls(stage);
+
+    const error = yield* effect.pipe(Effect.flip);
+
+    expect(error.message).toContain('run provision first');
+    expect(zerops.serviceSecrets).toStrictEqual([]);
+  }),
+);
+
+it.effect('refuses SpiceDB TLS when the production project ID names the stage project', () =>
+  Effect.gen(function* refusesStageSpicedbTls() {
+    const stage = fakeStage({
+      environments: ['stage', PRODUCTION],
+      variables: { [PRODUCTION]: { [PROJECT_ID_VARIABLE]: STAGE_ZEROPS_PROJECT_ID } },
+    });
+    const { effect, zerops } = runSpicedbTls(stage);
+
+    const error = yield* effect.pipe(Effect.flip);
+
+    expect(error.message).toContain('names the stage project');
+    expect(zerops.serviceSecrets).toStrictEqual([]);
   }),
 );
