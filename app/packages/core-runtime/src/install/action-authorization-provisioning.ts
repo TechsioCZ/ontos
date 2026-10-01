@@ -7,14 +7,8 @@ import { toSpiceDbActionObjectId } from '../permissions/service.ts';
 
 export const ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID = '00000000-0000-4000-8000-000000000019';
 
-/** Fixed stage account roles; the stage explicit Action policy names the roles that hold explicit Actions. */
-export const ActionAuthorizationAccountRoleSchema = Schema.Literals(['admin', 'demo']);
-type ActionAuthorizationAccountRole = typeof ActionAuthorizationAccountRoleSchema.Type;
-
 export interface ActionAuthorizationContext {
   readonly principalId: string;
-  /** Fixed stage accounts carry a role; it selects their explicit Action grants. */
-  readonly role?: ActionAuthorizationAccountRole;
   readonly tenantId: string;
 }
 
@@ -32,12 +26,16 @@ export interface ActionAuthorizationExplicitGrant {
   readonly principalIds: readonly string[];
 }
 
-/** Source-controlled rule: which fixed account roles hold every `explicit` Action. */
-export interface ActionAuthorizationExplicitPolicy {
-  readonly allowedRoles: readonly ActionAuthorizationAccountRole[];
+/**
+ * One fixed account's explicit Action grant data: the `explicit` Action keys it executes, or `'all'`
+ * for every current `explicit` Action.
+ */
+export interface ActionAuthorizationExplicitAccountGrant {
+  readonly explicitActions: 'all' | readonly string[];
+  readonly principalId: string;
 }
 
-/** Per-Action assertions and direct grants expanded from an {@link ActionAuthorizationExplicitPolicy}. */
+/** Per-Action assertions and direct grants expanded from per-account grant data. */
 export interface ActionAuthorizationExplicitDerivation {
   readonly explicitActionAssertions: readonly ActionAuthorizationExplicitAssertionSet[];
   readonly explicitActionGrants: readonly ActionAuthorizationExplicitGrant[];
@@ -204,40 +202,65 @@ const assertProvisioningInput = (input: ActionAuthorizationProvisioningInput) =>
 };
 
 /**
- * Expands the source-controlled explicit Action rule into per-Action grants and assertions.
- * Fixed accounts whose role is allowed receive a direct executor grant; every other fixed account
- * and the synthetic non-member are recorded as denied.
+ * Expands per-account explicit Action grant data into per-Action grants and assertions. Accounts
+ * that list an Action receive a direct executor grant and an `allowed` assertion; every other fixed
+ * account and the synthetic non-member receive a `denied` assertion. Grant data that names an Action
+ * outside the current `explicit` set fails, so stale data cannot grant anything silently.
  */
 export const deriveExplicitActionAuthorization = (
   actions: readonly ActionAuthorizationProvisioningAction[],
   contexts: readonly ActionAuthorizationContext[],
-  policy: ActionAuthorizationExplicitPolicy,
+  accountGrants: readonly ActionAuthorizationExplicitAccountGrant[],
   deniedPrincipalId: string = ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
-): ActionAuthorizationExplicitDerivation => {
-  const allowedRoles = new Set(policy.allowedRoles);
-  const allowedPrincipalIds = contexts.flatMap(({ principalId, role }) =>
-    role !== undefined && allowedRoles.has(role) ? [principalId] : [],
-  );
-  const deniedPrincipalIds = [
-    ...contexts.flatMap(({ principalId, role }) => (role !== undefined && allowedRoles.has(role) ? [] : [principalId])),
-    deniedPrincipalId,
-  ];
+): Effect.Effect<ActionAuthorizationExplicitDerivation, ActionAuthorizationProvisioningError> => {
   const explicitActionKeys = actions.flatMap(({ actionKey, provisioning }) =>
     provisioning === 'explicit' ? [actionKey] : [],
   );
-  return {
-    explicitActionAssertions: explicitActionKeys.map((actionKey) => ({
+  const explicitActionKeySet: ReadonlySet<string> = new Set(explicitActionKeys);
+  const contextPrincipalIds = new Set(contexts.map(({ principalId }) => principalId));
+  if (
+    new Set(accountGrants.map(({ principalId }) => principalId)).size !== accountGrants.length ||
+    accountGrants.some(
+      ({ explicitActions, principalId }) =>
+        !contextPrincipalIds.has(principalId) ||
+        (explicitActions !== 'all' && explicitActions.some((actionKey) => !explicitActionKeySet.has(actionKey))),
+    )
+  ) {
+    return Effect.fail(
+      failure(
+        'action_authorization_input_invalid',
+        'Explicit Action grant data must name fixed Principals and current explicit Actions',
+      ),
+    );
+  }
+  const grantees = (actionKey: string): readonly string[] =>
+    contexts.flatMap(({ principalId }) => {
+      const grant = accountGrants.find((candidate) => candidate.principalId === principalId);
+      return grant !== undefined && (grant.explicitActions === 'all' || grant.explicitActions.includes(actionKey))
+        ? [principalId]
+        : [];
+    });
+  const derivation = explicitActionKeys.map((actionKey) => {
+    const allowed = grantees(actionKey);
+    const allowedSet: ReadonlySet<string> = new Set(allowed);
+    const denied = [
+      ...contexts.flatMap(({ principalId }) => (allowedSet.has(principalId) ? [] : [principalId])),
+      deniedPrincipalId,
+    ];
+    return { actionKey, allowed, denied };
+  });
+  return Effect.succeed({
+    explicitActionAssertions: derivation.map(({ actionKey, allowed, denied }) => ({
       actionKey,
       assertions: [
-        ...allowedPrincipalIds.map((principalId) => ({ expected: 'allowed' as const, principalId })),
-        ...deniedPrincipalIds.map((principalId) => ({ expected: 'denied' as const, principalId })),
+        ...allowed.map((principalId) => ({ expected: 'allowed' as const, principalId })),
+        ...denied.map((principalId) => ({ expected: 'denied' as const, principalId })),
       ],
     })),
-    explicitActionGrants:
-      allowedPrincipalIds.length === 0
-        ? []
-        : explicitActionKeys.map((actionKey) => ({ actionKey, principalIds: allowedPrincipalIds })),
-  };
+    explicitActionGrants: derivation.flatMap(({ actionKey, allowed }) =>
+      allowed.length === 0 ? [] : [{ actionKey, principalIds: allowed }],
+    ),
+  });
 };
 
 const tenantAccessRequest = (context: ActionAuthorizationContext) =>

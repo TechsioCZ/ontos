@@ -1,4 +1,7 @@
-import { reconcileStageContextBootstraps } from '@app/core-runtime/install/stage-context-bootstrap';
+import {
+  reconcileStageContextBootstraps,
+  stageContextsFromAccountsFile,
+} from '@app/core-runtime/install/stage-context-bootstrap';
 import type { StageContextBootstrapResult } from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';
 import { hashPassword, verifyPassword } from 'better-auth/crypto';
@@ -12,24 +15,24 @@ import { account, session, user } from './db/schema.ts';
 import type { AuthDatabaseExecutor } from './db/types.ts';
 import {
   STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY,
-  StageDemoBootstrapError,
-  classifyExactStageDemoRecord,
-  parseStageDemoBootstrapConfig,
-} from './stage-demo-bootstrap-contract.ts';
+  StageAccountsBootstrapError,
+  classifyExactStageAccountsRecord,
+  parseStageAccountsBootstrapConfig,
+} from './stage-accounts-bootstrap-contract.ts';
 import type {
-  StageDemoAccountConfig,
-  StageDemoAccountResult,
-  StageDemoBootstrapConfig,
+  StageAccountConfig,
+  StageAccountResult,
+  StageAccountsBootstrapConfig,
   StageAccountsFileReader,
-  StageDemoBootstrapResult,
-  StageDemoEnvironment,
-} from './stage-demo-bootstrap-contract.ts';
+  StageAccountsBootstrapResult,
+  StageAccountsEnvironment,
+} from './stage-accounts-bootstrap-contract.ts';
 
 const persistenceFailure = (cause?: unknown) =>
-  new StageDemoBootstrapError({
+  new StageAccountsBootstrapError({
     cause,
-    code: 'stage_demo_persistence_failed',
-    reason: 'The stage demo Better Auth user could not be reconciled',
+    code: 'stage_accounts_persistence_failed',
+    reason: 'The stage account Better Auth user could not be reconciled',
   });
 
 const bootstrapSdkTimeout = Effect.timeoutOrElse({
@@ -39,7 +42,7 @@ const bootstrapSdkTimeout = Effect.timeoutOrElse({
 
 type AuthTransaction = Parameters<Parameters<AuthDatabaseExecutor['transaction']>[0]>[0];
 
-const replaceStagePassword = Effect.fn('StageDemoBootstrap.replacePassword')(function* replacePassword(
+const replaceStagePassword = Effect.fn('StageAccountsBootstrap.replacePassword')(function* replacePassword(
   transaction: AuthTransaction,
   accountId: string,
   userId: string,
@@ -52,18 +55,18 @@ const replaceStagePassword = Effect.fn('StageDemoBootstrap.replacePassword')(fun
     .where(eq(account.id, accountId))
     .returning({ id: account.id });
   if (updated.length !== 1) {
-    return yield* new StageDemoBootstrapError({
-      code: 'stage_demo_conflict',
-      reason: 'The existing stage demo credential changed during password replacement',
+    return yield* new StageAccountsBootstrapError({
+      code: 'stage_accounts_conflict',
+      reason: 'The existing stage account credential changed during password replacement',
     });
   }
   yield* transaction.delete(session).where(eq(session.userId, userId));
   return yield* Effect.void;
 });
 
-const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* ensureUser(
-  configuration: StageDemoBootstrapConfig,
-  accountConfiguration: StageDemoAccountConfig,
+const ensureAuthUser = Effect.fn('StageAccountsBootstrap.ensureAuthUser')(function* ensureUser(
+  configuration: Pick<StageAccountsBootstrapConfig, 'authBaseUrl' | 'authSecret'>,
+  accountConfiguration: StageAccountConfig,
 ) {
   const { adapter, executor: database } = yield* AuthDatabase;
   const existingUsers = yield* database
@@ -73,16 +76,16 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
     .limit(2)
     .pipe(Effect.mapError(persistenceFailure));
   if (existingUsers.length > 1) {
-    return yield* new StageDemoBootstrapError({
-      code: 'stage_demo_conflict',
-      reason: 'Multiple Better Auth users use the stage demo email',
+    return yield* new StageAccountsBootstrapError({
+      code: 'stage_accounts_conflict',
+      reason: 'Multiple Better Auth users use the stage account email',
     });
   }
   const [existingUser] = existingUsers;
   if (existingUser !== undefined) {
-    yield* classifyExactStageDemoRecord('Better Auth user', existingUser, {
+    yield* classifyExactStageAccountsRecord('Better Auth user', existingUser, {
       email: accountConfiguration.email,
-      name: accountConfiguration.principalDisplayName,
+      name: accountConfiguration.displayName,
     });
     const credentials = yield* database
       .select({
@@ -96,25 +99,25 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
       .pipe(Effect.mapError(persistenceFailure));
     const [credential] = credentials.length === 1 ? credentials : [];
     if (credential?.password === null || credential?.password === undefined) {
-      return yield* new StageDemoBootstrapError({
-        code: 'stage_demo_conflict',
-        reason: 'The existing stage demo user has conflicting credentials',
+      return yield* new StageAccountsBootstrapError({
+        code: 'stage_accounts_conflict',
+        reason: 'The existing stage account user has conflicting credentials',
       });
     }
-    yield* classifyExactStageDemoRecord('Better Auth credential account', credential, {
+    yield* classifyExactStageAccountsRecord('Better Auth credential account', credential, {
       accountId: existingUser.id,
     });
     const hash = credential.password;
     const validPassword = yield* Effect.tryPromise({
       catch: persistenceFailure,
       // oxlint-disable-next-line typescript/promise-function-async -- Effect owns the Better Auth crypto boundary.
-      try: () => verifyPassword({ hash, password: accountConfiguration.password }),
+      try: () => verifyPassword({ hash, password: Redacted.value(accountConfiguration.password) }),
     }).pipe(Effect.option, Effect.map(Option.getOrElse(() => false)), bootstrapSdkTimeout);
     if (!validPassword) {
       const replacementHash = yield* Effect.tryPromise({
         catch: persistenceFailure,
         // oxlint-disable-next-line typescript/promise-function-async -- Effect owns the Better Auth crypto boundary.
-        try: () => hashPassword(accountConfiguration.password),
+        try: () => hashPassword(Redacted.value(accountConfiguration.password)),
       }).pipe(bootstrapSdkTimeout);
       const updatedAt = yield* DateTime.nowAsDate;
       yield* database
@@ -148,86 +151,83 @@ const ensureAuthUser = Effect.fn('StageDemoBootstrap.ensureAuthUser')(function* 
       authentication.api.createUser({
         body: {
           email: accountConfiguration.email,
-          name: accountConfiguration.principalDisplayName,
-          password: accountConfiguration.password,
+          name: accountConfiguration.displayName,
+          password: Redacted.value(accountConfiguration.password),
         },
       }),
   }).pipe(Effect.uninterruptible);
   return { status: 'created' as const, userId: created.user.id };
 });
 
-export { ensureAuthUser as ensureStageDemoAuthUser };
+export { ensureAuthUser as ensureStageAccountAuthUser };
 
 const optionalString = (name: string) => Config.option(Config.String(name)).pipe(Config.map(Option.getOrUndefined));
 
 const optionalSecret = (name: string) =>
   Config.option(Config.Redacted(name)).pipe(Config.map(Option.map(Redacted.value)), Config.map(Option.getOrUndefined));
 
-const loadStageDemoEnvironment = Effect.fn('StageDemoBootstrapRuntimeInfrastructure.loadStageDemoEnvironment')(
-  function* loadStageDemoEnvironmentEffect() {
-    const values = yield* Effect.all(
-      {
-        BETTER_AUTH_SECRET: optionalSecret('BETTER_AUTH_SECRET'),
-        BETTER_AUTH_URL: optionalString('BETTER_AUTH_URL'),
-        DATABASE_ADMIN_URL: optionalSecret('DATABASE_ADMIN_URL'),
-        [STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY]: optionalString(STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY),
-        ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: optionalString('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'),
-      },
-      { concurrency: 8 },
-    );
-    return values satisfies StageDemoEnvironment;
+const loadStageAccountsEnvironment = Effect.fn(
+  'StageAccountsBootstrapRuntimeInfrastructure.loadStageAccountsEnvironment',
+)(function* loadStageAccountsEnvironmentEffect() {
+  const values = yield* Effect.all(
+    {
+      BETTER_AUTH_SECRET: optionalSecret('BETTER_AUTH_SECRET'),
+      BETTER_AUTH_URL: optionalString('BETTER_AUTH_URL'),
+      DATABASE_ADMIN_URL: optionalSecret('DATABASE_ADMIN_URL'),
+      [STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY]: optionalString(STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY),
+      ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: optionalString('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'),
+    },
+    { concurrency: 8 },
+  );
+  return values satisfies StageAccountsEnvironment;
+});
+
+export const loadStageAccountsConfiguration = Effect.fn('StageAccountsBootstrap.loadConfiguration')(
+  function* loadConfiguration(readAccountsFile: StageAccountsFileReader, environment?: StageAccountsEnvironment) {
+    const runtimeEnvironment =
+      environment ??
+      (yield* loadStageAccountsEnvironment().pipe(
+        Effect.mapError(
+          (error) =>
+            new StageAccountsBootstrapError({
+              code: 'stage_accounts_configuration_invalid',
+              reason: `The stage account configuration could not be loaded: ${error.message}`,
+            }),
+        ),
+      ));
+    return yield* parseStageAccountsBootstrapConfig(runtimeEnvironment, readAccountsFile);
   },
 );
-
-export const loadStageDemoConfiguration = Effect.fn('StageDemoBootstrap.loadConfiguration')(function* loadConfiguration(
-  readAccountsFile: StageAccountsFileReader,
-  environment?: StageDemoEnvironment,
-) {
-  const runtimeEnvironment =
-    environment ??
-    (yield* loadStageDemoEnvironment().pipe(
-      Effect.mapError(
-        (error) =>
-          new StageDemoBootstrapError({
-            code: 'stage_demo_configuration_invalid',
-            reason: `The stage demo configuration could not be loaded: ${error.message}`,
-          }),
-      ),
-    ));
-  return yield* parseStageDemoBootstrapConfig(runtimeEnvironment, readAccountsFile);
-});
 
 /**
  * Bans a retired stage account's Better Auth user, ends its sessions, and removes its password
  * credential so a previously disclosed password can never sign in again. Absent users are fine.
  */
-const retireAuthUserTransaction = Effect.fn('StageDemoBootstrap.retireAuthUserTransaction')(function* retireUserRows(
-  transaction: AuthTransaction,
-  email: string,
-  updatedAt: Date,
-) {
-  const users = yield* transaction
-    .update(user)
-    .set({ banned: true, banReason: 'Stage tenant retired', updatedAt })
-    .where(eq(user.email, email))
-    .returning({ id: user.id });
-  yield* Effect.forEach(
-    users,
-    ({ id }) =>
-      transaction
-        .delete(session)
-        .where(eq(session.userId, id))
-        .pipe(
-          Effect.andThen(
-            transaction.delete(account).where(and(eq(account.userId, id), eq(account.providerId, 'credential'))),
+const retireAuthUserTransaction = Effect.fn('StageAccountsBootstrap.retireAuthUserTransaction')(
+  function* retireUserRows(transaction: AuthTransaction, email: string, updatedAt: Date) {
+    const users = yield* transaction
+      .update(user)
+      .set({ banned: true, banReason: 'Stage tenant retired', updatedAt })
+      .where(eq(user.email, email))
+      .returning({ id: user.id });
+    yield* Effect.forEach(
+      users,
+      ({ id }) =>
+        transaction
+          .delete(session)
+          .where(eq(session.userId, id))
+          .pipe(
+            Effect.andThen(
+              transaction.delete(account).where(and(eq(account.userId, id), eq(account.providerId, 'credential'))),
+            ),
           ),
-        ),
-    { concurrency: 1, discard: true },
-  );
-  return users.length;
-});
+      { concurrency: 1, discard: true },
+    );
+    return users.length;
+  },
+);
 
-const retireAuthUser = Effect.fn('StageDemoBootstrap.retireAuthUser')(function* retireUser(email: string) {
+const retireAuthUser = Effect.fn('StageAccountsBootstrap.retireAuthUser')(function* retireUser(email: string) {
   const { executor: database } = yield* AuthDatabase;
   const updatedAt = yield* DateTime.nowAsDate;
   const banned = yield* database
@@ -237,53 +237,52 @@ const retireAuthUser = Effect.fn('StageDemoBootstrap.retireAuthUser')(function* 
 });
 
 const toAccountResult = (
-  accountConfiguration: StageDemoBootstrapConfig['accounts'][number],
-  authUser: { readonly status: StageDemoAccountResult['authUser'] },
+  email: string,
+  authUser: { readonly status: StageAccountResult['authUser'] },
   context: StageContextBootstrapResult,
-): StageDemoAccountResult => ({
+): StageAccountResult => ({
   authUser: authUser.status,
-  email: accountConfiguration.email,
+  email,
   legalEntityId: context.legalEntityId,
   principalId: context.principalId,
-  role: context.role,
   tenantId: context.tenantId,
 });
 
-export const bootstrapStageDemo = Effect.fn('StageDemoBootstrap.bootstrap')(function* bootstrap(
-  configuration: StageDemoBootstrapConfig,
-): Effect.fn.Return<StageDemoBootstrapResult, StageDemoBootstrapError, AuthDatabase> {
+export const bootstrapStageAccounts = Effect.fn('StageAccountsBootstrap.bootstrap')(function* bootstrap(
+  configuration: StageAccountsBootstrapConfig,
+): Effect.fn.Return<StageAccountsBootstrapResult, StageAccountsBootstrapError, AuthDatabase> {
+  const { accountsFile } = configuration;
+  const accountConfigurations = accountsFile.tenants.flatMap(({ accounts }) =>
+    accounts.map(({ displayName, email, password }) => ({ displayName, email, password })),
+  );
   const authUsers = yield* Effect.forEach(
-    configuration.accounts,
+    accountConfigurations,
     (accountConfiguration) => ensureAuthUser(configuration, accountConfiguration),
     { concurrency: 1 },
   );
-  const [techsioDemo, techsioAdmin, akrosDemo, akrosAdmin] = authUsers;
-  if (techsioDemo === undefined || techsioAdmin === undefined || akrosDemo === undefined || akrosAdmin === undefined) {
-    return yield* new StageDemoBootstrapError({
-      code: 'stage_demo_configuration_invalid',
-      reason: 'Every fixed stage account is required',
-    });
-  }
-  const contexts = yield* reconcileStageContextBootstraps(
-    [techsioDemo.userId, techsioAdmin.userId, akrosDemo.userId, akrosAdmin.userId],
+  const contexts = stageContextsFromAccountsFile(accountsFile);
+  const results = yield* reconcileStageContextBootstraps(
+    contexts.map((context, index) => ({ context, providerUserId: authUsers[index]?.userId ?? '' })),
+    accountsFile.retiredTenants,
     { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
   ).pipe(
     Effect.mapError(
       (error) =>
-        new StageDemoBootstrapError({
-          code: 'stage_demo_persistence_failed',
+        new StageAccountsBootstrapError({
+          code: 'stage_accounts_persistence_failed',
           reason: error.reason,
         }),
     ),
   );
-  const retiredAccounts = yield* Effect.forEach(configuration.retiredAccountEmails, retireAuthUser, {
+  const retiredAccounts = yield* Effect.forEach(accountsFile.retiredAccountEmails, retireAuthUser, {
     concurrency: 1,
   });
-  const accounts: StageDemoAccountResult[] = [
-    toAccountResult(configuration.accounts[0], techsioDemo, contexts[0]),
-    toAccountResult(configuration.accounts[1], techsioAdmin, contexts[1]),
-    toAccountResult(configuration.accounts[2], akrosDemo, contexts[2]),
-    toAccountResult(configuration.accounts[3], akrosAdmin, contexts[3]),
-  ];
+  const accounts = results.flatMap((result, index) => {
+    const accountConfiguration = accountConfigurations[index];
+    const authUser = authUsers[index];
+    return accountConfiguration === undefined || authUser === undefined
+      ? []
+      : [toAccountResult(accountConfiguration.email, authUser, result)];
+  });
   return { accounts, retiredAccounts };
 });

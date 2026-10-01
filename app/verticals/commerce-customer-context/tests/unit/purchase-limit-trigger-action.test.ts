@@ -30,7 +30,7 @@ import {
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
 const legalEntityId = '30000000-0000-4000-8000-000000000001';
-const storefrontId = 'storefront:akros-b2b';
+const storefrontId = 'storefront:tenant-a-b2b';
 const counterpartyRef = {
   moduleId: 'party.registry',
   resourceId: '40000000-0000-4000-8000-000000000001',

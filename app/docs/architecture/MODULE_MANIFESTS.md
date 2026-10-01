@@ -6,7 +6,7 @@ An OntOS Module Manifest is a validated capability contract. It is data, not an 
 
 - `appId` is the hyphenated UltraModern topology identity of a deployment. It remains the Module Federation remote identity, deployment lookup key, and exact Shell gateway JWT audience.
 - `moduleId` is the stable dotted OntOS capability identity. It owns Actions, Policies, resources, events, Outbox producers and consumers, and `core.tenant_module_states.module_key`.
-- Target `implementationId` is the stable explicit identity of one catalogued executable implementation of a `moduleId`, for example `standard` or `akros`. Compatible alternatives may share a `moduleId`; different public semantics require a different `moduleId`.
+- Target `implementationId` is the stable explicit identity of one catalogued executable implementation of a `moduleId`, for example `standard` or `tenant-a`. Compatible alternatives may share a `moduleId`; different public semantics require a different `moduleId`.
 - These identities may happen to contain equal text, but their roles never become interchangeable.
 
 For example, deployment `property-registry` may publish module `property.registry`.

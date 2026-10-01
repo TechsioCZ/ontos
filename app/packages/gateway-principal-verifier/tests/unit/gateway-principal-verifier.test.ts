@@ -100,7 +100,7 @@ it.effect('preserves signed Storefront scope with non-copyable verified provenan
     const storefrontPrincipal = {
       ...principal,
       legalEntityId: '70000000-0000-4000-8000-000000000001',
-      trustedStorefrontId: 'storefront-akros-b2b',
+      trustedStorefrontId: 'storefront-tenant-a-b2b',
     };
     const fixture = yield* makeFixture('commerce-customer-context', 1, storefrontPrincipal);
     const verifier = bindGatewayPrincipalVerifier('commerce-customer-context');
@@ -116,7 +116,7 @@ it.effect('preserves signed Storefront scope with non-copyable verified provenan
       redemption: { consume: () => Effect.void },
     });
 
-    expect(verified.trustedStorefrontId).toBe('storefront-akros-b2b');
+    expect(verified.trustedStorefrontId).toBe('storefront-tenant-a-b2b');
     expect(isVerifiedGatewayPrincipalContext(verified)).toBe(true);
   }),
 );

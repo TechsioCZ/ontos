@@ -13,7 +13,7 @@ const purchasingContext = {
   channelId: 'web',
   marketId: 'cz',
   sellingLegalEntityId: '40000000-0000-4000-8000-000000000001',
-  storefrontId: 'akros-cz',
+  storefrontId: 'tenant-a-cz',
   tenantId,
 };
 const subject = {

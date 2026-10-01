@@ -78,7 +78,7 @@
     "action:test:unit": "pnpm --filter @app/core-runtime action:test:unit",
     "action:test:integration": "pnpm --filter @app/core-runtime action:test:integration",
     "outbox:test": "pnpm --filter @app/core-runtime outbox:test:unit && pnpm --filter @app/core-runtime outbox:test:integration",
-    "stage:bootstrap-demo": "pnpm --filter @app/shell-super-app stage:bootstrap-demo",
+    "stage:bootstrap-accounts": "pnpm --filter @app/shell-super-app stage:bootstrap-accounts",
     "scaffold:action": "node ./scripts/scaffolding/cli.mts action",
     "scaffold:action-http": "node ./scripts/scaffolding/cli.mts action-http",
     "scaffold:action-service": "node ./scripts/scaffolding/cli.mts action-service",

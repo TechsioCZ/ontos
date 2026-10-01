@@ -69,15 +69,15 @@ export const LOCAL_DEVELOPMENT_CONTEXT = Object.freeze({
   defaultLocale: 'cs',
   email: 'demo@test.com',
   legalEntityId: '71000000-0000-4000-8000-000000000010',
-  legalName: 'TechsioCZ',
+  legalName: 'Local Legal Entity',
   password: localDevelopmentPassword,
-  principalDisplayName: 'Techsio Demo',
+  principalDisplayName: 'Local User',
   principalId: '72000000-0000-4000-8000-000000000010',
   registrationCountry: 'CZ',
-  registrationNumber: 'DEMO-TECHSIOCZ',
+  registrationNumber: 'LOCAL-0001',
   tenantId: '70000000-0000-4000-8000-000000000010',
-  tenantName: 'Techsio',
-  tenantSlug: 'techsio',
+  tenantName: 'Local Tenant',
+  tenantSlug: 'local',
 });
 
 export const LOCAL_DEVELOPMENT_VERTICALS = Object.freeze([

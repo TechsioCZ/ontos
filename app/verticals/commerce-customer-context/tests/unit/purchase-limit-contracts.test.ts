@@ -108,7 +108,7 @@ it('uses submit authority only when Storefront identity comes from trusted scope
       sourceRef: 'proposal:1',
       sourceRevision: 'proposal:1',
     },
-    storefrontId: 'storefront:akros-b2b',
+    storefrontId: 'storefront:tenant-a-b2b',
   });
   const resolvePolicyTarget = getReadPermissionTargetResolver(purchaseLimitPolicyReadRead);
   if (!Predicate.isFunction(resolvePolicyTarget)) {
@@ -137,7 +137,7 @@ it('uses submit authority only when Storefront identity comes from trusted scope
         counterpartyId: counterpartyRef.resourceId,
         kind: 'counterparty_storefront',
         legalEntityId,
-        storefrontId: 'storefront:akros-b2b',
+        storefrontId: 'storefront:tenant-a-b2b',
         tenantId,
       },
     },
@@ -146,7 +146,7 @@ it('uses submit authority only when Storefront identity comes from trusted scope
   expect(
     resolveEvaluationTarget(evaluationInput, {
       ...scope,
-      trustedStorefrontId: 'storefront:akros-b2b',
+      trustedStorefrontId: 'storefront:tenant-a-b2b',
     }),
   ).toEqual({
     businessPermission: {
@@ -155,12 +155,12 @@ it('uses submit authority only when Storefront identity comes from trusted scope
         counterpartyId: counterpartyRef.resourceId,
         kind: 'counterparty_storefront',
         legalEntityId,
-        storefrontId: 'storefront:akros-b2b',
+        storefrontId: 'storefront:tenant-a-b2b',
         tenantId,
       },
     },
     kind: 'business_permission',
-    trustedStorefrontId: 'storefront:akros-b2b',
+    trustedStorefrontId: 'storefront:tenant-a-b2b',
   });
 });
 

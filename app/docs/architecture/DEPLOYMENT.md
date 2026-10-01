@@ -139,48 +139,69 @@ The fail-closed Action authorization rollout uses an explicit expand/provision/v
 
 1. prepare the candidate application/release artifact for the operator command while the previous runtime remains active; this is separate from the PostgreSQL migration artifact;
 2. ensure the fixed stage contexts and their Tenant membership relationships already exist;
-3. run `mise exec -- pnpm authorization:provision-current-actions` in the stage-gated artifact. It publishes the compatible schema and membership-set executor grants for every `tenant_membership_default` Action across the fixed stage Tenants. For every `explicit` Action it writes direct executor grants for the roles in `topology/authorization-contexts/stage.json` `explicitActionPolicy` (the stage `admin` accounts, [ADR-0028](../../../docs/adr/0028-stage-demo-and-admin-accounts.md));
-4. verify every default Action for the fixed stage Principals and the non-member denial. Verify every explicit Action as allowed for admins and denied for demos and the non-member. Verify that no fixed Principal can access the other fixed Tenant;
+3. run `mise exec -- pnpm authorization:provision-current-actions` in the stage-gated artifact. It publishes the compatible schema and membership-set executor grants for every `tenant_membership_default` Action across the fixed stage Tenants. For every `explicit` Action it writes direct executor grants for the accounts whose `grants.explicitActions` in the operator stage accounts file name it ([ADR-0028](../../../docs/adr/0028-stage-accounts-from-operator-data.md)); set `ONTOS_STAGE_ACCOUNTS_FILE` for the run;
+4. verify every default Action for the fixed stage Principals and the non-member denial. Verify every explicit Action as allowed for its grantees and denied for every other fixed account and the non-member. Verify that no fixed Principal can access the other fixed Tenant;
 5. only then deploy the runtime that treats missing `action#execute` permission as denial;
 6. smoke one provisioned Action and one deliberately unconfigured Action denial.
 
 The command is operator-invoked, idempotent, accepts no scope arguments, and must not be attached to PostgreSQL migrations, SpiceDB startup, application startup, or automatic deployment. A failure or catalog mismatch blocks promotion. Rollback restores the previous application artifact while leaving the additive schema and relationships in place.
 
-Provisioning is additive, not stale-grant reconciliation. Before narrowing an Action from `tenant_membership_default` to `explicit`, the operator must prepare its intended narrow grants, remove the obsolete `action:<encoded-key>#executor@tenant:<fixed-tenant>#member` relation for each affected fixed Tenant, and verify both the intended allowed Principal and a Tenant member who must now be denied. Removed Actions and revoked role/workload assignments likewise require an explicit, reviewed removal of their obsolete executor relations. Derive Action object IDs with `toSpiceDbActionObjectId`; never delete unrelated tuples or rely on rerunning `TOUCH` to revoke access. Record and verify this policy-data transition before promotion. An application rollback must not silently restore a revoked grant; any policy restoration needs its own reviewed decision. The fixed environment's provisioning input records at least one allowed and one denied Principal assertion for every `explicit` Action. On stage those assertions and grants come from the source-controlled `explicitActionPolicy`, whose `fixedTenants` must match `STAGE_CONTEXTS`; a direct grant may name only a fixed Principal with an allowed assertion. Development has no explicit policy, so it still fails while the catalog has `explicit` Actions. Promotion verifies every fixed context plus the representative non-member for each `tenant_membership_default` Action; it verifies only those recorded per-Action assertions for an `explicit` Action. Missing, duplicate, unknown, allow-only, or deny-only explicit assertion sets fail before schema or relationship writes.
+Provisioning is additive, not stale-grant reconciliation. Before narrowing an Action from `tenant_membership_default` to `explicit`, the operator must prepare its intended narrow grants, remove the obsolete `action:<encoded-key>#executor@tenant:<fixed-tenant>#member` relation for each affected fixed Tenant, and verify both the intended allowed Principal and a Tenant member who must now be denied. Removed Actions and revoked role/workload assignments likewise require an explicit, reviewed removal of their obsolete executor relations. Derive Action object IDs with `toSpiceDbActionObjectId`; never delete unrelated tuples or rely on rerunning `TOUCH` to revoke access. Record and verify this policy-data transition before promotion. An application rollback must not silently restore a revoked grant; any policy restoration needs its own reviewed decision. The fixed environment's provisioning input records at least one allowed and one denied Principal assertion for every `explicit` Action. On stage those assertions and grants are derived from the operator stage accounts file, the same data the bootstrap writes; grant data may name only accounts in the file and current `explicit` Actions, and a direct grant may name only a fixed Principal with an allowed assertion. Development has no explicit policy, so it still fails while the catalog has `explicit` Actions. Promotion verifies every fixed context plus the representative non-member for each `tenant_membership_default` Action; it verifies only those recorded per-Action assertions for an `explicit` Action. Missing, duplicate, unknown, allow-only, or deny-only explicit assertion sets fail before schema or relationship writes.
 
-### Stage/demo bootstrap
+### Stage accounts bootstrap
 
 Stage bootstrap is an operator action, not a migration, startup hook, or automatic deploy step. It must remain:
 
-- limited to a fixed context set in source control (one `demo` and one `admin` account per stage Tenant; retired contexts are revoked, archived and banned, never deleted);
+- driven only by the operator stage accounts file; source control holds no stage Tenant, account, or grant ([ADR-0028](../../../docs/adr/0028-stage-accounts-from-operator-data.md));
 - explicitly gated to stage;
 - idempotent and conflict detecting;
 - interactive or otherwise secret-safe;
 - outside normal application startup;
 - responsible only for the documented initial installation exception.
 
-Source control knows only the account slots (Tenant × role). The operator supplies every stage account identity in a JSON file outside the repository and names it with `ONTOS_STAGE_ACCOUNTS_FILE`; `mise exec -- pnpm --filter shell-super-app stage:bootstrap-demo` fails when the variable is unset, the file cannot be read, the file is readable by group or others, or it does not match this shape. Errors never echo file values, and output names accounts but never passwords.
+The operator supplies every stage Tenant, account, and grant in a JSON file outside the repository and names it with `ONTOS_STAGE_ACCOUNTS_FILE`. `mise exec -- pnpm --filter shell-super-app stage:bootstrap-accounts` fails when the variable is unset, the file cannot be read, the file is readable by group or others, or it does not match this shape. Errors never echo file values, and output names accounts but never passwords.
 
 ```json
 {
-  "schemaVersion": 1,
-  "tenants": {
-    "techsio": {
-      "demo": { "email": "<email>", "password": "<at least 8 characters>" },
-      "admin": { "email": "<email>", "password": "<at least 8 characters>" }
-    },
-    "akros": {
-      "demo": { "email": "<email>", "password": "<at least 8 characters>" },
-      "admin": { "email": "<email>", "password": "<at least 8 characters>" }
+  "schemaVersion": 2,
+  "tenants": [
+    {
+      "tenantId": "<uuid>",
+      "slug": "<lowercase-slug>",
+      "displayName": "<name>",
+      "defaultLocale": "<locale>",
+      "moduleStateId": "<uuid>",
+      "legalEntity": {
+        "legalEntityId": "<uuid>",
+        "legalName": "<name>",
+        "registrationCountry": "<ISO 3166-1 alpha-2>",
+        "registrationNumber": "<number>"
+      },
+      "accounts": [
+        {
+          "principalId": "<uuid>",
+          "authBindingId": "<uuid>",
+          "email": "<email>",
+          "password": "<at least 8 characters>",
+          "displayName": "<name>",
+          "grants": {
+            "tenantRelations": ["<tenant relation from the SpiceDB schema>"],
+            "explicitActions": ["<explicit Action key>"]
+          }
+        }
+      ]
     }
-  },
+  ],
+  "retiredTenants": [{ "tenantId": "<uuid>", "legalEntityId": "<uuid>", "principalIds": ["<uuid>"] }],
   "retiredAccountEmails": ["<email>"]
 }
 ```
 
-- Every slot needs its own email; unknown keys are rejected.
-- `retiredAccountEmails` (may be empty) lists former stage accounts. The bootstrap bans each one, ends its sessions and removes its password credential. A retired email must not also be an active slot.
-- Keep the file mode `600`. Rerunning with a changed password resets that account's password and ends its sessions.
+- Every Tenant, slug, legal entity, module state, Principal, binding, and email must be unique; unknown keys are rejected.
+- `tenantRelations` may name any Principal relation on `tenant` in the SpiceDB schema except `member`, which every account gets. `explicitActions` is a list of `explicit` Action keys or `"all"`. `authorization:provision-current-actions` reads the same file, so grants and their assertions cannot drift apart.
+- `retiredTenants` (may be empty) lists former stage Tenants. The bootstrap revokes their bindings, archives their rows, and deletes every SpiceDB relationship it can have written for them.
+- `retiredAccountEmails` (may be empty) lists former stage accounts. The bootstrap bans each one, ends its sessions and removes its password credential. Retired data must not overlap an active Tenant, Principal, or email.
+- Keep the file mode `600`. Rerunning with a changed password resets that account's password and ends its sessions. Both tools only add relationships; removing a grant from the file does not revoke it.
 
 Every later canonical state change uses a typed Action.
 

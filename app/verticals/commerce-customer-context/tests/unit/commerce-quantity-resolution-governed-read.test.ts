@@ -23,7 +23,7 @@ import {
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const sellingLegalEntityId = '20000000-0000-4000-8000-000000000001';
-const storefrontId = 'akros-cz';
+const storefrontId = 'tenant-a-cz';
 const selection = {
   productRef: {
     moduleId: 'commerce.catalog' as const,

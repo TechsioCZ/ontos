@@ -1,109 +1,117 @@
 import { Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { STAGE_GRANTABLE_TENANT_RELATIONS, parseStageAccountsFile } from '../../src/install/stage-accounts-file.ts';
 import {
-  STAGE_CONTEXTS,
-  STAGE_CONTEXT_ORDER,
-  STAGE_RETIRED_CONTEXTS,
-  STAGE_TENANT_ROLE_RELATIONS,
   buildRetiredStageContextRelationships,
   buildStageContextRelationships,
+  stageContextsFromAccountsFile,
 } from '../../src/install/stage-context-bootstrap.ts';
 
-const techsio = {
-  defaultLocale: 'cs',
-  legalEntityId: '71000000-0000-4000-8000-000000000001',
-  legalName: 'TechsioCZ',
-  moduleId: 'party.registry',
-  moduleStateId: '74000000-0000-4000-8000-000000000001',
-  registrationCountry: 'CZ',
-  registrationNumber: 'DEMO-TECHSIOCZ',
-  tenantId: '70000000-0000-4000-8000-000000000001',
-  tenantName: 'Techsio',
-  tenantSlug: 'techsio',
-} as const;
+const fixturePassword = (account: string): string => `fixture-${account}-password`;
 
-const akros = {
-  defaultLocale: 'cs',
-  legalEntityId: '71000000-0000-4000-8000-000000000003',
-  legalName: 'Akros',
-  moduleId: 'party.registry',
-  moduleStateId: '74000000-0000-4000-8000-000000000003',
-  registrationCountry: 'CZ',
-  registrationNumber: 'DEMO-AKROS',
-  tenantId: '70000000-0000-4000-8000-000000000003',
-  tenantName: 'Akros',
-  tenantSlug: 'akros',
-} as const;
-
-it('defines one demo and one admin account for each of the Techsio and Akros stage Tenants', () => {
-  expect(STAGE_CONTEXTS).toEqual({
-    akrosAdmin: {
-      ...akros,
-      authBindingId: '73000000-0000-4000-8000-000000000013',
-      principalDisplayName: 'Akros Admin',
-      principalId: '72000000-0000-4000-8000-000000000013',
-      role: 'admin',
+const accountsFileSource = JSON.stringify({
+  retiredAccountEmails: [],
+  retiredTenants: [
+    {
+      legalEntityId: '11000000-0000-4000-8000-0000000000b0',
+      principalIds: ['20000000-0000-4000-8000-0000000000b1'],
+      tenantId: '10000000-0000-4000-8000-0000000000b0',
     },
-    akrosDemo: {
-      ...akros,
-      authBindingId: '73000000-0000-4000-8000-000000000003',
-      principalDisplayName: 'Akros Demo',
-      principalId: '72000000-0000-4000-8000-000000000003',
-      role: 'demo',
+  ],
+  schemaVersion: 2,
+  tenants: [
+    {
+      accounts: [
+        {
+          authBindingId: '30000000-0000-4000-8000-0000000000a1',
+          displayName: 'Tenant A account 1',
+          email: 'account-a-1@example.invalid',
+          grants: { explicitActions: [], tenantRelations: ['party_identity_reader'] },
+          password: fixturePassword('a-1'),
+          principalId: '20000000-0000-4000-8000-0000000000a1',
+        },
+        {
+          authBindingId: '30000000-0000-4000-8000-0000000000a2',
+          displayName: 'Tenant A account 2',
+          email: 'account-a-2@example.invalid',
+          grants: { explicitActions: 'all', tenantRelations: ['identity_admin', 'party_identity_manager'] },
+          password: fixturePassword('a-2'),
+          principalId: '20000000-0000-4000-8000-0000000000a2',
+        },
+      ],
+      defaultLocale: 'cs',
+      displayName: 'Tenant A',
+      legalEntity: {
+        legalEntityId: '11000000-0000-4000-8000-0000000000a0',
+        legalName: 'Tenant A Legal',
+        registrationCountry: 'CZ',
+        registrationNumber: 'FIXTURE-A',
+      },
+      moduleStateId: '40000000-0000-4000-8000-0000000000a0',
+      slug: 'tenant-a',
+      tenantId: '10000000-0000-4000-8000-0000000000a0',
     },
-    techsioAdmin: {
-      ...techsio,
-      authBindingId: '73000000-0000-4000-8000-000000000011',
-      principalDisplayName: 'Techsio Admin',
-      principalId: '72000000-0000-4000-8000-000000000011',
-      role: 'admin',
-    },
-    techsioDemo: {
-      ...techsio,
-      authBindingId: '73000000-0000-4000-8000-000000000001',
-      principalDisplayName: 'Techsio Demo',
-      principalId: '72000000-0000-4000-8000-000000000001',
-      role: 'demo',
-    },
-  });
-  expect(STAGE_CONTEXT_ORDER).toEqual(['techsioDemo', 'techsioAdmin', 'akrosDemo', 'akrosAdmin']);
+  ],
 });
 
-it.effect('grants Tenant roles by account role, never support, and only inside the own Tenant', () =>
-  Effect.gen(function* grantsTenantRolesByAccountRole() {
-    for (const key of STAGE_CONTEXT_ORDER) {
-      const context = STAGE_CONTEXTS[key];
+const loadAccountsFile = parseStageAccountsFile({ mode: 0o600, source: accountsFileSource });
+
+it.effect('flattens the accounts file into stage contexts in file order', () =>
+  Effect.gen(function* flattensAccountsFile() {
+    const contexts = stageContextsFromAccountsFile(yield* loadAccountsFile);
+    expect(contexts.map(({ principalDisplayName, tenantSlug }) => ({ principalDisplayName, tenantSlug }))).toEqual([
+      { principalDisplayName: 'Tenant A account 1', tenantSlug: 'tenant-a' },
+      { principalDisplayName: 'Tenant A account 2', tenantSlug: 'tenant-a' },
+    ]);
+    expect(contexts[0]).toMatchObject({
+      legalName: 'Tenant A Legal',
+      moduleId: 'party.registry',
+      tenantName: 'Tenant A',
+      tenantRelations: ['party_identity_reader'],
+    });
+    expect(contexts.some((context) => Object.hasOwn(context, 'password') || Object.hasOwn(context, 'email'))).toBe(
+      false,
+    );
+  }),
+);
+
+it.effect('writes exactly the Tenant relations listed in grant data, only inside the own Tenant', () =>
+  Effect.gen(function* writesListedRelations() {
+    for (const context of stageContextsFromAccountsFile(yield* loadAccountsFile)) {
       const relationships = yield* buildStageContextRelationships(context);
-      const tenantRoles = relationships
-        .filter(({ relation, resourceType }) => resourceType === 'tenant' && relation !== 'member')
-        .map(({ relation }) => relation);
-      expect(tenantRoles).toEqual([...STAGE_TENANT_ROLE_RELATIONS[context.role]]);
-      expect(tenantRoles).not.toContain('support');
+      expect(
+        relationships
+          .filter(({ relation, resourceType }) => resourceType === 'tenant' && relation !== 'member')
+          .map(({ relation }) => relation),
+      ).toEqual([...context.tenantRelations]);
       expect(
         relationships
           .filter(({ resourceType }) => resourceType === 'tenant')
           .every(({ resourceId }) => resourceId === context.tenantId),
       ).toBe(true);
     }
-    expect(STAGE_TENANT_ROLE_RELATIONS.demo).toEqual(['party_identity_reader']);
-    expect(STAGE_TENANT_ROLE_RELATIONS.admin).toContain('identity_admin');
   }),
 );
 
-it.effect('retires the former Siam Park context through exact relationship deletion', () =>
-  Effect.gen(function* retiresSiamPark() {
-    expect(Object.keys(STAGE_RETIRED_CONTEXTS)).toEqual(['siampark']);
-    const relationships = yield* buildRetiredStageContextRelationships(STAGE_RETIRED_CONTEXTS.siampark);
-    expect(relationships).toHaveLength(5);
-    expect(relationships[0]).toEqual({
+it.effect('deletes every relationship a bootstrap can have written for a retired Tenant', () =>
+  Effect.gen(function* retiresTenant() {
+    const [retired] = (yield* loadAccountsFile).retiredTenants;
+    expect(retired).toBeDefined();
+    if (retired === undefined) {
+      return;
+    }
+    const relationships = yield* buildRetiredStageContextRelationships(retired);
+    expect(relationships).toHaveLength(2 + retired.principalIds.length * (STAGE_GRANTABLE_TENANT_RELATIONS.length + 3));
+    expect(relationships).toContainEqual({
       relation: 'member',
-      resourceId: '70000000-0000-4000-8000-000000000002',
+      resourceId: retired.tenantId,
       resourceType: 'tenant',
-      subjectId: '72000000-0000-4000-8000-000000000002',
+      subjectId: retired.principalIds[0],
       subjectType: 'principal',
     });
-    const retiredTenantId: string = STAGE_RETIRED_CONTEXTS.siampark.tenantId;
-    expect(Object.values(STAGE_CONTEXTS).map(({ tenantId }) => tenantId)).not.toContain(retiredTenantId);
+    expect(
+      relationships.filter(({ resourceType }) => resourceType === 'tenant').map(({ relation }) => relation),
+    ).toEqual(['member', ...STAGE_GRANTABLE_TENANT_RELATIONS]);
   }),
 );

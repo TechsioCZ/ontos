@@ -95,5 +95,5 @@ Host-side worktrees and the shared sandbox home remain.
 
 - Login: `demo@test.com`
 - Password: `password1234`
-- Tenant: `Techsio`
-- Legal entity: `TechsioCZ`
+- Tenant: `Local Tenant`
+- Legal entity: `Local Legal Entity`

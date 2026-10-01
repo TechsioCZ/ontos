@@ -3,19 +3,54 @@ import { randomUUID } from 'node:crypto';
 import { memoryAdapter } from 'better-auth/adapters/memory';
 import { verifyPassword } from 'better-auth/crypto';
 import { eq } from 'drizzle-orm';
-import { Cause, DateTime, Deferred, Effect, Exit, Fiber } from 'effect';
+import { Cause, DateTime, Deferred, Effect, Exit, Fiber, Redacted } from 'effect';
 import { describe, expect, it, rstest } from 'effect-rstest';
+
+import { parseStageAccountsFile } from '@app/core-runtime/install/stage-accounts-file';
 
 import { loadAuthConfig } from '../../api/auth/config.ts';
 import { AuthDatabase, makeAuthDatabase } from '../../api/auth/db/client.ts';
 import { account, session, user } from '../../api/auth/db/schema.ts';
 import {
-  bootstrapStageDemo,
-  ensureStageDemoAuthUser,
-} from '../../api/auth/stage-demo-bootstrap-runtime-infrastructure.ts';
+  bootstrapStageAccounts,
+  ensureStageAccountAuthUser,
+} from '../../api/auth/stage-accounts-bootstrap-runtime-infrastructure.ts';
 
-describe('stage-demo-bootstrap', () => {
-  it.live('replaces an unreadable demo password and revokes its sessions', () =>
+/** A one-account stage accounts file with fresh identifiers, as the operator would write it. */
+const oneAccountFileSource = (): string =>
+  JSON.stringify({
+    retiredAccountEmails: [],
+    retiredTenants: [],
+    schemaVersion: 2,
+    tenants: [
+      {
+        accounts: [
+          {
+            authBindingId: randomUUID(),
+            displayName: 'First',
+            email: `stage-first-${randomUUID()}@example.test`,
+            grants: { explicitActions: [], tenantRelations: [] },
+            password: randomUUID(),
+            principalId: randomUUID(),
+          },
+        ],
+        defaultLocale: 'cs',
+        displayName: 'Tenant A',
+        legalEntity: {
+          legalEntityId: randomUUID(),
+          legalName: 'Tenant A Legal',
+          registrationCountry: 'CZ',
+          registrationNumber: 'FIXTURE-A',
+        },
+        moduleStateId: randomUUID(),
+        slug: 'tenant-a',
+        tenantId: randomUUID(),
+      },
+    ],
+  });
+
+describe('stage-accounts-bootstrap', () => {
+  it.live('replaces an unreadable account password and revokes its sessions', () =>
     Effect.scoped(
       Effect.gen(function* replacesPassword() {
         const baseConfiguration = yield* loadAuthConfig();
@@ -25,32 +60,9 @@ describe('stage-demo-bootstrap', () => {
         const initialPassword = `initial-${randomUUID()}`;
         const replacementPassword = `replacement-${randomUUID()}`;
         const configuration = {
-          accounts: [
-            {
-              email,
-              password: initialPassword,
-              principalDisplayName: 'Password reset fixture',
-            },
-            {
-              email: `unused-1-${randomUUID()}@example.test`,
-              password: randomUUID(),
-              principalDisplayName: 'Unused fixture 1',
-            },
-            {
-              email: `unused-2-${randomUUID()}@example.test`,
-              password: randomUUID(),
-              principalDisplayName: 'Unused fixture 2',
-            },
-            {
-              email: `unused-3-${randomUUID()}@example.test`,
-              password: randomUUID(),
-              principalDisplayName: 'Unused fixture 3',
-            },
-          ],
+          accounts: [{ displayName: 'Password reset fixture', email, password: Redacted.make(initialPassword) }],
           authBaseUrl: baseConfiguration.baseUrl,
           authSecret: baseConfiguration.secret,
-          databaseAdminUrl: baseConfiguration.connectionString,
-          retiredAccountEmails: [],
         } as const;
         const cleanup = Effect.gen(function* cleanupPasswordFixture() {
           const users = yield* database.select({ id: user.id }).from(user).where(eq(user.email, email));
@@ -62,7 +74,7 @@ describe('stage-demo-bootstrap', () => {
         }).pipe(Effect.orDie);
         yield* cleanup;
         yield* Effect.addFinalizer(() => cleanup);
-        const created = yield* ensureStageDemoAuthUser(configuration, configuration.accounts[0]).pipe(
+        const created = yield* ensureStageAccountAuthUser(configuration, configuration.accounts[0]).pipe(
           Effect.provideService(AuthDatabase, persistence),
         );
         yield* database.update(account).set({ password: randomUUID() }).where(eq(account.userId, created.userId));
@@ -79,9 +91,9 @@ describe('stage-demo-bootstrap', () => {
           updatedAt: sessionCreatedAt,
           userId: created.userId,
         });
-        const replaced = yield* ensureStageDemoAuthUser(configuration, {
+        const replaced = yield* ensureStageAccountAuthUser(configuration, {
           ...configuration.accounts[0],
-          password: replacementPassword,
+          password: Redacted.make(replacementPassword),
         }).pipe(Effect.provideService(AuthDatabase, persistence));
         expect(replaced).toEqual({
           status: 'password-reset',
@@ -133,33 +145,12 @@ describe('stage-demo-bootstrap', () => {
               }),
             );
             const database = yield* makeAuthDatabase(configuration);
-            return yield* bootstrapStageDemo({
-              accounts: [
-                {
-                  email: `stage-first-${randomUUID()}@example.test`,
-                  password: randomUUID(),
-                  principalDisplayName: 'First',
-                },
-                {
-                  email: `stage-second-${randomUUID()}@example.test`,
-                  password: randomUUID(),
-                  principalDisplayName: 'Second',
-                },
-                {
-                  email: `stage-third-${randomUUID()}@example.test`,
-                  password: randomUUID(),
-                  principalDisplayName: 'Third',
-                },
-                {
-                  email: `stage-fourth-${randomUUID()}@example.test`,
-                  password: randomUUID(),
-                  principalDisplayName: 'Fourth',
-                },
-              ],
+            const accountsFile = yield* parseStageAccountsFile({ mode: 0o600, source: oneAccountFileSource() });
+            return yield* bootstrapStageAccounts({
+              accountsFile,
               authBaseUrl: configuration.baseUrl,
               authSecret: configuration.secret,
               databaseAdminUrl: configuration.connectionString,
-              retiredAccountEmails: [],
             }).pipe(
               Effect.provideService(AuthDatabase, {
                 adapter: (options) => {

@@ -32,7 +32,7 @@ relevant to the task. An accepted ADR remains current unless a later ADR explici
 | [0025](0025-multiple-authority-homogeneous-inventory-reservations.md) | One Attempt may use multiple authority-homogeneous Reservations | Superseded by 0026             |
 | [0026](0026-single-inventory-backend-and-reservation.md)   | One configured Inventory Backend and one Reservation per Attempt | Accepted                       |
 | [0027](0027-launch-order-tax-fixed-at-commitment-time.md) | Launch Order Tax is fixed at one Order Commitment Time | Accepted |
-| [0028](0028-stage-demo-and-admin-accounts.md) | Stage has one demo and one admin account per Tenant | Accepted |
+| [0028](0028-stage-accounts-from-operator-data.md) | Stage accounts and their rights come from operator data | Accepted |
 
 ## Status meanings
 

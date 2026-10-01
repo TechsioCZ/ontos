@@ -5,6 +5,7 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
   Array as EffectArray,
   Cause,
+  Config,
   Console,
   Duration,
   Effect,
@@ -19,19 +20,23 @@ import { Command } from 'effect/unstable/cli';
 
 import { coreActionCatalog } from '../packages/core-runtime/src/index.ts';
 import {
-  ActionAuthorizationAccountRoleSchema,
   ActionAuthorizationProvisioningError,
   deriveExplicitActionAuthorization,
   provisionActionAuthorization,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type {
   ActionAuthorizationContext,
-  ActionAuthorizationExplicitPolicy,
+  ActionAuthorizationExplicitAccountGrant,
   ActionAuthorizationProvisioningAction,
   ActionAuthorizationProvisioningClient,
   ActionAuthorizationProvisioningResult,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
-import { STAGE_CONTEXTS, STAGE_CONTEXT_ORDER } from '../packages/core-runtime/src/install/stage-context-bootstrap.ts';
+import {
+  STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY,
+  parseStageAccountsFile,
+  readStageAccountsFileContents,
+} from '../packages/core-runtime/src/install/stage-accounts-file.ts';
+import type { StageAccountsFile } from '../packages/core-runtime/src/install/stage-accounts-file.ts';
 import { newSpiceDbGrpcClient } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
@@ -60,22 +65,18 @@ const OwnershipSchema = Schema.Struct({
 
 type DeriveContract = typeof deriveOntosModuleDeploymentContract;
 
-/** The provisioning slice of `topology/authorization-contexts/stage.json`; readiness owns the full schema. */
-const StageAuthorizationGrantsSchema = Schema.Struct({
-  environment: Schema.Literal('stage'),
-  explicitActionPolicy: Schema.Struct({
-    allowedRoles: Schema.Array(ActionAuthorizationAccountRoleSchema),
-    decisionReference: Schema.String,
-  }),
-  fixedTenants: Schema.Array(Schema.String),
-});
-
-export const STAGE_AUTHORIZATION_CONTEXT_PATH = 'topology/authorization-contexts/stage.json';
-
 export interface ActionAuthorizationProvisioningTarget {
   readonly configuration: SpiceDbConfigValue;
   readonly contexts: readonly ActionAuthorizationContext[];
   readonly environment: 'development' | 'stage';
+  /** Per-account explicit Action grant data; empty outside stage. */
+  readonly explicitAccountGrants: readonly ActionAuthorizationExplicitAccountGrant[];
+}
+
+/** The authorization slice of the operator stage accounts file: who exists and what each holds. */
+export interface StageAccountsAuthorization {
+  readonly contexts: readonly ActionAuthorizationContext[];
+  readonly explicitAccountGrants: readonly ActionAuthorizationExplicitAccountGrant[];
 }
 
 const failure = (
@@ -96,8 +97,47 @@ const isLoopbackSpiceDb = (configuration: SpiceDbConfigValue): boolean => {
   }
 };
 
+/** Projects the operator stage accounts file onto Action authorization inputs; passwords are dropped. */
+export const stageAccountsAuthorization = (file: StageAccountsFile): StageAccountsAuthorization => {
+  const accounts = file.tenants.flatMap(({ accounts: tenantAccounts, tenantId }) =>
+    tenantAccounts.map(({ grants, principalId }) => ({
+      explicitActions: grants.explicitActions,
+      principalId,
+      tenantId,
+    })),
+  );
+  return {
+    contexts: EffectArray.sortWith(
+      accounts.map(({ principalId, tenantId }) => ({ principalId, tenantId })),
+      ({ principalId }) => principalId,
+      Order.String,
+    ),
+    explicitAccountGrants: accounts.map(({ explicitActions, principalId }) => ({ explicitActions, principalId })),
+  };
+};
+
+/** Loads the operator stage accounts file named by {@link STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY}. */
+export const loadStageAccountsAuthorization = (): Effect.Effect<
+  StageAccountsAuthorization,
+  ActionAuthorizationProvisioningError,
+  FileSystem.FileSystem
+> =>
+  Config.schema(Schema.Trim.check(Schema.isNonEmpty()), STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY).pipe(
+    Effect.mapError(() =>
+      failure('action_authorization_configuration_invalid', `${STAGE_ACCOUNTS_FILE_ENVIRONMENT_KEY} is required`),
+    ),
+    Effect.flatMap((filePath) =>
+      readStageAccountsFileContents(filePath).pipe(
+        Effect.flatMap(parseStageAccountsFile),
+        Effect.mapError(({ reason }) => failure('action_authorization_configuration_invalid', reason)),
+      ),
+    ),
+    Effect.map(stageAccountsAuthorization),
+  );
+
 export const selectActionAuthorizationProvisioningTarget = (
   configuration: SpiceDbConfigValue,
+  stageAuthorization?: StageAccountsAuthorization,
 ): Effect.Effect<ActionAuthorizationProvisioningTarget, ActionAuthorizationProvisioningError> => {
   if (
     (configuration.deploymentEnvironment === undefined || configuration.deploymentEnvironment === 'development') &&
@@ -112,18 +152,15 @@ export const selectActionAuthorizationProvisioningTarget = (
         },
       ],
       environment: 'development',
+      explicitAccountGrants: [],
     });
   }
-  if (configuration.deploymentEnvironment === 'stage' && configuration.endpoint === 'spicedb:50051') {
-    const contexts = EffectArray.sortWith(
-      STAGE_CONTEXT_ORDER.map((key) => {
-        const { principalId, role, tenantId } = STAGE_CONTEXTS[key];
-        return { principalId, role, tenantId };
-      }),
-      ({ principalId }) => principalId,
-      Order.String,
-    );
-    return Effect.succeed({ configuration, contexts, environment: 'stage' });
+  if (
+    configuration.deploymentEnvironment === 'stage' &&
+    configuration.endpoint === 'spicedb:50051' &&
+    stageAuthorization !== undefined
+  ) {
+    return Effect.succeed({ configuration, environment: 'stage', ...stageAuthorization });
   }
   return Effect.fail(
     failure(
@@ -132,43 +169,6 @@ export const selectActionAuthorizationProvisioningTarget = (
     ),
   );
 };
-
-/**
- * Loads the source-controlled stage explicit Action rule and proves its Tenant set matches the
- * fixed stage contexts, so a stale context file cannot grant or verify the wrong accounts.
- */
-export const loadStageExplicitActionPolicy = (
-  workspaceRoot: string,
-): Effect.Effect<ActionAuthorizationExplicitPolicy, ActionAuthorizationProvisioningError, NodeServices.NodeServices> =>
-  Effect.gen(function* loadStageExplicitActionPolicyEffect() {
-    const invalid = () =>
-      failure(
-        'action_authorization_configuration_invalid',
-        'The stage authorization context does not define a valid explicit Action policy',
-      );
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const source = yield* fileSystem
-      .readFileString(path.join(workspaceRoot, STAGE_AUTHORIZATION_CONTEXT_PATH), 'utf-8')
-      .pipe(Effect.mapError(invalid));
-    const context = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(StageAuthorizationGrantsSchema), {
-      onExcessProperty: 'ignore',
-    })(source).pipe(Effect.mapError(invalid));
-    const fixedTenantSlugs = EffectArray.sort(
-      new Set<string>(STAGE_CONTEXT_ORDER.map((key) => STAGE_CONTEXTS[key].tenantSlug)),
-      Order.String,
-    );
-    const recordedTenantSlugs = EffectArray.sort(context.fixedTenants, Order.String);
-    if (
-      recordedTenantSlugs.length !== fixedTenantSlugs.length ||
-      recordedTenantSlugs.some((slug, index) => slug !== fixedTenantSlugs[index]) ||
-      context.explicitActionPolicy.allowedRoles.length === 0 ||
-      context.explicitActionPolicy.decisionReference.length === 0
-    ) {
-      return yield* invalid();
-    }
-    return { allowedRoles: context.explicitActionPolicy.allowedRoles };
-  });
 
 const discoveryFailure = (): ActionAuthorizationProvisioningError =>
   failure('action_authorization_discovery_failed', 'The complete current Action set could not be derived safely');
@@ -354,15 +354,13 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
         failure('action_authorization_configuration_invalid', 'The SpiceDB provisioning configuration is invalid'),
       ),
     );
-    const target = yield* selectActionAuthorizationProvisioningTarget(configuration);
+    const stageAuthorization =
+      configuration.deploymentEnvironment === 'stage' ? yield* loadStageAccountsAuthorization() : undefined;
+    const target = yield* selectActionAuthorizationProvisioningTarget(configuration, stageAuthorization);
     const actions = yield* discoverCurrentActions(workspaceRoot);
     const explicitAuthorization =
       target.environment === 'stage'
-        ? deriveExplicitActionAuthorization(
-            actions,
-            target.contexts,
-            yield* loadStageExplicitActionPolicy(workspaceRoot),
-          )
+        ? yield* deriveExplicitActionAuthorization(actions, target.contexts, target.explicitAccountGrants)
         : {};
     const client = yield* acquireProvisioningClient(target.configuration);
     const result = yield* provisionActionAuthorization(client, {
@@ -422,10 +420,11 @@ const command = Command.make('authorization-provision-current-actions', {}, () =
 
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   NodeRuntime.runMain(
-    Layer.effectDiscard(Command.run(command, { version: '0.1.0' })).pipe(
-      Layer.provide(NodeServices.layer),
-      Layer.launch,
-    ),
-    { disableErrorReporting: true },
+    Layer.build(
+      Layer.effectDiscard(Command.run(command, { version: '0.1.0' })).pipe(Layer.provide(NodeServices.layer)),
+    ).pipe(Effect.scoped),
+    {
+      disableErrorReporting: true,
+    },
   );
 }

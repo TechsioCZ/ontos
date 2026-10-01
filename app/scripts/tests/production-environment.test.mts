@@ -26,7 +26,7 @@ import {
 import type { FakeFiles, FakeStage } from './stage-operations-fixture.mts';
 
 const PRODUCTION = 'production';
-const STAGE_ORG_ID = 'org-techsio';
+const STAGE_ORG_ID = 'org-example';
 const SPICEDB_ENDPOINT = 'spicedb:50051';
 const ZEROPS_TOKEN = 'production-zerops-token';
 const SECRETS_FILE = 'production-secrets.env';
@@ -85,7 +85,7 @@ it('parses the project table zcli prints', () => {
         '┌────┬──────┬──────────┬────────┬────────┬─────────┐',
         '│ ID │ NAME │ ORG NAME │ ORG ID │ STATUS │ MODE    │',
         '├────┼──────┼──────────┼────────┼────────┼─────────┤',
-        '│ p1 │ ontos │ Techsio │ o1 │ ACTIVE │ LIGHT │',
+        '│ p1 │ ontos │ Example Org │ o1 │ ACTIVE │ LIGHT │',
         '└────┴──────┴──────────┴────────┴────────┴─────────┘',
       ].join('\n'),
     ),

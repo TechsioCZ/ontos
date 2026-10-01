@@ -3,11 +3,6 @@
   "environment": "stage",
   "approvalReference": "https://github.com/TechsioCZ/ontos/issues/173",
   "approvalStatus": "pending",
-  "explicitActionPolicy": {
-    "allowedRoles": ["admin"],
-    "decisionReference": "docs/adr/0028-stage-demo-and-admin-accounts.md"
-  },
-  "fixedTenants": ["akros", "techsio"],
   "gatewayAudiences": ["party-registry"],
   "minimumObservationSeconds": 604800,
   "moduleStateVersion": "tenant-module-state-v1",

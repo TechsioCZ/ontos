@@ -127,7 +127,7 @@ const table = (services: readonly ZeropsService[]) =>
 const projectTable = (projects: readonly FakeZeropsProject[]) =>
   [
     '│ ID │ NAME │ ORG NAME │ ORG ID │ STATUS │ MODE │',
-    ...projects.map(({ id, name, orgId }) => `│ ${id} │ ${name} │ Techsio │ ${orgId} │ ACTIVE │ SERIOUS │`),
+    ...projects.map(({ id, name, orgId }) => `│ ${id} │ ${name} │ Example Org │ ${orgId} │ ACTIVE │ SERIOUS │`),
   ].join('\n');
 
 const unexpected = (command: OpsCommand) =>

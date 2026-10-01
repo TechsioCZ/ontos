@@ -16,7 +16,7 @@ const request = {
   contextRevision: 'customer-context:41',
   effectiveAt: '2026-09-22T10:00:00.000Z',
   marketId: 'cz-launch',
-  sellingLegalEntityId: 'techsio-cz',
+  sellingLegalEntityId: 'tenant-a-cz',
   storefrontId: 'storefront-cz',
   subject: {
     guestEvidenceRef: 'guest-evidence:17',

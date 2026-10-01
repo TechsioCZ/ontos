@@ -3,7 +3,7 @@
 import { Effect } from "effect";
 import { pathToFileURL } from "node:url";
 
-const tenants = ["akros", "ontos"];
+const tenants = ["tenant-a", "tenant-b"];
 
 const main = async (): Promise<void> => {
 	for (const tenant of tenants) {

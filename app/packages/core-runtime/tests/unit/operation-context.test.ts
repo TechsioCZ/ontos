@@ -184,7 +184,7 @@ it.effect('preserves verified Storefront scope through persisted tenant and lega
   Effect.gen(function* verifiedStorefrontScope() {
     const storefrontPrincipal = trustVerifiedGatewayPrincipalContext({
       ...principal,
-      trustedStorefrontId: 'storefront-akros-b2b',
+      trustedStorefrontId: 'storefront-tenant-a-b2b',
     });
     const resolver = makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, access('allowed'));
 
@@ -194,7 +194,7 @@ it.effect('preserves verified Storefront scope through persisted tenant and lega
       principal: storefrontPrincipal,
     });
 
-    expect(resolved.trustedStorefrontId).toBe('storefront-akros-b2b');
+    expect(resolved.trustedStorefrontId).toBe('storefront-tenant-a-b2b');
     expect(isVerifiedGatewayPrincipalContext(resolved)).toBe(true);
     expect(Exit.isFailure(yield* Effect.exit(decodeTrustedPrincipalContext({ ...resolved })))).toBe(true);
   }),

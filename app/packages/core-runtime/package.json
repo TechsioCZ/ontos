@@ -15,6 +15,7 @@
     "./http/action-runner": "./src/http/http-instrumentation-seam.ts",
     "./http/governed-read": "./src/http/governed-read.ts",
     "./http/principal-authentication": "./src/http/principal-authentication.ts",
+    "./install/stage-accounts-file": "./src/install/stage-accounts-file.ts",
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
     "./module-entrypoint": "./src/modules/module-entrypoint.ts",
     "./operations/context": "./src/operations/context.ts",

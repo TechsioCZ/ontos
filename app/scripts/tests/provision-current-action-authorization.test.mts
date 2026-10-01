@@ -20,17 +20,21 @@ import type {
   ActionAuthorizationContext,
   ActionAuthorizationProvisioningClient,
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
+import { parseStageAccountsFile } from '../../packages/core-runtime/src/install/stage-accounts-file.ts';
 import type { SpiceDbConfigValue } from '../../packages/core-runtime/src/permissions/config.ts';
 import { toSpiceDbActionObjectId } from '../../packages/core-runtime/src/permissions/service.ts';
 import type { deriveOntosModuleDeploymentContract as DeriveModuleContract } from '../generate-ontos-module-contract.mts';
 import { LOCAL_DEVELOPMENT_CONTEXT } from '../initialize-local-development.mts';
 import {
   formatActionAuthorizationProvisioningFailure,
-  loadStageExplicitActionPolicy,
   runCurrentActionAuthorizationProvisioning,
   selectActionAuthorizationProvisioningTarget,
+  stageAccountsAuthorization,
 } from '../provision-current-action-authorization.mts';
-import type { discoverCurrentActionKeys as DiscoverCurrentActionKeys } from '../provision-current-action-authorization.mts';
+import type {
+  discoverCurrentActionKeys as DiscoverCurrentActionKeys,
+  StageAccountsAuthorization,
+} from '../provision-current-action-authorization.mts';
 
 const attachPersonEngagementAction = 'party.registry.attach-person-engagement';
 const restrictedAction = 'core.identity.restricted';
@@ -308,6 +312,66 @@ const stageConfiguration: SpiceDbConfigValue = {
   preSharedKey: testPreSharedKey,
 };
 
+const stageFixtureAccount = (tenant: string, index: number, explicitActions: 'all' | readonly string[]) => ({
+  authBindingId: `30000000-0000-4000-8000-0000000000${tenant}${index}`,
+  displayName: `Tenant ${tenant.toUpperCase()} account ${index}`,
+  email: `account-${tenant}-${index}@example.invalid`,
+  grants: { explicitActions, tenantRelations: [] },
+  password: `fixture-${tenant}-${index}-password`,
+  principalId: `20000000-0000-4000-8000-0000000000${tenant}${index}`,
+});
+
+const stageFixtureTenant = (tenant: string) => ({
+  accounts: [stageFixtureAccount(tenant, 1, []), stageFixtureAccount(tenant, 2, 'all')] as const,
+  defaultLocale: 'cs',
+  displayName: `Tenant ${tenant.toUpperCase()}`,
+  legalEntity: {
+    legalEntityId: `11000000-0000-4000-8000-0000000000${tenant}0`,
+    legalName: `Tenant ${tenant.toUpperCase()} Legal`,
+    registrationCountry: 'CZ',
+    registrationNumber: `FIXTURE-${tenant.toUpperCase()}`,
+  },
+  moduleStateId: `40000000-0000-4000-8000-0000000000${tenant}0`,
+  slug: `tenant-${tenant}`,
+  tenantId: `10000000-0000-4000-8000-0000000000${tenant}0`,
+});
+
+/** Synthetic operator accounts file: two Tenants, each with one account that holds every explicit Action. */
+const stageAccountsFileSource = JSON.stringify({
+  retiredAccountEmails: [],
+  retiredTenants: [],
+  schemaVersion: 2,
+  tenants: [stageFixtureTenant('a'), stageFixtureTenant('b')],
+});
+
+const stageFixturePrincipal = (tenant: string, index: number) => `20000000-0000-4000-8000-0000000000${tenant}${index}`;
+const stageFixtureTenantId = (tenant: string) => `10000000-0000-4000-8000-0000000000${tenant}0`;
+
+/** The Action authorization inputs the synthetic accounts file projects onto. */
+const stageAuthorization: StageAccountsAuthorization = {
+  contexts: ['a', 'b'].flatMap((tenant) =>
+    [1, 2].map((index) => ({
+      principalId: stageFixturePrincipal(tenant, index),
+      tenantId: stageFixtureTenantId(tenant),
+    })),
+  ),
+  explicitAccountGrants: ['a', 'b'].flatMap((tenant) => [
+    { explicitActions: [], principalId: stageFixturePrincipal(tenant, 1) },
+    { explicitActions: 'all' as const, principalId: stageFixturePrincipal(tenant, 2) },
+  ]),
+};
+
+const grantedPrincipalIds = (contexts: readonly ActionAuthorizationContext[]) =>
+  contexts.flatMap(({ principalId }) =>
+    stageAuthorization.explicitAccountGrants.some(
+      (grant) => grant.principalId === principalId && grant.explicitActions === 'all',
+    )
+      ? [principalId]
+      : [],
+  );
+const ungrantedPrincipalIds = (contexts: readonly ActionAuthorizationContext[]) =>
+  contexts.flatMap(({ principalId }) => (grantedPrincipalIds(contexts).includes(principalId) ? [] : [principalId]));
+
 const response = (permissionship: v1.CheckPermissionResponse_Permissionship) =>
   v1.CheckPermissionResponse.create({ permissionship });
 
@@ -338,12 +402,13 @@ it.effect(
       },
     ]);
 
-    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration, stageAuthorization);
     expect(stage.environment).toBe('stage');
     expect(stage.contexts.length).toBe(4);
-    expect(stage.contexts.filter(({ role }) => role === 'admin')).toHaveLength(2);
-    expect(stage.contexts.filter(({ role }) => role === 'demo')).toHaveLength(2);
+    expect(stage.explicitAccountGrants).toHaveLength(4);
     expect(new Set(stage.contexts.map(({ tenantId }) => tenantId)).size).toBe(2);
+    expect(JSON.stringify(stage)).not.toMatch(/password|example\.invalid/u);
+    expect(development.explicitAccountGrants).toEqual([]);
 
     const { deploymentEnvironment: _environment, ...withoutEnvironment } = developmentConfiguration;
     const implicitDevelopment = yield* selectActionAuthorizationProvisioningTarget(withoutEnvironment);
@@ -365,6 +430,7 @@ it.effect(
         },
         { ...withoutEnvironment, endpoint: 'spicedb.example.com:50051' },
         { ...withoutEnvironment, endpoint: 'spicedb:50051' },
+        stageConfiguration,
         { ...stageConfiguration, endpoint: 'localhost:50051' },
         { ...stageConfiguration, endpoint: 'spicedb:50052' },
       ].map((configuration) =>
@@ -437,7 +503,7 @@ it.effect(
   'builds lossless, deterministic Tenant-membership grants for development and stage',
   Effect.fn(function* testEffect8() {
     const development = yield* selectActionAuthorizationProvisioningTarget(developmentConfiguration);
-    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration, stageAuthorization);
     const developmentRelationships = buildActionAuthorizationRelationships(currentActionKeys, development.contexts);
     const stageRelationships = buildActionAuthorizationRelationships(currentActionKeys, stage.contexts);
 
@@ -907,24 +973,26 @@ const stageExplicitActions = [
 ];
 
 it.effect(
-  'grants every explicit Action to stage admins only and records demo and non-member denials',
+  'grants each explicit Action to the accounts whose grant data lists it and records every other denial',
   Effect.fn(function* testEffect21() {
-    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
-    const admins = stage.contexts.filter(({ role }) => role === 'admin').map(({ principalId }) => principalId);
-    const demos = stage.contexts.filter(({ role }) => role === 'demo').map(({ principalId }) => principalId);
-    const derived = deriveExplicitActionAuthorization(stageExplicitActions, stage.contexts, {
-      allowedRoles: ['admin'],
-    });
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration, stageAuthorization);
+    const granted = grantedPrincipalIds(stage.contexts);
+    const ungranted = ungrantedPrincipalIds(stage.contexts);
+    const derived = yield* deriveExplicitActionAuthorization(
+      stageExplicitActions,
+      stage.contexts,
+      stage.explicitAccountGrants,
+    );
     expect(derived.explicitActionGrants.map(({ actionKey }) => actionKey)).toEqual([
       restrictedAction,
       changePrincipalBindingStatusAction,
     ]);
     for (const { assertions } of derived.explicitActionAssertions) {
       expect(assertions.filter(({ expected }) => expected === 'allowed').map(({ principalId }) => principalId)).toEqual(
-        admins,
+        granted,
       );
       expect(assertions.filter(({ expected }) => expected === 'denied').map(({ principalId }) => principalId)).toEqual([
-        ...demos,
+        ...ungranted,
         ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
       ]);
     }
@@ -933,7 +1001,7 @@ it.effect(
     for (const relationship of grantRelationships) {
       expect(relationship.subject?.object?.objectType).toBe('principal');
       expect(relationship.subject?.optionalRelation ?? '').toBe('');
-      expect(admins).toContain(relationship.subject?.object?.objectId);
+      expect(granted).toContain(relationship.subject?.object?.objectId);
     }
 
     const { client, state } = makeProvisioningClient(stage.contexts);
@@ -943,20 +1011,33 @@ it.effect(
     expect(first).toEqual({ actionCount: 3, grantCount: 6, tenantCount: 2 });
     expect(second).toEqual(first);
     expect(state.updates.every(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH)).toBe(true);
-    expect([...state.grants].some((grant) => demos.some((demo) => grant.endsWith(`:${demo}`)))).toBe(false);
+    expect([...state.grants].some((grant) => ungranted.some((principalId) => grant.endsWith(`:${principalId}`)))).toBe(
+      false,
+    );
 
-    const demoOnly = deriveExplicitActionAuthorization(stageExplicitActions, stage.contexts, { allowedRoles: [] });
-    expect(demoOnly.explicitActionGrants).toEqual([]);
+    const noGrants = yield* deriveExplicitActionAuthorization(
+      stageExplicitActions,
+      stage.contexts,
+      stage.explicitAccountGrants.map(({ principalId }) => ({ explicitActions: [], principalId })),
+    );
+    expect(noGrants.explicitActionGrants).toEqual([]);
+
+    const listed = yield* deriveExplicitActionAuthorization(stageExplicitActions, stage.contexts, [
+      { explicitActions: [restrictedAction], principalId: ungranted[0] ?? '' },
+    ]);
+    expect(listed.explicitActionGrants).toEqual([{ actionKey: restrictedAction, principalIds: [ungranted[0]] }]);
   }),
 );
 
 it.effect(
   'fails stage provisioning when a fixed Principal can access the other fixed Tenant',
   Effect.fn(function* testEffect22() {
-    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
-    const derived = deriveExplicitActionAuthorization(stageExplicitActions, stage.contexts, {
-      allowedRoles: ['admin'],
-    });
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration, stageAuthorization);
+    const derived = yield* deriveExplicitActionAuthorization(
+      stageExplicitActions,
+      stage.contexts,
+      stage.explicitAccountGrants,
+    );
     const { client, state } = makeProvisioningClient(stage.contexts);
     const [leaking] = stage.contexts;
     const leakingClient: ActionAuthorizationProvisioningClient = {
@@ -981,16 +1062,18 @@ it.effect(
 it.effect(
   'rejects explicit grants for non-fixed Principals or Principals without an allowed assertion',
   Effect.fn(function* testEffect23() {
-    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
-    const derived = deriveExplicitActionAuthorization(stageExplicitActions, stage.contexts, {
-      allowedRoles: ['admin'],
-    });
-    const demo = stage.contexts.find(({ role }) => role === 'demo')?.principalId ?? '';
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration, stageAuthorization);
+    const derived = yield* deriveExplicitActionAuthorization(
+      stageExplicitActions,
+      stage.contexts,
+      stage.explicitAccountGrants,
+    );
+    const ungranted = ungrantedPrincipalIds(stage.contexts)[0] ?? '';
     yield* Effect.all(
       [
         [{ actionKey: restrictedAction, principalIds: ['00000000-0000-4000-8000-000000000099'] }],
-        [{ actionKey: restrictedAction, principalIds: [demo] }],
-        [{ actionKey: attachPersonEngagementAction, principalIds: [demo] }],
+        [{ actionKey: restrictedAction, principalIds: [ungranted] }],
+        [{ actionKey: attachPersonEngagementAction, principalIds: [ungranted] }],
         [{ actionKey: restrictedAction, principalIds: [] }],
       ].map((explicitActionGrants) =>
         Effect.gen(function* testEffect24() {
@@ -1013,39 +1096,36 @@ it.effect(
 );
 
 it.effect(
-  'loads the source-controlled stage explicit Action policy and rejects a stale Tenant set',
-  Effect.fn(function* testEffect25() {
-    const policy = yield* loadStageExplicitActionPolicy(path.resolve(import.meta.dirname, '../..')).pipe(
-      Effect.provide(NodeServices.layer),
-    );
-    expect(policy).toEqual({ allowedRoles: ['admin'] });
+  'projects the parsed operator accounts file onto sorted contexts and per-account grants',
+  Effect.fn(function* projectsAccountsFile() {
+    const file = yield* parseStageAccountsFile({ mode: 0o600, source: stageAccountsFileSource });
+    expect(stageAccountsAuthorization(file)).toEqual(stageAuthorization);
+  }),
+);
 
-    const root = yield* Effect.acquireRelease(
-      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-stage-policy-'))),
-      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
-    );
-    yield* Effect.tryPromise(() => mkdir(path.join(root, 'topology/authorization-contexts'), { recursive: true }));
+it.effect(
+  'rejects explicit grant data for unknown Principals or Actions outside the explicit set',
+  Effect.fn(function* testEffect25() {
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration, stageAuthorization);
+    const [first] = stage.contexts;
     yield* Effect.all(
       [
-        {
-          explicitActionPolicy: { allowedRoles: ['admin'], decisionReference: 'x' },
-          fixedTenants: ['siampark', 'techsio'],
-        },
-        { fixedTenants: ['akros', 'techsio'] },
-        { explicitActionPolicy: { allowedRoles: [], decisionReference: 'x' }, fixedTenants: ['akros', 'techsio'] },
-      ].map((override) =>
+        [{ explicitActions: 'all' as const, principalId: '00000000-0000-4000-8000-000000000099' }],
+        [{ explicitActions: [attachPersonEngagementAction], principalId: first?.principalId ?? '' }],
+        [{ explicitActions: ['core.identity.unknown'], principalId: first?.principalId ?? '' }],
+        [
+          { explicitActions: 'all' as const, principalId: first?.principalId ?? '' },
+          { explicitActions: [], principalId: first?.principalId ?? '' },
+        ],
+      ].map((accountGrants) =>
         Effect.gen(function* testEffect26() {
-          yield* Effect.promise(() =>
-            writeFile(
-              path.join(root, 'topology/authorization-contexts/stage.json'),
-              JSON.stringify({ environment: 'stage', ...override }),
-            ),
+          const error = yield* failureOf(
+            deriveExplicitActionAuthorization(stageExplicitActions, stage.contexts, accountGrants),
           );
-          const error = yield* failureOf(loadStageExplicitActionPolicy(root).pipe(Effect.provide(NodeServices.layer)));
-          expect(error.code).toBe('action_authorization_configuration_invalid');
+          expect(error.code).toBe('action_authorization_input_invalid');
         }),
       ),
-      { concurrency: 1 },
+      { concurrency: 'unbounded' },
     );
   }),
 );

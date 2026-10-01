@@ -89,7 +89,7 @@ It must preserve owner-local validation, Permission, Business Policy, Action, au
 This section defines accepted target selection semantics. Current V0 supports one implicit `standard` implementation per `moduleId`; it does not yet serialize or select `implementationId`.
 
 - `moduleId` is the Module Contract Identity and owns public capability semantics.
-- `implementationId` identifies one catalogued executable implementation, for example `standard` or `akros`.
+- `implementationId` identifies one catalogued executable implementation, for example `standard` or `tenant-a`.
 - `appId` remains the independently deployable topology identity and exact gateway audience.
 
 Once that target contract exists, two implementations may share `moduleId` only while public semantics and compatibility remain the same. Different semantics require a different `moduleId`. Each implementation records immutable build revision/digest, public-contract hash/version, migration set, owner, health, and readiness; the catalog rejects missing, duplicate, ambiguous, incompatible, or invisible implementation identities. Implement the target only by extending Codesmith, Effect Schemas, serialized contracts, topology/allowlist validation, Customer Configuration resolution, and tests together. Do not hand-author fields or customer branches as a substitute.

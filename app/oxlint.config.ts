@@ -72,7 +72,7 @@ const effectNativeRules: NonNullable<Parameters<typeof defineConfig>[0]['rules']
         'packages/core-runtime/src/testing/actions.ts',
         // This CLI composes administrative Auth/Core database Layers for local initialization.
         'scripts/initialize-local-development.mts',
-        'apps/shell-super-app/scripts/bootstrap-stage-demo.mts',
+        'apps/shell-super-app/scripts/bootstrap-stage-accounts.mts',
       ],
     },
   ],
@@ -504,7 +504,7 @@ export default defineConfig({
       // replacing it with null would change exact-optional and fixture contracts.
       files: [
         'apps/shell-super-app/api/modules/installed-module-catalog.ts',
-        'apps/shell-super-app/tests/unit/stage-demo-bootstrap.test.ts',
+        'apps/shell-super-app/tests/unit/stage-accounts-bootstrap.test.ts',
         'packages/core-runtime/src/actions/runtime.ts',
         'packages/core-runtime/tests/integration/action-permission.test.ts',
         'packages/core-runtime/tests/integration/action-runtime.test.ts',
@@ -625,13 +625,13 @@ export default defineConfig({
       },
     },
     {
-      // These files define intentionally non-production demo/test credentials.
+      // These files define intentionally non-production test credentials.
       files: [
         'apps/shell-super-app/tests/e2e/auth-fixture.ts',
         'apps/shell-super-app/tests/integration/auth-runtime.test.ts',
         'apps/shell-super-app/tests/integration/identity-modes-runtime.test.ts',
         'apps/shell-super-app/tests/unit/auth-contract.test.ts',
-        'apps/shell-super-app/tests/unit/stage-demo-bootstrap.test.ts',
+        'apps/shell-super-app/tests/unit/stage-accounts-bootstrap.test.ts',
       ],
       rules: {
         'sonarjs/no-hardcoded-passwords': 'off',

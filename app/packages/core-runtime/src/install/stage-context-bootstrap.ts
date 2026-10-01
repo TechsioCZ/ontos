@@ -19,107 +19,53 @@ import {
   selectBootstrapPrincipals,
   selectBootstrapAuthBindings,
 } from './context-bootstrap-shared.ts';
+import { STAGE_GRANTABLE_TENANT_RELATIONS } from './stage-accounts-file.ts';
+import type { StageAccountsFile, StageRetiredTenant } from './stage-accounts-file.ts';
 
 type Comparable = boolean | null | number | string;
 type ExactRecord = Readonly<Record<string, Comparable>>;
 
 const STAGE_MODULE_ID = 'party.registry';
 
-const TECHSIO_TENANT = Object.freeze({
-  defaultLocale: 'cs',
-  legalEntityId: '71000000-0000-4000-8000-000000000001',
-  legalName: 'TechsioCZ',
-  moduleId: STAGE_MODULE_ID,
-  moduleStateId: '74000000-0000-4000-8000-000000000001',
-  registrationCountry: 'CZ',
-  registrationNumber: 'DEMO-TECHSIOCZ',
-  tenantId: '70000000-0000-4000-8000-000000000001',
-  tenantName: 'Techsio',
-  tenantSlug: 'techsio',
-});
+/** One stage account resolved from the operator accounts file, with the grants it holds as data. */
+export interface StageContext {
+  readonly authBindingId: string;
+  readonly defaultLocale: string;
+  readonly legalEntityId: string;
+  readonly legalName: string;
+  readonly moduleId: string;
+  readonly moduleStateId: string;
+  readonly principalDisplayName: string;
+  readonly principalId: string;
+  readonly registrationCountry: string;
+  readonly registrationNumber: string;
+  readonly tenantId: string;
+  readonly tenantName: string;
+  /** Principal relations on the own Tenant, copied verbatim from the account's grant data. */
+  readonly tenantRelations: readonly string[];
+  readonly tenantSlug: string;
+}
 
-const AKROS_TENANT = Object.freeze({
-  defaultLocale: 'cs',
-  legalEntityId: '71000000-0000-4000-8000-000000000003',
-  legalName: 'Akros',
-  moduleId: STAGE_MODULE_ID,
-  moduleStateId: '74000000-0000-4000-8000-000000000003',
-  registrationCountry: 'CZ',
-  registrationNumber: 'DEMO-AKROS',
-  tenantId: '70000000-0000-4000-8000-000000000003',
-  tenantName: 'Akros',
-  tenantSlug: 'akros',
-});
-
-/**
- * The fixed stage accounts: one `demo` and one `admin` per stage Tenant (ADR-0028).
- * Siam Park left stage; its former context is retired by {@link STAGE_RETIRED_CONTEXTS}.
- */
-export const STAGE_CONTEXTS = Object.freeze({
-  akrosAdmin: Object.freeze({
-    ...AKROS_TENANT,
-    authBindingId: '73000000-0000-4000-8000-000000000013',
-    principalDisplayName: 'Akros Admin',
-    principalId: '72000000-0000-4000-8000-000000000013',
-    role: 'admin',
-  }),
-  akrosDemo: Object.freeze({
-    ...AKROS_TENANT,
-    authBindingId: '73000000-0000-4000-8000-000000000003',
-    principalDisplayName: 'Akros Demo',
-    principalId: '72000000-0000-4000-8000-000000000003',
-    role: 'demo',
-  }),
-  techsioAdmin: Object.freeze({
-    ...TECHSIO_TENANT,
-    authBindingId: '73000000-0000-4000-8000-000000000011',
-    principalDisplayName: 'Techsio Admin',
-    principalId: '72000000-0000-4000-8000-000000000011',
-    role: 'admin',
-  }),
-  techsioDemo: Object.freeze({
-    ...TECHSIO_TENANT,
-    authBindingId: '73000000-0000-4000-8000-000000000001',
-    principalDisplayName: 'Techsio Demo',
-    principalId: '72000000-0000-4000-8000-000000000001',
-    role: 'demo',
-  }),
-} as const);
-
-/** Fixed stage account order shared with the Shell bootstrap contract. */
-export const STAGE_CONTEXT_ORDER = Object.freeze(['techsioDemo', 'techsioAdmin', 'akrosDemo', 'akrosAdmin'] as const);
-
-/**
- * Tenant roles per account role. Both roles read Party Registry; only `admin` manages identity and
- * parties. The `support` (impersonation) role is never granted by the stage bootstrap.
- */
-export const STAGE_TENANT_ROLE_RELATIONS = Object.freeze({
-  admin: Object.freeze([
-    'identity_admin',
-    'party_identity_manager',
-    'party_identity_merger',
-    'party_identity_reader',
-    'party_identity_reviewer',
-    'party_relationship_manager',
-  ] as const),
-  demo: Object.freeze(['party_identity_reader'] as const),
-});
-
-/** Former stage contexts that the bootstrap archives, revokes, and removes from SpiceDB. */
-export const STAGE_RETIRED_CONTEXTS = Object.freeze({
-  siampark: Object.freeze({
-    authBindingId: '73000000-0000-4000-8000-000000000002',
-    legalEntityId: '71000000-0000-4000-8000-000000000002',
-    moduleId: STAGE_MODULE_ID,
-    moduleStateId: '74000000-0000-4000-8000-000000000002',
-    principalId: '72000000-0000-4000-8000-000000000002',
-    tenantId: '70000000-0000-4000-8000-000000000002',
-    tenantSlug: 'siampark',
-  }),
-});
-
-type StageContextKey = keyof typeof STAGE_CONTEXTS;
-type StageContext = (typeof STAGE_CONTEXTS)[StageContextKey];
+/** Flattens the operator accounts file into stage contexts, in file order. */
+export const stageContextsFromAccountsFile = (file: StageAccountsFile): readonly StageContext[] =>
+  file.tenants.flatMap((tenant) =>
+    tenant.accounts.map((account) => ({
+      authBindingId: account.authBindingId,
+      defaultLocale: tenant.defaultLocale,
+      legalEntityId: tenant.legalEntity.legalEntityId,
+      legalName: tenant.legalEntity.legalName,
+      moduleId: STAGE_MODULE_ID,
+      moduleStateId: tenant.moduleStateId,
+      principalDisplayName: account.displayName,
+      principalId: account.principalId,
+      registrationCountry: tenant.legalEntity.registrationCountry,
+      registrationNumber: tenant.legalEntity.registrationNumber,
+      tenantId: tenant.tenantId,
+      tenantName: tenant.displayName,
+      tenantRelations: account.grants.tenantRelations,
+      tenantSlug: tenant.slug,
+    })),
+  );
 
 interface StageContextBootstrapConfiguration {
   readonly databaseAdminUrl: Redacted.Redacted;
@@ -137,19 +83,16 @@ interface StageContextBootstrapRelationship {
 }
 
 export interface StageContextBootstrapResult {
-  readonly legalEntityId: StageContext['legalEntityId'];
-  readonly principalId: StageContext['principalId'];
-  readonly role: StageContext['role'];
-  readonly tenantId: StageContext['tenantId'];
+  readonly legalEntityId: string;
+  readonly principalId: string;
+  readonly tenantId: string;
 }
 
-export type StageContextBootstrapProviderUserIds = readonly [string, string, string, string];
-export type StageContextBootstrapResults = readonly [
-  StageContextBootstrapResult,
-  StageContextBootstrapResult,
-  StageContextBootstrapResult,
-  StageContextBootstrapResult,
-];
+/** A stage context paired with the Shell-owned Better Auth user ID that signs in as it. */
+export interface StageContextBootstrapAccount {
+  readonly context: StageContext;
+  readonly providerUserId: string;
+}
 
 export interface StageContextBootstrapOptions {
   /** A validated deployment registration value supplied by Shell composition. */
@@ -441,7 +384,7 @@ export const buildStageContextRelationships = Effect.fn('StageContextBootstrap.b
         subjectId: context.principalId,
         subjectType: 'principal',
       },
-      ...STAGE_TENANT_ROLE_RELATIONS[context.role].map((relation) => ({
+      ...context.tenantRelations.map((relation) => ({
         relation,
         resourceId: context.tenantId,
         resourceType: 'tenant',
@@ -452,26 +395,21 @@ export const buildStageContextRelationships = Effect.fn('StageContextBootstrap.b
   },
 );
 
-type RetiredStageContext = (typeof STAGE_RETIRED_CONTEXTS)[keyof typeof STAGE_RETIRED_CONTEXTS];
-
-/** Every relationship the former bootstrap wrote for a retired context, for exact deletion. */
+/**
+ * Every relationship a bootstrap can have written for a retired Tenant, for exact deletion: the
+ * structural links plus membership, module access, and every grantable Tenant relation of each
+ * listed Principal. Deleting an absent relationship is a no-op.
+ */
 export const buildRetiredStageContextRelationships = Effect.fn('StageContextBootstrap.buildRetiredRelationships')(
   function* buildRetiredRelationships(
-    context: RetiredStageContext,
+    context: StageRetiredTenant,
   ): Effect.fn.Return<readonly StageContextBootstrapRelationship[], StageContextBootstrapError> {
     const legalEntityObjectId = toLegalEntityAccessObjectId(context.tenantId, context.legalEntityId);
-    const moduleObjectId = toModuleAccessObjectId(context.tenantId, context.legalEntityId, context.moduleId);
+    const moduleObjectId = toModuleAccessObjectId(context.tenantId, context.legalEntityId, STAGE_MODULE_ID);
     if (legalEntityObjectId === undefined || moduleObjectId === undefined) {
       return yield* failure('The retired stage authorization object IDs are invalid');
     }
     return [
-      {
-        relation: 'member',
-        resourceId: context.tenantId,
-        resourceType: 'tenant',
-        subjectId: context.principalId,
-        subjectType: 'principal',
-      },
       {
         relation: 'tenant',
         resourceId: legalEntityObjectId,
@@ -480,26 +418,35 @@ export const buildRetiredStageContextRelationships = Effect.fn('StageContextBoot
         subjectType: 'tenant',
       },
       {
-        relation: 'member',
-        resourceId: legalEntityObjectId,
-        resourceType: 'legal_entity',
-        subjectId: context.principalId,
-        subjectType: 'principal',
-      },
-      {
         relation: 'legal_entity',
         resourceId: moduleObjectId,
         resourceType: 'module_access',
         subjectId: legalEntityObjectId,
         subjectType: 'legal_entity',
       },
-      {
-        relation: 'accessor',
-        resourceId: moduleObjectId,
-        resourceType: 'module_access',
-        subjectId: context.principalId,
-        subjectType: 'principal',
-      },
+      ...context.principalIds.flatMap((principalId) => [
+        ...['member', ...STAGE_GRANTABLE_TENANT_RELATIONS].map((relation) => ({
+          relation,
+          resourceId: context.tenantId,
+          resourceType: 'tenant',
+          subjectId: principalId,
+          subjectType: 'principal',
+        })),
+        {
+          relation: 'member',
+          resourceId: legalEntityObjectId,
+          resourceType: 'legal_entity',
+          subjectId: principalId,
+          subjectType: 'principal',
+        },
+        {
+          relation: 'accessor',
+          resourceId: moduleObjectId,
+          resourceType: 'module_access',
+          subjectId: principalId,
+          subjectType: 'principal',
+        },
+      ]),
     ];
   },
 );
@@ -507,7 +454,7 @@ export const buildRetiredStageContextRelationships = Effect.fn('StageContextBoot
 const retirePostgresTransaction = Effect.fn('StageContextBootstrap.retirePostgresTransaction')(
   function* retireStagePostgresTransaction(
     transaction: CoreTransaction,
-    context: RetiredStageContext,
+    context: StageRetiredTenant,
     retiredAt: Date,
   ): Effect.fn.Return<void, StageContextBootstrapError> {
     yield* transaction
@@ -573,24 +520,24 @@ const deleteRelationshipsRequest = (relationships: readonly StageContextBootstra
   });
 
 /**
- * Reconciles the complete fixed set of stage accounts and retires former stage contexts.
- * The caller supplies only the Shell-owned Better Auth user IDs in {@link STAGE_CONTEXT_ORDER}.
+ * Reconciles every stage account from the operator accounts file and retires former stage Tenants.
+ * Results follow the order of `accounts`.
  */
 export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.reconcileStageContextBootstraps')(
-  function* reconcileFixedStageContexts(
-    providerUserIds: StageContextBootstrapProviderUserIds,
+  function* reconcileStageContexts(
+    accounts: readonly StageContextBootstrapAccount[],
+    retiredTenants: readonly StageRetiredTenant[],
     options: StageContextBootstrapOptions,
-  ): Effect.fn.Return<StageContextBootstrapResults, StageContextBootstrapError> {
-    if (providerUserIds.some((providerUserId) => providerUserId.trim().length === 0)) {
+  ): Effect.fn.Return<readonly StageContextBootstrapResult[], StageContextBootstrapError> {
+    if (accounts.length === 0) {
+      return yield* failure('At least one stage account is required');
+    }
+    if (accounts.some(({ providerUserId }) => providerUserId.trim().length === 0)) {
       return yield* failure('Every stage Better Auth provider user ID is required');
     }
-    if (new Set(providerUserIds).size !== providerUserIds.length) {
+    if (new Set(accounts.map(({ providerUserId }) => providerUserId)).size !== accounts.length) {
       return yield* failure('The stage contexts require distinct Better Auth provider user IDs');
     }
-    const contexts = STAGE_CONTEXT_ORDER.map((key, index) => ({
-      context: STAGE_CONTEXTS[key],
-      providerUserId: providerUserIds[index] ?? '',
-    }));
     const configuration = yield* loadConfiguration();
     const retiredAt = yield* DateTime.nowAsDate;
     yield* Effect.scoped(
@@ -602,7 +549,7 @@ export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.
           Effect.mapError(bootstrapFailureFromCause),
         );
         yield* Effect.forEach(
-          contexts,
+          accounts,
           ({ context, providerUserId }) =>
             reconcilePostgresContext(executor, context, providerUserId, options.authenticationNamespaceId).pipe(
               Effect.andThen(buildStageContextRelationships(context)),
@@ -613,7 +560,7 @@ export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.
           { concurrency: 1, discard: true },
         );
         yield* Effect.forEach(
-          Object.values(STAGE_RETIRED_CONTEXTS),
+          retiredTenants,
           (retired) =>
             buildRetiredStageContextRelationships(retired).pipe(
               Effect.flatMap((relationships) =>
@@ -632,18 +579,10 @@ export const reconcileStageContextBootstraps = Effect.fn('StageContextBootstrap.
         );
       }),
     );
-    const [techsioDemo, techsioAdmin, akrosDemo, akrosAdmin] = STAGE_CONTEXT_ORDER.map((key) => {
-      const { legalEntityId, principalId, role, tenantId } = STAGE_CONTEXTS[key];
-      return { legalEntityId, principalId, role, tenantId };
-    });
-    if (
-      techsioDemo === undefined ||
-      techsioAdmin === undefined ||
-      akrosDemo === undefined ||
-      akrosAdmin === undefined
-    ) {
-      return yield* failure('The fixed stage account order is incomplete');
-    }
-    return [techsioDemo, techsioAdmin, akrosDemo, akrosAdmin];
+    return accounts.map(({ context: { legalEntityId, principalId, tenantId } }) => ({
+      legalEntityId,
+      principalId,
+      tenantId,
+    }));
   },
 );

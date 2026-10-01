@@ -36,7 +36,7 @@ Registration, matching Contact Points, Party correction/merge, account ownership
 
 ### Module identity and delivery
 
-Customer Configuration remains declarative and may select permitted optional modules and explicit Module Implementation Identities. A Module Contract Identity names stable public semantics. A Module Implementation Identity names one catalogued executable implementation, such as `standard` or `akros`.
+Customer Configuration remains declarative and may select permitted optional modules and explicit Module Implementation Identities. A Module Contract Identity names stable public semantics. A Module Implementation Identity names one catalogued executable implementation, such as `standard` or `tenant-a`.
 
 Compatible implementations may share a Module Contract Identity only when public semantics and contract remain the same. Different public semantics require a distinct module identity. The catalog records implementation identity, immutable Build Revision and digest, public-contract hash/version, migration set, owner, and health. Invisible same-identity forks are forbidden.
 

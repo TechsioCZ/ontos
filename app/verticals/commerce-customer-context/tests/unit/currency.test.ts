@@ -64,7 +64,7 @@ const purchasingContext = {
   channelId: 'web',
   marketId: 'cz',
   sellingLegalEntityId,
-  storefrontId: 'akros-cz',
+  storefrontId: 'tenant-a-cz',
   tenantId,
 };
 const policyCompleteness = {
@@ -194,7 +194,7 @@ it('accepts an explicit CZK choice under the Launch policy', () => {
   expect(result).toMatchObject({ currencyCode: 'CZK', source: 'EXPLICIT_CHOICE' });
 });
 
-it('keeps the accepted Akros Launch path exactly CZK for Guest and Profile subjects', () => {
+it('keeps the accepted launch path exactly CZK for Guest and Profile subjects', () => {
   for (const subject of [guestSubject, retailSubject]) {
     const result = resolvePurchaseCurrency({
       policy: launchCurrencyPolicy,

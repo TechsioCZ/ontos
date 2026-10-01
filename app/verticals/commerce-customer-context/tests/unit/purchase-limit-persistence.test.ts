@@ -38,7 +38,7 @@ const evaluationContext = {
     channelId: 'b2b-web',
     marketId: 'cz',
     sellingLegalEntityId: legalEntityId,
-    storefrontId: 'akros-cz',
+    storefrontId: 'tenant-a-cz',
     tenantId,
   },
   requestCorrelation: 'purchase-limit-evaluation-9',

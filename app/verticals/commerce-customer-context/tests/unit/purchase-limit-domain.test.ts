@@ -53,7 +53,7 @@ const sellingLegalEntityId = Schema.decodeUnknownSync(PurchaseLimitEvaluationCon
   '50000000-0000-4000-8000-000000000001',
 );
 const storefrontId = Schema.decodeUnknownSync(PurchaseLimitEvaluationContextSchema.fields.storefrontId)(
-  'storefront:akros-b2b',
+  'storefront:tenant-a-b2b',
 );
 const evaluationContext = {
   counterpartyRef,

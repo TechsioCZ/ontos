@@ -237,7 +237,7 @@ node -e '
 # 4. SSR: the Shell renders the authenticated Party Registry page frame; each UI vertical Worker
 #    renders its own route.
 check "Shell SSR of /en/contacts" 200 "$(request "$work/shell-contacts.html" "$shell_origin/en/contacts")"
-grep -q 'Techsio Demo\|aria-label="Dashboard header"' "$work/shell-contacts.html" ||
+grep -q 'Local User\|aria-label="Dashboard header"' "$work/shell-contacts.html" ||
   { echo "FAIL: Shell SSR did not render the authenticated frame" >&2; exit 1; }
 for page in "party-registry:/en/contacts:Party Registry" "catalog:/en:Catalog" "commerce-market-catalog:/en:Commerce Market Catalog"; do
   IFS=: read -r name route marker <<<"$page"
