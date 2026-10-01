@@ -1570,6 +1570,25 @@ it('requires exact impact, readiness, and negative-smoke evidence for enforced p
   ).toThrow(/stale, mismatched/u);
 });
 
+it('enforces a non-production environment without promotion evidence only when no allowance is withdrawn', () => {
+  const enforced = withoutReadinessEvidence(withoutNegativeSmokeEvidence(withoutImpactEvidence(promotionFixture())));
+  expect(validateAuthorizationPromotionGate(enforced)).toEqual({
+    environment: 'stage',
+    mode: 'enforced',
+    status: 'enforced',
+  });
+  expect(validateAuthorizationPromotionGate({ ...enforced, environment: 'development' }).status).toBe('enforced');
+  expect(() => validateAuthorizationPromotionGate({ ...enforced, environment: 'production' })).toThrow(
+    /requires impact/u,
+  );
+  expect(() =>
+    validateAuthorizationPromotionGate({
+      ...enforced,
+      rollout: { ...enforced.rollout, compatibilityEligibleEntrypoints: ['contacts.route.home'] },
+    }),
+  ).toThrow(/requires impact/u);
+});
+
 it('report-only promotion is bounded, explicit-baseline-only, and never allowed in production', () => {
   const enforced = promotionFixture();
   const withoutRequiredEvidence = withoutReadinessEvidence(

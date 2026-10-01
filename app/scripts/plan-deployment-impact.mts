@@ -166,7 +166,12 @@ export interface DeploymentImpactPlan {
   readonly authorization?: {
     readonly environment: 'development' | 'production' | 'stage';
     readonly mode: 'enforced' | 'report_only';
-    readonly status: 'observing' | 'ready';
+    /**
+     * `observing`: report-only window. `ready`: enforced with matching promotion evidence.
+     * `enforced`: a non-production environment enforcing with an empty compatibility baseline, so no
+     * allowance is withdrawn and there is nothing for promotion evidence to prove.
+     */
+    readonly status: 'enforced' | 'observing' | 'ready';
   };
   readonly changedPaths: readonly string[];
   readonly comparison: {
@@ -216,11 +221,11 @@ export interface PlanDeploymentImpactOptions {
 
 export interface AuthorizationPromotionGateInput {
   readonly environment: 'development' | 'production' | 'stage';
-  readonly impact?: AuthorizationImpactReport;
+  readonly impact?: AuthorizationImpactReport | undefined;
   readonly inventory: ProtectedEntrypointInventory;
-  readonly negativeSmoke?: AuthorizationNegativeSmokeEvidence;
+  readonly negativeSmoke?: AuthorizationNegativeSmokeEvidence | undefined;
   readonly nowEpochMs: number;
-  readonly readiness?: AuthorizationReadinessEvidence;
+  readonly readiness?: AuthorizationReadinessEvidence | undefined;
   readonly rollout: AuthorizationRolloutContract;
 }
 
@@ -358,7 +363,7 @@ const DeploymentImpactPlanSchema = Schema.Struct({
     Schema.Struct({
       environment: AuthorizationEnvironmentSchema,
       mode: AuthorizationModeSchema,
-      status: Schema.Literals(['observing', 'ready']),
+      status: Schema.Literals(['enforced', 'observing', 'ready']),
     }),
   ),
   changedPaths: Schema.Array(Schema.String),
@@ -459,6 +464,19 @@ export const validateAuthorizationPromotionGate = (
       environment: input.environment,
       mode: rollout.mode,
       status: 'observing',
+    };
+  }
+  if (
+    input.environment !== 'production' &&
+    rollout.compatibilityEligibleEntrypoints.length === 0 &&
+    input.impact === undefined &&
+    input.negativeSmoke === undefined &&
+    input.readiness === undefined
+  ) {
+    return {
+      environment: input.environment,
+      mode: rollout.mode,
+      status: 'enforced',
     };
   }
   if (!authorizationEvidenceMatches(input, requireAuthorizationEvidence(input))) {
@@ -1509,24 +1527,31 @@ const loadAuthorizationPromotionGate = (
     if (rollout.mode === 'report_only') {
       return { environment, inventory, nowEpochMs, rollout };
     }
-    return {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const readEvidence = <EvidenceSchema extends Schema.ConstraintDecoder<unknown>>(
+      schema: EvidenceSchema,
+      fileName: string,
+    ) =>
+      Effect.gen(function* readEvidenceEffect() {
+        const evidencePath = pathService.join(reportDirectory, fileName);
+        return (yield* fileSystem.exists(evidencePath)) ? yield* readJson(schema, evidencePath) : undefined;
+      });
+    // Absent evidence is decided by the promotion gate: production always requires all of it.
+    const [impact, negativeSmoke, readiness] = yield* Effect.all([
+      readEvidence(AuthorizationImpactReportSchema, 'fail-closed-impact.json'),
+      readEvidence(AuthorizationNegativeSmokeEvidenceSchema, `negative-smoke.${environment}.json`),
+      readEvidence(AuthorizationReadinessEvidenceSchema, 'readiness.json'),
+    ]);
+    const gate: AuthorizationPromotionGateInput = {
       environment,
-      impact: yield* readJson(
-        AuthorizationImpactReportSchema,
-        pathService.join(reportDirectory, 'fail-closed-impact.json'),
-      ),
+      impact,
       inventory,
-      negativeSmoke: yield* readJson(
-        AuthorizationNegativeSmokeEvidenceSchema,
-        pathService.join(reportDirectory, `negative-smoke.${environment}.json`),
-      ),
+      negativeSmoke,
       nowEpochMs,
-      readiness: yield* readJson(
-        AuthorizationReadinessEvidenceSchema,
-        pathService.join(reportDirectory, 'readiness.json'),
-      ),
+      readiness,
       rollout,
     };
+    return gate;
   });
 
 const PlanJsonSchema = Schema.fromJsonString(DeploymentImpactPlanSchema);

@@ -5,6 +5,6 @@
   "compatibilityEligibleEntrypoints": [],
   "decisionReference": "https://github.com/TechsioCZ/ontos/issues/173",
   "expiresAt": "2026-09-30T23:59:59.000Z",
-  "mode": "report_only",
+  "mode": "enforced",
   "schemaVersion": 1
 }
