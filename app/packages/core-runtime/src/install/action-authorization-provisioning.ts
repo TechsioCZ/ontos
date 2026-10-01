@@ -9,7 +9,7 @@ export const ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID = '00000000-0000-4000-8000
 
 /** Fixed stage account roles; the stage explicit Action policy names the roles that hold explicit Actions. */
 export const ActionAuthorizationAccountRoleSchema = Schema.Literals(['admin', 'demo']);
-export type ActionAuthorizationAccountRole = typeof ActionAuthorizationAccountRoleSchema.Type;
+type ActionAuthorizationAccountRole = typeof ActionAuthorizationAccountRoleSchema.Type;
 
 export interface ActionAuthorizationContext {
   readonly principalId: string;
@@ -43,7 +43,7 @@ export interface ActionAuthorizationExplicitDerivation {
   readonly explicitActionGrants: readonly ActionAuthorizationExplicitGrant[];
 }
 
-export interface ActionAuthorizationExplicitAssertionSet {
+interface ActionAuthorizationExplicitAssertionSet {
   readonly actionKey: string;
   readonly assertions: readonly {
     readonly expected: 'allowed' | 'denied';
