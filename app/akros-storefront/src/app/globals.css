@@ -1559,6 +1559,7 @@ body {
   }
 
   [data-akros-product-listing] .akros-catalog-product-card__image-link {
+    inline-size: 100%;
     max-block-size: calc(var(--dimension-80) * 2);
   }
 
