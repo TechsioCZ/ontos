@@ -273,12 +273,17 @@ const accessAppCovers = (current: CloudflareAccessApp, spec: AccessAppSpec) =>
     [...spec.destinations],
   ) && Option.getOrUndefined(current.session_duration) === spec.sessionDuration;
 
-/** What is wrong with the provisioned application, if anything. */
-const accessAppProblem = (current: CloudflareAccessApp | undefined, spec: AccessAppSpec): Option.Option<string> => {
+/** What is wrong with the provisioned policy, if anything. */
+const accessPolicyProblem = (
+  current: CloudflareAccessPolicy | undefined,
+  spec: AccessPolicySpec,
+): Option.Option<string> => {
   if (current === undefined) {
     return Option.some(NOT_FOUND);
   }
-  return accessAppCovers(current, spec) ? Option.none() : Option.some('it drifted; run cost-guards');
+  return current.decision === spec.decision && same(current.include, spec.include)
+    ? Option.none()
+    : Option.some('it drifted; run cost-guards');
 };
 
 const accessAppMatches = (current: CloudflareAccessApp, spec: AccessAppSpec) =>
@@ -287,6 +292,14 @@ const accessAppMatches = (current: CloudflareAccessApp, spec: AccessAppSpec) =>
     Option.getOrElse(current.policies, () => []).map(({ id }) => id),
     spec.policies.map(({ id }) => id),
   );
+
+/** What is wrong with the provisioned application, if anything. */
+const accessAppProblem = (current: CloudflareAccessApp | undefined, spec: AccessAppSpec): Option.Option<string> => {
+  if (current === undefined) {
+    return Option.some(NOT_FOUND);
+  }
+  return accessAppMatches(current, spec) ? Option.none() : Option.some('it drifted; run cost-guards');
+};
 
 const ensureAccessApp = (existing: readonly CloudflareAccessApp[], spec: AccessAppSpec) =>
   Effect.gen(function* ensureAccessAppEffect() {
@@ -395,12 +408,13 @@ const ensureAccess = (plan: CostGuardPlan) =>
     const api = yield* CloudflareApi;
     // The first Access read fails with the operator's to-do while Zero Trust is off.
     const policies = yield* requireAccess(api.accessPolicies);
-    const people = yield* ensureAccessPolicy(policies, peoplePolicy);
     const tokenId = yield* ensureServiceToken(plan.repository);
     const ci = yield* ensureAccessPolicy(policies, ciPolicy(tokenId));
+    // Who may sign in changes only together with the applications, never ahead of them.
     if (!plan.enforceAccess) {
       return yield* Console.log('the stage hostnames stay outside Access: STAGE_ACCESS_ENFORCE is off');
     }
+    const people = yield* ensureAccessPolicy(policies, peoplePolicy);
     const bypass = yield* ensureAccessPolicy(policies, bypassPolicy);
     const apps = yield* api.accessApps;
     // The bypass paths must exist before the hostnames are gated.
@@ -463,7 +477,7 @@ export const costGuardChecks = (plan: CostGuardPlan) =>
       Effect.map(Option.some),
       Effect.catchIf(isAccessNotEnabled, () => Effect.succeed(Option.none())),
     );
-    const policies = new Set(Option.getOrElse(access, () => []).map(({ name }) => name));
+    const policyIds = new Map(Option.getOrElse(access, () => []).map(({ id, name }) => [name, id]));
     const token =
       Option.isSome(access) && (yield* api.accessServiceTokens).some(({ name }) => name === ACCESS_SERVICE_TOKEN);
     const secrets = yield* listGithubSecretNames(plan.repository, STAGE_EDGE_ENVIRONMENT);
@@ -488,10 +502,7 @@ export const costGuardChecks = (plan: CostGuardPlan) =>
           },
         }),
       ],
-      [
-        `the Access policies ${ACCESS_PEOPLE_POLICY} and ${ACCESS_CI_POLICY} exist`,
-        accessFailure(policies.has(ACCESS_PEOPLE_POLICY) && policies.has(ACCESS_CI_POLICY)),
-      ],
+      [`the Access policy ${ACCESS_CI_POLICY} exists`, accessFailure(policyIds.has(ACCESS_CI_POLICY))],
       [
         `the Access service token ${ACCESS_SERVICE_TOKEN} exists and ${STAGE_EDGE_ENVIRONMENT} holds its credentials`,
         accessFailure(token && secrets.has(ACCESS_CLIENT_ID_SECRET) && secrets.has(ACCESS_CLIENT_SECRET_SECRET)),
@@ -499,12 +510,21 @@ export const costGuardChecks = (plan: CostGuardPlan) =>
       [`the notification ${USAGE_ALERT_NAME} is on`, present(alert?.enabled === true)],
     ];
     if (plan.enforceAccess && Option.isSome(access)) {
+      const people = Option.getOrElse(access, () => []).find(({ name }) => name === ACCESS_PEOPLE_POLICY);
+      checks.push([
+        `the Access policy ${ACCESS_PEOPLE_POLICY} admits anyone who signs in`,
+        accessPolicyProblem(people, peoplePolicy),
+      ]);
       const apps = yield* api.accessApps;
-      // Policy ids are the provisioned ones; the check compares what each application covers.
-      for (const spec of stageAccessApps(plan, { bypass: '', ci: '', people: '' })) {
+      const ids = {
+        bypass: policyIds.get(ACCESS_BYPASS_POLICY) ?? '',
+        ci: policyIds.get(ACCESS_CI_POLICY) ?? '',
+        people: policyIds.get(ACCESS_PEOPLE_POLICY) ?? '',
+      };
+      for (const spec of stageAccessApps(plan, ids)) {
         const current = apps.find(({ name }) => name === spec.name);
         checks.push([
-          `the Access application ${spec.name} covers its ${spec.destinations.length} destinations`,
+          `the Access application ${spec.name} covers its ${spec.destinations.length} destinations with its policies`,
           accessAppProblem(current, spec),
         ]);
       }

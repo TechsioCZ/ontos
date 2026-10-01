@@ -517,8 +517,8 @@ list of the usage notification emails) and `STAGE_ACCESS_ENFORCE` (default `fals
   account is. If the API still rejects the policy, `cost-guards` and `provision` stop there with the
   Cloudflare error; the notification is the last guard, so the kill switch and Access are already in
   place.
-- Access: a reusable people policy `ontos-stage-people` that admits anyone who signs in, a service
-  token `ontos-stage-ci` (one-year duration) and a policy `ontos-stage-ci-token` for it. `stage-edge`
+- Access: a service token `ontos-stage-ci` (one-year duration) and a policy `ontos-stage-ci-token`
+  for it. `stage-edge`
   holds the token as the secrets `CLOUDFLARE_ACCESS_CLIENT_ID` and `CLOUDFLARE_ACCESS_CLIENT_SECRET`;
   when they are missing, a re-run rotates the token to recover the secret. Enable Zero Trust once in
   the dashboard (the Free plan covers 50 people) before the first run; until then Cloudflare answers
@@ -527,7 +527,9 @@ list of the usage notification emails) and `STAGE_ACCESS_ENFORCE` (default `fals
 Only with `STAGE_ACCESS_ENFORCE=true` does `cost-guards` put stage behind Access. Its job is to keep
 bots and crawlers from spending the Workers allowance, not to pick who may look: anyone who proves an
 email address gets in, through a one-time PIN or the GitHub and Google logins set up in Zero Trust,
-and a login lasts 30 days (`720h`). It manages two applications:
+and a login lasts 30 days (`720h`). Only then does it set the reusable policy `ontos-stage-people`
+to admit anyone who signs in, so the audience never widens ahead of the applications. It manages two
+applications:
 
 - `ontos-stage` covers every placed stage hostname with the people policy and the CI token policy.
   `cloudflare:proof` sends the token as `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`.

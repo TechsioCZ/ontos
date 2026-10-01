@@ -117,15 +117,6 @@ it.effect('provisions every cost guard on an empty account and hands CI the zone
         method: 'PUT',
         path: `/rulesets/phases/${CUSTOM_PHASE}/entrypoint`,
       },
-      {
-        body: {
-          decision: 'allow',
-          include: [{ everyone: {} }],
-          name: 'ontos-stage-people',
-        },
-        method: 'POST',
-        path: '/access/policies',
-      },
       { body: { duration: '8760h', name: 'ontos-stage-ci' }, method: 'POST', path: '/access/service_tokens' },
       {
         body: {
@@ -159,6 +150,7 @@ it.effect('provisions every cost guard on an empty account and hands CI the zone
   }),
 );
 
+const PEOPLE_POLICY = 'ontos-stage-people';
 const FEDERATION_PATHS = ['/mf-manifest.json', '/remoteEntry.js', '/static/*', '/locales/*'];
 
 it.effect('gates every stage hostname behind one Access application only when enforced', () =>
@@ -195,11 +187,11 @@ it.effect('gates every stage hostname behind one Access application only when en
         [{ id: 'policy-3', precedence: 1 }],
       ),
       app('ontos-stage', HOSTNAMES, [
-        { id: 'policy-1', precedence: 1 },
-        { id: 'policy-2', precedence: 2 },
+        { id: 'policy-2', precedence: 1 },
+        { id: 'policy-1', precedence: 2 },
       ]),
     ]);
-    expect(account.accessPolicies.find(({ name }) => name === 'ontos-stage-people')).toMatchObject({
+    expect(account.accessPolicies.find(({ name }) => name === PEOPLE_POLICY)).toMatchObject({
       decision: 'allow',
       include: [{ everyone: {} }],
     });
@@ -220,6 +212,40 @@ it.effect('gates every stage hostname behind one Access application only when en
       decision: 'bypass',
       include: [{ everyone: {} }],
     });
+
+    const accessChecks = function* accessChecks() {
+      const checks = yield* run(costGuardChecks({ ...settings, enforceAccess: true, hostnames: HOSTNAMES }), {
+        account,
+        stage,
+      });
+      return checks.filter(([label]) => label.includes('Access')).map(([, failure]) => failure);
+    };
+    expect(yield* accessChecks()).toStrictEqual(Array.from({ length: 5 }, () => Option.none()));
+
+    // An application whose policies were swapped no longer passes verify.
+    const stageApp = account.accessApps.findIndex(({ name }) => name === 'ontos-stage');
+    account.accessApps.splice(stageApp, 1, {
+      ...account.accessApps[stageApp],
+      policies: [{ id: 'policy-3', precedence: 1 }],
+    });
+    expect((yield* accessChecks()).at(-1)).toStrictEqual(Option.some('it drifted; run cost-guards'));
+  }),
+);
+
+it.effect('leaves who may sign in alone while Access is not enforced', () =>
+  Effect.gen(function* keepsPeoplePolicy() {
+    const legacy = {
+      decision: 'allow',
+      id: 'policy-9',
+      include: [{ email: { email: OPS_EMAIL } }],
+      name: PEOPLE_POLICY,
+    };
+    const account = fakeCloudflareAccount({ accessPolicies: [legacy] });
+
+    yield* run(provisionCostGuards, { account, stage: fakeStage({}) });
+
+    expect(writes(account).filter(({ path }) => path.startsWith('/access/policies/'))).toStrictEqual([]);
+    expect(account.accessPolicies.find(({ name }) => name === PEOPLE_POLICY)).toStrictEqual(legacy);
   }),
 );
 
