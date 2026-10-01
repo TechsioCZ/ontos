@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { Schema } from 'effect';
+import { Array as EffectArray, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
@@ -24,6 +24,7 @@ const readWorkflow = (name: string) =>
 /** The GitHub environment that holds the Cloudflare account token. */
 const EDGE_ENVIRONMENT = 'stage-edge';
 const GATES_WORKFLOW = 'ultramodern-workspace-gates.yml';
+const GATES_WORKFLOW_URL = new URL(`../../../.github/workflows/${GATES_WORKFLOW}`, import.meta.url);
 
 const skipsGates = (changedPaths: readonly string[], ignored: readonly string[]) =>
   changedPaths.every((changedPath) => ignored.some((pattern) => path.matchesGlob(changedPath, pattern)));
@@ -133,11 +134,7 @@ const runStep = (script: string, environment: Readonly<Record<string, string>>) 
 };
 
 const readEdgeDeployJobs = () =>
-  Schema.decodeUnknownSync(EdgeDeployWorkflowSchema)(
-    parse(
-      readFileSync(new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url), 'utf-8'),
-    ),
-  ).jobs;
+  Schema.decodeUnknownSync(EdgeDeployWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs;
 
 it('deploys to Cloudflare only when both the account and the deploy token are configured', () => {
   const jobs = readEdgeDeployJobs();
@@ -352,11 +349,7 @@ const TargetWorkflowSchema = Schema.Struct({
 });
 
 const readTargetWorkflow = () =>
-  Schema.decodeUnknownSync(TargetWorkflowSchema)(
-    parse(
-      readFileSync(new URL('../../../.github/workflows/ultramodern-workspace-gates.yml', import.meta.url), 'utf-8'),
-    ),
-  );
+  Schema.decodeUnknownSync(TargetWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
 
 /** Runs a workflow step's script as Actions would and returns its GitHub outputs, or its failure. */
 /** The deploying environment: the dispatched one, or stage for a push to main. */
@@ -580,7 +573,23 @@ it('hands the edge deployment planner the Outbox Worker mode it requires', () =>
   expect(plan?.run).toContain('--outbox-worker-mode "$OUTBOX_WORKER_MODE"');
 });
 
-const GATE_JOBS = ['workspace-gate', 'static-contracts', 'service-integration', 'node-runtime', 'cloudflare-runtime'];
+const QUEUE_PROOF_JOB = 'queue-proof';
+const ARTIFACT_BUILD_JOB = 'artifact-build';
+const BARREL_GUARD_JOB = 'commerce-catalog-barrel';
+/** The gates that start once the merge queue proof is checked. */
+const ROOT_GATE_JOBS = [
+  'workspace-gate',
+  'static-contracts',
+  'service-integration',
+  ARTIFACT_BUILD_JOB,
+  BARREL_GUARD_JOB,
+] as const;
+/** The proofs of the built artifacts, which also wait for the shard builds. */
+const ARTIFACT_PROOF_JOBS = {
+  'cloudflare-runtime': [QUEUE_PROOF_JOB, ARTIFACT_BUILD_JOB, BARREL_GUARD_JOB],
+  'node-runtime': [QUEUE_PROOF_JOB, ARTIFACT_BUILD_JOB],
+} as const;
+const GATE_JOBS = [...ROOT_GATE_JOBS, 'node-runtime', 'cloudflare-runtime'];
 const GatedJobsSchema = Schema.Struct({
   jobs: Schema.Record(
     Schema.String,
@@ -603,7 +612,7 @@ const stepPasses = (script: string, environment: Readonly<Record<string, string>
 
 it('skips the gates on main only for a commit the merge queue already proved', () => {
   const workflow = readTargetWorkflow();
-  const proof = workflow.jobs['queue-proof'];
+  const proof = workflow.jobs[QUEUE_PROOF_JOB];
   // Only a push or dispatch on main can carry a proven commit; pull requests and merge groups run every gate.
   expect(proof.if).toBe(
     "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'",
@@ -614,12 +623,18 @@ it('skips the gates on main only for a commit the merge queue already proved', (
   const lookup = proof.steps.find(({ id }) => id === 'proof')?.run ?? '';
   expect(lookup).toContain('runs?head_sha=$GITHUB_SHA&event=merge_group&status=success');
   expect(lookup).toContain('actions/runs/$GITHUB_RUN_ID');
-  const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(
-    parse(readFileSync(new URL(`../../../.github/workflows/${GATES_WORKFLOW}`, import.meta.url), 'utf-8')),
-  );
-  for (const gate of GATE_JOBS) {
-    expect(jobs[gate]?.needs).toEqual(['queue-proof']);
+  const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
+  for (const gate of ROOT_GATE_JOBS) {
+    expect(jobs[gate]?.needs).toEqual([QUEUE_PROOF_JOB]);
     expect(jobs[gate]?.if).toBe(expression("!cancelled() && needs.queue-proof.outputs.proven != 'true'"));
+  }
+  // A proof runs only when every build it proves succeeded, so a failed shard fails the Workspace gates check.
+  for (const [proofJob, needs] of Object.entries(ARTIFACT_PROOF_JOBS)) {
+    expect(jobs[proofJob]?.needs).toEqual(needs);
+    for (const build of needs.slice(1)) {
+      expect(jobs[proofJob]?.if).toContain(`needs.${build}.result == 'success'`);
+    }
+    expect(jobs[proofJob]?.if).toContain("!cancelled() && needs.queue-proof.outputs.proven != 'true'");
   }
 });
 
@@ -628,11 +643,11 @@ it('requires every gate, or the merge queue proof, in the one Workspace gates ch
   // The main ruleset requires this check by name.
   expect(gates.name).toBe('Workspace gates');
   expect(gates.if).toBe(expression('always()'));
-  expect(gates.needs).toEqual(['queue-proof', ...GATE_JOBS]);
+  expect(gates.needs).toEqual([QUEUE_PROOF_JOB, ...GATE_JOBS]);
   const script = gates.steps.at(-1)?.run ?? 'exit 1';
   const needs = (proof: { proven?: string; result: string }, results: readonly string[]) =>
     JSON.stringify({
-      'queue-proof': { outputs: proof.proven === undefined ? {} : { proven: proof.proven }, result: proof.result },
+      [QUEUE_PROOF_JOB]: { outputs: proof.proven === undefined ? {} : { proven: proof.proven }, result: proof.result },
       ...Object.fromEntries(GATE_JOBS.map((gate, index) => [gate, { outputs: {}, result: results[index] }])),
     });
   const allPassed = GATE_JOBS.map(() => 'success');
@@ -652,4 +667,61 @@ it('requires every gate, or the merge queue proof, in the one Workspace gates ch
   expect(stepPasses(script, { NEEDS_JSON: needs({ proven: 'false', result: 'success' }, allPassed) })).toBe(true);
   expect(stepPasses(script, { NEEDS_JSON: needs({ proven: 'false', result: 'success' }, allSkipped) })).toBe(false);
   expect(stepPasses(script, { NEEDS_JSON: needs({ result: 'failure' }, allPassed) })).toBe(false);
+});
+
+const ArtifactBuildWorkflowSchema = Schema.Struct({
+  jobs: Schema.Struct({
+    [ARTIFACT_BUILD_JOB]: Schema.Struct({
+      strategy: Schema.Struct({
+        matrix: Schema.Struct({
+          include: Schema.Array(
+            Schema.Struct({
+              script: Schema.optional(Schema.String),
+              shard: Schema.optional(Schema.String),
+              target: Schema.optional(Schema.String),
+              units: Schema.optional(Schema.String),
+            }),
+          ),
+          shard: Schema.Array(Schema.String),
+          target: Schema.Array(Schema.String),
+        }),
+      }),
+    }),
+    'cloudflare-runtime': Schema.Struct({ needs: Schema.Array(Schema.String) }),
+    'node-runtime': Schema.Struct({ needs: Schema.Array(Schema.String) }),
+  }),
+});
+const TopologyUnitsSchema = Schema.Struct({
+  shell: Schema.Struct({ path: Schema.String }),
+  verticals: Schema.Array(Schema.Struct({ path: Schema.String })),
+});
+
+const sorted = (values: readonly string[]) => EffectArray.sort(values, Order.String);
+
+it('builds every delivery unit of the topology in exactly one artifact-build shard, for both targets', () => {
+  const { jobs } = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(
+    parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')),
+  );
+  const topology = Schema.decodeUnknownSync(TopologyUnitsSchema)(
+    JSON.parse(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
+  );
+  const { matrix } = jobs[ARTIFACT_BUILD_JOB].strategy;
+  const shardUnits = matrix.include.flatMap((entry) =>
+    entry.shard !== undefined && entry.units !== undefined ? [entry] : [],
+  );
+  expect(sorted(shardUnits.flatMap((entry) => (entry.shard === undefined ? [] : [entry.shard])))).toEqual(
+    sorted(matrix.shard),
+  );
+  const built = shardUnits.flatMap((entry) => entry.units?.split(/\s+/u).filter(Boolean) ?? []);
+  const units = [topology.shell, ...topology.verticals].map((unit) => unit.path);
+  expect(sorted(built)).toEqual(sorted(units));
+  // Each target builds with its own script, and both proofs wait for every shard.
+  expect(
+    Object.fromEntries(
+      matrix.include.flatMap((entry) => (entry.script === undefined ? [] : [[entry.target, entry.script]])),
+    ),
+  ).toEqual({ cloudflare: 'cloudflare:build', node: 'build' });
+  expect(sorted(matrix.target)).toEqual(['cloudflare', 'node']);
+  expect(jobs['node-runtime'].needs).toContain(ARTIFACT_BUILD_JOB);
+  expect(jobs['cloudflare-runtime'].needs).toContain(ARTIFACT_BUILD_JOB);
 });

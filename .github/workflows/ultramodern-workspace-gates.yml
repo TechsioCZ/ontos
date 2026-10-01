@@ -320,9 +320,31 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm test:integration
 
+      # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
+      - name: Restore the Playwright Chromium build
+        id: playwright-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
+
       - name: Install Chromium and its runtime dependencies
         working-directory: app
-        run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
+        env:
+          CHROMIUM_CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
+        run: |
+          if [ "$CHROMIUM_CACHED" = true ]; then
+            mise exec -- pnpm --filter @app/shell-super-app exec playwright install-deps chromium
+          else
+            mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
+          fi
+
+      - name: Save the Playwright Chromium build
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
 
       - name: Run parallel authenticated browser tests without retries
         working-directory: app
@@ -351,12 +373,42 @@ jobs:
         working-directory: app
         run: docker compose down --volumes --remove-orphans
 
-  node-runtime:
-    name: Node Backend Federation Artifact Proof
+  # Each delivery unit builds from source exports only (scripts/tests/vertical-build-order.test.mts), so
+  # the units build in shards on parallel runners, one unit at a time per shard: parallel builds on one
+  # runner fight over its cores, and every unit's TS-Go declaration pass then runs several times slower.
+  # The proof jobs below download every shard and prove the whole topology, exactly as one build did.
+  # Shards are balanced by measured build time; a new unit joins one shard of each target (a test checks).
+  artifact-build:
+    name: Build ${{ matrix.target }} artifacts (${{ matrix.shard }})
     needs: [queue-proof]
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [node, cloudflare]
+        shard: [catalog-shell, commerce, inventory-assortment, small-verticals]
+        include:
+          - shard: catalog-shell
+            units: verticals/catalog apps/shell-super-app
+          - shard: commerce
+            units: verticals/commerce-customer-context verticals/commerce-market-catalog
+          - shard: inventory-assortment
+            units: verticals/inventory verticals/assortment
+          - shard: small-verticals
+            units: >-
+              verticals/party-registry verticals/payment-term-catalog verticals/price-group-catalog
+              verticals/pricing verticals/storefront-registry
+          - target: node
+            script: build
+            public-site-url: http://localhost:8080
+          - target: cloudflare
+            script: cloudflare:build
+            public-site-url: https://shell-super-app.invalid
+    env:
+      MODERN_PUBLIC_SITE_URL: ${{ matrix.public-site-url }}
+      ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
@@ -372,19 +424,158 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      - name: Build Node deployment artifacts
+      - name: Build the shard's Node artifacts one unit at a time
+        if: matrix.target == 'node'
         working-directory: app
         env:
-          MODERN_PUBLIC_SITE_URL: http://localhost:8080
+          BUILD_SCRIPT: ${{ matrix.script }}
+          SHARD_UNITS: ${{ matrix.units }}
+        run: |
+          read -ra units <<<"$SHARD_UNITS"
+          filters=()
+          for unit in "${units[@]}"; do
+            filters+=(--filter "./$unit")
+          done
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
+          mise exec -- pnpm -r --no-sort --workspace-concurrency=1 "${filters[@]}" run "$BUILD_SCRIPT"
+
+      - name: Build the shard's Cloudflare artifacts one unit at a time
+        if: matrix.target == 'cloudflare'
+        working-directory: app
+        env:
+          BUILD_SCRIPT: ${{ matrix.script }}
+          SHARD_UNITS: ${{ matrix.units }}
+          # Placeholder data-plane IDs the Cloudflare build requires in each Worker's bindings, as in cloudflare-runtime.
+          ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 00000000000000000000000000000000
+          ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 00000000000000000000000000000000
+          ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
+          ULTRAMODERN_PUBLIC_URL_ASSORTMENT: https://assortment.invalid
+          ULTRAMODERN_PUBLIC_URL_CATALOG: https://catalog.invalid
+          ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
+          ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG: https://commerce-market-catalog.invalid
+          ULTRAMODERN_PUBLIC_URL_INVENTORY: https://inventory.invalid
+          ULTRAMODERN_PUBLIC_URL_PARTY_REGISTRY: https://party-registry.invalid
+          ULTRAMODERN_PUBLIC_URL_PAYMENT_TERM_CATALOG: https://payment-term-catalog.invalid
+          ULTRAMODERN_PUBLIC_URL_PRICE_GROUP_CATALOG: https://price-group-catalog.invalid
+          ULTRAMODERN_PUBLIC_URL_PRICING: https://pricing.invalid
+          ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
+          ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY: https://storefront-registry.invalid
+        run: |
+          read -ra units <<<"$SHARD_UNITS"
+          filters=()
+          for unit in "${units[@]}"; do
+            filters+=(--filter "./$unit")
+          done
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
+          mise exec -- pnpm -r --no-sort --workspace-concurrency=1 "${filters[@]}" run "$BUILD_SCRIPT"
+
+      # Everything the build wrote inside the shard's units is ignored by git; node_modules is the install.
+      - name: Pack the shard's build outputs
+        working-directory: app
+        env:
+          SHARD_UNITS: ${{ matrix.units }}
+        run: |
+          read -ra units <<<"$SHARD_UNITS"
+          git ls-files --others --ignored --exclude-standard --directory -z -- "${units[@]}" \
+            | grep -zv '/node_modules/$' \
+            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/units.tar.zst"
+
+      - name: Upload the shard's build outputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.target }}-units-${{ matrix.shard }}
+          path: ${{ runner.temp }}/units.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
+  # The Commerce Cloudflare build once crashed parsing Catalog's root HttpApi chain because React
+  # Compiler also compiled server code. Production imports only the quantity-preparation client;
+  # this case keeps the whole Catalog client barrel compiling in the Commerce workerd graph.
+  commerce-catalog-barrel:
+    name: Build Commerce for workerd with the whole Catalog client barrel
+    needs: [queue-proof]
+    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Build Commerce for workerd with the whole Catalog client barrel
+        working-directory: app
+        env:
+          MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
+          ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-        run: mise exec -- pnpm build
+          ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 00000000000000000000000000000000
+          ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 00000000000000000000000000000000
+          ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
+        run: |
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
+          mise exec -- pnpm --filter @app/commerce-customer-context run cloudflare:build:full-catalog-client-guard
+          grep -qF '"CatalogApiFoundation"' verticals/commerce-customer-context/dist-cloudflare/worker/__modern_bff_effect.js
+
+  node-runtime:
+    name: Node Backend Federation Artifact Proof
+    needs: [queue-proof, artifact-build]
+    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' && needs.artifact-build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      MODERN_PUBLIC_SITE_URL: http://localhost:8080
+      ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Download every shard's Node build outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: node-units-*
+          path: ${{ runner.temp }}/units
+
+      - name: Unpack the Node build outputs of every delivery unit
+        working-directory: app
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/units" .output
+
+      - name: Generate federated types and check performance readiness over every unit
+        working-directory: app
+        run: |
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
+          mise exec -- pnpm mf:types
+          mise exec -- pnpm performance:readiness
 
       - name: Prove Node backend-federation artifacts
         working-directory: app
         env:
           DATABASE_URL: postgresql://ontos_proof:ontos_proof@localhost:5432/ontos_proof
-          MODERN_PUBLIC_SITE_URL: http://localhost:8080
-          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: mise exec -- pnpm node:proof
 
       # The deployed publisher derives the snapshot from exactly these artifact kinds; this proves its output
@@ -395,10 +586,12 @@ jobs:
 
   cloudflare-runtime:
     name: Cloudflare Workerd Artifact Proof
-    needs: [queue-proof]
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    needs: [queue-proof, artifact-build, commerce-catalog-barrel]
+    if: >-
+      ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' && needs.artifact-build.result == 'success'
+      && needs.commerce-catalog-barrel.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     # Development-only service values for the Worker topology proof (as in service-integration).
     env:
       DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
@@ -439,11 +632,20 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      - name: Build and prove Cloudflare/workerd artifacts
+      - name: Download every shard's Cloudflare build outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: cloudflare-units-*
+          path: ${{ runner.temp }}/units
+
+      - name: Unpack the Cloudflare build outputs of every delivery unit
+        working-directory: app
+        run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/units" .output
+
+      - name: Generate federated types, verify the Worker outputs and prove their SSR
         working-directory: app
         env:
           MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
-          pnpm_config_workspace_concurrency: "1"
           ULTRAMODERN_PUBLIC_URL_ASSORTMENT: https://assortment.invalid
           ULTRAMODERN_PUBLIC_URL_CATALOG: https://catalog.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
@@ -456,7 +658,12 @@ jobs:
           ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_STOREFRONT_REGISTRY: https://storefront-registry.invalid
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-        run: mise exec -- pnpm cloudflare:build
+        run: |
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
+          mise exec -- pnpm mf:types --target cloudflare
+          mise exec -- pnpm cloudflare-output:verify
+          mise exec -- pnpm cloudflare:ssr-proof
 
       # The built Workers, run together in workerd against real PostgreSQL and SpiceDB, prove the
       # Cloudflare topology end to end: Hyperdrive across requests, SpiceDB over HTTP, module
@@ -499,24 +706,22 @@ jobs:
         working-directory: app
         run: docker compose down --volumes --remove-orphans
 
-      # The Commerce Cloudflare build once crashed parsing Catalog's root HttpApi chain because React
-      # Compiler also compiled server code. Production imports only the quantity-preparation client;
-      # this case keeps the whole Catalog client barrel compiling in the Commerce workerd graph.
-      - name: Build Commerce for workerd with the whole Catalog client barrel
-        working-directory: app
-        env:
-          MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
-          ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
-        run: |
-          mise exec -- pnpm --filter @app/commerce-customer-context run cloudflare:build:full-catalog-client-guard
-          grep -qF '"CatalogApiFoundation"' verticals/commerce-customer-context/dist-cloudflare/worker/__modern_bff_effect.js
-
   # The one required status check of the main ruleset, so new gate jobs join it here, not the ruleset.
   # It passes when every gate passed, or when the merge queue already proved this commit and the gates were skipped.
   workspace-gates:
     name: Workspace gates
     if: ${{ always() }}
-    needs: [queue-proof, workspace-gate, static-contracts, service-integration, node-runtime, cloudflare-runtime]
+    needs:
+      [
+        queue-proof,
+        workspace-gate,
+        static-contracts,
+        service-integration,
+        artifact-build,
+        commerce-catalog-barrel,
+        node-runtime,
+        cloudflare-runtime,
+      ]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
