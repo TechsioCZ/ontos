@@ -469,9 +469,9 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   );
   expect(zerops.needs).toEqual([DEPLOY_TARGET_JOB, 'deploy-plan', MIGRATIONS_JOB]);
   expect(zerops.if).toBe(expression(`!cancelled() && needs.${MIGRATIONS_JOB}.result == 'success'`));
-  for (const job of [migrations, zerops]) {
-    expect(job.concurrency.group).toBe(`zerops-${DEPLOY_ENVIRONMENT_EXPRESSION}`);
-  }
+  // Only deploy-zerops publishes, so only it shares the composition refresh's group; migrations lock on their own.
+  expect(zerops.concurrency.group).toBe(`zerops-${DEPLOY_ENVIRONMENT_EXPRESSION}`);
+  expect(migrations.concurrency.group).toBe(`zerops-migrations-${DEPLOY_ENVIRONMENT_EXPRESSION}`);
   expect(plan.env.DEPLOY_TARGET).toBe(DEPLOY_TARGET_OUTPUT);
   expect(plan.env.OUTBOX_WORKER_MODE).toBe(OUTBOX_WORKER_MODE_OUTPUT);
   expect(zerops.env.DEPLOY_TARGET).toBe(DEPLOY_TARGET_OUTPUT);

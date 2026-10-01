@@ -753,9 +753,11 @@ jobs:
     environment:
       name: ${{ needs.deploy-target.outputs.environment }}
       deployment: false
-    # Serializes with the scheduled composition refresh so no publication interleaves with a deploy.
+    # Migrations publish nothing, so they take their own lock, not the zerops group the composition refresh
+    # waits on: the publication guarantee lives entirely in deploy-zerops, which holds that group. Migrations
+    # stay backward compatible, so a refresh that runs after them still serves the previous deployment.
     concurrency:
-      group: zerops-${{ inputs.environment || 'stage' }}
+      group: zerops-migrations-${{ inputs.environment || 'stage' }}
       cancel-in-progress: false
     permissions:
       contents: read
