@@ -82,9 +82,27 @@ const EdgeDeployWorkflowSchema = Schema.Struct({
       'timeout-minutes': Schema.Number,
     }),
     'deploy-zerops': Schema.Struct({ environment: Schema.String }),
+    'edge-build': Schema.Struct({
+      environment: Schema.optional(Schema.Unknown),
+      if: Schema.String,
+      needs: Schema.Array(Schema.String),
+      steps: Schema.Array(WorkflowStepSchema),
+      strategy: Schema.Struct({
+        'fail-fast': Schema.Boolean,
+        matrix: Schema.Struct({ unit: Schema.String }),
+      }),
+      'timeout-minutes': Schema.Number,
+    }),
     'edge-deploy-readiness': Schema.Struct({
       environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
       if: Schema.String,
+      outputs: Schema.Record(Schema.String, Schema.String),
+      steps: Schema.Array(WorkflowStepSchema),
+    }),
+    'edge-plan': Schema.Struct({
+      environment: Schema.optional(Schema.Unknown),
+      if: Schema.String,
+      needs: Schema.Array(Schema.String),
       outputs: Schema.Record(Schema.String, Schema.String),
       steps: Schema.Array(WorkflowStepSchema),
     }),
@@ -97,7 +115,11 @@ const PLAN_STEP = 'Plan the impacted edge units';
 const DEPLOY_STEP = 'Deploy planned edge units in dependency order';
 const RESTORE_STEP = 'Restore the edge Workers this run deployed';
 const RETIRE_STEP = 'Report retired Workers that still exist';
-const BUILD_STEP = 'Build and verify planned edge units';
+const BUILD_STEP = 'Build and verify the planned edge unit';
+const UNPACK_STEP = "Unpack the planned edge units' build outputs";
+const EDGE_PLAN_JOB = 'edge-plan';
+const EDGE_BUILD_JOB = 'edge-build';
+const EDGE_UNITS_OUTPUT = expression('needs.edge-plan.outputs.cloudflare');
 const PROOF_STEP = 'Prove the deployed edge units on their public URLs';
 const PROVEN_STEP = 'Record the proven edge Worker versions';
 
@@ -233,45 +255,61 @@ const WRANGLER_COMMAND = /^pnpm --filter "\$(?:[a-z_]+|\d)" exec wrangler /u;
 
 it('deploys planned edge units to Cloudflare after the stage migration, with their own deployment history', () => {
   const jobs = readEdgeDeployJobs();
+  const plan = jobs[EDGE_PLAN_JOB];
+  const builds = jobs[EDGE_BUILD_JOB];
   const edge = jobs['deploy-cloudflare'];
   // A separate environment keeps a failed or skipped edge deploy from hiding behind a successful
   // Zerops deployment of the same revision.
   expect(jobs['deploy-zerops'].environment).toBe(DEPLOY_ENVIRONMENT_OUTPUT);
   expect(edge.environment).toBe(EDGE_ENVIRONMENT);
-  // The edge waits only for the migrations, and deploys beside the Zerops units.
-  expect(edge.needs).toEqual([DEPLOY_TARGET_JOB, MIGRATIONS_JOB, EDGE_READINESS_JOB]);
+  // Planning and building wait only for the deploy target, so they run beside the migrations. Neither
+  // records a deployment or reads the environment's secrets.
+  expect(plan.needs).toEqual([DEPLOY_TARGET_JOB, EDGE_READINESS_JOB]);
+  expect(plan.if).toBe(expression("!cancelled() && needs.edge-deploy-readiness.outputs.configured == 'true'"));
+  expect(plan.environment).toBeUndefined();
+  expect(builds.needs).toEqual([EDGE_PLAN_JOB]);
+  expect(builds.environment).toBeUndefined();
+  // Each planned unit builds on its own runner; a plan without units builds nothing.
+  expect(builds.strategy.matrix.unit).toBe(expression('fromJSON(needs.edge-plan.outputs.cloudflare)'));
+  expect(builds.strategy['fail-fast']).toBe(true);
+  expect(builds.if).toBe(
+    expression("!cancelled() && needs.edge-plan.result == 'success' && needs.edge-plan.outputs.cloudflare != '[]'"),
+  );
+  // Only changing Workers waits for the migrations, and it deploys beside the Zerops units. A plan
+  // without units still deploys, so its deployment records the revision.
+  expect(edge.needs).toEqual([DEPLOY_TARGET_JOB, MIGRATIONS_JOB, EDGE_PLAN_JOB, EDGE_BUILD_JOB]);
   expect(edge.if).toBe(
     expression(
-      "!cancelled() && needs.deploy-migrations.result == 'success' && needs.edge-deploy-readiness.outputs.configured == 'true'",
+      "!cancelled() && needs.deploy-migrations.result == 'success' && needs.edge-plan.result == 'success' && (needs.edge-build.result == 'success' || (needs.edge-build.result == 'skipped' && needs.edge-plan.outputs.cloudflare == '[]'))",
     ),
   );
   expect(edge.env).toBeUndefined();
+  const planSteps = new Map(plan.steps.map((step) => [step.name, step]));
+  expect(planSteps.get('Resolve the last successful edge deployment')?.run).toContain('--environment stage-edge');
+  expect(planSteps.get(PLAN_STEP)?.id).toBe('impact');
+  expect(plan.outputs.cloudflare).toBe(expression('steps.impact.outputs.cloudflare'));
+  expect(plan.outputs.cloudflare_retirements).toBe(expression('steps.impact.outputs.cloudflare_retirements'));
   const byName = new Map(edge.steps.map((step) => [step.name, step]));
-  expect(byName.get('Resolve the last successful edge deployment')?.run).toContain('--environment stage-edge');
-  expect(byName.get(PLAN_STEP)?.id).toBe('impact');
-  const build = byName.get(BUILD_STEP);
+  const unpack = byName.get(UNPACK_STEP);
   const deploy = byName.get(DEPLOY_STEP);
   const proof = byName.get(PROOF_STEP);
   const restore = byName.get(RESTORE_STEP);
-  for (const step of [build, deploy, proof]) {
-    expect(step?.env?.CLOUDFLARE_UNITS_JSON).toBe(expression('steps.impact.outputs.cloudflare'));
+  for (const step of [unpack, deploy, proof]) {
+    expect(step?.env?.CLOUDFLARE_UNITS_JSON).toBe(EDGE_UNITS_OUTPUT);
   }
-  // The build step is each unit's `cloudflare:deploy` without its final `wrangler deploy`.
-  expect(build?.run).toContain('run cloudflare:build');
-  expect(build?.run).toContain('cloudflare-output-verify --app "$id" --require-public-urls');
-  // The built Wrangler config must name the Worker the run snapshots, deploys and restores.
-  expect(build?.run).toContain("exec jq -r '.name' .output/wrangler.json");
-  expect(build?.run).toContain('"$built_worker" != "$worker"');
+  // The deploy uses each planned unit's build from this run, and stops before any Worker changes
+  // when one is missing.
+  const names = edge.steps.map((step) => step.name);
+  expect(names.indexOf(UNPACK_STEP)).toBeLessThan(names.indexOf(DEPLOY_STEP));
+  expect(unpack?.run).toContain('test -f .output/wrangler.json');
   expect(deploy?.run).toContain('exec wrangler deploy --config .output/wrangler.json');
   expect(proof?.run).toContain('run cloudflare:proof');
   // Build configuration comes from the reviewed placement document, not from environment
   // variables a Git diff cannot see.
-  for (const step of [build, proof]) {
-    expect(step?.run).toContain(
-      ".buildEnvironment | to_entries[] | [.key, .value] | @tsv' topology/cloudflare-placement.json",
-    );
-    expect(JSON.stringify(step?.env)).not.toContain('vars');
-  }
+  expect(proof?.run).toContain(
+    ".buildEnvironment | to_entries[] | [.key, .value] | @tsv' topology/cloudflare-placement.json",
+  );
+  expect(JSON.stringify(proof?.env)).not.toContain('vars');
   // Every Worker is snapshotted before the first one changes, and restored to that snapshot after
   // a failed deploy or proof: its newest proven version, or no Worker when this run created it.
   expectProvenRollbackTargets(edge.steps);
@@ -282,39 +320,70 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   expect(restore?.if).toBe("(failure() || cancelled()) && steps.deploy.outcome != 'skipped'");
   // The account token reaches only the steps that use it, and those run nothing but Wrangler:
   // building, verifying and proving a unit executes dependency code.
+  expect(JSON.stringify([plan, builds])).not.toContain('secrets.');
   const tokenSteps = edge.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined);
   expect(tokenSteps.map((step) => step.name)).toEqual([DEPLOY_STEP, PROVEN_STEP, RETIRE_STEP, RESTORE_STEP]);
   expect(tokenSteps.flatMap(packageCommands).filter((command) => !WRANGLER_COMMAND.test(command))).toEqual([]);
 });
 
+it('builds each planned edge unit on its own runner from the reviewed placement, without the token', () => {
+  const builds = readEdgeDeployJobs()[EDGE_BUILD_JOB];
+  const build = builds.steps.find((step) => step.name === BUILD_STEP);
+  expect(build?.env).toMatchObject({
+    UNIT_ID: expression('matrix.unit.id'),
+    UNIT_PACKAGE: expression('matrix.unit.packageName'),
+    UNIT_WORKER: expression('matrix.unit.workerName'),
+  });
+  // The build step is the unit's `cloudflare:deploy` without its final `wrangler deploy`.
+  expect(build?.run).toContain('run cloudflare:build');
+  expect(build?.run).toContain('cloudflare-output-verify --app "$UNIT_ID" --require-public-urls');
+  // The built Wrangler config must name the Worker the run snapshots, deploys and restores.
+  expect(build?.run).toContain("exec jq -r '.name' .output/wrangler.json");
+  expect(build?.run).toContain('"$built_worker" != "$UNIT_WORKER"');
+  // Build configuration comes from the reviewed placement document, not from environment
+  // variables a Git diff cannot see.
+  expect(build?.run).toContain(
+    ".buildEnvironment | to_entries[] | [.key, .value] | @tsv' topology/cloudflare-placement.json",
+  );
+  expect(JSON.stringify(build?.env)).not.toContain('vars');
+  expect(JSON.stringify(builds)).not.toContain('secrets.');
+});
+
 it('bounds every edge step that changes or proves Workers and reports retirements read-only', () => {
-  const edge = readEdgeDeployJobs()['deploy-cloudflare'];
+  const jobs = readEdgeDeployJobs();
+  const edge = jobs['deploy-cloudflare'];
   const byName = new Map(edge.steps.map((step) => [step.name, step]));
+  const planSteps = new Map(jobs[EDGE_PLAN_JOB].steps.map((step) => [step.name, step]));
+  const builds = jobs[EDGE_BUILD_JOB];
+  // A hung build times out inside its own job.
+  const build = builds.steps.find((step) => step.name === BUILD_STEP);
+  expect(build?.['timeout-minutes']).toBeLessThan(builds['timeout-minutes']);
   const retire = byName.get(RETIRE_STEP);
   // A hung build, deploy, proof or retirement times out as a step failure, leaving the restore
   // step its own budget inside the job deadline.
-  const bounded = [BUILD_STEP, DEPLOY_STEP, PROOF_STEP, PROVEN_STEP, RETIRE_STEP, RESTORE_STEP].map(
+  const bounded = [DEPLOY_STEP, PROOF_STEP, PROVEN_STEP, RETIRE_STEP, RESTORE_STEP].map(
     (name) => byName.get(name)?.['timeout-minutes'] ?? Number.POSITIVE_INFINITY,
   );
   expect(bounded.every(Number.isFinite)).toBe(true);
   expect(bounded.reduce((total, minutes) => total + minutes, 0)).toBeLessThanOrEqual(edge['timeout-minutes'] - 10);
   // Retirement is two-phase: the retired Worker survives the deploy that drops it, so a rollback
   // still finds it; after the proofs it is reported, read-only, until an operator deletes it.
-  expect(retire?.env?.CLOUDFLARE_RETIREMENTS_JSON).toBe(expression('steps.impact.outputs.cloudflare_retirements'));
+  expect(retire?.env?.CLOUDFLARE_RETIREMENTS_JSON).toBe(expression('needs.edge-plan.outputs.cloudflare_retirements'));
   expect(retire?.run).toContain('wrangler deployments status --name "$worker"');
   expect(retire?.run).not.toMatch(/exec wrangler (?:delete|rollback|deploy)\b/u);
   const names = edge.steps.map((step) => step.name);
   expect(names.indexOf(RETIRE_STEP)).toBeGreaterThan(names.indexOf(PROOF_STEP));
   expect(retire?.run).not.toContain('exit 1');
   // Full plans still reconcile retirements against the last edge deployment.
-  const resolve = byName.get('Resolve the last successful edge deployment');
+  const resolve = planSteps.get('Resolve the last successful edge deployment');
   expect(resolve?.if).toBeUndefined();
   expect(resolve?.run).toContain('--optional');
-  expect(byName.get(PLAN_STEP)?.run).toContain('--placement-base "$BASE_SHA"');
+  expect(planSteps.get(PLAN_STEP)?.run).toContain('--placement-base "$BASE_SHA"');
   // A recovery run after rewritten history fetches that base by id before planning.
-  const fetchBase = byName.get('Fetch the last edge deployment commit');
+  const fetchBase = planSteps.get('Fetch the last edge deployment commit');
   expect(fetchBase?.run).toContain('fetch --no-tags --depth=1 origin "$BASE_SHA"');
-  expect(names.indexOf('Fetch the last edge deployment commit')).toBeLessThan(names.indexOf(PLAN_STEP));
+  const planNames = [...planSteps.keys()];
+  expect(planNames.indexOf('Fetch the last edge deployment commit')).toBeLessThan(planNames.indexOf(PLAN_STEP));
 });
 
 const TargetWorkflowSchema = Schema.Struct({
@@ -575,7 +644,7 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   }
   // Only stage deploys to the edge, after its migrations and beside its Zerops services.
   expect(jobs['edge-deploy-readiness'].if).toBe("needs.deploy-target.outputs.environment == 'stage'");
-  expect(jobs['deploy-cloudflare'].needs).toEqual([DEPLOY_TARGET_JOB, MIGRATIONS_JOB, EDGE_READINESS_JOB]);
+  expect(jobs['deploy-cloudflare'].needs).toEqual([DEPLOY_TARGET_JOB, MIGRATIONS_JOB, EDGE_PLAN_JOB, EDGE_BUILD_JOB]);
   // On Cloudflare the snapshot is published again from the new Workers, outside the deploy history.
   const publish = jobs['publish-edge-composition'];
   expect(publish.if).toBe(
@@ -609,8 +678,7 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
 });
 
 it('hands the edge deployment planner the Outbox Worker mode it requires', () => {
-  const edge = readEdgeDeployJobs()['deploy-cloudflare'];
-  const plan = edge.steps.find((step) => step.name === PLAN_STEP);
+  const plan = readEdgeDeployJobs()[EDGE_PLAN_JOB].steps.find((step) => step.name === PLAN_STEP);
   expect(plan?.env?.OUTBOX_WORKER_MODE).toBe(OUTBOX_WORKER_MODE_OUTPUT);
   expect(plan?.run).toContain('--outbox-worker-mode "$OUTBOX_WORKER_MODE"');
 });

@@ -301,14 +301,16 @@ workers stops the other mode's. A switch changes no source, so each deploy first
 other mode's workers still run or this mode's do not (`active-composition:publish worker-mode-drift`);
 when either holds, the plan deploys every worker of this mode, whatever the diff, and stops the others.
 
-The `deploy-cloudflare` job runs once `deploy-migrations` has migrated the database and SpiceDB, beside
-`deploy-zerops`, in its own `stage-edge` environment, one edge deploy at a time (`edge-stage` concurrency
-group). It resolves the last successful `stage-edge` deployment, plans the diff from there, and ships
-the planned units in four passes: build and verify every unit (each unit's `cloudflare:deploy` up to
-its final `wrangler deploy`, three units side by side), deploy them with Wrangler one by one in plan
-order, run every unit's `cloudflare:proof` side by side, then record each deployed version as proven.
-Only the Wrangler steps receive `CLOUDFLARE_API_TOKEN`; the build, verification and proof run
-dependency code and never see it.
+The edge ships in three jobs. `edge-plan` resolves the last successful `stage-edge` deployment and
+plans the diff from there. `edge-build` builds and verifies each planned unit on its own runner (the
+unit's `cloudflare:deploy` up to its final `wrangler deploy`) and uploads its output; a build is
+CPU-bound, and two builds on one two-core hosted runner take as long as two in a row. Both wait only
+for the deploy target, so they run beside the migrations. `deploy-cloudflare` runs once
+`deploy-migrations` has migrated the database and SpiceDB, beside `deploy-zerops`, in its own
+`stage-edge` environment, one edge deploy at a time (`edge-stage` concurrency group). It unpacks this
+run's builds, deploys them with Wrangler one by one in plan order, runs every unit's `cloudflare:proof`
+side by side, then records each deployed version as proven. Only its Wrangler steps receive
+`CLOUDFLARE_API_TOKEN`; the plan, builds and proof run dependency code and never see it.
 
 A version is recorded as proven by redeploying it at 100% with a deployment message starting
 `Proven by cloudflare:proof at`; traffic does not change. Only such a version is a rollback target.
@@ -806,15 +808,16 @@ The push that lands the commit deploys straight away. `queue-proof` looks for a 
 the queue) runs the gates first. The deploy then runs:
 
 ```text
-deploy-target ─┬─ deploy-plan ──────────┐
-edge-readiness ┘                        ├─ deploy-migrations ─┬─ deploy-cloudflare ─┐
-Workspace gates ────────────────────────┘   (migrator,        └─ deploy-zerops ─────┴─ publish-edge-composition ─ sync-edge-composition
-                                             SpiceDB)
+deploy-target ──┬─ deploy-plan ───────────────┐
+edge-readiness ─┴─ edge-plan ─ edge-build ─┐  │
+Workspace gates ───────────────────────────┼──┴─ deploy-migrations ─┬─ deploy-zerops ─────┬─ publish-edge-composition ─ sync-edge-composition
+                                           └────────────────────────┴─ deploy-cloudflare ─┘
 ```
 
-`deploy-plan` needs no gate, so the plan is ready when the gates pass or prove skipped. A plan with
-no migration and no SpiceDB change finishes `deploy-migrations` in seconds, so a one-vertical change
-reaches its Worker within minutes of the merge.
+`deploy-plan` and `edge-plan` need no gate, so both plans are ready when the gates pass or prove
+skipped, and the edge builds run while the migrations do. A plan with no migration and no SpiceDB
+change finishes `deploy-migrations` in seconds, so a one-vertical change reaches its Worker within
+minutes of the merge.
 
 ## Pull-request and release hygiene
 

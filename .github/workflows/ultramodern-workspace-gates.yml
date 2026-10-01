@@ -1294,31 +1294,25 @@ jobs:
           fi
           echo "::notice title=Edge deploy not configured::Missing ${joined//,/, }; edge units were not deployed."
 
-  # Edge units (topology/cloudflare-placement.json) ship as Cloudflare Workers once deploy-migrations has
-  # migrated the database and SpiceDB, so Worker code never runs against an older schema; the Zerops units
-  # deploy beside them. The
-  # `stage-edge` environment keeps its own deployment history: the job plans against the last
-  # successful edge deployment, so a failed or skipped edge deploy is never hidden by a successful
-  # Zerops one. Unconfigured repositories skip it, so it records nothing.
-  deploy-cloudflare:
-    name: Deploy edge units to Cloudflare Workers after the stage migration
-    # Results are checked explicitly: a merge-queue-proven run skips the gates, and a skipped ancestor would
-    # otherwise skip every job below it through the implicit success().
-    if: ${{ !cancelled() && needs.deploy-migrations.result == 'success' && needs.edge-deploy-readiness.outputs.configured == 'true' }}
-    needs: [deploy-target, deploy-migrations, edge-deploy-readiness]
+  # Edge units (topology/cloudflare-placement.json) ship as Cloudflare Workers. edge-plan and edge-build
+  # wait only for the deploy target, so they run beside the migrations; deploy-cloudflare changes Workers
+  # only once deploy-migrations has migrated the database and SpiceDB, so Worker code never runs
+  # against an older schema. The Zerops units deploy beside them. The `stage-edge` environment keeps
+  # its own deployment history: edge-plan plans against the last successful edge deployment, so a
+  # failed or skipped edge deploy is never hidden by a successful Zerops one. Unconfigured
+  # repositories skip all three, so they record nothing.
+  edge-plan:
+    name: Plan the edge units to deploy
+    if: ${{ !cancelled() && needs.edge-deploy-readiness.outputs.configured == 'true' }}
+    needs: [deploy-target, edge-deploy-readiness]
     runs-on: ubuntu-latest
-    # One edge deploy at a time; a newer pending run replaces an older one, and it plans from the last
-    # successful edge deployment, so it ships the skipped run's changes too.
-    concurrency:
-      group: edge-stage
-      cancel-in-progress: false
-    # Step timeouts leave the restore step its own budget inside the job deadline, so a hung
-    # deploy or proof still ends with every changed Worker restored.
-    timeout-minutes: 90
-    environment: stage-edge
+    timeout-minutes: 15
     permissions:
       contents: read
       deployments: read
+    outputs:
+      cloudflare: ${{ steps.impact.outputs.cloudflare }}
+      cloudflare_retirements: ${{ steps.impact.outputs.cloudflare_retirements }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
@@ -1390,15 +1384,45 @@ jobs:
             "${base_arguments[@]}" \
             --head "$GITHUB_SHA"
 
-      # Only Wrangler sees the account token. Building, verifying and proving a unit runs
-      # dependency code (bundlers, build plugins, the framework CLI), so those steps run without
-      # it. The build step runs each unit's `cloudflare:deploy` up to, but not including, Wrangler.
-      - name: Build and verify planned edge units
+  # Each planned unit builds on its own runner: a build is CPU-bound, and a hosted runner of this
+  # private repository has two cores, so builds side by side on one runner take as long as in a row.
+  # Building runs dependency code (bundlers, build plugins, the framework CLI), so these jobs get no
+  # environment and no Cloudflare token; only deploy-cloudflare's Wrangler steps see it.
+  edge-build:
+    name: Build edge unit ${{ matrix.unit.id }}
+    if: ${{ !cancelled() && needs.edge-plan.result == 'success' && needs.edge-plan.outputs.cloudflare != '[]' }}
+    needs: [edge-plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        unit: ${{ fromJSON(needs.edge-plan.outputs.cloudflare) }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout main revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      # The build step runs the unit's `cloudflare:deploy` up to, but not including, Wrangler.
+      - name: Build and verify the planned edge unit
         timeout-minutes: 25
         working-directory: app
         env:
-          CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
-          EDGE_BUILD_PARALLELISM: '3'
+          UNIT_ID: ${{ matrix.unit.id }}
+          UNIT_PACKAGE: ${{ matrix.unit.packageName }}
+          UNIT_WORKER: ${{ matrix.unit.workerName }}
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
@@ -1408,50 +1432,96 @@ jobs:
           while IFS=$'\t' read -r key value; do
             export "$key=$value"
           done < <(jq -r '.buildEnvironment | to_entries[] | [.key, .value] | @tsv' topology/cloudflare-placement.json)
-          build_unit() {
-            local id="$1" package="$2" worker="$3" built_worker
-            mise exec -- pnpm --filter "$package" run cloudflare:build
-            mise exec -- pnpm --filter "$package" exec ultramodern-create ultramodern cloudflare-output-verify --app "$id" --require-public-urls
-            # Wrangler deploys the name in the built config; the run snapshots and restores the
-            # planned topology name, so they must be the same Worker.
-            built_worker="$(mise exec -- pnpm --filter "$package" exec jq -r '.name' .output/wrangler.json)"
-            if [[ "$built_worker" != "$worker" ]]; then
-              echo "$id builds Worker $built_worker, but topology places $worker; no Worker was changed." >&2
-              return 1
-            fi
-          }
-          # Each unit builds into its own package, so they build side by side, EDGE_BUILD_PARALLELISM at a
-          # time to stay within the runner's memory. Each log prints whole once its build ends.
-          mapfile -t units < <(jq -r '.[] | [.id, .packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
-          declare -A builds=()
-          failed=()
-          wait_for_build() {
-            local finished_pid status=0
-            wait -n -p finished_pid "${!builds[@]}" || status=$?
-            local id="${builds[$finished_pid]}"
-            unset "builds[$finished_pid]"
-            echo "::group::Build $id (exit $status)"
-            cat "$RUNNER_TEMP/edge-build-$id.log"
-            echo '::endgroup::'
-            if [[ $status -ne 0 ]]; then
-              failed+=("$id")
-            fi
-          }
-          for unit in "${units[@]}"; do
-            IFS=$'\t' read -r id package worker <<<"$unit"
-            while [[ ${#builds[@]} -ge $EDGE_BUILD_PARALLELISM ]]; do
-              wait_for_build
-            done
-            build_unit "$id" "$package" "$worker" >"$RUNNER_TEMP/edge-build-$id.log" 2>&1 &
-            builds[$!]="$id"
-          done
-          while [[ ${#builds[@]} -gt 0 ]]; do
-            wait_for_build
-          done
-          if [[ ${#failed[@]} -gt 0 ]]; then
-            echo "::error title=Edge build failed::${failed[*]} did not build; no Worker was changed."
+          mise exec -- pnpm --filter "$UNIT_PACKAGE" run cloudflare:build
+          mise exec -- pnpm --filter "$UNIT_PACKAGE" exec ultramodern-create ultramodern cloudflare-output-verify --app "$UNIT_ID" --require-public-urls
+          # Wrangler deploys the name in the built config; the deploy snapshots and restores the
+          # planned topology name, so they must be the same Worker.
+          built_worker="$(mise exec -- pnpm --filter "$UNIT_PACKAGE" exec jq -r '.name' .output/wrangler.json)"
+          if [[ "$built_worker" != "$UNIT_WORKER" ]]; then
+            echo "$UNIT_ID builds Worker $built_worker, but topology places $UNIT_WORKER; no Worker was changed." >&2
             exit 1
           fi
+
+      # Everything the build wrote inside the unit is ignored by git; node_modules is the install.
+      - name: Pack the edge unit's build output
+        working-directory: app
+        env:
+          UNIT_PACKAGE: ${{ matrix.unit.packageName }}
+        run: |
+          unit_directory="$(realpath --relative-to=. "$(mise exec -- pnpm --filter "$UNIT_PACKAGE" exec pwd)")"
+          git ls-files --others --ignored --exclude-standard --directory -z -- "$unit_directory" \
+            | grep -zv '/node_modules/$' \
+            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/edge-unit.tar.zst"
+
+      - name: Upload the edge unit's build output
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: edge-unit-${{ matrix.unit.id }}
+          path: ${{ runner.temp }}/edge-unit.tar.zst
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy-cloudflare:
+    name: Deploy edge units to Cloudflare Workers after the stage migration
+    # Results are checked explicitly: a merge-queue-proven run skips the gates, and a skipped ancestor would
+    # otherwise skip every job below it through the implicit success().
+    # A plan with no units skips edge-build; the deploy still runs, so its deployment records the revision.
+    if: >-
+      ${{ !cancelled() && needs.deploy-migrations.result == 'success' && needs.edge-plan.result == 'success'
+      && (needs.edge-build.result == 'success' || (needs.edge-build.result == 'skipped' && needs.edge-plan.outputs.cloudflare == '[]')) }}
+    needs: [deploy-target, deploy-migrations, edge-plan, edge-build]
+    runs-on: ubuntu-latest
+    # One edge deploy at a time; a newer pending run replaces an older one, and it plans from the last
+    # successful edge deployment, so it ships the skipped run's changes too.
+    concurrency:
+      group: edge-stage
+      cancel-in-progress: false
+    # Step timeouts leave the restore step its own budget inside the job deadline, so a hung
+    # deploy or proof still ends with every changed Worker restored.
+    timeout-minutes: 90
+    environment: stage-edge
+    permissions:
+      contents: read
+      deployments: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout main revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Download the planned edge units' build outputs
+        if: needs.edge-plan.outputs.cloudflare != '[]'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: edge-unit-*
+          path: ${{ runner.temp }}/edge-units
+
+      # Only Wrangler sees the account token. Building, verifying and proving a unit runs dependency
+      # code, so the builds ran in edge-build without it.
+      - name: Unpack the planned edge units' build outputs
+        working-directory: app
+        env:
+          CLOUDFLARE_UNITS_JSON: ${{ needs.edge-plan.outputs.cloudflare }}
+        run: |
+          mapfile -t units < <(jq -r '.[] | [.id, .packageName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
+          for unit in "${units[@]}"; do
+            IFS=$'\t' read -r id package <<<"$unit"
+            tar --extract --zstd --file "$RUNNER_TEMP/edge-units/edge-unit-$id/edge-unit.tar.zst"
+            if ! mise exec -- pnpm --filter "$package" exec test -f .output/wrangler.json; then
+              echo "Edge unit $id has no built .output/wrangler.json; no Worker was changed." >&2
+              exit 1
+            fi
+          done
 
       - name: Deploy planned edge units in dependency order
         id: deploy
@@ -1460,7 +1530,7 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
+          CLOUDFLARE_UNITS_JSON: ${{ needs.edge-plan.outputs.cloudflare }}
           EDGE_DEPLOY_STATE: ${{ runner.temp }}/edge-deploy-state.tsv
           EDGE_DEPLOYED_VERSIONS: ${{ runner.temp }}/edge-deployed-versions.tsv
           EDGE_PROVEN_MARKER: 'Proven by cloudflare:proof at '
@@ -1515,7 +1585,7 @@ jobs:
           # The Access service token, so the proof passes once stage sits behind Cloudflare Access.
           CF_ACCESS_CLIENT_ID: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}
-          CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
+          CLOUDFLARE_UNITS_JSON: ${{ needs.edge-plan.outputs.cloudflare }}
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
@@ -1576,13 +1646,13 @@ jobs:
       # retired Worker that still exists is reported for an operator to delete
       # (`wrangler delete`); CI never deletes a Worker. The check is read-only and never fails the run.
       - name: Report retired Workers that still exist
-        if: steps.impact.outputs.cloudflare_retirements != '[]'
+        if: needs.edge-plan.outputs.cloudflare_retirements != '[]'
         timeout-minutes: 5
         working-directory: app
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_RETIREMENTS_JSON: ${{ steps.impact.outputs.cloudflare_retirements }}
+          CLOUDFLARE_RETIREMENTS_JSON: ${{ needs.edge-plan.outputs.cloudflare_retirements }}
         run: |
           mapfile -t retirements < <(jq -r '.[] | [.packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_RETIREMENTS_JSON")
           for retirement in "${retirements[@]}"; do
