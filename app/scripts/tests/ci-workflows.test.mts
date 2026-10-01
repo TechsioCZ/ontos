@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -700,12 +700,8 @@ const ROOT_GATE_JOBS = [
   NODE_ARTIFACT_BUILD_JOB,
   CLOUDFLARE_ARTIFACT_BUILD_JOB,
 ] as const;
-/** The proofs of the built artifacts, which also wait for the shard builds of their own target only. */
-const ARTIFACT_PROOF_JOBS = {
-  'cloudflare-runtime': [QUEUE_PROOF_JOB, CLOUDFLARE_ARTIFACT_BUILD_JOB],
-  'node-runtime': [QUEUE_PROOF_JOB, NODE_ARTIFACT_BUILD_JOB],
-} as const;
-const GATE_JOBS = [...ROOT_GATE_JOBS, 'node-runtime', 'cloudflare-runtime'];
+/** Every gate job; each target's artifact proofs run inside its own build shards. */
+const GATE_JOBS = ROOT_GATE_JOBS;
 const GatedJobsSchema = Schema.Struct({
   jobs: Schema.Record(
     Schema.String,
@@ -743,14 +739,6 @@ it('skips the gates on main only for a commit the merge queue already proved', (
   for (const gate of ROOT_GATE_JOBS) {
     expect(jobs[gate]?.needs).toEqual([QUEUE_PROOF_JOB]);
     expect(jobs[gate]?.if).toBe(expression("!cancelled() && needs.queue-proof.outputs.proven != 'true'"));
-  }
-  // A proof runs only when every build it proves succeeded, so a failed shard fails the Workspace gates check.
-  for (const [proofJob, needs] of Object.entries(ARTIFACT_PROOF_JOBS)) {
-    expect(jobs[proofJob]?.needs).toEqual(needs);
-    for (const build of needs.slice(1)) {
-      expect(jobs[proofJob]?.if).toContain(`needs.${build}.result == 'success'`);
-    }
-    expect(jobs[proofJob]?.if).toContain("!cancelled() && needs.queue-proof.outputs.proven != 'true'");
   }
 });
 
@@ -801,10 +789,20 @@ it('runs every job after the gates even when a merge-queue-proven run skipped th
 });
 
 const ArtifactBuildJobSchema = Schema.Struct({
-  steps: Schema.Array(Schema.Struct({ run: Schema.optional(Schema.String) })),
+  name: Schema.String,
+  permissions: Schema.Record(Schema.String, Schema.String),
+  steps: Schema.Array(
+    Schema.Struct({
+      if: Schema.optional(Schema.String),
+      name: Schema.String,
+      run: Schema.optional(Schema.String),
+      uses: Schema.optional(Schema.String),
+      with: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),
+    }),
+  ),
   strategy: Schema.Struct({
     matrix: Schema.Struct({
-      include: Schema.Array(Schema.Struct({ shard: Schema.Number, units: Schema.String })),
+      include: Schema.Array(Schema.Struct({ proof: Schema.String, shard: Schema.Number, units: Schema.String })),
       shard: Schema.Array(Schema.Number),
     }),
   }),
@@ -840,6 +838,85 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
     const built = strategy.matrix.include.flatMap(({ units: shardUnits }) => shardUnits.split(/\s+/u).filter(Boolean));
     expect(sorted(built)).toEqual(sorted(units));
     expect(steps.some(({ run }) => run?.includes(`"\${filters[@]}" run ${script}\n`) === true)).toBe(true);
+  }
+});
+
+const readArtifactBuildJobs = () =>
+  Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs;
+
+it('proves each target on its own shards only after every other shard of the target succeeded', () => {
+  const jobs = readArtifactBuildJobs();
+  for (const [job, proofs, artifacts] of [
+    [NODE_ARTIFACT_BUILD_JOB, ['node'], 'node-units-*'],
+    [CLOUDFLARE_ARTIFACT_BUILD_JOB, ['outputs', 'topology'], 'cloudflare-units-*'],
+  ] as const) {
+    const { name, permissions, steps, strategy } = jobs[job];
+    // Each proof runs on exactly one shard; the other shards only build.
+    const hosted = strategy.matrix.include.map(({ proof }) => proof).filter((proof) => proof !== 'none');
+    expect(sorted(hosted)).toEqual([...proofs]);
+    expect(permissions).toEqual({ actions: 'read', contents: 'read' });
+    // The proving shard waits for every other shard of this job, by the job's own name, before it
+    // downloads them; every step after the shard's own upload runs only on a proving shard.
+    const prefix = name.slice(0, name.indexOf('${{'));
+    const upload = steps.findIndex((step) => step.name === "Upload the shard's build outputs");
+    const wait = steps.findIndex(({ run }) => run?.startsWith('bash scripts/wait-for-build-shards.sh') === true);
+    const download = steps.findIndex(({ uses }) => uses?.startsWith('actions/download-artifact@') === true);
+    expect(steps[wait]?.run).toBe(
+      `bash scripts/wait-for-build-shards.sh '${prefix}' ${strategy.matrix.shard.length} '${name}'`,
+    );
+    expect(upload).toBeGreaterThan(-1);
+    expect(upload < wait && wait < download).toBe(true);
+    for (const step of steps.slice(upload + 1)) {
+      expect(`${step.name}: ${step.if ?? ''}`).toMatch(/matrix\.proof (?:!= 'none'|== '[a-z]+')$/u);
+    }
+    // Only the target's proving shards download: a single one compares by name, several by `!= 'none'`.
+    expect(steps[download]?.if).toBe(proofs.length === 1 ? `matrix.proof == '${proofs[0]}'` : "matrix.proof != 'none'");
+    expect(steps[download]?.with?.pattern).toBe(artifacts);
+  }
+});
+
+/** Runs the shard wait with a `gh` that answers the jobs API with these jobs, as `gh api --jq` would. */
+const waitForBuildShards = (jobs: readonly { conclusion: string | null; name: string }[]) => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-wait-shards-'));
+  try {
+    const gh = path.join(directory, 'gh');
+    writeFileSync(gh, '#!/bin/sh\n[ "$1" = api ] && [ "$3" = --jq ] || exit 2\nprintf %s "$FAKE_JOBS" | jq -r "$4"\n');
+    chmodSync(gh, 0o755);
+    execFileSync(
+      '/bin/bash',
+      [fileURLToPath(new URL('../wait-for-build-shards.sh', import.meta.url)), 'Build x (', '3', 'Build x (1/3)'],
+      {
+        env: {
+          FAKE_JOBS: JSON.stringify({ jobs }),
+          GITHUB_REPOSITORY: 'owner/repository',
+          GITHUB_RUN_ID: '1',
+          PATH: `${directory}:${STEP_PATH}`,
+          WAIT_FOR_BUILD_SHARDS_INTERVAL: '0',
+        },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 10_000,
+      },
+    );
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+};
+
+it('waits for the other build shards of its own target and fails when one does not succeed', () => {
+  const others = [
+    { conclusion: 'success', name: 'Build x (2/3)' },
+    { conclusion: 'success', name: 'Build x (3/3)' },
+  ];
+  const unrelated = [
+    { conclusion: null, name: 'Build x (1/3)' },
+    { conclusion: 'failure', name: 'Static Contracts' },
+  ];
+  expect(waitForBuildShards([...others, ...unrelated])).toBe(true);
+  for (const conclusion of ['failure', 'cancelled', 'timed_out', 'skipped']) {
+    expect(waitForBuildShards([others[0], { conclusion, name: 'Build x (3/3)' }, ...unrelated])).toBe(false);
   }
 });
 
