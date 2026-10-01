@@ -513,6 +513,53 @@ it('refreshes the production composition on Zerops, in its own environment and c
   expect(publish?.if).toBe("steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'");
 });
 
+it('bounds each refresh and yields it to a main deploy in flight', () => {
+  const StepSchema = Schema.Struct({
+    if: Schema.optional(Schema.String),
+    run: Schema.optional(Schema.String),
+    'timeout-minutes': Schema.optional(Schema.Number),
+    uses: Schema.optional(Schema.String),
+  });
+  const JobSchema = Schema.Struct({
+    concurrency: Schema.optional(Schema.Struct({ group: Schema.String })),
+    if: Schema.optional(Schema.String),
+    needs: Schema.optional(Schema.Array(Schema.String)),
+    steps: Schema.Array(StepSchema),
+    'timeout-minutes': Schema.Number,
+  });
+  const workflow = Schema.decodeUnknownSync(Schema.Struct({ jobs: Schema.Record(Schema.String, JobSchema) }))(
+    parse(readFileSync(refreshWorkflowUrl, 'utf-8')),
+  );
+  const { jobs } = workflow;
+  const guard = jobs['deploy-guard'];
+  // The guard queues outside every deploy lock: a refresh pending in the lock would cancel a pending deploy.
+  expect(guard?.concurrency).toBeUndefined();
+  expect(guard?.steps.map(({ run }) => run ?? '').join('\n')).toContain('--workflow ultramodern-workspace-gates.yml');
+  for (const [name, environment] of [
+    ['refresh-stage', 'stage'],
+    ['refresh-production', 'production'],
+  ] as const) {
+    const job = jobs[name];
+    expect(job?.concurrency?.group).toBe(`zerops-${environment}`);
+    expect(job?.needs).toEqual(['deploy-guard']);
+    expect(job?.if).toBe(`needs.deploy-guard.outputs.${environment}-deploy-active == 'false'`);
+    expect(job?.['timeout-minutes']).toBeLessThanOrEqual(10);
+    // Every install and the publication carry their own bound inside the job's.
+    for (const step of job?.steps ?? []) {
+      if (
+        step.uses === './.github/actions/install-app' ||
+        step.run?.includes('active-composition:publish publish') === true
+      ) {
+        expect(step['timeout-minutes']).toBeLessThanOrEqual(5);
+      }
+    }
+    // The second install must not walk the first one's node_modules: mise-action hashes the whole tree.
+    const checkout = job?.steps.find(({ run }) => run?.includes('git checkout --detach') === true);
+    expect(checkout?.run).toMatch(/git checkout --detach "\$DEPLOYED_SHA"\ngit clean -ffdx/u);
+  }
+  expect(jobs['refresh-stage-edge']?.['timeout-minutes']).toBeLessThanOrEqual(5);
+});
+
 it('reads quoted Zerops env-file values', () => {
   const environment = parseZeropsEnvFile('catalog_zeropsSubdomain="https://catalog.example"\nPLAIN=value\ninvalid\n');
   expect(environment.get('catalog_zeropsSubdomain')).toBe('https://catalog.example');

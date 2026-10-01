@@ -16,10 +16,60 @@ defaults:
     shell: bash
 
 jobs:
+  # A refresh shares its environment's deploy lock (zerops-<environment>), so it never observes or publishes
+  # in the middle of a deploy. GitHub keeps one pending job per concurrency group and cancels the older
+  # pending one when another queues, so a refresh that queued behind a running deploy would cancel the
+  # deploy job pending after it. A deploy re-publishes the composition anyway, and validity outlasts
+  # three refresh intervals, so a refresh that finds a main deploy run in flight yields to it. This job
+  # sits outside the lock so it never queues there itself.
+  deploy-guard:
+    name: Yield the refresh to a main deploy in flight
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      actions: read
+    outputs:
+      stage-deploy-active: ${{ steps.active.outputs.stage }}
+      production-deploy-active: ${{ steps.active.outputs.production }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Find unfinished main deploy runs
+        id: active
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+        # A push to main deploys stage; a dispatch deploys stage or production.
+        run: |
+          unfinished() {
+            gh run list --workflow ultramodern-workspace-gates.yml --branch main --event "$1" --limit 20 \
+              --json status --jq '[.[] | select(.status != "completed")] | length'
+          }
+          pushes="$(unfinished push)"
+          dispatches="$(unfinished workflow_dispatch)"
+          stage=false
+          production=false
+          if (( pushes + dispatches > 0 )); then
+            stage=true
+            echo "::notice title=Stage refresh skipped::A main deploy run is unfinished; it re-publishes the stage composition."
+          fi
+          if (( dispatches > 0 )); then
+            production=true
+            echo "::notice title=Production refresh skipped::A dispatched deploy run is unfinished and may target production; it re-publishes the composition."
+          fi
+          echo "stage=$stage" >>"$GITHUB_OUTPUT"
+          echo "production=$production" >>"$GITHUB_OUTPUT"
+
   refresh-stage:
     name: Re-observe and re-publish the stage Application Composition
+    needs: [deploy-guard]
+    if: needs.deploy-guard.outputs.stage-deploy-active == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # A refresh takes about two minutes and holds the stage deploy lock, so a stuck one must not hold it long.
+    timeout-minutes: 10
     # Refreshing is not a deployment: without deployment: false the job would record a successful stage
     # deployment for the schedule's main SHA, which the stage deploy would then treat as its diff base.
     environment:
@@ -55,6 +105,7 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+        timeout-minutes: 5
 
       # On the Cloudflare target the Workers are what the snapshot observes, and a failed edge rollout leaves
       # the last successful stage-edge revision live even after a newer stage deployment succeeded.
@@ -90,20 +141,26 @@ jobs:
           echo "::warning title=Refresh skipped::OUTBOX_WORKER_MODE is $MODE but the Outbox Workers still reflect
           the other mode. Run the stage deploy to finish the switch; it re-publishes the composition."
 
-      # The publisher and topology of the deployed revision describe what stage actually runs.
+      # The publisher and topology of the deployed revision describe what stage actually runs. The clean drops
+      # main's install before the second one: mise-action hashes every **/mise*.toml-style path for its cache
+      # key, and walking main's node_modules (following its symlinks) took that hash 11 to 22 minutes.
       - name: Check out the deployed revision
         if: steps.worker-drift.outputs.drift != 'true'
         env:
           DEPLOYED_SHA: ${{ steps.base.outputs.base }}
-        run: git checkout --detach "$DEPLOYED_SHA"
+        run: |
+          git checkout --detach "$DEPLOYED_SHA"
+          git clean -ffdx
 
       - name: Install the deployed revision's app workspace
         if: steps.worker-drift.outputs.drift != 'true'
         uses: ./.github/actions/install-app
+        timeout-minutes: 5
 
       - name: Re-observe live services and re-publish the active Application Composition
         id: publish
         if: steps.worker-drift.outputs.drift != 'true'
+        timeout-minutes: 5
         working-directory: app
         env:
           SNAPSHOT_FILE: ${{ runner.temp }}/active-application-composition.json
@@ -131,13 +188,15 @@ jobs:
         run: mise exec -- pnpm --silent active-composition:publish edge-consumers
 
   # Placed Worker consumers read the snapshot from the composition KV namespace, not the Zerops project
-  # variable, so they need each re-publication too. Only stage-edge holds the Cloudflare token.
+  # variable, so they need each re-publication too. Only stage-edge holds the Cloudflare token. This write
+  # runs after the stage lock is released, so a deploy may publish a newer snapshot first; the script
+  # writes only when the key holds no newer observation, so a late refresh never rolls the key back.
   refresh-stage-edge:
     name: Hand the re-published Application Composition to its Worker consumers
     if: needs.refresh-stage.outputs.edge-consumers != '' && needs.refresh-stage.outputs.edge-consumers != '[]'
     needs: [refresh-stage]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     environment:
       name: stage-edge
       deployment: false
@@ -154,9 +213,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-
+      # The write needs only bash, curl and jq from the runner image, so it installs nothing.
       - name: Write the snapshot to the composition KV namespace the consumer Workers read
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
@@ -168,8 +225,11 @@ jobs:
   # A production that is not configured or has never deployed has no snapshot to refresh.
   refresh-production:
     name: Re-observe and re-publish the production Application Composition
+    needs: [deploy-guard]
+    if: needs.deploy-guard.outputs.production-deploy-active == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # It holds the production deploy lock, so it is bounded like the stage refresh.
+    timeout-minutes: 10
     environment:
       name: production
       deployment: false
@@ -212,6 +272,7 @@ jobs:
       - name: Install the app workspace
         if: steps.configuration.outputs.configured == 'true'
         uses: ./.github/actions/install-app
+        timeout-minutes: 5
 
       - name: Resolve the last successful production deployment
         id: base
@@ -243,19 +304,24 @@ jobs:
           echo "::warning title=Refresh skipped::OUTBOX_WORKER_MODE is $MODE but the Outbox Workers still reflect
           the other mode. Run the production deploy to finish the switch; it re-publishes the composition."
 
-      # The publisher and topology of the deployed revision describe what production actually runs.
+      # The publisher and topology of the deployed revision describe what production actually runs. The clean
+      # drops main's install before the second one, as on stage.
       - name: Check out the deployed revision
         if: steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'
         env:
           DEPLOYED_SHA: ${{ steps.base.outputs.base }}
-        run: git checkout --detach "$DEPLOYED_SHA"
+        run: |
+          git checkout --detach "$DEPLOYED_SHA"
+          git clean -ffdx
 
       - name: Install the deployed revision's app workspace
         if: steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'
         uses: ./.github/actions/install-app
+        timeout-minutes: 5
 
       - name: Re-observe live services and re-publish the active Application Composition
         if: steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'
+        timeout-minutes: 5
         working-directory: app
         env:
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}

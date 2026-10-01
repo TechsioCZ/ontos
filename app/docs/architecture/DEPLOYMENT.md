@@ -266,6 +266,10 @@ production deploy without that variable fails before it pushes anything. The
 scheduled composition refresh has a `refresh-production` lane beside `refresh-stage`, in production's
 own environment and `zerops-production` concurrency group; it publishes nothing until production is
 configured and has deployed once.
+Each refresh lane holds its environment's deploy lock, so it is bounded to 10 minutes (about two in
+practice), and it yields to a main deploy run that is still unfinished: GitHub cancels the older pending
+job when another queues in the same concurrency group, so a refresh queued behind a deploy could cancel
+the next deploy job, and every deploy re-publishes the composition anyway.
 
 The composition publisher resolves each unit's public origin by target: the Zerops subdomain of its
 service on `zerops`, and on `cloudflare` the Worker URL its edge build is given
@@ -278,7 +282,8 @@ a Worker secret's 5.1 kB limit. Every placed Worker binds the stage composition 
 `ONTOS_ACTIVE_APPLICATION_COMPOSITION` and reads key `active` on each request, failing closed when
 the binding or key is missing. `sync-edge-composition`, and `refresh-stage-edge` after each
 scheduled refresh, write every publication to that key from `stage-edge`
-(`scripts/put-edge-composition-snapshot.sh`). Writing the key deploys nothing.
+(`scripts/put-edge-composition-snapshot.sh`). Writing the key deploys nothing. Both writes run outside
+the stage deploy lock, so the script leaves the key alone when it already holds a newer `observedAt`.
 
 Switching stage between targets is one variable: set `DEPLOY_TARGET` on `stage` and dispatch
 `full=true`. Its other variables and secrets never change. A stage on `cloudflare` whose edge deploy
