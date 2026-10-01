@@ -54,8 +54,6 @@ zerops:
           protocol: tcp
           httpSupport: true
       envVariables:
-        BETTER_AUTH_SECRET: ${shellsuperapp_BETTER_AUTH_SECRET}
-        BETTER_AUTH_URL: ${shellsuperapp_BETTER_AUTH_URL}
         DATABASE_ADMIN_URL: postgresql://${db18_superUser}:${db18_superUserPassword}@${db18_hostname}:${db18_port}/${db18_dbName}
         DATABASE_URL: postgresql://ontos_runtime:${db18_password}@${db18_hostname}:${db18_port}/${db18_dbName}
         MIGRATOR_PORT: '8080'

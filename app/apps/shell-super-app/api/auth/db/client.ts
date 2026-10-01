@@ -6,7 +6,7 @@ import { Context, Effect, Layer, Redacted } from 'effect';
 import type { Scope } from 'effect';
 import { Reactivity } from 'effect/unstable/reactivity';
 
-import { AuthConfig } from '../config.ts';
+import { AuthConfig, loadAuthDatabaseConfig } from '../config.ts';
 import type { AuthConfigValue } from '../config.ts';
 import { AuthDatabaseConnectionError } from './connection-error.ts';
 import { authDatabaseSchema, authRelations } from './schema.ts';
@@ -51,5 +51,13 @@ export const AuthDatabaseLive = Layer.effect(
   Effect.gen(function* makeAuthDatabaseService() {
     const configuration = yield* AuthConfig;
     return yield* makeAuthDatabase(configuration);
+  }),
+);
+
+/** The authentication database from `DATABASE_URL` alone, without the Better Auth configuration. */
+export const AuthDatabaseOnlyLive = Layer.effect(
+  AuthDatabase,
+  Effect.gen(function* makeAuthDatabaseOnlyService() {
+    return yield* makeAuthDatabase(yield* loadAuthDatabaseConfig());
   }),
 );

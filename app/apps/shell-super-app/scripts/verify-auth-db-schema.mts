@@ -1,10 +1,9 @@
 // @effect-diagnostics globalConsole:off processEnv:off strictEffectProvide:off -- Existing compatibility boundary; expires: 2026-12-31.
 import { sql } from 'drizzle-orm';
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 
-import { AuthConfigLive } from '../api/auth/config.ts';
 import { compareAuthCatalog } from '../api/auth/db/catalog.ts';
-import { AuthDatabase, AuthDatabaseLive } from '../api/auth/db/client.ts';
+import { AuthDatabase, AuthDatabaseOnlyLive } from '../api/auth/db/client.ts';
 import { AUTH_SCHEMA_NAME, AUTH_TABLES } from '../api/auth/db/schema.ts';
 
 class AuthDatabaseVerificationError extends Schema.TaggedError<AuthDatabaseVerificationError>()(
@@ -112,7 +111,6 @@ const verification = Effect.gen(function* verifyAuthDatabase() {
   };
 });
 
-const runtime = AuthDatabaseLive.pipe(Layer.provide(AuthConfigLive));
-const result = await Effect.runPromise(Effect.provide(verification, runtime));
+const result = await Effect.runPromise(Effect.provide(verification, AuthDatabaseOnlyLive));
 
 console.log(`Verified ${result.tableCount} typed tables in PostgreSQL schema ${AUTH_SCHEMA_NAME}`);

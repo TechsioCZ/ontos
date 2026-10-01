@@ -65,6 +65,16 @@ const authConfigSource = Config.all({
   trustedOrigins: Config.schema(Schema.Trim, 'BETTER_AUTH_TRUSTED_ORIGINS').pipe(Config.withDefault('')),
 });
 
+const parseConnectionString = Effect.fn('AuthConfig.parseConnectionString')(function* parseConnection(
+  databaseUrl: Redacted.Redacted,
+) {
+  const connectionString = Redacted.value(databaseUrl).trim();
+  yield* Schema.decodeEffect(PostgreSqlUrlSchema)(connectionString).pipe(
+    Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration())),
+  );
+  return connectionString;
+});
+
 const parseHttpOrigin = (value: string): Effect.Effect<string, AuthConfigFailure> =>
   Schema.decodeEffect(HttpUrlSchema)(value).pipe(
     Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration())),
@@ -77,10 +87,7 @@ const parseAuthConfigFromProvider = Effect.fn('AuthConfig.parseAuthConfigFromPro
   const source = yield* authConfigSource
     .parse(provider)
     .pipe(Effect.catchTag('ConfigError', () => Effect.fail(malformedConfiguration())));
-  const connectionString = Redacted.value(source.databaseUrl).trim();
-  yield* Schema.decodeEffect(PostgreSqlUrlSchema)(connectionString).pipe(
-    Effect.catchTag('SchemaError', () => Effect.fail(malformedConfiguration())),
-  );
+  const connectionString = yield* parseConnectionString(source.databaseUrl);
   const secret = Redacted.value(source.secret).trim();
   if (secret.length < 32) {
     return yield* malformedConfiguration();
@@ -121,9 +128,7 @@ export interface LoadAuthConfigOptions {
   readonly envPath?: string;
 }
 
-export const loadAuthConfig = (
-  options: LoadAuthConfigOptions = {},
-): Effect.Effect<AuthConfigValue, AuthConfigFailure> =>
+const loadRuntimeConfigurationProvider = (options: LoadAuthConfigOptions) =>
   loadConfigurationProvider(options, unableToLoadEnvironment).pipe(
     // A Worker's DATABASE_URL is its HYPERDRIVE binding; Node keeps the environment's.
     Effect.flatMap((provider) =>
@@ -131,7 +136,28 @@ export const loadAuthConfig = (
         .runtimeDatabaseProvider(provider)
         .pipe(Effect.catchTag('DatabaseConfigError', ({ reason }) => Effect.fail(new AuthConfigError({ reason })))),
     ),
-    Effect.flatMap(parseAuthConfigFromProvider),
+  );
+
+export const loadAuthConfig = (
+  options: LoadAuthConfigOptions = {},
+): Effect.Effect<AuthConfigValue, AuthConfigFailure> =>
+  loadRuntimeConfigurationProvider(options).pipe(Effect.flatMap(parseAuthConfigFromProvider));
+
+/**
+ * Only the authentication database connection, for tools such as the schema verifier that open the
+ * database without serving Better Auth and so need neither its secret nor its public URL.
+ */
+export const loadAuthDatabaseConfig = (
+  options: LoadAuthConfigOptions = {},
+): Effect.Effect<Pick<AuthConfigValue, 'connectionString'>, AuthConfigFailure> =>
+  loadRuntimeConfigurationProvider(options).pipe(
+    Effect.flatMap((provider) =>
+      Config.Redacted('DATABASE_URL')
+        .parse(provider)
+        .pipe(Effect.catchTag('ConfigError', () => Effect.fail(malformedConfiguration()))),
+    ),
+    Effect.flatMap(parseConnectionString),
+    Effect.map((connectionString) => ({ connectionString })),
   );
 
 export const AuthConfigLive = Layer.effect(AuthConfig, loadAuthConfig());
