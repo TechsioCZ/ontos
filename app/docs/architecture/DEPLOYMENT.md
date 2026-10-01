@@ -240,10 +240,11 @@ Zerops can equally run `host`.
 `deploy-target` reads `DEPLOY_TARGET`, `OUTBOX_WORKER_MODE`, `ZEROPS_PROJECT_ID` and the `ZEROPS_TOKEN`
 secret from the deploying environment without creating a deployment. An invalid target or mode fails
 the run, and so does a configured environment without `OUTBOX_WORKER_MODE`: it has no default. An
-environment without its Zerops project or token deploys nothing and records nothing. `deploy-zerops`
-then runs in that environment: it plans from the environment's last successful deployment and
-promotes authorization for that environment (`--authorization-environment`), so production needs its
-own enforced authorization evidence and context. Pushes to `main` deploy `stage`. Production deploys
+environment without its Zerops project or token deploys nothing and records nothing. `deploy-plan`
+then plans in that environment from the environment's last successful deployment and promotes
+authorization for that environment (`--authorization-environment`), so production needs its own
+enforced authorization evidence and context. `deploy-migrations` runs the planned migrations and
+SpiceDB deploy, and `deploy-zerops`, the environment's one deployment record, deploys the rest. Pushes to `main` deploy `stage`. Production deploys
 only on an explicit dispatch:
 
 ```sh
@@ -254,7 +255,7 @@ Create `production` once, outside CI, before the first dispatch, with the operat
 [Create production](#create-production). Leave `DEPLOY_TARGET` unset or `zerops`, and keep
 `OUTBOX_WORKER_MODE=dedicated`, which the script records. The first production deploy has no base, so dispatch it with `full=true`.
 
-`zerops.yaml` describes stage. Before any push, `deploy-zerops` writes a copy that sets
+`zerops.yaml` describes stage. Before any push, `deploy-migrations` and `deploy-zerops` write a copy that sets
 `ULTRAMODERN_DEPLOYMENT_ENVIRONMENT` to the deploying environment in every build and runtime that
 names it (`pnpm zerops:materialize-environment`), and every `zcli push` reads that copy. Production
 therefore never runs stage-only behaviour. Every runtime reaches SpiceDB over TLS gRPC and pins
@@ -281,7 +282,7 @@ scheduled refresh, write every publication to that key from `stage-edge`
 
 Switching stage between targets is one variable: set `DEPLOY_TARGET` on `stage` and dispatch
 `full=true`. Its other variables and secrets never change. A stage on `cloudflare` whose edge deploy
-is not configured fails in `edge-deploy-readiness`, before `deploy-zerops` changes anything on Zerops.
+is not configured fails in `edge-deploy-readiness`, before anything changes on Zerops.
 
 ### Edge units on Cloudflare Workers
 
@@ -300,11 +301,12 @@ workers stops the other mode's. A switch changes no source, so each deploy first
 other mode's workers still run or this mode's do not (`active-composition:publish worker-mode-drift`);
 when either holds, the plan deploys every worker of this mode, whatever the diff, and stops the others.
 
-The `deploy-cloudflare` job runs after `deploy-zerops` has migrated the database, in its own
-`stage-edge` environment. It resolves the last successful `stage-edge` deployment, plans the diff
-from there, and ships the planned units in three passes: build and verify every unit (each unit's
-`cloudflare:deploy` up to its final `wrangler deploy`), deploy them with Wrangler in plan order, then
-run each unit's `cloudflare:proof`. Only the Wrangler steps receive `CLOUDFLARE_API_TOKEN`; the
+The `deploy-cloudflare` job runs once `deploy-migrations` has migrated the database and SpiceDB, beside
+`deploy-zerops`, in its own `stage-edge` environment, one edge deploy at a time (`edge-stage` concurrency
+group). It resolves the last successful `stage-edge` deployment, plans the diff from there, and ships
+the planned units in three passes: build and verify every unit (each unit's `cloudflare:deploy` up to
+its final `wrangler deploy`, three units side by side), deploy them with Wrangler one by one in plan
+order, then run every unit's `cloudflare:proof` side by side. Only the Wrangler steps receive `CLOUDFLARE_API_TOKEN`; the
 build, verification and proof run dependency code and never see it. Every Worker's active version
 is recorded before the first deploy. A failed deploy or proof returns each Worker this run deployed
 to that state: the recorded version, or no Worker at all when the run created it. A cancelled run
@@ -697,6 +699,39 @@ Rollback must be executable and tested before rollout:
 8. record the rollback artifacts and outcome.
 
 If cleanup or endpoint provisioning returns an error, accept only a recognized idempotent state and verify the final state. `continue-on-error` without final-state verification is not rollback or idempotence.
+
+## Merge queue and the main deploy path
+
+`main` accepts changes only through the GitHub merge queue (the `Protect main` ruleset). The queue
+runs the gates once, on the exact commit that will land on `main`, and its required check is the
+`Workspace gates` job, which needs every gate job. Add a new gate job to that job's `needs`, not to
+the ruleset. The queue rebases, so `main` stays linear.
+
+Merge a green pull request by adding it to the queue:
+
+```sh
+gh pr merge <number>   # or the "Merge when ready" button
+```
+
+No merge strategy flag is needed: the queue rebases. Before the pull request's own checks pass, the
+command enables auto-merge, and the pull request joins the queue once they do. It leaves the queue if
+its merge-group run fails. Nobody bypasses the queue, so do not pass `--admin`.
+
+The push that lands the commit deploys straight away. `queue-proof` looks for a successful
+`merge_group` run of the workflow on that commit; when one exists every gate job is skipped and
+`Workspace gates` passes on that proof. A commit without one (a dispatch on a commit pushed before
+the queue) runs the gates first. The deploy then runs:
+
+```text
+deploy-target ─┬─ deploy-plan ──────────┐
+edge-readiness ┘                        ├─ deploy-migrations ─┬─ deploy-cloudflare ─┐
+Workspace gates ────────────────────────┘   (migrator,        └─ deploy-zerops ─────┴─ publish-edge-composition ─ sync-edge-composition
+                                             SpiceDB)
+```
+
+`deploy-plan` needs no gate, so the plan is ready when the gates pass or prove skipped. A plan with
+no migration and no SpiceDB change finishes `deploy-migrations` in seconds, so a one-vertical change
+reaches its Worker within minutes of the merge.
 
 ## Pull-request and release hygiene
 

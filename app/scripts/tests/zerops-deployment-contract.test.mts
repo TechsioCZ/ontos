@@ -29,17 +29,20 @@ const ZeropsImportSchema = Schema.Struct({
     }),
   ),
 });
+const DeployJobSchema = Schema.Struct({
+  steps: Schema.Array(
+    Schema.Struct({
+      'continue-on-error': Schema.optional(Schema.Boolean),
+      name: Schema.String,
+      run: Schema.optional(Schema.String),
+    }),
+  ),
+});
 const DeployWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
-    'deploy-zerops': Schema.Struct({
-      steps: Schema.Array(
-        Schema.Struct({
-          'continue-on-error': Schema.optional(Schema.Boolean),
-          name: Schema.String,
-          run: Schema.optional(Schema.String),
-        }),
-      ),
-    }),
+    'deploy-migrations': DeployJobSchema,
+    'deploy-plan': DeployJobSchema,
+    'deploy-zerops': DeployJobSchema,
   }),
 });
 
@@ -116,30 +119,35 @@ it('declares Price Group Cloudflare proof variables and resolves every provider 
   const providerVariables = workflow.match(/^ +ZEROPS_[A-Z_]+_SERVICE_ID: /gmu)?.map((line) => line.trim()) ?? [];
   expect(providerVariables).toEqual([
     'ZEROPS_MIGRATOR_SERVICE_ID:',
-    'ZEROPS_SHELL_SERVICE_ID:',
     'ZEROPS_SPICEDB_SERVICE_ID:',
+    'ZEROPS_SHELL_SERVICE_ID:',
   ]);
 });
 
 it("stops the other Outbox Worker mode's workers after this mode's workers deploy", () => {
   const workflow = Schema.decodeUnknownSync(DeployWorkflowSchema)(parse(readFileSync(workflowPath, 'utf-8')));
   const deployZerops = workflow.jobs['deploy-zerops'];
-  const steps = deployZerops.steps.map((step) => step.name);
+  const deployPlan = workflow.jobs['deploy-plan'];
+  const steps = deployPlan.steps.map((step) => step.name);
   const stop = deployZerops.steps.find((step) => step.name === "Stop the other Outbox Worker mode's workers");
 
   expect(stop?.run).toContain('active-composition:publish stop-service --setup "$setup"');
   // A mode switch changes no source, so running workers of the other mode make the plan reconcile.
-  const drift = deployZerops.steps.find(
+  const drift = deployPlan.steps.find(
     (step) => step.name === 'Detect Outbox Workers that do not match the Outbox Worker mode',
   );
   expect(drift?.run).toContain('active-composition:publish worker-mode-drift');
   expect(steps.indexOf('Detect Outbox Workers that do not match the Outbox Worker mode')).toBeLessThan(
     steps.indexOf('Generate topology-driven deployment impact plan'),
   );
-  const plan = deployZerops.steps.find((step) => step.name === 'Generate topology-driven deployment impact plan');
+  const plan = deployPlan.steps.find((step) => step.name === 'Generate topology-driven deployment impact plan');
   expect(plan?.run).toContain('plan_arguments+=(--reconcile-workers)');
-  expect(steps.indexOf("Stop the other Outbox Worker mode's workers")).toBeGreaterThan(
-    steps.indexOf('Publish the complete active Application Composition and restart its consumers'),
+  const deploySteps = deployZerops.steps.map((step) => step.name);
+  expect(
+    deploySteps.indexOf('Publish the complete active Application Composition and restart its consumers'),
+  ).toBeGreaterThanOrEqual(0);
+  expect(deploySteps.indexOf("Stop the other Outbox Worker mode's workers")).toBeGreaterThan(
+    deploySteps.indexOf('Publish the complete active Application Composition and restart its consumers'),
   );
 });
 
@@ -279,11 +287,13 @@ it('declares a public subdomain at service creation for every non-worker unit an
 });
 
 it('lets stage deploy failures fail the job, tolerating only best-effort log collection', () => {
-  const { steps } = Schema.decodeUnknownSync(DeployWorkflowSchema)(parse(readFileSync(workflowPath, 'utf-8'))).jobs[
-    'deploy-zerops'
-  ];
+  const { jobs } = Schema.decodeUnknownSync(DeployWorkflowSchema)(parse(readFileSync(workflowPath, 'utf-8')));
 
-  for (const step of steps) {
+  for (const step of [
+    ...jobs['deploy-plan'].steps,
+    ...jobs['deploy-migrations'].steps,
+    ...jobs['deploy-zerops'].steps,
+  ]) {
     const run = step.run ?? '';
     expect(run).not.toContain('enable-subdomain');
     expect(run.replaceAll(/zcli service log[^|]*\|\| true/gu, '')).not.toContain('|| true');

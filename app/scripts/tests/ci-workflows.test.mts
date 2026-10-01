@@ -7,8 +7,14 @@ import { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
-const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.Array(Schema.String) });
-const WorkflowSchema = Schema.Struct({ on: Schema.Struct({ pull_request: TriggerSchema, push: TriggerSchema }) });
+const TriggerSchema = Schema.Struct({ 'paths-ignore': Schema.optional(Schema.Array(Schema.String)) });
+const WorkflowSchema = Schema.Struct({
+  on: Schema.Struct({
+    merge_group: Schema.optional(Schema.Struct({ types: Schema.Array(Schema.String) })),
+    pull_request: TriggerSchema,
+    push: TriggerSchema,
+  }),
+});
 
 const readWorkflow = (name: string) =>
   Schema.decodeUnknownSync(WorkflowSchema)(
@@ -17,30 +23,40 @@ const readWorkflow = (name: string) =>
 
 /** The GitHub environment that holds the Cloudflare account token. */
 const EDGE_ENVIRONMENT = 'stage-edge';
-const gateWorkflows = ['ultramodern-workspace-gates.yml', 'quality-audit.yml'];
+const GATES_WORKFLOW = 'ultramodern-workspace-gates.yml';
 
 const skipsGates = (changedPaths: readonly string[], ignored: readonly string[]) =>
   changedPaths.every((changedPath) => ignored.some((pattern) => path.matchesGlob(changedPath, pattern)));
 
-it('skips the gate workflows for pushes and pull requests that change only repository-root documentation', () => {
-  for (const name of gateWorkflows) {
-    const workflow = readWorkflow(name);
-    for (const trigger of [workflow.on.push, workflow.on.pull_request]) {
-      const ignored = trigger['paths-ignore'];
-      expect(skipsGates(['docs/contexts/tax/CONTEXT.md', 'CONTEXT-MAP.md', 'README.md', 'AGENTS.md'], ignored)).toBe(
-        true,
-      );
-      for (const gatedPath of [
-        'app/tools/oxlint/effect-native/rules/index.mts',
-        'app/docs/architecture/DEPLOYMENT.md',
-        'app/AGENTS.md',
-        '.github/workflows/ultramodern-workspace-gates.yml',
-        'lefthook.yml',
-      ]) {
-        expect(skipsGates(['docs/index.md', gatedPath], ignored)).toBe(false);
-      }
+const ROOT_DOCUMENTATION_TRIGGERS = [
+  readWorkflow(GATES_WORKFLOW).on.push,
+  readWorkflow('quality-audit.yml').on.push,
+  readWorkflow('quality-audit.yml').on.pull_request,
+];
+
+it('deploys nothing and audits nothing for changes to repository-root documentation only', () => {
+  for (const trigger of ROOT_DOCUMENTATION_TRIGGERS) {
+    const ignored = trigger['paths-ignore'] ?? [];
+    expect(skipsGates(['docs/contexts/tax/CONTEXT.md', 'CONTEXT-MAP.md', 'README.md', 'AGENTS.md'], ignored)).toBe(
+      true,
+    );
+    for (const gatedPath of [
+      'app/tools/oxlint/effect-native/rules/index.mts',
+      'app/docs/architecture/DEPLOYMENT.md',
+      'app/AGENTS.md',
+      '.github/workflows/ultramodern-workspace-gates.yml',
+      'lefthook.yml',
+    ]) {
+      expect(skipsGates(['docs/index.md', gatedPath], ignored)).toBe(false);
     }
   }
+});
+
+it('reports the required Workspace gates check on every pull request and merge group', () => {
+  const workflow = readWorkflow(GATES_WORKFLOW);
+  // A filtered pull request would never report the check the main ruleset requires, and could never merge.
+  expect(workflow.on.pull_request['paths-ignore']).toBeUndefined();
+  expect(workflow.on.merge_group).toEqual({ types: ['checks_requested'] });
 });
 
 /** A GitHub Actions `${{ … }}` expression, written without JavaScript template placeholders. */
@@ -89,8 +105,11 @@ interface PlacementBuildInputs {
 }
 
 const EDGE_READINESS_JOB = 'edge-deploy-readiness';
+const MIGRATIONS_JOB = 'deploy-migrations';
 const DEPLOY_TARGET_JOB = 'deploy-target';
 const OUTBOX_WORKER_MODE_OUTPUT = expression('needs.deploy-target.outputs.outbox-worker-mode');
+const DEPLOY_TARGET_OUTPUT = expression('needs.deploy-target.outputs.target');
+const DEPLOY_ENVIRONMENT_OUTPUT = expression('needs.deploy-target.outputs.environment');
 
 const runStep = (script: string, environment: Readonly<Record<string, string>>) => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-workflow-step-'));
@@ -134,7 +153,7 @@ it('deploys to Cloudflare only when both the account and the deploy token are co
   expect(check?.env).toEqual({
     CLOUDFLARE_ACCOUNT_ID: expression('vars.CLOUDFLARE_ACCOUNT_ID'),
     CLOUDFLARE_API_TOKEN: expression('secrets.CLOUDFLARE_API_TOKEN'),
-    DEPLOY_TARGET: expression('needs.deploy-target.outputs.target'),
+    DEPLOY_TARGET: DEPLOY_TARGET_OUTPUT,
   });
   // A stage that deploys to Zerops only skips the edge; one that targets Cloudflare fails before any
   // Zerops change, since deploy-zerops would otherwise migrate and swap workers beside the old Workers.
@@ -186,9 +205,10 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   const edge = jobs['deploy-cloudflare'];
   // A separate environment keeps a failed or skipped edge deploy from hiding behind a successful
   // Zerops deployment of the same revision.
-  expect(jobs['deploy-zerops'].environment).toBe(expression('needs.deploy-target.outputs.environment'));
+  expect(jobs['deploy-zerops'].environment).toBe(DEPLOY_ENVIRONMENT_OUTPUT);
   expect(edge.environment).toBe(EDGE_ENVIRONMENT);
-  expect(edge.needs).toEqual([DEPLOY_TARGET_JOB, 'deploy-zerops', EDGE_READINESS_JOB]);
+  // The edge waits only for the migrations, and deploys beside the Zerops units.
+  expect(edge.needs).toEqual([DEPLOY_TARGET_JOB, MIGRATIONS_JOB, EDGE_READINESS_JOB]);
   expect(edge.if).toBe("needs.edge-deploy-readiness.outputs.configured == 'true'");
   expect(edge.env).toBeUndefined();
   const byName = new Map(edge.steps.map((step) => [step.name, step]));
@@ -265,6 +285,22 @@ it('bounds every edge step that changes or proves Workers and reports retirement
 const TargetWorkflowSchema = Schema.Struct({
   jobs: Schema.Struct({
     'deploy-cloudflare': Schema.Struct({ needs: Schema.Array(Schema.String) }),
+    'deploy-migrations': Schema.Struct({
+      concurrency: Schema.Struct({ group: Schema.String }),
+      env: Schema.Record(Schema.String, Schema.String),
+      environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
+      if: Schema.String,
+      needs: Schema.Array(Schema.String),
+      steps: Schema.Array(WorkflowStepSchema),
+    }),
+    'deploy-plan': Schema.Struct({
+      env: Schema.Record(Schema.String, Schema.String),
+      environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
+      if: Schema.String,
+      needs: Schema.Array(Schema.String),
+      outputs: Schema.Record(Schema.String, Schema.String),
+      steps: Schema.Array(WorkflowStepSchema),
+    }),
     'deploy-target': Schema.Struct({
       environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
       if: Schema.String,
@@ -287,9 +323,21 @@ const TargetWorkflowSchema = Schema.Struct({
       needs: Schema.Array(Schema.String),
       steps: Schema.Array(WorkflowStepSchema),
     }),
+    'queue-proof': Schema.Struct({
+      if: Schema.String,
+      outputs: Schema.Record(Schema.String, Schema.String),
+      permissions: Schema.Record(Schema.String, Schema.String),
+      steps: Schema.Array(WorkflowStepSchema),
+    }),
     'sync-edge-composition': Schema.Struct({
       environment: Schema.Struct({ deployment: Schema.Boolean, name: Schema.String }),
       if: Schema.String,
+      needs: Schema.Array(Schema.String),
+      steps: Schema.Array(WorkflowStepSchema),
+    }),
+    'workspace-gates': Schema.Struct({
+      if: Schema.String,
+      name: Schema.String,
       needs: Schema.Array(Schema.String),
       steps: Schema.Array(WorkflowStepSchema),
     }),
@@ -398,27 +446,54 @@ it('requires each configured environment to choose its Outbox Worker mode, indep
 
 it('deploys the whole topology to Zerops, or only its infrastructure and outbox workers beside the edge', () => {
   const { jobs } = readTargetWorkflow();
+  const plan = jobs['deploy-plan'];
+  const migrations = jobs[MIGRATIONS_JOB];
   const zerops = jobs['deploy-zerops'];
-  expect(zerops.if).toContain("needs.deploy-target.outputs.configured == 'true'");
-  // A skipped edge check (production) must not skip the job, so every gate is checked by name.
-  expect(zerops.if).toMatch(/^!cancelled\(\)/u);
-  for (const need of zerops.needs.filter((name) => ![DEPLOY_TARGET_JOB, EDGE_READINESS_JOB].includes(name))) {
-    expect(zerops.if).toContain(`needs.${need}.result == 'success'`);
-  }
+  // The plan needs no gate, so it is ready when the gates pass. A skipped edge check (production) must not skip it.
+  expect(plan.if).toMatch(/^!cancelled\(\)/u);
+  expect(plan.if).toContain("needs.deploy-target.outputs.configured == 'true'");
   // The Cloudflare target mutates Zerops only once the edge deploy is configured.
-  expect(zerops.if).toContain(
+  expect(plan.if).toContain(
     "(needs.deploy-target.outputs.target == 'zerops' || needs.edge-deploy-readiness.outputs.configured == 'true')",
   );
-  expect(zerops.needs).toContain(DEPLOY_TARGET_JOB);
-  expect(zerops.needs).toContain(EDGE_READINESS_JOB);
-  expect(zerops.concurrency.group).toBe(`zerops-${DEPLOY_ENVIRONMENT_EXPRESSION}`);
-  expect(zerops.env.DEPLOY_TARGET).toBe(expression('needs.deploy-target.outputs.target'));
+  expect(plan.needs).toEqual([DEPLOY_TARGET_JOB, EDGE_READINESS_JOB]);
+  // Only deploy-zerops records the environment's deployment, so a plan or migration before a failed deploy
+  // never moves the diff base.
+  expect(plan.environment).toEqual({ deployment: false, name: DEPLOY_ENVIRONMENT_OUTPUT });
+  expect(migrations.environment).toEqual(plan.environment);
+  expect(zerops.environment).toBe(DEPLOY_ENVIRONMENT_OUTPUT);
+  // Nothing changes on Zerops before the gates pass or prove skipped on the merge queue's proof.
+  expect(migrations.needs).toEqual(['workspace-gates', DEPLOY_TARGET_JOB, 'deploy-plan']);
+  expect(migrations.if).toBe(
+    expression("!cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success'"),
+  );
+  expect(zerops.needs).toEqual([DEPLOY_TARGET_JOB, 'deploy-plan', MIGRATIONS_JOB]);
+  expect(zerops.if).toBe(expression(`!cancelled() && needs.${MIGRATIONS_JOB}.result == 'success'`));
+  for (const job of [migrations, zerops]) {
+    expect(job.concurrency.group).toBe(`zerops-${DEPLOY_ENVIRONMENT_EXPRESSION}`);
+  }
+  expect(plan.env.DEPLOY_TARGET).toBe(DEPLOY_TARGET_OUTPUT);
+  expect(plan.env.OUTBOX_WORKER_MODE).toBe(OUTBOX_WORKER_MODE_OUTPUT);
+  expect(zerops.env.DEPLOY_TARGET).toBe(DEPLOY_TARGET_OUTPUT);
   expect(zerops.env.OUTBOX_WORKER_MODE).toBe(OUTBOX_WORKER_MODE_OUTPUT);
   // Every service ID comes from the deploying environment's own variables.
-  for (const [name, value] of Object.entries(zerops.env).filter(([key]) => key.startsWith('ZEROPS_'))) {
+  for (const [name, value] of Object.entries({ ...migrations.env, ...zerops.env }).filter(([key]) =>
+    key.startsWith('ZEROPS_'),
+  )) {
     expect(value).toBe(expression(`vars.${name}`));
   }
-  const byName = new Map(zerops.steps.map((step) => [step.name, step]));
+  // Migrations and SpiceDB run alone, before the edge and the Zerops units; a plan without them only skips steps.
+  const migrationSteps = new Map(migrations.steps.map((step) => [step.name, step]));
+  expect(migrationSteps.get('Run verified database migrations')?.if).toBe(
+    "needs.deploy-plan.outputs.migrator == 'true'",
+  );
+  expect(migrationSteps.get('Deploy SpiceDB when affected')?.if).toBe("needs.deploy-plan.outputs.spicedb == 'true'");
+  expect(migrations.env.INFRASTRUCTURE).toBe(
+    expression("needs.deploy-plan.outputs.migrator == 'true' || needs.deploy-plan.outputs.spicedb == 'true'"),
+  );
+  expect(zerops.steps.map(({ name }) => name)).not.toContain('Run verified database migrations');
+  expect(zerops.steps.map(({ name }) => name)).not.toContain('Deploy SpiceDB when affected');
+  const byName = new Map(plan.steps.map((step) => [step.name, step]));
   const planRun = byName.get('Generate topology-driven deployment impact plan')?.run;
   expect(byName.get("Resolve the environment's last successful deployment")?.run).toContain(
     '--environment "$DEPLOY_ENVIRONMENT"',
@@ -427,8 +502,16 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   // The Outbox Worker mode, not the deploy target, chooses the workers the plan deploys and stops.
   expect(planRun).toContain('--outbox-worker-mode "$OUTBOX_WORKER_MODE"');
   expect(planRun).not.toContain('--deploy-target');
+  expect(plan.outputs).toEqual({
+    any: expression('steps.units.outputs.any'),
+    migrator: expression('steps.impact.outputs.migrator'),
+    providers: expression('steps.units.outputs.providers'),
+    shell: expression('steps.units.outputs.shell'),
+    spicedb: expression('steps.impact.outputs.spicedb'),
+    'stopped-workers': expression('steps.impact.outputs.stopped_workers'),
+  });
   const select = byName.get('Select the Zerops units of the deploy target');
-  const plan = {
+  const impact = {
     MIGRATOR: 'false',
     PROVIDERS_JSON: '["contacts","contacts-worker"]',
     SHELL: 'true',
@@ -436,37 +519,37 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
     WORKERS_JSON: '["contacts-worker"]',
   };
   const units = (environment: Readonly<Record<string, string>>) => runStep(select?.run ?? 'exit 1', environment);
-  expect(units({ ...plan, DEPLOY_TARGET: 'zerops' })).toEqual({
+  expect(units({ ...impact, DEPLOY_TARGET: 'zerops' })).toEqual({
     any: 'true',
-    providers: plan.PROVIDERS_JSON,
+    providers: impact.PROVIDERS_JSON,
     shell: 'true',
   });
-  expect(units({ ...plan, DEPLOY_TARGET: 'cloudflare' })).toEqual({
+  expect(units({ ...impact, DEPLOY_TARGET: 'cloudflare' })).toEqual({
     any: 'true',
-    providers: plan.WORKERS_JSON,
+    providers: impact.WORKERS_JSON,
     shell: 'false',
   });
-  expect(units({ ...plan, DEPLOY_TARGET: 'cloudflare', WORKERS_JSON: '[]' })).toEqual({
+  expect(units({ ...impact, DEPLOY_TARGET: 'cloudflare', WORKERS_JSON: '[]' })).toEqual({
     any: 'false',
     providers: '[]',
     shell: 'false',
   });
-  // Every Zerops push and publication after the selection follows the selected units.
-  const selectedIndex = select === undefined ? -1 : zerops.steps.indexOf(select);
-  expect(selectedIndex).toBeGreaterThan(0);
-  for (const step of zerops.steps.slice(selectedIndex + 1)) {
+  // Every Zerops push and publication follows the selected units the plan hands over.
+  expect(select?.id).toBe('units');
+  for (const step of [...migrations.steps, ...zerops.steps]) {
     expect(`${step.if ?? ''}${JSON.stringify(step.env ?? {})}`).not.toMatch(
       /steps\.impact\.outputs\.(?:any|providers|shell)/u,
     );
     expect(step.run ?? '').not.toContain('--environment stage');
   }
-  // Only stage deploys to the edge, after its Zerops services.
+  // Only stage deploys to the edge, after its migrations and beside its Zerops services.
   expect(jobs['edge-deploy-readiness'].if).toBe("needs.deploy-target.outputs.environment == 'stage'");
-  expect(jobs['deploy-cloudflare'].needs).toEqual([DEPLOY_TARGET_JOB, 'deploy-zerops', EDGE_READINESS_JOB]);
+  expect(jobs['deploy-cloudflare'].needs).toEqual([DEPLOY_TARGET_JOB, MIGRATIONS_JOB, EDGE_READINESS_JOB]);
   // On Cloudflare the snapshot is published again from the new Workers, outside the deploy history.
   const publish = jobs['publish-edge-composition'];
   expect(publish.if).toBe("needs.deploy-target.outputs.target == 'cloudflare'");
-  expect(publish.needs).toEqual(['deploy-target', 'deploy-cloudflare']);
+  // It restarts the Zerops consumers, so it waits for deploy-zerops too.
+  expect(publish.needs).toEqual(['deploy-target', 'deploy-zerops', 'deploy-cloudflare']);
   expect(publish.environment).toEqual({ deployment: false, name: 'stage' });
   expect(publish.env.DEPLOY_TARGET).toBe('cloudflare');
   expect(publish.env.OUTBOX_WORKER_MODE).toBe(OUTBOX_WORKER_MODE_OUTPUT);
@@ -476,10 +559,11 @@ it('deploys the whole topology to Zerops, or only its infrastructure and outbox 
   expect(edgePublication?.run).toContain('publish --environment stage --restart-consumers');
   expect(edgePublication?.run).toContain('--snapshot-file "$SNAPSHOT_FILE"');
   // A new Worker is unobservable before deploy-cloudflare ships it, so deploy-zerops leaves publication to it.
-  expect(byName.get('Publish the complete active Application Composition and restart its consumers')?.if).toContain(
-    "env.DEPLOY_TARGET == 'zerops'",
-  );
-  expect(byName.get('Publish the active Application Composition before its consumers deploy')?.run).toContain(
+  const zeropsSteps = new Map(zerops.steps.map((step) => [step.name, step]));
+  expect(
+    zeropsSteps.get('Publish the complete active Application Composition and restart its consumers')?.if,
+  ).toContain("env.DEPLOY_TARGET == 'zerops'");
+  expect(zeropsSteps.get('Publish the active Application Composition before its consumers deploy')?.run).toContain(
     'if [[ "$DEPLOY_TARGET" == cloudflare ]]; then',
   );
   // Placed Worker consumers read each publication from the composition KV namespace, written from the one environment with the token.
@@ -494,4 +578,78 @@ it('hands the edge deployment planner the Outbox Worker mode it requires', () =>
   const plan = edge.steps.find((step) => step.name === PLAN_STEP);
   expect(plan?.env?.OUTBOX_WORKER_MODE).toBe(OUTBOX_WORKER_MODE_OUTPUT);
   expect(plan?.run).toContain('--outbox-worker-mode "$OUTBOX_WORKER_MODE"');
+});
+
+const GATE_JOBS = ['workspace-gate', 'static-contracts', 'service-integration', 'node-runtime', 'cloudflare-runtime'];
+const GatedJobsSchema = Schema.Struct({
+  jobs: Schema.Record(
+    Schema.String,
+    Schema.Struct({ if: Schema.optional(Schema.String), needs: Schema.optional(Schema.Array(Schema.String)) }),
+  ),
+});
+
+/** Whether a workflow step's script succeeds when Actions runs it with these variables. */
+const stepPasses = (script: string, environment: Readonly<Record<string, string>>) => {
+  try {
+    execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', script], {
+      env: { PATH: '/usr/bin:/bin', ...environment },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+it('skips the gates on main only for a commit the merge queue already proved', () => {
+  const workflow = readTargetWorkflow();
+  const proof = workflow.jobs['queue-proof'];
+  // Only a push or dispatch on main can carry a proven commit; pull requests and merge groups run every gate.
+  expect(proof.if).toBe(
+    "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'",
+  );
+  expect(proof.permissions).toEqual({ actions: 'read' });
+  expect(proof.outputs.proven).toBe(expression('steps.proof.outputs.proven'));
+  // The proof is this workflow's successful merge group run on this exact commit, read from GitHub.
+  const lookup = proof.steps.find(({ id }) => id === 'proof')?.run ?? '';
+  expect(lookup).toContain('runs?head_sha=$GITHUB_SHA&event=merge_group&status=success');
+  expect(lookup).toContain('actions/runs/$GITHUB_RUN_ID');
+  const { jobs } = Schema.decodeUnknownSync(GatedJobsSchema)(
+    parse(readFileSync(new URL(`../../../.github/workflows/${GATES_WORKFLOW}`, import.meta.url), 'utf-8')),
+  );
+  for (const gate of GATE_JOBS) {
+    expect(jobs[gate]?.needs).toEqual(['queue-proof']);
+    expect(jobs[gate]?.if).toBe(expression("!cancelled() && needs.queue-proof.outputs.proven != 'true'"));
+  }
+});
+
+it('requires every gate, or the merge queue proof, in the one Workspace gates check', () => {
+  const gates = readTargetWorkflow().jobs['workspace-gates'];
+  // The main ruleset requires this check by name.
+  expect(gates.name).toBe('Workspace gates');
+  expect(gates.if).toBe(expression('always()'));
+  expect(gates.needs).toEqual(['queue-proof', ...GATE_JOBS]);
+  const script = gates.steps.at(-1)?.run ?? 'exit 1';
+  const needs = (proof: { proven?: string; result: string }, results: readonly string[]) =>
+    JSON.stringify({
+      'queue-proof': { outputs: proof.proven === undefined ? {} : { proven: proof.proven }, result: proof.result },
+      ...Object.fromEntries(GATE_JOBS.map((gate, index) => [gate, { outputs: {}, result: results[index] }])),
+    });
+  const allPassed = GATE_JOBS.map(() => 'success');
+  const allSkipped = GATE_JOBS.map(() => 'skipped');
+  // A pull request or merge group: no proof job, every gate must pass.
+  expect(stepPasses(script, { NEEDS_JSON: needs({ result: 'skipped' }, allPassed) })).toBe(true);
+  expect(stepPasses(script, { NEEDS_JSON: needs({ result: 'skipped' }, ['failure', ...allPassed.slice(1)]) })).toBe(
+    false,
+  );
+  expect(stepPasses(script, { NEEDS_JSON: needs({ result: 'skipped' }, ['cancelled', ...allPassed.slice(1)]) })).toBe(
+    false,
+  );
+  expect(stepPasses(script, { NEEDS_JSON: needs({ result: 'skipped' }, allSkipped) })).toBe(false);
+  // A proven commit on main: every gate skipped.
+  expect(stepPasses(script, { NEEDS_JSON: needs({ proven: 'true', result: 'success' }, allSkipped) })).toBe(true);
+  // An unproven commit on main runs the gates, and so does a failed lookup, which also fails the check.
+  expect(stepPasses(script, { NEEDS_JSON: needs({ proven: 'false', result: 'success' }, allPassed) })).toBe(true);
+  expect(stepPasses(script, { NEEDS_JSON: needs({ proven: 'false', result: 'success' }, allSkipped) })).toBe(false);
+  expect(stepPasses(script, { NEEDS_JSON: needs({ result: 'failure' }, allPassed) })).toBe(false);
 });
