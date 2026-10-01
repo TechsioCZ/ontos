@@ -3,6 +3,7 @@ import { expect, it } from 'effect-rstest';
 
 import {
   STAGE_DEMO_ACCOUNTS,
+  STAGE_DEMO_RETIRED_ACCOUNT_EMAILS,
   classifyExactStageDemoRecord,
   parseStageDemoBootstrapConfig,
 } from '../../api/auth/stage-demo-bootstrap-contract.ts';
@@ -13,8 +14,10 @@ const validEnvironment = {
   DATABASE_ADMIN_URL: 'postgresql://db:password@db:5432/db',
   SPICEDB_ENDPOINT: 'spicedb:50051',
   SPICEDB_PRESHARED_KEY: 'stage-spicedb-key',
-  STAGE_DEMO_PASSWORD: 'test-only-bootstrap-password',
-  STAGE_SIAMPARK_PASSWORD: 'test-only-siampark-password',
+  STAGE_AKROS_ADMIN_PASSWORD: 'test-only-akros-admin-password',
+  STAGE_AKROS_DEMO_PASSWORD: 'test-only-akros-demo-password',
+  STAGE_TECHSIO_ADMIN_PASSWORD: 'test-only-techsio-admin-password',
+  STAGE_TECHSIO_DEMO_PASSWORD: 'test-only-techsio-demo-password',
   ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: 'stage',
 } as const;
 it.effect('accepts the complete stage-only demo bootstrap configuration', () =>
@@ -23,13 +26,23 @@ it.effect('accepts the complete stage-only demo bootstrap configuration', () =>
       accounts: [
         {
           email: 'demo@test.com',
-          password: 'test-only-bootstrap-password',
+          password: 'test-only-techsio-demo-password',
           principalDisplayName: 'Techsio Demo',
         },
         {
-          email: 'siampark01@test.com',
-          password: 'test-only-siampark-password',
-          principalDisplayName: 'Siampark 01',
+          email: 'admin@techsio.test',
+          password: 'test-only-techsio-admin-password',
+          principalDisplayName: 'Techsio Admin',
+        },
+        {
+          email: 'demo@akros.test',
+          password: 'test-only-akros-demo-password',
+          principalDisplayName: 'Akros Demo',
+        },
+        {
+          email: 'admin@akros.test',
+          password: 'test-only-akros-admin-password',
+          principalDisplayName: 'Akros Admin',
         },
       ],
       authBaseUrl: 'https://shell.stage.example.test',
@@ -38,20 +51,31 @@ it.effect('accepts the complete stage-only demo bootstrap configuration', () =>
     });
   }),
 );
-it.effect('defines both exact stage accounts without storing their passwords', () =>
+it.effect('defines the four exact stage accounts without storing their passwords', () =>
   Effect.sync(() => {
     expect(STAGE_DEMO_ACCOUNTS).toEqual([
       {
         email: 'demo@test.com',
-        passwordEnvironmentKey: 'STAGE_DEMO_PASSWORD',
+        passwordEnvironmentKey: 'STAGE_TECHSIO_DEMO_PASSWORD',
         principalDisplayName: 'Techsio Demo',
       },
       {
-        email: 'siampark01@test.com',
-        passwordEnvironmentKey: 'STAGE_SIAMPARK_PASSWORD',
-        principalDisplayName: 'Siampark 01',
+        email: 'admin@techsio.test',
+        passwordEnvironmentKey: 'STAGE_TECHSIO_ADMIN_PASSWORD',
+        principalDisplayName: 'Techsio Admin',
+      },
+      {
+        email: 'demo@akros.test',
+        passwordEnvironmentKey: 'STAGE_AKROS_DEMO_PASSWORD',
+        principalDisplayName: 'Akros Demo',
+      },
+      {
+        email: 'admin@akros.test',
+        passwordEnvironmentKey: 'STAGE_AKROS_ADMIN_PASSWORD',
+        principalDisplayName: 'Akros Admin',
       },
     ]);
+    expect(STAGE_DEMO_RETIRED_ACCOUNT_EMAILS).toEqual(['siampark01@test.com']);
   }),
 );
 it.effect('refuses to provision outside stage or without an operator-supplied password', () =>
@@ -64,26 +88,18 @@ it.effect('refuses to provision outside stage or without an operator-supplied pa
         }),
       ),
     ).toMatchObject({ reason: expect.stringMatching(/stage environment/u) });
-    expect(
-      yield* Effect.flip(
-        parseStageDemoBootstrapConfig({
-          ...validEnvironment,
-          STAGE_DEMO_PASSWORD: undefined,
-        }),
-      ),
-    ).toMatchObject({
-      reason: expect.stringMatching(/STAGE_DEMO_PASSWORD/u),
-    });
-    expect(
-      yield* Effect.flip(
-        parseStageDemoBootstrapConfig({
-          ...validEnvironment,
-          STAGE_SIAMPARK_PASSWORD: undefined,
-        }),
-      ),
-    ).toMatchObject({
-      reason: expect.stringMatching(/STAGE_SIAMPARK_PASSWORD/u),
-    });
+    for (const key of [
+      'STAGE_TECHSIO_DEMO_PASSWORD',
+      'STAGE_TECHSIO_ADMIN_PASSWORD',
+      'STAGE_AKROS_DEMO_PASSWORD',
+      'STAGE_AKROS_ADMIN_PASSWORD',
+    ] as const) {
+      expect(
+        yield* Effect.flip(parseStageDemoBootstrapConfig({ ...validEnvironment, [key]: undefined })),
+      ).toMatchObject({
+        reason: expect.stringMatching(new RegExp(key, 'u')),
+      });
+    }
   }),
 );
 it.effect('treats an exact record as idempotent and rejects conflicting state', () =>

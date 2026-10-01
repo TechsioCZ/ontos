@@ -7,8 +7,14 @@ import { toSpiceDbActionObjectId } from '../permissions/service.ts';
 
 export const ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID = '00000000-0000-4000-8000-000000000019';
 
+/** Fixed stage account roles; the stage explicit Action policy names the roles that hold explicit Actions. */
+export const ActionAuthorizationAccountRoleSchema = Schema.Literals(['admin', 'demo']);
+export type ActionAuthorizationAccountRole = typeof ActionAuthorizationAccountRoleSchema.Type;
+
 export interface ActionAuthorizationContext {
   readonly principalId: string;
+  /** Fixed stage accounts carry a role; it selects their explicit Action grants. */
+  readonly role?: ActionAuthorizationAccountRole;
   readonly tenantId: string;
 }
 
@@ -17,9 +23,27 @@ export interface ActionAuthorizationProvisioningInput {
   readonly contexts: readonly ActionAuthorizationContext[];
   readonly deniedPrincipalId?: string;
   readonly explicitActionAssertions?: readonly ActionAuthorizationExplicitAssertionSet[];
+  readonly explicitActionGrants?: readonly ActionAuthorizationExplicitGrant[];
 }
 
-interface ActionAuthorizationExplicitAssertionSet {
+/** A narrow direct-Principal executor grant for one `explicit` Action. */
+export interface ActionAuthorizationExplicitGrant {
+  readonly actionKey: string;
+  readonly principalIds: readonly string[];
+}
+
+/** Source-controlled rule: which fixed account roles hold every `explicit` Action. */
+export interface ActionAuthorizationExplicitPolicy {
+  readonly allowedRoles: readonly ActionAuthorizationAccountRole[];
+}
+
+/** Per-Action assertions and direct grants expanded from an {@link ActionAuthorizationExplicitPolicy}. */
+export interface ActionAuthorizationExplicitDerivation {
+  readonly explicitActionAssertions: readonly ActionAuthorizationExplicitAssertionSet[];
+  readonly explicitActionGrants: readonly ActionAuthorizationExplicitGrant[];
+}
+
+export interface ActionAuthorizationExplicitAssertionSet {
   readonly actionKey: string;
   readonly assertions: readonly {
     readonly expected: 'allowed' | 'denied';
@@ -81,7 +105,7 @@ const hasInvalidActions = (actions: readonly ActionAuthorizationProvisioningActi
 const hasInvalidContexts = (contexts: readonly ActionAuthorizationContext[]): boolean =>
   contexts.length === 0 ||
   contexts.some(({ principalId, tenantId }) => principalId.length === 0 || tenantId.length === 0) ||
-  new Set(contexts.map(({ tenantId }) => tenantId)).size !== contexts.length;
+  new Set(contexts.map(({ principalId }) => principalId)).size !== contexts.length;
 
 const isInvalidExplicitAssertionSet = (
   { actionKey, assertions }: ActionAuthorizationExplicitAssertionSet,
@@ -104,9 +128,38 @@ const hasInvalidExplicitAssertions = (
   explicitActionAssertions.some((assertionSet) => isInvalidExplicitAssertionSet(assertionSet, explicitActionKeys)) ||
   new Set(explicitActionAssertions.map(({ actionKey }) => actionKey)).size !== explicitActionAssertions.length;
 
+const hasInvalidExplicitGrants = (
+  explicitActionGrants: readonly ActionAuthorizationExplicitGrant[],
+  explicitActionAssertions: readonly ActionAuthorizationExplicitAssertionSet[],
+  contexts: readonly ActionAuthorizationContext[],
+): boolean => {
+  const contextPrincipalIds = new Set(contexts.map(({ principalId }) => principalId));
+  const assertionsByAction = new Map(
+    explicitActionAssertions.map(({ actionKey, assertions }) => [actionKey, assertions] as const),
+  );
+  return (
+    new Set(explicitActionGrants.map(({ actionKey }) => actionKey)).size !== explicitActionGrants.length ||
+    explicitActionGrants.some(({ actionKey, principalIds }) => {
+      const assertions = assertionsByAction.get(actionKey);
+      return (
+        assertions === undefined ||
+        principalIds.length === 0 ||
+        new Set(principalIds).size !== principalIds.length ||
+        principalIds.some(
+          (principalId) =>
+            !contextPrincipalIds.has(principalId) ||
+            !assertions.some((assertion) => assertion.principalId === principalId && assertion.expected === 'allowed'),
+        )
+      );
+    })
+  );
+};
+
 const assertProvisioningInput = (input: ActionAuthorizationProvisioningInput) => {
   const actions = input.actions.toSorted((left, right) => left.actionKey.localeCompare(right.actionKey));
-  const contexts = input.contexts.toSorted((left, right) => left.tenantId.localeCompare(right.tenantId));
+  const contexts = input.contexts.toSorted(
+    (left, right) => left.tenantId.localeCompare(right.tenantId) || left.principalId.localeCompare(right.principalId),
+  );
   if (hasInvalidActions(actions)) {
     throw failure('action_authorization_input_invalid', 'Current Action discovery must produce a non-empty unique set');
   }
@@ -138,7 +191,53 @@ const assertProvisioningInput = (input: ActionAuthorizationProvisioningInput) =>
       'Each explicit Action requires unique recorded allowed and denied verification assertions',
     );
   }
-  return { actions, contexts, deniedPrincipalId, explicitActionAssertions };
+  const explicitActionGrants = (input.explicitActionGrants ?? []).toSorted((left, right) =>
+    left.actionKey.localeCompare(right.actionKey),
+  );
+  if (hasInvalidExplicitGrants(explicitActionGrants, explicitActionAssertions, contexts)) {
+    throw failure(
+      'action_authorization_input_invalid',
+      'Explicit Action grants must name fixed Principals that the recorded assertions allow',
+    );
+  }
+  return { actions, contexts, deniedPrincipalId, explicitActionAssertions, explicitActionGrants };
+};
+
+/**
+ * Expands the source-controlled explicit Action rule into per-Action grants and assertions.
+ * Fixed accounts whose role is allowed receive a direct executor grant; every other fixed account
+ * and the synthetic non-member are recorded as denied.
+ */
+export const deriveExplicitActionAuthorization = (
+  actions: readonly ActionAuthorizationProvisioningAction[],
+  contexts: readonly ActionAuthorizationContext[],
+  policy: ActionAuthorizationExplicitPolicy,
+  deniedPrincipalId: string = ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
+): ActionAuthorizationExplicitDerivation => {
+  const allowedRoles = new Set(policy.allowedRoles);
+  const allowedPrincipalIds = contexts.flatMap(({ principalId, role }) =>
+    role !== undefined && allowedRoles.has(role) ? [principalId] : [],
+  );
+  const deniedPrincipalIds = [
+    ...contexts.flatMap(({ principalId, role }) => (role !== undefined && allowedRoles.has(role) ? [] : [principalId])),
+    deniedPrincipalId,
+  ];
+  const explicitActionKeys = actions.flatMap(({ actionKey, provisioning }) =>
+    provisioning === 'explicit' ? [actionKey] : [],
+  );
+  return {
+    explicitActionAssertions: explicitActionKeys.map((actionKey) => ({
+      actionKey,
+      assertions: [
+        ...allowedPrincipalIds.map((principalId) => ({ expected: 'allowed' as const, principalId })),
+        ...deniedPrincipalIds.map((principalId) => ({ expected: 'denied' as const, principalId })),
+      ],
+    })),
+    explicitActionGrants:
+      allowedPrincipalIds.length === 0
+        ? []
+        : explicitActionKeys.map((actionKey) => ({ actionKey, principalIds: allowedPrincipalIds })),
+  };
 };
 
 const tenantAccessRequest = (context: ActionAuthorizationContext) =>
@@ -177,8 +276,8 @@ export const buildActionAuthorizationRelationships = (
   actionKeys: readonly string[],
   contexts: readonly ActionAuthorizationContext[],
 ): readonly v1.Relationship[] =>
-  contexts
-    .flatMap(({ tenantId }) =>
+  [...new Set(contexts.map(({ tenantId }) => tenantId))]
+    .flatMap((tenantId) =>
       actionKeys.map((actionKey) =>
         v1.Relationship.create({
           relation: 'executor',
@@ -192,6 +291,33 @@ export const buildActionAuthorizationRelationships = (
               objectType: 'tenant',
             }),
             optionalRelation: 'member',
+          }),
+        }),
+      ),
+    )
+    .toSorted((left, right) => {
+      const leftKey = `${left.resource?.objectId ?? ''}:${left.subject?.object?.objectId ?? ''}`;
+      const rightKey = `${right.resource?.objectId ?? ''}:${right.subject?.object?.objectId ?? ''}`;
+      return leftKey.localeCompare(rightKey);
+    });
+
+export const buildExplicitActionGrantRelationships = (
+  explicitActionGrants: readonly ActionAuthorizationExplicitGrant[],
+): readonly v1.Relationship[] =>
+  explicitActionGrants
+    .flatMap(({ actionKey, principalIds }) =>
+      principalIds.map((principalId) =>
+        v1.Relationship.create({
+          relation: 'executor',
+          resource: v1.ObjectReference.create({
+            objectId: toSpiceDbActionObjectId(actionKey),
+            objectType: 'action',
+          }),
+          subject: v1.SubjectReference.create({
+            object: v1.ObjectReference.create({
+              objectId: principalId,
+              objectType: 'principal',
+            }),
           }),
         }),
       ),
@@ -259,7 +385,7 @@ export const provisionActionAuthorization = Effect.fn('ActionAuthorizationProvis
     client: ActionAuthorizationProvisioningClient,
     input: ActionAuthorizationProvisioningInput,
   ): Effect.fn.Return<ActionAuthorizationProvisioningResult, ActionAuthorizationProvisioningError> {
-    const { actions, contexts, deniedPrincipalId, explicitActionAssertions } = yield* Effect.try({
+    const { actions, contexts, deniedPrincipalId, explicitActionAssertions, explicitActionGrants } = yield* Effect.try({
       catch: (error) => (Schema.is(ActionAuthorizationProvisioningError)(error) ? error : serviceFailure(error)),
       try: () => assertProvisioningInput(input),
     });
@@ -279,11 +405,32 @@ export const provisionActionAuthorization = Effect.fn('ActionAuthorizationProvis
         ),
       { concurrency: 1, discard: true },
     );
+    yield* Effect.forEach(
+      contexts,
+      (context) =>
+        Effect.forEach(
+          [...new Set(contexts.map(({ tenantId }) => tenantId))].filter((tenantId) => tenantId !== context.tenantId),
+          (otherTenantId) =>
+            checkNoPermission(
+              client,
+              tenantAccessRequest({ principalId: context.principalId, tenantId: otherTenantId }),
+              failure(
+                'action_authorization_verification_failed',
+                'A fixed provisioning Principal can access another fixed Tenant',
+              ),
+            ),
+          { concurrency: 1, discard: true },
+        ),
+      { concurrency: 1, discard: true },
+    );
 
     const defaultActionKeys = actions.flatMap(({ actionKey, provisioning }) =>
       provisioning === 'tenant_membership_default' ? [actionKey] : [],
     );
-    const relationships = buildActionAuthorizationRelationships(defaultActionKeys, contexts);
+    const relationships = [
+      ...buildActionAuthorizationRelationships(defaultActionKeys, contexts),
+      ...buildExplicitActionGrantRelationships(explicitActionGrants),
+    ];
     yield* callClient(
       client.writeRelationships(
         v1.WriteRelationshipsRequest.create({
@@ -348,7 +495,7 @@ export const provisionActionAuthorization = Effect.fn('ActionAuthorizationProvis
     return {
       actionCount: actions.length,
       grantCount: relationships.length,
-      tenantCount: contexts.length,
+      tenantCount: new Set(contexts.map(({ tenantId }) => tenantId)).size,
     };
   },
 );

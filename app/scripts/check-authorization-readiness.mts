@@ -404,6 +404,13 @@ const FixedAuthorizationContextSchema = Schema.Struct({
   approvalReference: Schema.String,
   approvalStatus: Schema.Literals(['approved', 'pending']),
   environment: AuthorizationEnvironmentSchema,
+  explicitActionPolicy: Schema.optional(
+    Schema.Struct({
+      allowedRoles: Schema.Array(Schema.Literals(['admin', 'demo'])),
+      decisionReference: Schema.String,
+    }),
+  ),
+  fixedTenants: Schema.optional(Schema.Array(Schema.String)),
   gatewayAudiences: Schema.Array(Schema.String),
   minimumObservationSeconds: Schema.Number,
   moduleStateVersion: Schema.String,

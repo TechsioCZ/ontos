@@ -32,9 +32,19 @@ describe('stage-demo-bootstrap', () => {
               principalDisplayName: 'Password reset fixture',
             },
             {
-              email: `unused-${randomUUID()}@example.test`,
+              email: `unused-1-${randomUUID()}@example.test`,
               password: randomUUID(),
-              principalDisplayName: 'Unused fixture',
+              principalDisplayName: 'Unused fixture 1',
+            },
+            {
+              email: `unused-2-${randomUUID()}@example.test`,
+              password: randomUUID(),
+              principalDisplayName: 'Unused fixture 2',
+            },
+            {
+              email: `unused-3-${randomUUID()}@example.test`,
+              password: randomUUID(),
+              principalDisplayName: 'Unused fixture 3',
             },
           ],
           authBaseUrl: baseConfiguration.baseUrl,
@@ -133,6 +143,16 @@ describe('stage-demo-bootstrap', () => {
                   email: `stage-second-${randomUUID()}@example.test`,
                   password: randomUUID(),
                   principalDisplayName: 'Second',
+                },
+                {
+                  email: `stage-third-${randomUUID()}@example.test`,
+                  password: randomUUID(),
+                  principalDisplayName: 'Third',
+                },
+                {
+                  email: `stage-fourth-${randomUUID()}@example.test`,
+                  password: randomUUID(),
+                  principalDisplayName: 'Fourth',
                 },
               ],
               authBaseUrl: configuration.baseUrl,

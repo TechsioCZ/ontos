@@ -19,16 +19,19 @@ import { Command } from 'effect/unstable/cli';
 
 import { coreActionCatalog } from '../packages/core-runtime/src/index.ts';
 import {
+  ActionAuthorizationAccountRoleSchema,
   ActionAuthorizationProvisioningError,
+  deriveExplicitActionAuthorization,
   provisionActionAuthorization,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type {
   ActionAuthorizationContext,
+  ActionAuthorizationExplicitPolicy,
   ActionAuthorizationProvisioningAction,
   ActionAuthorizationProvisioningClient,
   ActionAuthorizationProvisioningResult,
 } from '../packages/core-runtime/src/install/action-authorization-provisioning.ts';
-import { STAGE_CONTEXTS } from '../packages/core-runtime/src/install/stage-context-bootstrap.ts';
+import { STAGE_CONTEXTS, STAGE_CONTEXT_ORDER } from '../packages/core-runtime/src/install/stage-context-bootstrap.ts';
 import { newSpiceDbGrpcClient } from '../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import { loadSpiceDbConfig } from '../packages/core-runtime/src/permissions/config.ts';
 import type { SpiceDbConfigValue } from '../packages/core-runtime/src/permissions/config.ts';
@@ -56,6 +59,18 @@ const OwnershipSchema = Schema.Struct({
 });
 
 type DeriveContract = typeof deriveOntosModuleDeploymentContract;
+
+/** The provisioning slice of `topology/authorization-contexts/stage.json`; readiness owns the full schema. */
+const StageAuthorizationGrantsSchema = Schema.Struct({
+  environment: Schema.Literal('stage'),
+  explicitActionPolicy: Schema.Struct({
+    allowedRoles: Schema.Array(ActionAuthorizationAccountRoleSchema),
+    decisionReference: Schema.String,
+  }),
+  fixedTenants: Schema.Array(Schema.String),
+});
+
+export const STAGE_AUTHORIZATION_CONTEXT_PATH = 'topology/authorization-contexts/stage.json';
 
 export interface ActionAuthorizationProvisioningTarget {
   readonly configuration: SpiceDbConfigValue;
@@ -101,11 +116,11 @@ export const selectActionAuthorizationProvisioningTarget = (
   }
   if (configuration.deploymentEnvironment === 'stage' && configuration.endpoint === 'spicedb:50051') {
     const contexts = EffectArray.sortWith(
-      [STAGE_CONTEXTS.techsio, STAGE_CONTEXTS.siampark].map(({ principalId, tenantId }) => ({
-        principalId,
-        tenantId,
-      })),
-      ({ tenantId }) => tenantId,
+      STAGE_CONTEXT_ORDER.map((key) => {
+        const { principalId, role, tenantId } = STAGE_CONTEXTS[key];
+        return { principalId, role, tenantId };
+      }),
+      ({ principalId }) => principalId,
       Order.String,
     );
     return Effect.succeed({ configuration, contexts, environment: 'stage' });
@@ -117,6 +132,43 @@ export const selectActionAuthorizationProvisioningTarget = (
     ),
   );
 };
+
+/**
+ * Loads the source-controlled stage explicit Action rule and proves its Tenant set matches the
+ * fixed stage contexts, so a stale context file cannot grant or verify the wrong accounts.
+ */
+export const loadStageExplicitActionPolicy = (
+  workspaceRoot: string,
+): Effect.Effect<ActionAuthorizationExplicitPolicy, ActionAuthorizationProvisioningError, NodeServices.NodeServices> =>
+  Effect.gen(function* loadStageExplicitActionPolicyEffect() {
+    const invalid = () =>
+      failure(
+        'action_authorization_configuration_invalid',
+        'The stage authorization context does not define a valid explicit Action policy',
+      );
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const source = yield* fileSystem
+      .readFileString(path.join(workspaceRoot, STAGE_AUTHORIZATION_CONTEXT_PATH), 'utf-8')
+      .pipe(Effect.mapError(invalid));
+    const context = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(StageAuthorizationGrantsSchema), {
+      onExcessProperty: 'ignore',
+    })(source).pipe(Effect.mapError(invalid));
+    const fixedTenantSlugs = EffectArray.sort(
+      new Set<string>(STAGE_CONTEXT_ORDER.map((key) => STAGE_CONTEXTS[key].tenantSlug)),
+      Order.String,
+    );
+    const recordedTenantSlugs = EffectArray.sort(context.fixedTenants, Order.String);
+    if (
+      recordedTenantSlugs.length !== fixedTenantSlugs.length ||
+      recordedTenantSlugs.some((slug, index) => slug !== fixedTenantSlugs[index]) ||
+      context.explicitActionPolicy.allowedRoles.length === 0 ||
+      context.explicitActionPolicy.decisionReference.length === 0
+    ) {
+      return yield* invalid();
+    }
+    return { allowedRoles: context.explicitActionPolicy.allowedRoles };
+  });
 
 const discoveryFailure = (): ActionAuthorizationProvisioningError =>
   failure('action_authorization_discovery_failed', 'The complete current Action set could not be derived safely');
@@ -304,10 +356,19 @@ const runCurrentActionAuthorizationProvisioningWithServices = (
     );
     const target = yield* selectActionAuthorizationProvisioningTarget(configuration);
     const actions = yield* discoverCurrentActions(workspaceRoot);
+    const explicitAuthorization =
+      target.environment === 'stage'
+        ? deriveExplicitActionAuthorization(
+            actions,
+            target.contexts,
+            yield* loadStageExplicitActionPolicy(workspaceRoot),
+          )
+        : {};
     const client = yield* acquireProvisioningClient(target.configuration);
     const result = yield* provisionActionAuthorization(client, {
       actions,
       contexts: target.contexts,
+      ...explicitAuthorization,
     });
     return { ...result, environment: target.environment };
   }).pipe(Effect.scoped);
@@ -354,7 +415,7 @@ const command = Command.make('authorization-provision-current-actions', {}, () =
       Effect.tapError((cause) => Console.error(formatActionAuthorizationProvisioningFailure(cause))),
     );
     yield* Console.log(
-      `Provisioned ${result.grantCount} explicit Action grants for ${result.actionCount} Actions across ${result.tenantCount} ${result.environment} Tenant(s).`,
+      `Provisioned ${result.grantCount} Action executor grants for ${result.actionCount} Actions across ${result.tenantCount} ${result.environment} Tenant(s).`,
     );
   }),
 );

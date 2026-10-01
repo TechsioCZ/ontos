@@ -18,27 +18,39 @@ restore_terminal_echo() {
 }
 trap restore_terminal_echo EXIT HUP INT TERM
 
-printf '%s' 'Password for demo@test.com: ' >&2
+# Echo stays off for every prompt; the prompt text is printed only after echo is disabled, so an
+# operator tool may send each password as soon as it sees the prompt.
 stty -echo
 terminal_echo_disabled='true'
-IFS= read -r techsio_password
-restore_terminal_echo
-printf '\n' >&2
 
-printf '%s' 'Password for siampark01@test.com: ' >&2
-stty -echo
-terminal_echo_disabled='true'
-IFS= read -r siampark_password
+read_password() {
+  printf 'Password for %s: ' "$1" >&2
+  IFS= read -r password_value
+  printf '\n' >&2
+}
+
+read_password 'demo@test.com'
+techsio_demo_password="${password_value}"
+read_password 'admin@techsio.test'
+techsio_admin_password="${password_value}"
+read_password 'demo@akros.test'
+akros_demo_password="${password_value}"
+read_password 'admin@akros.test'
+akros_admin_password="${password_value}"
+password_value=''
 restore_terminal_echo
-printf '\n' >&2
 
 set +e
-STAGE_DEMO_PASSWORD="${techsio_password}" \
-  STAGE_SIAMPARK_PASSWORD="${siampark_password}" \
+STAGE_TECHSIO_DEMO_PASSWORD="${techsio_demo_password}" \
+  STAGE_TECHSIO_ADMIN_PASSWORD="${techsio_admin_password}" \
+  STAGE_AKROS_DEMO_PASSWORD="${akros_demo_password}" \
+  STAGE_AKROS_ADMIN_PASSWORD="${akros_admin_password}" \
   node scripts/bootstrap-stage-demo.mts
 bootstrap_status=$?
 set -e
 
-techsio_password=''
-siampark_password=''
+techsio_demo_password=''
+techsio_admin_password=''
+akros_demo_password=''
+akros_admin_password=''
 exit "${bootstrap_status}"

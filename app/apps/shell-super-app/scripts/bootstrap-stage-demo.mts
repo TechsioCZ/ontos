@@ -39,8 +39,13 @@ const program = Effect.gen(function* bootstrapStageDemoProgram() {
     result.accounts,
     (account) =>
       Console.log(
-        `Stage demo bootstrap complete (${account.authUser} auth user): tenant=${account.tenantId} legalEntity=${account.legalEntityId} principal=${account.principalId} email=${account.email}`,
+        `Stage demo bootstrap complete (${account.authUser} auth user, ${account.role}): tenant=${account.tenantId} legalEntity=${account.legalEntityId} principal=${account.principalId} email=${account.email}`,
       ),
+    { discard: true },
+  );
+  yield* Effect.forEach(
+    result.retiredAccounts,
+    (account) => Console.log(`Retired stage account ${account.email}: ${account.status}`),
     { discard: true },
   );
 }).pipe(

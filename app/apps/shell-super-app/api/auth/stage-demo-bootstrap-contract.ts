@@ -1,17 +1,34 @@
 import { Config, ConfigProvider, Effect, Redacted, Schema } from 'effect';
 
+/**
+ * Fixed stage accounts in the Core `STAGE_CONTEXT_ORDER`. The Techsio demo keeps `demo@test.com`
+ * because its existing Core principal binding is pinned to that Better Auth user.
+ */
 export const STAGE_DEMO_ACCOUNTS = Object.freeze([
   Object.freeze({
     email: 'demo@test.com',
-    passwordEnvironmentKey: 'STAGE_DEMO_PASSWORD',
+    passwordEnvironmentKey: 'STAGE_TECHSIO_DEMO_PASSWORD',
     principalDisplayName: 'Techsio Demo',
   }),
   Object.freeze({
-    email: 'siampark01@test.com',
-    passwordEnvironmentKey: 'STAGE_SIAMPARK_PASSWORD',
-    principalDisplayName: 'Siampark 01',
+    email: 'admin@techsio.test',
+    passwordEnvironmentKey: 'STAGE_TECHSIO_ADMIN_PASSWORD',
+    principalDisplayName: 'Techsio Admin',
+  }),
+  Object.freeze({
+    email: 'demo@akros.test',
+    passwordEnvironmentKey: 'STAGE_AKROS_DEMO_PASSWORD',
+    principalDisplayName: 'Akros Demo',
+  }),
+  Object.freeze({
+    email: 'admin@akros.test',
+    passwordEnvironmentKey: 'STAGE_AKROS_ADMIN_PASSWORD',
+    principalDisplayName: 'Akros Admin',
   }),
 ] as const);
+
+/** Former stage accounts that the bootstrap bans, signs out, and strips of their password credential. */
+export const STAGE_DEMO_RETIRED_ACCOUNT_EMAILS = Object.freeze(['siampark01@test.com'] as const);
 
 type Comparable = boolean | null | number | string;
 type ExactRecord = Readonly<Record<string, Comparable>>;
@@ -21,7 +38,12 @@ type OptionalDecodedConfigString = DecodedConfigString | undefined;
 export type StageDemoEnvironment = Readonly<Record<string, OptionalDecodedConfigString>>;
 
 export interface StageDemoBootstrapConfig {
-  readonly accounts: readonly [StageDemoAccountConfig, StageDemoAccountConfig];
+  readonly accounts: readonly [
+    StageDemoAccountConfig,
+    StageDemoAccountConfig,
+    StageDemoAccountConfig,
+    StageDemoAccountConfig,
+  ];
   readonly authBaseUrl: string;
   readonly authSecret: DecodedConfigString;
   readonly databaseAdminUrl: string;
@@ -38,11 +60,16 @@ export interface StageDemoAccountResult {
   readonly email: string;
   readonly legalEntityId: string;
   readonly principalId: string;
+  readonly role: 'admin' | 'demo';
   readonly tenantId: string;
 }
 
 export interface StageDemoBootstrapResult {
   readonly accounts: readonly StageDemoAccountResult[];
+  readonly retiredAccounts: readonly {
+    readonly email: string;
+    readonly status: 'absent' | 'banned';
+  }[];
 }
 
 export class StageDemoBootstrapError extends Schema.TaggedError<StageDemoBootstrapError>()('StageDemoBootstrapError', {
@@ -80,17 +107,23 @@ const PostgreSqlUrlSchema = Schema.Trim.check(
 );
 
 const stageDemoBootstrapSource = Config.all({
+  akrosAdminPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_AKROS_ADMIN_PASSWORD'),
+  akrosDemoPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_AKROS_DEMO_PASSWORD'),
   authBaseUrl: Config.schema(HttpOriginSchema, 'BETTER_AUTH_URL'),
   authSecret: Config.schema(StageAuthSecretSchema, 'BETTER_AUTH_SECRET'),
   databaseAdminUrl: Config.schema(PostgreSqlUrlSchema, 'DATABASE_ADMIN_URL'),
-  demoPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_DEMO_PASSWORD'),
   deploymentEnvironment: Config.schema(StageEnvironmentSchema, 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'),
-  siamparkPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_SIAMPARK_PASSWORD'),
+  techsioAdminPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_TECHSIO_ADMIN_PASSWORD'),
+  techsioDemoPassword: Config.schema(StageDemoPasswordSchema, 'STAGE_TECHSIO_DEMO_PASSWORD'),
 });
 
+const PASSWORD_REQUIREMENT = 'must contain at least 8 characters';
+
 const configurationRequirements = [
-  ['STAGE_DEMO_PASSWORD', 'must contain at least 8 characters'],
-  ['STAGE_SIAMPARK_PASSWORD', 'must contain at least 8 characters'],
+  ['STAGE_TECHSIO_DEMO_PASSWORD', PASSWORD_REQUIREMENT],
+  ['STAGE_TECHSIO_ADMIN_PASSWORD', PASSWORD_REQUIREMENT],
+  ['STAGE_AKROS_DEMO_PASSWORD', PASSWORD_REQUIREMENT],
+  ['STAGE_AKROS_ADMIN_PASSWORD', PASSWORD_REQUIREMENT],
   ['BETTER_AUTH_SECRET', 'must contain at least 32 characters'],
   ['BETTER_AUTH_URL', 'must be an HTTP origin'],
   ['DATABASE_ADMIN_URL', 'must use PostgreSQL'],
@@ -114,8 +147,10 @@ const environmentProvider = (environment: StageDemoEnvironment): ConfigProvider.
     BETTER_AUTH_SECRET: environment['BETTER_AUTH_SECRET'],
     BETTER_AUTH_URL: environment['BETTER_AUTH_URL'],
     DATABASE_ADMIN_URL: environment['DATABASE_ADMIN_URL'],
-    STAGE_DEMO_PASSWORD: environment['STAGE_DEMO_PASSWORD'],
-    STAGE_SIAMPARK_PASSWORD: environment['STAGE_SIAMPARK_PASSWORD'],
+    STAGE_AKROS_ADMIN_PASSWORD: environment['STAGE_AKROS_ADMIN_PASSWORD'],
+    STAGE_AKROS_DEMO_PASSWORD: environment['STAGE_AKROS_DEMO_PASSWORD'],
+    STAGE_TECHSIO_ADMIN_PASSWORD: environment['STAGE_TECHSIO_ADMIN_PASSWORD'],
+    STAGE_TECHSIO_DEMO_PASSWORD: environment['STAGE_TECHSIO_DEMO_PASSWORD'],
     ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: environment['ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'],
   });
 
@@ -125,18 +160,17 @@ const parseStageDemoBootstrapConfigFromProvider = Effect.fn(
   const source = yield* stageDemoBootstrapSource
     .parse(provider)
     .pipe(Effect.catchTag('ConfigError', (error) => Effect.fail(configurationFailureFromConfigError(error))));
+  const account = (index: 0 | 1 | 2 | 3, password: Redacted.Redacted): StageDemoAccountConfig => ({
+    email: STAGE_DEMO_ACCOUNTS[index].email,
+    password: Redacted.value(password),
+    principalDisplayName: STAGE_DEMO_ACCOUNTS[index].principalDisplayName,
+  });
   return {
     accounts: [
-      {
-        email: STAGE_DEMO_ACCOUNTS[0].email,
-        password: Redacted.value(source.demoPassword),
-        principalDisplayName: STAGE_DEMO_ACCOUNTS[0].principalDisplayName,
-      },
-      {
-        email: STAGE_DEMO_ACCOUNTS[1].email,
-        password: Redacted.value(source.siamparkPassword),
-        principalDisplayName: STAGE_DEMO_ACCOUNTS[1].principalDisplayName,
-      },
+      account(0, source.techsioDemoPassword),
+      account(1, source.techsioAdminPassword),
+      account(2, source.akrosDemoPassword),
+      account(3, source.akrosAdminPassword),
     ] as const,
     authBaseUrl: source.authBaseUrl,
     authSecret: Redacted.value(source.authSecret),

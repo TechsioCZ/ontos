@@ -1,4 +1,5 @@
 import { reconcileStageContextBootstraps } from '@app/core-runtime/install/stage-context-bootstrap';
+import type { StageContextBootstrapResult } from '@app/core-runtime/install/stage-context-bootstrap';
 import { betterAuth } from 'better-auth';
 import { hashPassword, verifyPassword } from 'better-auth/crypto';
 import { admin } from 'better-auth/plugins/admin';
@@ -10,6 +11,7 @@ import { AuthDatabase } from './db/client.ts';
 import { account, session, user } from './db/schema.ts';
 import type { AuthDatabaseExecutor } from './db/types.ts';
 import {
+  STAGE_DEMO_RETIRED_ACCOUNT_EMAILS,
   StageDemoBootstrapError,
   classifyExactStageDemoRecord,
   parseStageDemoBootstrapConfig,
@@ -167,11 +169,13 @@ const loadStageDemoEnvironment = Effect.fn('StageDemoBootstrapRuntimeInfrastruct
         BETTER_AUTH_SECRET: optionalSecret('BETTER_AUTH_SECRET'),
         BETTER_AUTH_URL: optionalString('BETTER_AUTH_URL'),
         DATABASE_ADMIN_URL: optionalSecret('DATABASE_ADMIN_URL'),
-        STAGE_DEMO_PASSWORD: optionalSecret('STAGE_DEMO_PASSWORD'),
-        STAGE_SIAMPARK_PASSWORD: optionalSecret('STAGE_SIAMPARK_PASSWORD'),
+        STAGE_AKROS_ADMIN_PASSWORD: optionalSecret('STAGE_AKROS_ADMIN_PASSWORD'),
+        STAGE_AKROS_DEMO_PASSWORD: optionalSecret('STAGE_AKROS_DEMO_PASSWORD'),
+        STAGE_TECHSIO_ADMIN_PASSWORD: optionalSecret('STAGE_TECHSIO_ADMIN_PASSWORD'),
+        STAGE_TECHSIO_DEMO_PASSWORD: optionalSecret('STAGE_TECHSIO_DEMO_PASSWORD'),
         ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: optionalString('ULTRAMODERN_DEPLOYMENT_ENVIRONMENT'),
       },
-      { concurrency: 6 },
+      { concurrency: 8 },
     );
     return values satisfies StageDemoEnvironment;
   },
@@ -194,16 +198,75 @@ export const loadStageDemoConfiguration = Effect.fn('StageDemoBootstrap.loadConf
   return yield* parseStageDemoBootstrapConfig(runtimeEnvironment);
 });
 
+/**
+ * Bans a retired stage account's Better Auth user, ends its sessions, and removes its password
+ * credential so a previously disclosed password can never sign in again. Absent users are fine.
+ */
+const retireAuthUserTransaction = Effect.fn('StageDemoBootstrap.retireAuthUserTransaction')(function* retireUserRows(
+  transaction: AuthTransaction,
+  email: string,
+  updatedAt: Date,
+) {
+  const users = yield* transaction
+    .update(user)
+    .set({ banned: true, banReason: 'Stage tenant retired', updatedAt })
+    .where(eq(user.email, email))
+    .returning({ id: user.id });
+  yield* Effect.forEach(
+    users,
+    ({ id }) =>
+      transaction
+        .delete(session)
+        .where(eq(session.userId, id))
+        .pipe(
+          Effect.andThen(
+            transaction.delete(account).where(and(eq(account.userId, id), eq(account.providerId, 'credential'))),
+          ),
+        ),
+    { concurrency: 1, discard: true },
+  );
+  return users.length;
+});
+
+const retireAuthUser = Effect.fn('StageDemoBootstrap.retireAuthUser')(function* retireUser(email: string) {
+  const { executor: database } = yield* AuthDatabase;
+  const updatedAt = yield* DateTime.nowAsDate;
+  const banned = yield* database
+    .transaction((transaction) => retireAuthUserTransaction(transaction, email, updatedAt))
+    .pipe(Effect.mapError(persistenceFailure));
+  return { email, status: banned === 0 ? ('absent' as const) : ('banned' as const) };
+});
+
+const toAccountResult = (
+  accountConfiguration: StageDemoBootstrapConfig['accounts'][number],
+  authUser: { readonly status: StageDemoAccountResult['authUser'] },
+  context: StageContextBootstrapResult,
+): StageDemoAccountResult => ({
+  authUser: authUser.status,
+  email: accountConfiguration.email,
+  legalEntityId: context.legalEntityId,
+  principalId: context.principalId,
+  role: context.role,
+  tenantId: context.tenantId,
+});
+
 export const bootstrapStageDemo = Effect.fn('StageDemoBootstrap.bootstrap')(function* bootstrap(
   configuration: StageDemoBootstrapConfig,
 ): Effect.fn.Return<StageDemoBootstrapResult, StageDemoBootstrapError, AuthDatabase> {
-  const [techsioAccount, siamparkAccount] = configuration.accounts;
-  const [techsioAuthUser, siamparkAuthUser] = yield* Effect.all(
-    [ensureAuthUser(configuration, techsioAccount), ensureAuthUser(configuration, siamparkAccount)],
+  const authUsers = yield* Effect.forEach(
+    configuration.accounts,
+    (accountConfiguration) => ensureAuthUser(configuration, accountConfiguration),
     { concurrency: 1 },
   );
-  const [techsioContext, siamparkContext] = yield* reconcileStageContextBootstraps(
-    [techsioAuthUser.userId, siamparkAuthUser.userId],
+  const [techsioDemo, techsioAdmin, akrosDemo, akrosAdmin] = authUsers;
+  if (techsioDemo === undefined || techsioAdmin === undefined || akrosDemo === undefined || akrosAdmin === undefined) {
+    return yield* new StageDemoBootstrapError({
+      code: 'stage_demo_configuration_invalid',
+      reason: 'Every fixed stage account is required',
+    });
+  }
+  const contexts = yield* reconcileStageContextBootstraps(
+    [techsioDemo.userId, techsioAdmin.userId, akrosDemo.userId, akrosAdmin.userId],
     { authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID },
   ).pipe(
     Effect.mapError(
@@ -214,21 +277,14 @@ export const bootstrapStageDemo = Effect.fn('StageDemoBootstrap.bootstrap')(func
         }),
     ),
   );
+  const retiredAccounts = yield* Effect.forEach(STAGE_DEMO_RETIRED_ACCOUNT_EMAILS, retireAuthUser, {
+    concurrency: 1,
+  });
   const accounts: StageDemoAccountResult[] = [
-    {
-      authUser: techsioAuthUser.status,
-      email: techsioAccount.email,
-      legalEntityId: techsioContext.legalEntityId,
-      principalId: techsioContext.principalId,
-      tenantId: techsioContext.tenantId,
-    },
-    {
-      authUser: siamparkAuthUser.status,
-      email: siamparkAccount.email,
-      legalEntityId: siamparkContext.legalEntityId,
-      principalId: siamparkContext.principalId,
-      tenantId: siamparkContext.tenantId,
-    },
+    toAccountResult(configuration.accounts[0], techsioDemo, contexts[0]),
+    toAccountResult(configuration.accounts[1], techsioAdmin, contexts[1]),
+    toAccountResult(configuration.accounts[2], akrosDemo, contexts[2]),
+    toAccountResult(configuration.accounts[3], akrosAdmin, contexts[3]),
   ];
-  return { accounts };
+  return { accounts, retiredAccounts };
 });

@@ -12,6 +12,8 @@ import {
   ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
   ActionAuthorizationProvisioningError,
   buildActionAuthorizationRelationships,
+  buildExplicitActionGrantRelationships,
+  deriveExplicitActionAuthorization,
   provisionActionAuthorization,
 } from '../../packages/core-runtime/src/install/action-authorization-provisioning.ts';
 import type {
@@ -24,6 +26,7 @@ import type { deriveOntosModuleDeploymentContract as DeriveModuleContract } from
 import { LOCAL_DEVELOPMENT_CONTEXT } from '../initialize-local-development.mts';
 import {
   formatActionAuthorizationProvisioningFailure,
+  loadStageExplicitActionPolicy,
   runCurrentActionAuthorizationProvisioning,
   selectActionAuthorizationProvisioningTarget,
 } from '../provision-current-action-authorization.mts';
@@ -31,6 +34,7 @@ import type { discoverCurrentActionKeys as DiscoverCurrentActionKeys } from '../
 
 const attachPersonEngagementAction = 'party.registry.attach-person-engagement';
 const restrictedAction = 'core.identity.restricted';
+const changePrincipalBindingStatusAction = 'core.identity.change-principal-binding-status';
 const testPreSharedKey = 'not-a-real-secret';
 const ProvisioningFailureCauseSchema = Schema.Struct({ cause: Schema.Unknown });
 const decodeProvisioningFailureCause = Schema.decodeUnknownSync(ProvisioningFailureCauseSchema);
@@ -276,7 +280,7 @@ const explicitlyProvisionedActionKeys = [
   'commerce.inventory.stock-issue',
   'commerce.inventory.stock-receipt',
   'core.identity.activate-principal-binding',
-  'core.identity.change-principal-binding-status',
+  changePrincipalBindingStatusAction,
   'core.identity.reserve-principal-binding',
 ] as const;
 
@@ -336,7 +340,10 @@ it.effect(
 
     const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
     expect(stage.environment).toBe('stage');
-    expect(stage.contexts.length).toBe(2);
+    expect(stage.contexts.length).toBe(4);
+    expect(stage.contexts.filter(({ role }) => role === 'admin')).toHaveLength(2);
+    expect(stage.contexts.filter(({ role }) => role === 'demo')).toHaveLength(2);
+    expect(new Set(stage.contexts.map(({ tenantId }) => tenantId)).size).toBe(2);
 
     const { deploymentEnvironment: _environment, ...withoutEnvironment } = developmentConfiguration;
     const implicitDevelopment = yield* selectActionAuthorizationProvisioningTarget(withoutEnvironment);
@@ -890,5 +897,155 @@ it.effect(
     );
     expect(error.code).toBe('action_authorization_configuration_invalid');
     expect(error.reason).toMatch(/no command-line arguments/u);
+  }),
+);
+
+const stageExplicitActions = [
+  { actionKey: attachPersonEngagementAction, provisioning: 'tenant_membership_default' as const },
+  { actionKey: restrictedAction, provisioning: 'explicit' as const },
+  { actionKey: changePrincipalBindingStatusAction, provisioning: 'explicit' as const },
+];
+
+it.effect(
+  'grants every explicit Action to stage admins only and records demo and non-member denials',
+  Effect.fn(function* testEffect21() {
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
+    const admins = stage.contexts.filter(({ role }) => role === 'admin').map(({ principalId }) => principalId);
+    const demos = stage.contexts.filter(({ role }) => role === 'demo').map(({ principalId }) => principalId);
+    const derived = deriveExplicitActionAuthorization(stageExplicitActions, stage.contexts, {
+      allowedRoles: ['admin'],
+    });
+    expect(derived.explicitActionGrants.map(({ actionKey }) => actionKey)).toEqual([
+      restrictedAction,
+      changePrincipalBindingStatusAction,
+    ]);
+    for (const { assertions } of derived.explicitActionAssertions) {
+      expect(assertions.filter(({ expected }) => expected === 'allowed').map(({ principalId }) => principalId)).toEqual(
+        admins,
+      );
+      expect(assertions.filter(({ expected }) => expected === 'denied').map(({ principalId }) => principalId)).toEqual([
+        ...demos,
+        ACTION_AUTHORIZATION_DENIED_PRINCIPAL_ID,
+      ]);
+    }
+    const grantRelationships = buildExplicitActionGrantRelationships(derived.explicitActionGrants);
+    expect(grantRelationships.length).toBe(4);
+    for (const relationship of grantRelationships) {
+      expect(relationship.subject?.object?.objectType).toBe('principal');
+      expect(relationship.subject?.optionalRelation ?? '').toBe('');
+      expect(admins).toContain(relationship.subject?.object?.objectId);
+    }
+
+    const { client, state } = makeProvisioningClient(stage.contexts);
+    const input = { actions: stageExplicitActions, contexts: stage.contexts, ...derived };
+    const first = yield* provisionActionAuthorization(client, input);
+    const second = yield* provisionActionAuthorization(client, input);
+    expect(first).toEqual({ actionCount: 3, grantCount: 6, tenantCount: 2 });
+    expect(second).toEqual(first);
+    expect(state.updates.every(({ operation }) => operation === v1.RelationshipUpdate_Operation.TOUCH)).toBe(true);
+    expect([...state.grants].some((grant) => demos.some((demo) => grant.endsWith(`:${demo}`)))).toBe(false);
+
+    const demoOnly = deriveExplicitActionAuthorization(stageExplicitActions, stage.contexts, { allowedRoles: [] });
+    expect(demoOnly.explicitActionGrants).toEqual([]);
+  }),
+);
+
+it.effect(
+  'fails stage provisioning when a fixed Principal can access the other fixed Tenant',
+  Effect.fn(function* testEffect22() {
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
+    const derived = deriveExplicitActionAuthorization(stageExplicitActions, stage.contexts, {
+      allowedRoles: ['admin'],
+    });
+    const { client, state } = makeProvisioningClient(stage.contexts);
+    const [leaking] = stage.contexts;
+    const leakingClient: ActionAuthorizationProvisioningClient = {
+      ...client,
+      checkPermission: (request) =>
+        request.permission === 'access' && request.subject?.object?.objectId === leaking?.principalId
+          ? Effect.succeed(permissionResponse(true))
+          : client.checkPermission(request),
+    };
+    const error = yield* failureOf(
+      provisionActionAuthorization(leakingClient, {
+        actions: stageExplicitActions,
+        contexts: stage.contexts,
+        ...derived,
+      }),
+    );
+    expect(error.code).toBe('action_authorization_verification_failed');
+    expect(state.relationshipWriteCount).toBe(0);
+  }),
+);
+
+it.effect(
+  'rejects explicit grants for non-fixed Principals or Principals without an allowed assertion',
+  Effect.fn(function* testEffect23() {
+    const stage = yield* selectActionAuthorizationProvisioningTarget(stageConfiguration);
+    const derived = deriveExplicitActionAuthorization(stageExplicitActions, stage.contexts, {
+      allowedRoles: ['admin'],
+    });
+    const demo = stage.contexts.find(({ role }) => role === 'demo')?.principalId ?? '';
+    yield* Effect.all(
+      [
+        [{ actionKey: restrictedAction, principalIds: ['00000000-0000-4000-8000-000000000099'] }],
+        [{ actionKey: restrictedAction, principalIds: [demo] }],
+        [{ actionKey: attachPersonEngagementAction, principalIds: [demo] }],
+        [{ actionKey: restrictedAction, principalIds: [] }],
+      ].map((explicitActionGrants) =>
+        Effect.gen(function* testEffect24() {
+          const { client, state } = makeProvisioningClient(stage.contexts);
+          const error = yield* failureOf(
+            provisionActionAuthorization(client, {
+              actions: stageExplicitActions,
+              contexts: stage.contexts,
+              explicitActionAssertions: derived.explicitActionAssertions,
+              explicitActionGrants,
+            }),
+          );
+          expect(error.code).toBe('action_authorization_input_invalid');
+          expect(state.schemaWriteCount).toBe(0);
+        }),
+      ),
+      { concurrency: 'unbounded' },
+    );
+  }),
+);
+
+it.effect(
+  'loads the source-controlled stage explicit Action policy and rejects a stale Tenant set',
+  Effect.fn(function* testEffect25() {
+    const policy = yield* loadStageExplicitActionPolicy(path.resolve(import.meta.dirname, '../..')).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    expect(policy).toEqual({ allowedRoles: ['admin'] });
+
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-stage-policy-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    yield* Effect.tryPromise(() => mkdir(path.join(root, 'topology/authorization-contexts'), { recursive: true }));
+    yield* Effect.all(
+      [
+        {
+          explicitActionPolicy: { allowedRoles: ['admin'], decisionReference: 'x' },
+          fixedTenants: ['siampark', 'techsio'],
+        },
+        { fixedTenants: ['akros', 'techsio'] },
+        { explicitActionPolicy: { allowedRoles: [], decisionReference: 'x' }, fixedTenants: ['akros', 'techsio'] },
+      ].map((override) =>
+        Effect.gen(function* testEffect26() {
+          yield* Effect.promise(() =>
+            writeFile(
+              path.join(root, 'topology/authorization-contexts/stage.json'),
+              JSON.stringify({ environment: 'stage', ...override }),
+            ),
+          );
+          const error = yield* failureOf(loadStageExplicitActionPolicy(root).pipe(Effect.provide(NodeServices.layer)));
+          expect(error.code).toBe('action_authorization_configuration_invalid');
+        }),
+      ),
+      { concurrency: 1 },
+    );
   }),
 );
