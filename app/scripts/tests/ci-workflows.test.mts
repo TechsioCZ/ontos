@@ -99,6 +99,7 @@ const RESTORE_STEP = 'Restore the edge Workers this run deployed';
 const RETIRE_STEP = 'Report retired Workers that still exist';
 const BUILD_STEP = 'Build and verify planned edge units';
 const PROOF_STEP = 'Prove the deployed edge units on their public URLs';
+const PROVEN_STEP = 'Record the proven edge Worker versions';
 
 interface PlacementBuildInputs {
   readonly buildEnvironment: Readonly<Record<string, string>>;
@@ -195,6 +196,27 @@ it('deploys to Cloudflare only when both the account and the deploy token are co
   ).toEqual([]);
 });
 
+// The active version is no rollback target: a secret change or manual deploy is never proven.
+// Only a version recorded after its proof is restored; a never-proven Worker is not rolled back.
+const expectProvenRollbackTargets = (steps: readonly (typeof WorkflowStepSchema.Type)[]) => {
+  const byName = new Map(steps.map((step) => [step.name, step]));
+  const deploy = byName.get(DEPLOY_STEP);
+  const proven = byName.get(PROVEN_STEP);
+  const restore = byName.get(RESTORE_STEP);
+  const marker = deploy?.env?.EDGE_PROVEN_MARKER;
+  expect(marker).toBeTruthy();
+  expect(proven?.env?.EDGE_PROVEN_MARKER).toBe(marker);
+  expect(deploy?.run).toContain('wrangler deployments list --name "$worker" --json');
+  expect(deploy?.run).toContain('startswith($marker)');
+  expect(deploy?.run).not.toContain('wrangler deployments status');
+  expect(proven?.run).toContain('wrangler versions deploy "$proven_version@100"');
+  expect(proven?.run).toContain('--message "$EDGE_PROVEN_MARKER$GITHUB_SHA"');
+  const names = steps.map((step) => step.name);
+  expect(names.indexOf(PROVEN_STEP)).toBe(names.indexOf(PROOF_STEP) + 1);
+  expect(restore?.run).toContain('"$previous_version" == unproven');
+  expect(restore?.run).toContain('no proven version to restore; not rolled back');
+};
+
 const WRANGLER_COMMAND = /^pnpm --filter "\$(?:[a-z_]+|\d)" exec wrangler /u;
 
 it('deploys planned edge units to Cloudflare after the stage migration, with their own deployment history', () => {
@@ -235,8 +257,8 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
     expect(JSON.stringify(step?.env)).not.toContain('vars');
   }
   // Every Worker is snapshotted before the first one changes, and restored to that snapshot after
-  // a failed deploy or proof: the recorded version, or no Worker when this run created it.
-  expect(deploy?.run).toContain('wrangler deployments status');
+  // a failed deploy or proof: its newest proven version, or no Worker when this run created it.
+  expectProvenRollbackTargets(edge.steps);
   expect(restore?.run).toContain('wrangler rollback "$previous_version"');
   expect(restore?.run).toContain('wrangler delete --name "$deployed_worker"');
   expect(restore?.run).not.toMatch(/wrangler (?:rollback|delete)[^\n]*\|\| true/u);
@@ -245,7 +267,7 @@ it('deploys planned edge units to Cloudflare after the stage migration, with the
   // The account token reaches only the steps that use it, and those run nothing but Wrangler:
   // building, verifying and proving a unit executes dependency code.
   const tokenSteps = edge.steps.filter((step) => step.env?.CLOUDFLARE_API_TOKEN !== undefined);
-  expect(tokenSteps.map((step) => step.name)).toEqual([DEPLOY_STEP, RETIRE_STEP, RESTORE_STEP]);
+  expect(tokenSteps.map((step) => step.name)).toEqual([DEPLOY_STEP, PROVEN_STEP, RETIRE_STEP, RESTORE_STEP]);
   expect(tokenSteps.flatMap(packageCommands).filter((command) => !WRANGLER_COMMAND.test(command))).toEqual([]);
 });
 
@@ -255,7 +277,7 @@ it('bounds every edge step that changes or proves Workers and reports retirement
   const retire = byName.get(RETIRE_STEP);
   // A hung build, deploy, proof or retirement times out as a step failure, leaving the restore
   // step its own budget inside the job deadline.
-  const bounded = [BUILD_STEP, DEPLOY_STEP, PROOF_STEP, RETIRE_STEP, RESTORE_STEP].map(
+  const bounded = [BUILD_STEP, DEPLOY_STEP, PROOF_STEP, PROVEN_STEP, RETIRE_STEP, RESTORE_STEP].map(
     (name) => byName.get(name)?.['timeout-minutes'] ?? Number.POSITIVE_INFINITY,
   );
   expect(bounded.every(Number.isFinite)).toBe(true);

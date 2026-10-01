@@ -1460,26 +1460,33 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
           EDGE_DEPLOY_STATE: ${{ runner.temp }}/edge-deploy-state.tsv
+          EDGE_PROVEN_MARKER: 'Proven by cloudflare:proof at '
         run: |
-          active_version() {
-            mise exec -- pnpm --filter "$1" exec wrangler deployments status --name "$2" --json \
-              | jq -er '.versions | map(select(.percentage == 100)) | .[0].version_id'
-          }
-          # Snapshot every planned Worker's active version before changing any of them. Only
-          # Cloudflare's "Worker not found" (API code 10007) means a first deployment without a
-          # rollback target; any other failure aborts before anything is deployed.
+          # Snapshot every planned Worker's rollback target before changing any of them: the version
+          # of its latest deployment recorded as proven (see "Record the proven edge Worker
+          # versions"). The active version is no target by itself: a secret change or a manual deploy
+          # makes a new version nobody proved. A Worker with history but no proven deployment is
+          # recorded as `unproven` and is never rolled back. Only Cloudflare's "Worker not found"
+          # (API code 10007) means a first deployment; any other failure aborts before anything is
+          # deployed.
           mapfile -t units < <(jq -r '.[] | [.packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
           declare -A previous_versions=()
           for unit in "${units[@]}"; do
             IFS=$'\t' read -r package worker <<<"$unit"
-            status_log="$RUNNER_TEMP/deployments-status-$worker.log"
-            if previous_version="$(active_version "$package" "$worker" 2>"$status_log")"; then
+            history="$RUNNER_TEMP/deployments-list-$worker.json"
+            status_log="$RUNNER_TEMP/deployments-list-$worker.log"
+            if mise exec -- pnpm --filter "$package" exec wrangler deployments list --name "$worker" --json >"$history" 2>"$status_log"; then
+              previous_version="$(jq -er --arg marker "$EDGE_PROVEN_MARKER" '
+                [.[] | select((.annotations["workers/message"] // "") | startswith($marker))]
+                | sort_by(.created_on) | last
+                | if . == null then "unproven" else .versions | map(select(.percentage == 100)) | .[0].version_id end
+              ' "$history")"
               previous_versions["$worker"]="$previous_version"
             elif grep -q 'code: 10007' "$status_log"; then
               previous_versions["$worker"]=''
             else
               cat "$status_log" >&2
-              echo "Could not read the active version of $worker; no Worker was changed." >&2
+              echo "Could not read the deployments of $worker; no Worker was changed." >&2
               exit 1
             fi
           done
@@ -1527,6 +1534,26 @@ jobs:
             exit 1
           fi
 
+      # The version each Worker serves once its proof passed is recorded as proven by redeploying it
+      # at 100% with the proven marker as the deployment message. Traffic does not change; a later
+      # failed run rolls back to the newest version recorded this way.
+      - name: Record the proven edge Worker versions
+        timeout-minutes: 5
+        working-directory: app
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
+          EDGE_PROVEN_MARKER: 'Proven by cloudflare:proof at '
+        run: |
+          mapfile -t units < <(jq -r '.[] | [.packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
+          for unit in "${units[@]}"; do
+            IFS=$'\t' read -r package worker <<<"$unit"
+            proven_version="$(mise exec -- pnpm --filter "$package" exec wrangler deployments status --name "$worker" --json \
+              | jq -er '.versions | map(select(.percentage == 100)) | .[0].version_id')"
+            mise exec -- pnpm --filter "$package" exec wrangler versions deploy "$proven_version@100" --name "$worker" --message "$EDGE_PROVEN_MARKER$GITHUB_SHA" --yes
+          done
+
       # Retirement is two-phase. The deploy that drops a Worker from placement leaves it running, so
       # a rollback of its dependents still finds it. Once this run has proven the new topology, each
       # retired Worker that still exists is reported for an operator to delete
@@ -1554,8 +1581,9 @@ jobs:
           done
 
       # Worker versions are immutable. After a failed deploy or proof, each Worker this run
-      # deployed returns to its snapshotted state: the exact version that was active before, or no
-      # Worker at all when this run created it. A Worker counts as restored only once that state is
+      # deployed returns to its snapshotted state: its newest proven version, or no Worker at all
+      # when this run created it. A Worker with no proven version is not rolled back and is
+      # reported. A Worker counts as restored only once that state is
       # observed; anything left on the candidate is reported. A cancelled run restores too: its
       # deploy may have stopped after some Workers changed.
       - name: Restore the edge Workers this run deployed
@@ -1584,6 +1612,12 @@ jobs:
           # before its binding target does, so no consumer is left calling an older provider.
           for (( index = ${#deployed[@]} - 1; index >= 0; index-- )); do
             IFS=$'\t' read -r deployed_package deployed_worker previous_version <<<"${deployed[index]}"
+            if [[ "$previous_version" == unproven ]]; then
+              # No version of this Worker ever passed its proof, so none is known to work. It is not
+              # rolled back to a version that may lack its bindings, and the run fails.
+              unrestored+=("$deployed_worker (no proven version to restore; not rolled back)")
+              continue
+            fi
             if [[ -z "$previous_version" ]]; then
               if absent "$deployed_package" "$deployed_worker"; then
                 echo "$deployed_worker, which this run was creating, does not exist"
