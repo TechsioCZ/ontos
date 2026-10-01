@@ -1,5 +1,5 @@
 import { makeEffectDrizzleAuthAdapter } from '@app/better-auth-effect-drizzle/server';
-import { configureDatabasePool } from '@app/core-runtime';
+import { DatabaseConfig, configureDatabasePool } from '@app/core-runtime';
 import { PgClient } from '@effect/sql-pg';
 import { makeWithDefaults } from 'drizzle-orm/effect-postgres';
 import { Context, Effect, Layer, Redacted } from 'effect';
@@ -50,6 +50,18 @@ export const AuthDatabaseLive = Layer.effect(
   AuthDatabase,
   Effect.gen(function* makeAuthDatabaseService() {
     const configuration = yield* AuthConfig;
+    return yield* makeAuthDatabase(configuration);
+  }),
+);
+
+/**
+ * Opens the authentication database from the runtime role's `DatabaseConfig` alone, for operator
+ * tools such as the schema verifier that never sign sessions and so hold no Better Auth secret.
+ */
+export const AuthDatabaseFromDatabaseConfigLive = Layer.effect(
+  AuthDatabase,
+  Effect.gen(function* makeAuthDatabaseFromDatabaseConfig() {
+    const configuration = yield* DatabaseConfig;
     return yield* makeAuthDatabase(configuration);
   }),
 );
