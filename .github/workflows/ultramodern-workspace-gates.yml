@@ -74,6 +74,65 @@ jobs:
             echo 'proven=false' >>"$GITHUB_OUTPUT"
           fi
 
+  # The only job that saves the caches the gates restore, on main, where every pull request and merge
+  # group can read them: the pnpm store, the TS-Go typecheck build, and the Playwright Chromium build.
+  # It is no gate and gates nothing; a later run without its caches only installs and builds from scratch.
+  warm-caches:
+    name: Warm the gate caches on main
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        id: install
+        uses: ./.github/actions/install-app
+        with:
+          restore-typescript-build: "true"
+          save-store: "true"
+
+      - name: Typecheck the workspace incrementally
+        working-directory: app
+        run: mise exec -- pnpm typecheck
+
+      - name: Save the TS-Go typecheck build
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: app/node_modules/.cache/tsgo
+          key: ${{ steps.install.outputs.typescript-build-key }}
+
+      - name: Restore the Playwright Chromium build
+        id: playwright-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
+
+      - name: Download the Playwright Chromium build
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        working-directory: app
+        run: mise exec -- pnpm --filter @app/shell-super-app exec playwright install chromium
+
+      - name: Save the Playwright Chromium build
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
+
+  # Each entry runs its commands one after another and reports every one that fails. Entries group a few
+  # minutes of checks each, so each runner pays one install for them: the org runs at most 20 jobs at
+  # once, and every gate job of the first wave must start at once to finish in time.
   workspace-gate:
     name: ${{ matrix.name }}
     needs: [queue-proof]
@@ -84,24 +143,34 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: Effect Rule Implementation
-            command: pnpm typecheck:lint-rules && pnpm test:lint-rules
-          - name: Typecheck
-            command: pnpm typecheck
-          - name: OntOS API Boundary Rules
-            command: pnpm api:check:ontos
-          - name: Database Access Boundaries
-            command: pnpm database-access:check
-          - name: Module Entrypoint Contracts
-            command: pnpm module-entrypoints:check
-          - name: Complete Unit and Component Tests
-            command: pnpm test:unit
-          - name: Repository Tooling Tests
-            command: pnpm test:scripts
-          - name: Deployment Impact Planner Tests
-            command: pnpm test:deployment-impact
-          - name: Codesmith and Generation Tests
-            command: pnpm test:generation
+          - name: Typecheck, Effect Rule Implementation, and OntOS API Boundary Rules
+            typescript-build: true
+            commands: |
+              pnpm typecheck
+              pnpm typecheck:lint-rules
+              pnpm test:lint-rules
+              pnpm api:check:ontos
+          - name: Repository Tooling, Module Entrypoint, Deployment Impact Planner, and Codesmith Generation Tests
+            commands: |
+              pnpm test:scripts
+              pnpm module-entrypoints:check
+              pnpm test:deployment-impact
+              pnpm test:generation
+          # The root `pnpm test:unit` (every package's test:unit, then every package's test:component) in
+          # shards of packages balanced by measured test time. The last shard runs every package the others
+          # do not name, so a new package is always tested; Repository Tooling Tests check the split.
+          - name: Unit and Component Tests (Catalog)
+            commands: |
+              pnpm -r --if-present --filter ./verticals/catalog run test:unit
+              pnpm -r --if-present --filter ./verticals/catalog run test:component
+          - name: Unit and Component Tests (Commerce Customer Context and Inventory)
+            commands: |
+              pnpm -r --if-present --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit
+              pnpm -r --if-present --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component
+          - name: Unit and Component Tests (every other package)
+            commands: |
+              pnpm -r --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:unit
+              pnpm -r --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:component
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
@@ -116,13 +185,29 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
+        with:
+          restore-typescript-build: ${{ matrix.typescript-build == true }}
 
       - name: Run ${{ matrix.name }}
         working-directory: app
         env:
+          COMMANDS: ${{ matrix.commands }}
           MODERN_PUBLIC_SITE_URL: http://localhost:8080
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-        run: mise exec -- ${{ matrix.command }}
+        run: |
+          failed=()
+          while IFS= read -r command; do
+            [[ -n "$command" ]] || continue
+            echo "::group::$command"
+            if ! mise exec -- bash -c "$command"; then
+              failed+=("$command")
+            fi
+            echo '::endgroup::'
+          done <<<"$COMMANDS"
+          for command in "${failed[@]}"; do
+            echo "::error title=Gate command failed::$command"
+          done
+          [[ ${#failed[@]} -eq 0 ]]
 
   static-contracts:
     name: Static Contracts
@@ -170,13 +255,6 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: app/node_modules/.bin/lefthook validate
 
-      # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it.
-      - name: Format and Lint through the pre-commit hook on every file
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: |
-          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --all-files --no-auto-install'
-          git diff --exit-code HEAD
-
       - name: Skills
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: app
@@ -191,6 +269,11 @@ jobs:
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: app
         run: mise exec -- pnpm api:check
+
+      - name: Database Access Boundaries
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: app
+        run: mise exec -- pnpm database-access:check
 
       - name: Lean Core Dependencies
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
@@ -212,12 +295,87 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm action:test:unit
 
-  service-integration:
-    name: Database, Migration, RLS, Authorization, and Outbox Integration
+      # The Commerce Cloudflare build once crashed parsing Catalog's root HttpApi chain because React
+      # Compiler also compiled server code. Production imports only the quantity-preparation client;
+      # this case keeps the whole Catalog client barrel compiling in the Commerce workerd graph. It is
+      # not a delivery artifact, so it runs here, off the build-and-proof path.
+      - name: Build Commerce for workerd with the whole Catalog client barrel
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: app
+        env:
+          MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
+          ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
+          ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 00000000000000000000000000000000
+          ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 00000000000000000000000000000000
+          ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
+        run: |
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
+          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
+          mise exec -- pnpm --filter @app/commerce-customer-context run cloudflare:build:full-catalog-client-guard
+          grep -qF '"CatalogApiFoundation"' verticals/commerce-customer-context/dist-cloudflare/worker/__modern_bff_effect.js
+
+  # The pre-commit hook is the format and lint gate, run from the git root exactly as a commit runs it,
+  # over every tracked file. Type-aware lint of the whole tree took over four minutes on one runner, so
+  # each shard runs the hook over every other tracked file (`--all-files` is `git ls-files`): together
+  # they cover every file once, and the hook's own globs still choose what each tool checks.
+  format-and-lint:
+    name: Format and Lint through the pre-commit hook (${{ matrix.shard }}/2)
     needs: [queue-proof]
     if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Format and Lint the shard's files through the pre-commit hook
+        env:
+          SHARD: ${{ matrix.shard }}
+          SHARDS: 2
+        run: |
+          index=0
+          git ls-files -z | while IFS= read -r -d '' file; do
+            if ((index % SHARDS == SHARD - 1)); then
+              printf '%s\0' "$file"
+            fi
+            index=$((index + 1))
+          done >"$RUNNER_TEMP/shard-files"
+          mise exec --cd app -- sh -c 'cd .. && app/node_modules/.bin/lefthook run pre-commit --files-from-stdin --no-auto-install' \
+            <"$RUNNER_TEMP/shard-files"
+          git diff --exit-code HEAD
+
+  # Two suites on fresh services, run side by side: the stage-shaped migrator and Outbox Worker host
+  # artifacts followed by the integration tests (as one job ran them), and the authenticated browser tests
+  # on their own freshly migrated database.
+  service-integration:
+    name: ${{ matrix.name }}
+    needs: [queue-proof]
+    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: integration
+            name: Database, Migration, RLS, Authorization, and Outbox Integration
+          - suite: browser
+            name: Authenticated Browser Tests
     env:
       BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
       BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020
@@ -250,8 +408,6 @@ jobs:
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
-        with:
-          save-store: "true"
 
       - name: Create the local SpiceDB TLS certificate
         working-directory: app
@@ -270,7 +426,30 @@ jobs:
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
 
+      # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
+      # Only warm-caches on main saves it, so parallel jobs never race to save.
+      - name: Restore the Playwright Chromium build
+        id: playwright-cache
+        if: matrix.suite == 'browser'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
+
+      - name: Install Chromium and its runtime dependencies
+        if: matrix.suite == 'browser'
+        working-directory: app
+        env:
+          CHROMIUM_CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
+        run: |
+          if [ "$CHROMIUM_CACHED" = true ]; then
+            mise exec -- pnpm --filter @app/shell-super-app exec playwright install-deps chromium
+          else
+            mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
+          fi
+
       - name: Remove the pre-seeded runtime role to prove deployment bootstrap ordering
+        if: matrix.suite == 'integration'
         working-directory: app
         run: |
           docker compose exec --no-TTY ontos-db psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set ON_ERROR_STOP=1 <<'SQL'
@@ -279,6 +458,7 @@ jobs:
           SQL
 
       - name: Run the assembled stage migrator artifact against the fresh database
+        if: matrix.suite == 'integration'
         working-directory: app
         # Stage-shaped: the migrator ships only its zerops.yaml deployFiles, runs its real start entry
         # point, bootstraps SpiceDB's database, and opts into the Commerce portal realm with its own
@@ -313,45 +493,22 @@ jobs:
       # ships only its deployFiles, polls every hosted owner's outbox against the freshly migrated
       # database until /ready, then drains on SIGTERM.
       - name: Build and run the Outbox Worker host artifact against the fresh database
+        if: matrix.suite == 'integration'
         working-directory: app
         run: mise exec -- sh scripts/prove-outbox-worker-host-artifact.sh "$RUNNER_TEMP/outbox-worker-host-artifact"
 
       - name: Run database, RLS, Action, authorization, identity, Outbox, module-state, Shell, and Contacts integration tests, including Party Registry
+        if: matrix.suite == 'integration'
         working-directory: app
         run: mise exec -- pnpm test:integration
 
-      # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
-      - name: Restore the Playwright Chromium build
-        id: playwright-cache
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
-
-      - name: Install Chromium and its runtime dependencies
-        working-directory: app
-        env:
-          CHROMIUM_CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
-        run: |
-          if [ "$CHROMIUM_CACHED" = true ]; then
-            mise exec -- pnpm --filter @app/shell-super-app exec playwright install-deps chromium
-          else
-            mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
-          fi
-
-      - name: Save the Playwright Chromium build
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ steps.playwright-cache.outputs.cache-primary-key }}
-
       - name: Run parallel authenticated browser tests without retries
+        if: matrix.suite == 'browser'
         working-directory: app
         run: mise exec -- pnpm --filter @app/shell-super-app test:e2e
 
       - name: Upload browser failure diagnostics
-        if: failure()
+        if: failure() && matrix.suite == 'browser'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: shell-browser-failure-diagnostics
@@ -388,18 +545,18 @@ jobs:
       fail-fast: false
       matrix:
         target: [node, cloudflare]
-        shard: [catalog-shell, commerce, inventory-assortment, small-verticals]
+        shard: [shell, catalog, commerce-customer-context, commerce-market-catalog, inventory-assortment]
         include:
-          - shard: catalog-shell
-            units: verticals/catalog apps/shell-super-app
-          - shard: commerce
-            units: verticals/commerce-customer-context verticals/commerce-market-catalog
+          - shard: shell
+            units: apps/shell-super-app verticals/price-group-catalog
+          - shard: catalog
+            units: verticals/catalog verticals/pricing
+          - shard: commerce-customer-context
+            units: verticals/commerce-customer-context verticals/storefront-registry verticals/payment-term-catalog
+          - shard: commerce-market-catalog
+            units: verticals/commerce-market-catalog verticals/party-registry
           - shard: inventory-assortment
             units: verticals/inventory verticals/assortment
-          - shard: small-verticals
-            units: >-
-              verticals/party-registry verticals/payment-term-catalog verticals/price-group-catalog
-              verticals/pricing verticals/storefront-registry
           - target: node
             script: build
             public-site-url: http://localhost:8080
@@ -491,45 +648,6 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The Commerce Cloudflare build once crashed parsing Catalog's root HttpApi chain because React
-  # Compiler also compiled server code. Production imports only the quantity-preparation client;
-  # this case keeps the whole Catalog client barrel compiling in the Commerce workerd graph.
-  commerce-catalog-barrel:
-    name: Build Commerce for workerd with the whole Catalog client barrel
-    needs: [queue-proof]
-    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
-        with:
-          egress-policy: audit
-
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-
-      - name: Build Commerce for workerd with the whole Catalog client barrel
-        working-directory: app
-        env:
-          MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
-          ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
-          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
-          ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID: 00000000000000000000000000000000
-          ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID: 00000000000000000000000000000000
-          ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID: 00000000-0000-4000-8000-000000000000
-        run: |
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json
-          mise exec -- pnpm exec ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json
-          mise exec -- pnpm --filter @app/commerce-customer-context run cloudflare:build:full-catalog-client-guard
-          grep -qF '"CatalogApiFoundation"' verticals/commerce-customer-context/dist-cloudflare/worker/__modern_bff_effect.js
-
   node-runtime:
     name: Node Backend Federation Artifact Proof
     needs: [queue-proof, artifact-build]
@@ -584,14 +702,18 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm active-composition:publish prove-build
 
+  # Two independent halves over the same downloaded Worker outputs, run side by side: the outputs and
+  # their SSR, and the whole Worker topology against real services, which reads only the built outputs.
   cloudflare-runtime:
-    name: Cloudflare Workerd Artifact Proof
-    needs: [queue-proof, artifact-build, commerce-catalog-barrel]
-    if: >-
-      ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' && needs.artifact-build.result == 'success'
-      && needs.commerce-catalog-barrel.result == 'success' }}
+    name: Cloudflare Workerd Artifact Proof (${{ matrix.part }})
+    needs: [queue-proof, artifact-build]
+    if: ${{ !cancelled() && needs.queue-proof.outputs.proven != 'true' && needs.artifact-build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [outputs, topology]
     # Development-only service values for the Worker topology proof (as in service-integration).
     env:
       DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
@@ -643,6 +765,7 @@ jobs:
         run: bash scripts/unpack-unit-build-outputs.sh "$RUNNER_TEMP/units" .output
 
       - name: Generate federated types, verify the Worker outputs and prove their SSR
+        if: matrix.part == 'outputs'
         working-directory: app
         env:
           MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
@@ -669,6 +792,7 @@ jobs:
       # Cloudflare topology end to end: Hyperdrive across requests, SpiceDB over HTTP, module
       # discovery and API calls over service bindings, and SSR.
       - name: Create the local SpiceDB TLS certificate
+        if: matrix.part == 'topology'
         working-directory: app
         # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
         run: |
@@ -680,12 +804,14 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Start fresh PostgreSQL and SpiceDB services for the Worker topology
+        if: matrix.part == 'topology'
         working-directory: app
         run: |
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
 
       - name: Migrate and initialize the local tenant for the Worker topology
+        if: matrix.part == 'topology'
         working-directory: app
         # The migrations and local initialization read the app .env; write it from this job's
         # development-only service values so every tool sees the same database and SpiceDB.
@@ -697,12 +823,13 @@ jobs:
           mise exec -- pnpm local:initialize
 
       - name: Prove the Worker topology against PostgreSQL and SpiceDB
+        if: matrix.part == 'topology'
         working-directory: app
         timeout-minutes: 10
         run: mise exec -- bash scripts/prove-cloudflare-local-topology.sh
 
       - name: Remove the Worker topology service containers and volumes
-        if: always()
+        if: always() && matrix.part == 'topology'
         working-directory: app
         run: docker compose down --volumes --remove-orphans
 
@@ -716,9 +843,9 @@ jobs:
         queue-proof,
         workspace-gate,
         static-contracts,
+        format-and-lint,
         service-integration,
         artifact-build,
-        commerce-catalog-barrel,
         node-runtime,
         cloudflare-runtime,
       ]

@@ -389,9 +389,10 @@ unit at a time, and uploads their git-ignored outputs. The `Node Backend Federat
 and `Cloudflare Workerd Artifact Proof` jobs download every shard
 (`scripts/unpack-unit-build-outputs.sh` fails naming any unit no shard built) and prove the whole
 topology from those outputs. A new unit joins one shard of the matrix; `Repository Tooling Tests`
-fails until it does.
+fails until it does. The Cloudflare proof runs as two jobs over the same outputs: one verifies the
+Worker outputs and their SSR, the other proves the Worker topology below.
 
-The `Cloudflare Workerd Artifact Proof` job runs the built Workers together before any deploy:
+The `Cloudflare Workerd Artifact Proof (topology)` job runs the built Workers together before any deploy:
 `scripts/prove-cloudflare-local-topology.sh` starts each Worker in `wrangler dev` against the job's
 PostgreSQL (as the `HYPERDRIVE` local connection string) and SpiceDB (a local gateway Worker stands
 in for the `SPICEDB` VPC service), then proves repeated database requests, a SpiceDB-authorized

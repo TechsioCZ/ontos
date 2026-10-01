@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { Array as EffectArray, Order, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -25,6 +26,8 @@ const readWorkflow = (name: string) =>
 const EDGE_ENVIRONMENT = 'stage-edge';
 const GATES_WORKFLOW = 'ultramodern-workspace-gates.yml';
 const GATES_WORKFLOW_URL = new URL(`../../../.github/workflows/${GATES_WORKFLOW}`, import.meta.url);
+/** The fixed system PATH a workflow step script runs with in these tests. */
+const STEP_PATH = '/usr/bin:/bin';
 
 const skipsGates = (changedPaths: readonly string[], ignored: readonly string[]) =>
   changedPaths.every((changedPath) => ignored.some((pattern) => path.matchesGlob(changedPath, pattern)));
@@ -140,7 +143,7 @@ const runStep = (script: string, environment: Readonly<Record<string, string>>) 
   const outputPath = path.join(directory, 'output');
   try {
     execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', script], {
-      env: { GITHUB_OUTPUT: outputPath, PATH: '/usr/bin:/bin', ...environment },
+      env: { GITHUB_OUTPUT: outputPath, PATH: STEP_PATH, ...environment },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     return Object.fromEntries(
@@ -685,18 +688,19 @@ it('hands the edge deployment planner the Outbox Worker mode it requires', () =>
 
 const QUEUE_PROOF_JOB = 'queue-proof';
 const ARTIFACT_BUILD_JOB = 'artifact-build';
-const BARREL_GUARD_JOB = 'commerce-catalog-barrel';
+const WORKSPACE_GATE_JOB = 'workspace-gate';
+const FORMAT_AND_LINT_JOB = 'format-and-lint';
 /** The gates that start once the merge queue proof is checked. */
 const ROOT_GATE_JOBS = [
-  'workspace-gate',
+  WORKSPACE_GATE_JOB,
   'static-contracts',
+  FORMAT_AND_LINT_JOB,
   'service-integration',
   ARTIFACT_BUILD_JOB,
-  BARREL_GUARD_JOB,
 ] as const;
 /** The proofs of the built artifacts, which also wait for the shard builds. */
 const ARTIFACT_PROOF_JOBS = {
-  'cloudflare-runtime': [QUEUE_PROOF_JOB, ARTIFACT_BUILD_JOB, BARREL_GUARD_JOB],
+  'cloudflare-runtime': [QUEUE_PROOF_JOB, ARTIFACT_BUILD_JOB],
   'node-runtime': [QUEUE_PROOF_JOB, ARTIFACT_BUILD_JOB],
 } as const;
 const GATE_JOBS = [...ROOT_GATE_JOBS, 'node-runtime', 'cloudflare-runtime'];
@@ -711,7 +715,7 @@ const GatedJobsSchema = Schema.Struct({
 const stepPasses = (script: string, environment: Readonly<Record<string, string>>) => {
   try {
     execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', script], {
-      env: { PATH: '/usr/bin:/bin', ...environment },
+      env: { PATH: STEP_PATH, ...environment },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     return true;
@@ -849,4 +853,118 @@ it('builds every delivery unit of the topology in exactly one artifact-build sha
   expect(sorted(matrix.target)).toEqual(['cloudflare', 'node']);
   expect(jobs['node-runtime'].needs).toContain(ARTIFACT_BUILD_JOB);
   expect(jobs['cloudflare-runtime'].needs).toContain(ARTIFACT_BUILD_JOB);
+});
+
+const GateCommandsWorkflowSchema = Schema.Struct({
+  jobs: Schema.Struct({
+    [FORMAT_AND_LINT_JOB]: Schema.Struct({
+      steps: Schema.Array(
+        Schema.Struct({
+          env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
+          name: Schema.optional(Schema.String),
+          run: Schema.optional(Schema.String),
+        }),
+      ),
+      strategy: Schema.Struct({ matrix: Schema.Struct({ shard: Schema.Array(Schema.Number) }) }),
+    }),
+    'static-contracts': Schema.Struct({ steps: Schema.Array(Schema.Struct({ run: Schema.optional(Schema.String) })) }),
+    [WORKSPACE_GATE_JOB]: Schema.Struct({
+      strategy: Schema.Struct({
+        matrix: Schema.Struct({
+          include: Schema.Array(Schema.Struct({ commands: Schema.String, name: Schema.String })),
+        }),
+      }),
+    }),
+  }),
+});
+const RootScriptsSchema = Schema.Struct({ scripts: Schema.Record(Schema.String, Schema.String) });
+
+const readGateCommandJobs = () =>
+  Schema.decodeUnknownSync(GateCommandsWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs;
+const gateCommands = () =>
+  readGateCommandJobs()[WORKSPACE_GATE_JOB].strategy.matrix.include.map(({ commands }) =>
+    commands.split('\n').filter(Boolean),
+  );
+
+it('runs every workspace gate check in some workspace-gate entry', () => {
+  const commands = gateCommands().flat();
+  for (const check of [
+    'pnpm typecheck',
+    'pnpm typecheck:lint-rules',
+    'pnpm test:lint-rules',
+    'pnpm api:check:ontos',
+    'pnpm test:scripts',
+    'pnpm module-entrypoints:check',
+    'pnpm test:deployment-impact',
+    'pnpm test:generation',
+  ]) {
+    expect(commands).toContain(check);
+  }
+  const staticChecks = readGateCommandJobs()['static-contracts'].steps.map(({ run }) => run ?? '');
+  expect(staticChecks).toContain('mise exec -- pnpm database-access:check');
+});
+
+it('runs the root unit and component tests of every workspace package in exactly one shard', () => {
+  const { scripts } = Schema.decodeUnknownSync(RootScriptsSchema)(
+    JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf-8')),
+  );
+  // The shards run exactly what the root script runs, split by package.
+  expect(scripts['test:unit']).toBe('pnpm -r --if-present run test:unit && pnpm -r --if-present run test:component');
+  const shards = gateCommands().flatMap((commands) => {
+    const [unit, component, ...rest] = commands;
+    if (unit === undefined || !unit.endsWith(' run test:unit')) {
+      return [];
+    }
+    const filters = unit.replace(/^pnpm -r --if-present /u, '').replace(/ run test:unit$/u, '');
+    // Each shard runs test:component over the same packages, after test:unit, and nothing else.
+    expect(component).toBe(`pnpm -r --if-present ${filters} run test:component`);
+    expect(rest).toEqual([]);
+    return [
+      [...filters.matchAll(/--filter (?<filter>\S+)/gu)].map(({ groups }) => groups?.filter?.replaceAll("'", '') ?? ''),
+    ];
+  });
+  const named = shards.filter((filters) => filters.every((filter) => !filter.startsWith('!')));
+  const remainder = shards.filter((filters) => filters.some((filter) => filter.startsWith('!')));
+  expect(named.length + remainder.length).toBe(shards.length);
+  // One shard runs every package the others do not name, excluding the workspace root like `pnpm -r`.
+  expect(remainder).toHaveLength(1);
+  const namedPackages = named.flat();
+  expect(sorted(remainder[0] ?? [])).toEqual(sorted(['!.', ...namedPackages.map((filter) => `!${filter}`)]));
+  expect(new Set(namedPackages).size).toBe(namedPackages.length);
+  for (const filter of namedPackages) {
+    expect(filter).toMatch(/^\.\/(?:apps|packages|verticals)\/[a-z-]+$/u);
+    expect(() => readFileSync(new URL(`../../${filter}/package.json`, import.meta.url))).not.toThrow();
+  }
+});
+
+it('formats and lints every tracked file in exactly one pre-commit hook shard', () => {
+  const lint = readGateCommandJobs()[FORMAT_AND_LINT_JOB];
+  const step = lint.steps.find(({ run }) => run?.includes('--files-from-stdin') === true);
+  const shards = Number(step?.env?.SHARDS);
+  expect(lint.strategy.matrix.shard).toEqual(Array.from({ length: shards }, (_, index) => index + 1));
+  const run = step?.run ?? 'exit 1';
+  // The hook sees its shard's files, and a file it fixes fails the gate.
+  expect(run).toContain('lefthook run pre-commit --files-from-stdin --no-auto-install');
+  expect(run.trimEnd().endsWith('git diff --exit-code HEAD')).toBe(true);
+  const select = run.slice(0, run.indexOf('mise exec'));
+  const repository = fileURLToPath(new URL('../../../', import.meta.url));
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-lint-shards-'));
+  try {
+    const selected = Array.from({ length: shards }, (_, index) => {
+      execFileSync('/bin/bash', ['-eo', 'pipefail', '-c', select], {
+        cwd: repository,
+        env: { PATH: STEP_PATH, RUNNER_TEMP: directory, SHARD: String(index + 1), SHARDS: String(shards) },
+      });
+      return readFileSync(path.join(directory, 'shard-files'), 'utf-8').split('\0').filter(Boolean);
+    });
+    const tracked = execFileSync('/usr/bin/git', ['ls-files', '-z'], { cwd: repository, encoding: 'utf-8' })
+      .split('\0')
+      .filter(Boolean);
+    expect(sorted(selected.flat())).toEqual(sorted(tracked));
+    for (const files of selected) {
+      expect(files.length).toBeGreaterThan(0);
+    }
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
 });

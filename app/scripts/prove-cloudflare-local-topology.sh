@@ -17,7 +17,7 @@
 # Usage: bash scripts/prove-cloudflare-local-topology.sh
 # Needs: `pnpm cloudflare:build` outputs, a migrated database with `pnpm local:initialize` data,
 # SpiceDB serving its HTTPS gateway with the local certificate, and the environment named below
-# (the service-integration job's values).
+# (the cloudflare-runtime job's values).
 set -euo pipefail
 
 app_directory="$(cd "$(dirname "$0")/.." && pwd)"
