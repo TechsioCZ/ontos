@@ -4,6 +4,10 @@ import { Config, Console, Context, DateTime, Effect, Layer, Option, Redacted, Sc
 import { Command } from 'effect/unstable/cli';
 import { FetchHttpClient } from 'effect/unstable/http';
 
+import {
+  ONTOS_MODULE_CONTRACT_PATH,
+  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
+} from '../../packages/core-runtime/src/index.ts';
 import type { CloudflareApiError } from './cloudflare-api-error.mts';
 import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from './cloudflare-api.mts';
 import type {
@@ -53,6 +57,7 @@ export const ACCESS_BYPASS_POLICY = 'ontos-stage-gateway-bypass';
 export const ACCESS_SERVICE_TOKEN = 'ontos-stage-ci';
 export const STAGE_ACCESS_APP = 'ontos-stage';
 export const PUBLIC_PATHS_APP = 'ontos-stage-public-paths';
+export const CONTRACT_PATHS_APP = 'ontos-stage-contracts';
 /** A login lasts 30 days. */
 export const ACCESS_SESSION_DURATION = '720h';
 /** Verticals call this route on the Shell with an API key, never with an Access session. */
@@ -64,6 +69,13 @@ export const GATEWAY_CONTEXT_PATH = '/shell-super-app-api/auth/api-key/gateway-c
  * built bundle every visitor downloads anyway; HTML, SSR and APIs stay behind Access.
  */
 export const FEDERATION_ASSET_PATHS = ['/mf-manifest.json', '/remoteEntry.js', '/static/*', '/locales/*'] as const;
+/**
+ * The build-time contracts the Application Composition publisher reads from each deployed unit: the
+ * Shell's runtime contract and federation manifest, and every vertical's module contract. CI publishes
+ * the composition without an Access session, and the files hold build metadata, never data.
+ */
+export const SHELL_CONTRACT_PATHS = [ONTOS_SHELL_RUNTIME_CONTRACT_PATH, '/mf-manifest.json'] as const;
+export const VERTICAL_CONTRACT_PATHS = [ONTOS_MODULE_CONTRACT_PATH] as const;
 export const ACCESS_CLIENT_ID_SECRET = 'CLOUDFLARE_ACCESS_CLIENT_ID';
 export const ACCESS_CLIENT_SECRET_SECRET = 'CLOUDFLARE_ACCESS_CLIENT_SECRET';
 export const ZONE_ID_VARIABLE = 'CLOUDFLARE_STAGE_ZONE_ID';
@@ -375,33 +387,44 @@ const ensureServiceToken = (repository: string) =>
 
 /**
  * One application covers every stage hostname, so a login on one is a login on all of them. The
- * bypass application's paths are the more specific match, so Access lets them through.
+ * bypass applications' paths are the more specific match, so Access lets them through.
  */
 export const stageAccessApps = (
   plan: CostGuardPlan,
   ids: { bypass: string; ci: string; people: string },
-): AccessAppSpec[] => [
-  {
-    destinations: [
-      `${plan.shellHostname}${GATEWAY_CONTEXT_PATH}`,
-      ...plan.hostnames
-        .filter((hostname) => hostname !== plan.shellHostname)
-        .flatMap((hostname) => FEDERATION_ASSET_PATHS.map((path) => `${hostname}${path}`)),
-    ],
-    name: PUBLIC_PATHS_APP,
-    policies: [{ id: ids.bypass, precedence: 1 }],
-    sessionDuration: ACCESS_SESSION_DURATION,
-  },
-  {
-    destinations: [...plan.hostnames],
-    name: STAGE_ACCESS_APP,
-    policies: [
-      { id: ids.people, precedence: 1 },
-      { id: ids.ci, precedence: 2 },
-    ],
-    sessionDuration: ACCESS_SESSION_DURATION,
-  },
-];
+): AccessAppSpec[] => {
+  const verticals = plan.hostnames.filter((hostname) => hostname !== plan.shellHostname);
+  return [
+    {
+      destinations: [
+        `${plan.shellHostname}${GATEWAY_CONTEXT_PATH}`,
+        ...verticals.flatMap((hostname) => FEDERATION_ASSET_PATHS.map((path) => `${hostname}${path}`)),
+      ],
+      name: PUBLIC_PATHS_APP,
+      policies: [{ id: ids.bypass, precedence: 1 }],
+      sessionDuration: ACCESS_SESSION_DURATION,
+    },
+    // Access caps one application's destinations, so the contracts take a second bypass application.
+    {
+      destinations: [
+        ...SHELL_CONTRACT_PATHS.map((path) => `${plan.shellHostname}${path}`),
+        ...verticals.flatMap((hostname) => VERTICAL_CONTRACT_PATHS.map((path) => `${hostname}${path}`)),
+      ],
+      name: CONTRACT_PATHS_APP,
+      policies: [{ id: ids.bypass, precedence: 1 }],
+      sessionDuration: ACCESS_SESSION_DURATION,
+    },
+    {
+      destinations: [...plan.hostnames],
+      name: STAGE_ACCESS_APP,
+      policies: [
+        { id: ids.people, precedence: 1 },
+        { id: ids.ci, precedence: 2 },
+      ],
+      sessionDuration: ACCESS_SESSION_DURATION,
+    },
+  ];
+};
 
 const ensureAccess = (plan: CostGuardPlan) =>
   Effect.gen(function* ensureAccessEffect() {

@@ -572,9 +572,8 @@ list of the usage notification emails) and `STAGE_ACCESS_ENFORCE` (default `fals
 
 Only with `STAGE_ACCESS_ENFORCE=true` does `cost-guards` put stage behind Access. Its job is to keep
 bots and crawlers from spending the Workers allowance, not to pick who may look: anyone who proves an
-email address gets in, through a one-time PIN or the GitHub and Google logins set up in Zero Trust,
-and a login lasts 30 days (`720h`). Only then does it set the reusable policy `ontos-stage-people`
-to admit anyone who signs in, so the audience never widens ahead of the applications. It manages two
+email address gets in, through the one-time PIN login set up in Zero Trust, and a login lasts 30 days (`720h`). Only then does it set the reusable policy `ontos-stage-people`
+to admit anyone who signs in, so the audience never widens ahead of the applications. It manages three
 applications:
 
 - `ontos-stage` covers every placed stage hostname with the people policy and the CI token policy.
@@ -585,8 +584,12 @@ applications:
   because the browser loads federated remotes cross-origin without credentials. Cloudflare applies
   the more specific path application before the hostname one. Pages and BFF calls still need a login;
   the browser reaches the BFFs through the Shell, which calls verticals over service bindings.
+- `ontos-stage-contracts` bypasses Access for the build-time contracts the Application Composition
+  publisher reads from CI: the Shell's `/.well-known/ontos-shell-runtime.json` and `/mf-manifest.json`,
+  and every vertical's `/.well-known/ontos-module-manifest.json`. They hold build metadata, never data.
+  Access caps one application's destinations, so they do not fit into `ontos-stage-public-paths`.
 
-To turn it off, set `STAGE_ACCESS_ENFORCE=false` and delete both applications in the Zero Trust
+To turn it off, set `STAGE_ACCESS_ENFORCE=false` and delete the three applications in the Zero Trust
 dashboard; `cost-guards` never deletes them.
 
 To resume after the kill switch trips, find out why, then run

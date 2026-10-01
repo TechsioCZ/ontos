@@ -186,6 +186,15 @@ it.effect('gates every stage hostname behind one Access application only when en
         ],
         [{ id: 'policy-3', precedence: 1 }],
       ),
+      app(
+        'ontos-stage-contracts',
+        [
+          `${SHELL_HOSTNAME}/.well-known/ontos-shell-runtime.json`,
+          `${SHELL_HOSTNAME}/mf-manifest.json`,
+          ...verticals.map((hostname) => `${hostname}/.well-known/ontos-module-manifest.json`),
+        ],
+        [{ id: 'policy-3', precedence: 1 }],
+      ),
       app('ontos-stage', HOSTNAMES, [
         { id: 'policy-2', precedence: 1 },
         { id: 'policy-1', precedence: 2 },
@@ -196,7 +205,7 @@ it.effect('gates every stage hostname behind one Access application only when en
       include: [{ everyone: {} }],
     });
 
-    // A re-run finds both applications current and changes nothing.
+    // A re-run finds every application current and changes nothing.
     const before = writes(account).length;
     yield* run(provisionCostGuards, {
       account,
@@ -220,7 +229,7 @@ it.effect('gates every stage hostname behind one Access application only when en
       });
       return checks.filter(([label]) => label.includes('Access')).map(([, failure]) => failure);
     };
-    expect(yield* accessChecks()).toStrictEqual(Array.from({ length: 5 }, () => Option.none()));
+    expect(yield* accessChecks()).toStrictEqual(Array.from({ length: 6 }, () => Option.none()));
 
     // An application whose policies were swapped no longer passes verify.
     const stageApp = account.accessApps.findIndex(({ name }) => name === 'ontos-stage');
