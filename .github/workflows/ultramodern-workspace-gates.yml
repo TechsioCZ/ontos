@@ -673,7 +673,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-      - name: Wait for every other Node build shard to succeed
+      - name: Wait for every other Node build shard to upload its outputs
         if: matrix.proof != 'none'
         working-directory: app
         timeout-minutes: 15
@@ -862,7 +862,7 @@ jobs:
           mise exec -- pnpm db:migrate
           mise exec -- pnpm local:initialize
 
-      - name: Wait for every other Cloudflare build shard to succeed
+      - name: Wait for every other Cloudflare build shard to upload its outputs
         if: matrix.proof != 'none'
         working-directory: app
         timeout-minutes: 15

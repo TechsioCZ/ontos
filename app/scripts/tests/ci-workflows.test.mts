@@ -28,6 +28,8 @@ const GATES_WORKFLOW = 'ultramodern-workspace-gates.yml';
 const GATES_WORKFLOW_URL = new URL(`../../../.github/workflows/${GATES_WORKFLOW}`, import.meta.url);
 /** The fixed system PATH a workflow step script runs with in these tests. */
 const STEP_PATH = '/usr/bin:/bin';
+/** The step after which a build shard's outputs are downloadable by the target's proving shards. */
+const UPLOAD_STEP = "Upload the shard's build outputs";
 
 const skipsGates = (changedPaths: readonly string[], ignored: readonly string[]) =>
   changedPaths.every((changedPath) => ignored.some((pattern) => path.matchesGlob(changedPath, pattern)));
@@ -844,7 +846,7 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
 const readArtifactBuildJobs = () =>
   Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8'))).jobs;
 
-it('proves each target on its own shards only after every other shard of the target succeeded', () => {
+it('proves each target on its own shards only after every other shard of the target uploaded its outputs', () => {
   const jobs = readArtifactBuildJobs();
   for (const [job, proofs, artifacts] of [
     [NODE_ARTIFACT_BUILD_JOB, ['node'], 'node-units-*'],
@@ -858,7 +860,7 @@ it('proves each target on its own shards only after every other shard of the tar
     // The proving shard waits for every other shard of this job, by the job's own name, before it
     // downloads them; every step after the shard's own upload runs only on a proving shard.
     const prefix = name.slice(0, name.indexOf('${{'));
-    const upload = steps.findIndex((step) => step.name === "Upload the shard's build outputs");
+    const upload = steps.findIndex((step) => step.name === UPLOAD_STEP);
     const wait = steps.findIndex(({ run }) => run?.startsWith('bash scripts/wait-for-build-shards.sh') === true);
     const download = steps.findIndex(({ uses }) => uses?.startsWith('actions/download-artifact@') === true);
     expect(steps[wait]?.run).toBe(
@@ -906,17 +908,28 @@ const waitForBuildShards = (jobs: readonly { conclusion: string | null; name: st
 };
 
 it('waits for the other build shards of its own target and fails when one does not succeed', () => {
+  const last = 'Build x (3/3)';
   const others = [
     { conclusion: 'success', name: 'Build x (2/3)' },
-    { conclusion: 'success', name: 'Build x (3/3)' },
+    { conclusion: 'success', name: last },
   ];
   const unrelated = [
     { conclusion: null, name: 'Build x (1/3)' },
     { conclusion: 'failure', name: 'Static Contracts' },
   ];
   expect(waitForBuildShards([...others, ...unrelated])).toBe(true);
+  // Another proving shard of the target is still running its proof, but its outputs are uploaded.
+  const proving = {
+    conclusion: null,
+    name: last,
+    steps: [
+      { conclusion: 'success', name: UPLOAD_STEP },
+      { conclusion: null, name: 'Wait for the other build shards' },
+    ],
+  };
+  expect(waitForBuildShards([others[0], proving, ...unrelated])).toBe(true);
   for (const conclusion of ['failure', 'cancelled', 'timed_out', 'skipped']) {
-    expect(waitForBuildShards([others[0], { conclusion, name: 'Build x (3/3)' }, ...unrelated])).toBe(false);
+    expect(waitForBuildShards([others[0], { conclusion, name: last }, ...unrelated])).toBe(false);
   }
 });
 
