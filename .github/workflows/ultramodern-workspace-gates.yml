@@ -159,14 +159,10 @@ jobs:
           # The root `pnpm test:unit` (every package's test:unit, then every package's test:component) in
           # shards of packages balanced by measured test time. The last shard runs every package the others
           # do not name, so a new package is always tested; Repository Tooling Tests check the split.
-          - name: Unit and Component Tests (Catalog)
+          - name: Unit and Component Tests (Catalog, Commerce Customer Context, and Inventory)
             commands: |
-              pnpm -r --if-present --filter ./verticals/catalog run test:unit
-              pnpm -r --if-present --filter ./verticals/catalog run test:component
-          - name: Unit and Component Tests (Commerce Customer Context and Inventory)
-            commands: |
-              pnpm -r --if-present --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit
-              pnpm -r --if-present --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component
+              pnpm -r --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit
+              pnpm -r --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component
           - name: Unit and Component Tests (every other package)
             commands: |
               pnpm -r --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:unit
@@ -409,6 +405,35 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
+      # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
+      # Only warm-caches on main saves it, so parallel jobs never race to save.
+      - name: Restore the Playwright Chromium build
+        id: playwright-cache
+        if: matrix.suite == 'browser'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
+
+      # The system-library install goes through apt and can take minutes on a slow mirror, so it runs in the
+      # background while the services start and the migrations run; the browser tests wait for it below.
+      - name: Start installing Chromium and its runtime dependencies in the background
+        if: matrix.suite == 'browser'
+        working-directory: app
+        env:
+          CHROMIUM_CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
+        run: |
+          if [ "$CHROMIUM_CACHED" = true ]; then
+            set -- install-deps chromium
+          else
+            set -- install --with-deps chromium
+          fi
+          (
+            status=0
+            mise exec -- pnpm --filter @app/shell-super-app exec playwright "$@" || status=$?
+            echo "$status" > "$RUNNER_TEMP/chromium-install.status"
+          ) > "$RUNNER_TEMP/chromium-install.log" 2>&1 &
+
       - name: Create the local SpiceDB TLS certificate
         working-directory: app
         # SpiceDB serves TLS only; every client pins this certificate as SPICEDB_CA_CERT.
@@ -425,28 +450,6 @@ jobs:
         run: |
           docker compose down --volumes --remove-orphans
           docker compose up --detach --wait --wait-timeout 120
-
-      # The Chromium build is pinned by the Playwright version in the lockfile; its system libraries are not cached.
-      # Only warm-caches on main saves it, so parallel jobs never race to save.
-      - name: Restore the Playwright Chromium build
-        id: playwright-cache
-        if: matrix.suite == 'browser'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-chromium-${{ runner.os }}-${{ hashFiles('app/pnpm-lock.yaml') }}
-
-      - name: Install Chromium and its runtime dependencies
-        if: matrix.suite == 'browser'
-        working-directory: app
-        env:
-          CHROMIUM_CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
-        run: |
-          if [ "$CHROMIUM_CACHED" = true ]; then
-            mise exec -- pnpm --filter @app/shell-super-app exec playwright install-deps chromium
-          else
-            mise exec -- pnpm --filter @app/shell-super-app exec playwright install --with-deps chromium
-          fi
 
       - name: Remove the pre-seeded runtime role to prove deployment bootstrap ordering
         if: matrix.suite == 'integration'
@@ -501,6 +504,15 @@ jobs:
         if: matrix.suite == 'integration'
         working-directory: app
         run: mise exec -- pnpm test:integration
+
+      - name: Wait for the Chromium install
+        if: matrix.suite == 'browser'
+        timeout-minutes: 10
+        run: |
+          status_file="$RUNNER_TEMP/chromium-install.status"
+          while [ ! -f "$status_file" ]; do sleep 2; done
+          cat "$RUNNER_TEMP/chromium-install.log"
+          exit "$(cat "$status_file")"
 
       - name: Run parallel authenticated browser tests without retries
         if: matrix.suite == 'browser'
