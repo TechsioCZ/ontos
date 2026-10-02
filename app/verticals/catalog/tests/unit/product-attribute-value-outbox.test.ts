@@ -1,7 +1,10 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import {
   RemoveProductAttributeValuesPayloadSchema,
@@ -82,38 +85,41 @@ const services = (partial: Partial<AttributeValuesPersistence>): Services => ({
   setVariantOverride: unexpected,
   ...partial,
 });
-const context = (persistence: Services) => {
-  const events: { eventType: string; payloadJson: unknown; reference: object; subjectResourceId: string }[] = [];
-  const outbox: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] = [];
-  const value: ActionHandlerContext<typeof domainEvents, Services> = {
-    actionInvocationId,
-    addDomainEvent: (event) =>
-      Effect.sync(() => {
-        const reference = Object.create(null);
-        events.push({
-          eventType: event.eventType,
-          payloadJson: event.payloadJson,
-          reference,
-          subjectResourceId: event.subjectResourceId,
-        });
-        return reference;
-      }),
-    addOutboxMessage: (event, message) =>
-      Effect.sync(() => {
-        outbox.push({ event, message });
-      }),
-    recordAuditEvidence: () => Effect.void,
-    recordDataAccess: () => Effect.void,
-    scope,
-    services: persistence,
-  };
-  return { events, outbox, value };
-};
+const context = (persistence: Services) =>
+  Effect.gen(function* makeContext() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const events: { eventType: string; payloadJson: unknown; reference: object; subjectResourceId: string }[] = [];
+    const outbox: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] = [];
+    const value: ActionHandlerContext<typeof domainEvents, Services> = {
+      actionInvocationId,
+      addDomainEvent: (event) =>
+        Effect.sync(() => {
+          const reference = Object.create(null);
+          events.push({
+            eventType: event.eventType,
+            payloadJson: event.payloadJson,
+            reference,
+            subjectResourceId: event.subjectResourceId,
+          });
+          return reference;
+        }),
+      addOutboxMessage: (event, message) =>
+        Effect.sync(() => {
+          outbox.push({ event, message });
+        }),
+      compositionRevision: snapshot.composition.revision,
+      recordAuditEvidence: () => Effect.void,
+      recordDataAccess: () => Effect.void,
+      scope,
+      services: persistence,
+    };
+    return { events, outbox, value };
+  });
 
 describe('Product attribute value committed selection source event', () => {
   it.effect('publishes one linked source revision for each proven inheriting Variant', () =>
     Effect.gen(function* sourceRevised() {
-      const state = context(
+      const state = yield* context(
         services({
           setProductValues: () =>
             Effect.succeed({
@@ -161,7 +167,7 @@ describe('Product attribute value committed selection source event', () => {
 
   it.effect('publishes the exact affected Variant for a Product source removal', () =>
     Effect.gen(function* sourceRemoved() {
-      const state = context(
+      const state = yield* context(
         services({
           removeProductValues: () =>
             Effect.succeed({
@@ -186,7 +192,7 @@ describe('Product attribute value committed selection source event', () => {
 
   it.effect('stays silent for an empty proven population and fails closed when proof is absent', () =>
     Effect.gen(function* silenceAndFailClosed() {
-      const overridden = context(
+      const overridden = yield* context(
         services({
           setProductValues: () =>
             Effect.succeed({ affectedVariantRefs: [], attributeValueSetId: valueSetId, revision: 2, state: 'SET' }),
@@ -196,7 +202,7 @@ describe('Product attribute value committed selection source event', () => {
       expect(overridden.events).toHaveLength(0);
       expect(overridden.outbox).toHaveLength(0);
 
-      const unproven = context(
+      const unproven = yield* context(
         services({
           removeProductValues: () => Effect.succeed({ attributeValueSetId: valueSetId, revision: 3, state: 'REMOVED' }),
         }),

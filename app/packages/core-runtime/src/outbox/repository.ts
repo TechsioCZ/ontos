@@ -16,9 +16,13 @@ import {
   tenants,
   workerCheckpoints,
 } from '../db/schema.ts';
-import type { CoreTransaction, CoreDatabaseExecutor } from '../db/types.ts';
+import type { CoreTransaction, CoreDbExecutor } from '../db/types.ts';
 import { tenantStatesAllowingAccess } from '../modules/module-state-gate.ts';
-import type { AnyOutboxWorkerRegistration, OutboxWorkerRetryPolicy, OutboxWorkerSubscription } from './definition.ts';
+import {
+  ApplicationCompositionAuthorityError,
+  lockApplicationCompositionAuthority,
+} from '../modules/application-composition-authority.ts';
+import type { AnyOutboxWorkerRegistration, OutboxWorkerRetryPolicy } from './definition.ts';
 import { retryBackoffMs } from './definition.ts';
 import { PersistenceFailure } from '../database/persistence-failure.ts';
 import { OutboxClaimLostError, sanitizeOutboxErrorMessage } from './errors.ts';
@@ -60,7 +64,8 @@ export interface OutboxRepositoryService {
     registrations: readonly AnyOutboxWorkerRegistration[],
     claimOwner: string,
     now: Date,
-  ) => Effect.Effect<Option.Option<OutboxClaim>, PersistenceFailure>;
+    compositionRevision: string,
+  ) => Effect.Effect<Option.Option<OutboxClaim>, ApplicationCompositionAuthorityError | PersistenceFailure>;
   readonly complete: (claim: OutboxClaim, now: Date) => Effect.Effect<void, OutboxClaimLostError | PersistenceFailure>;
   readonly fail: (
     claim: OutboxClaim,
@@ -68,9 +73,9 @@ export interface OutboxRepositoryService {
     now: Date,
   ) => Effect.Effect<OutboxFailureStatus, OutboxClaimLostError | PersistenceFailure>;
   readonly matchUnmatched: (
-    subscriptions: readonly OutboxWorkerSubscription[],
+    compositionRevision: string,
     now: Date,
-  ) => Effect.Effect<OutboxMatchResult, PersistenceFailure>;
+  ) => Effect.Effect<OutboxMatchResult, ApplicationCompositionAuthorityError | PersistenceFailure>;
 }
 export class OutboxRepository extends Context.Service<OutboxRepository, OutboxRepositoryService>()(
   '@app/core-runtime/outbox/repository/OutboxRepository',
@@ -79,6 +84,8 @@ const outboxPersistenceFailure = <FailureCause>(cause: FailureCause): Persistenc
   new PersistenceFailure({ cause, reason: 'The Outbox Worker persistence operation failed' });
 const claimLostOrPersistenceError = <Failure>(error: Failure) =>
   Schema.is(OutboxClaimLostError)(error) ? error : outboxPersistenceFailure(error);
+const compositionAuthorityOrPersistenceError = <Failure>(error: Failure) =>
+  Schema.is(ApplicationCompositionAuthorityError)(error) ? error : outboxPersistenceFailure(error);
 const OutboxRepositoryInvariantError = Schema.TaggedError<unknown>()('OutboxRepositoryInvariantError', {
   reason: Schema.String,
 });
@@ -123,8 +130,8 @@ const loadClaimInvocationEvidence = Effect.fnUntraced(function* loadClaimInvocat
   );
 });
 
-export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepositoryService => ({
-  claimNext: (registrations, claimOwner, now) => {
+export const makeOutboxRepository = (executor: CoreDbExecutor): OutboxRepositoryService => ({
+  claimNext: (registrations, claimOwner, now, compositionRevision) => {
     if (registrations.length === 0) {
       return Effect.succeedNone;
     }
@@ -132,6 +139,7 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
     return executor
       .transaction(
         Effect.fn('claimNextEffect')(function* claimNextEffect(transaction: CoreTransaction) {
+          yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'worker');
           const candidates = yield* transaction
             .select({
               actionInvocationId: domainEvents.actionInvocationId,
@@ -261,7 +269,7 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
       )
       .pipe(
         Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
-        Effect.mapError(outboxPersistenceFailure),
+        Effect.mapError(compositionAuthorityOrPersistenceError),
       );
   },
   complete: (claim, now) =>
@@ -442,10 +450,11 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
         Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
         Effect.mapError(claimLostOrPersistenceError),
       ),
-  matchUnmatched: (subscriptions, now) =>
+  matchUnmatched: (compositionRevision, now) =>
     executor
       .transaction(
         Effect.fn('matchUnmatchedEffect')(function* matchUnmatchedEffect(transaction: CoreTransaction) {
+          const subscriptions = yield* lockApplicationCompositionAuthority(transaction, compositionRevision, 'match');
           const messages = yield* transaction
             .select({
               messageId: outboxMessages.outboxMessageId,
@@ -496,7 +505,7 @@ export const makeOutboxRepository = (executor: CoreDatabaseExecutor): OutboxRepo
       )
       .pipe(
         Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
-        Effect.mapError(outboxPersistenceFailure),
+        Effect.mapError(compositionAuthorityOrPersistenceError),
       ),
 });
 export const OutboxRepositoryLive = Layer.effect(

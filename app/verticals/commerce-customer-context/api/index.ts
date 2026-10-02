@@ -1,10 +1,11 @@
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
   ActionRuntime,
   ActionAuthorizationPreflight,
-  ActionRuntimeLive,
+  makeActionRuntimeLive,
   ActionAuthorizationPreflightDatabaseLive,
-  ActiveApplicationCompositionConfigLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -37,7 +38,6 @@ import { commerceEnrollmentOwnerTransitionPreparationLive } from '../src/enrollm
 import { CommerceEnrollmentPreparationSubjectResolverLive } from '../src/enrollment/orchestration/preparation-subject.ts';
 import { CommerceEnrollmentSweptContinuationLive } from '../src/workers/enrollment-continuation-sweeper.ts';
 import { CommercePortalAuthAccountCreationUnavailable } from './portal-auth/provider/account-creation-unavailable.ts';
-import { CommerceUnitTransportLive } from './unit-transport.ts';
 import { CommercePortalAuthAccountLookupService } from './portal-auth/provider/account-lookup-service.ts';
 import { CommercePortalAuthLive } from './portal-auth/provider/auth.ts';
 import {
@@ -238,7 +238,7 @@ import { verifyRetailPurchasingSubjectCurrentV1ReadApiLive } from './verify-reta
 
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { commerceCustomerContextApi, commerceCustomerContextOperationContexts } from '../shared/api.ts';
-import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 
 const commercePortalAuthRecoveryStoreLive = CommercePortalAuthRecoveryStoreLive.pipe(
   Layer.provideMerge(CommercePortalAuthDatabaseLive),
@@ -428,14 +428,14 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
   | ActionRuntime
   | ActionAuthorizationPreflight
   | CommerceEnrollmentOwnerTransitionPreparation
-  | Layer.Services<typeof ActionRuntimeLive>
+  | Layer.Services<ReturnType<typeof makeActionRuntimeLive>>
 > = Layer.effect(
   ActionRuntime,
   Effect.gen(function* commerceEnrollmentActionRuntime() {
     const existingRuntime = yield* ActionRuntime;
     const existingPreflight = yield* ActionAuthorizationPreflight;
     const preparation = yield* CommerceEnrollmentOwnerTransitionPreparation;
-    const dependencies = yield* Effect.context<Layer.Services<typeof ActionRuntimeLive>>();
+    const dependencies = yield* Effect.context<Layer.Services<ReturnType<typeof makeActionRuntimeLive>>>();
     const runAction: ActionRuntimeService['runAction'] = (input) =>
       Effect.scoped(
         Effect.gen(function* runEnrollmentAwareAction() {
@@ -447,9 +447,10 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
           const execution = Context.get(executionContext, CommerceEnrollmentPreparedOwnerExecutionService);
           yield* Effect.addFinalizer(() => Effect.sync(execution.clear));
           const preflight = composeActionAuthorizationPreflights([execution.preflight, existingPreflight]);
-          const runtimeContext = yield* Layer.buildWithScope(Layer.fresh(ActionRuntimeLive), scope).pipe(
-            Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, preflight)),
-          );
+          const runtimeContext = yield* Layer.buildWithScope(
+            Layer.fresh(makeActionRuntimeLive(ultramodernDeliveryUnit)),
+            scope,
+          ).pipe(Effect.provideContext(Context.add(dependencies, ActionAuthorizationPreflight, preflight)));
           return yield* Context.get(runtimeContext, ActionRuntime)
             .runAction(input)
             .pipe(Effect.provideService(CommerceEnrollmentPreparedOwnerCapability, execution.capability));
@@ -459,7 +460,15 @@ const commerceEnrollmentActionRuntimeLive: Layer.Layer<
   }),
 );
 
+const compositionHttpClientLive = FetchHttpClient.layer.pipe(
+  Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+);
+const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
 const actionRuntimeDependenciesLive = Layer.mergeAll(
+  activeApplicationCompositionLive,
   actionAuthorizationPreflightDatabaseWithCoreLive,
   ActionRepositoryLive,
   ActionPermissionLive,
@@ -468,12 +477,12 @@ const actionRuntimeDependenciesLive = Layer.mergeAll(
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
 );
-const actionRuntimeCoreLive = ActionRuntimeLive.pipe(
+const actionRuntimeCoreLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
   Layer.provideMerge(commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive),
   Layer.provide(actionRuntimeDependenciesLive),
 );
 /**
- * The enrollment wrapper rebuilds `ActionRuntimeLive` per invocation with a composed preflight, so
+ * The enrollment preparation rebuilds the compiled owner Action runtime per invocation with a composed preflight, so
  * it needs the very services that runtime is built from as well as the base runtime it wraps.
  */
 const actionRuntimeServicesLive = commerceCustomerContextInvitationClaimActionAuthorizationPreflightLive.pipe(
@@ -607,7 +616,8 @@ const commerceEnrollmentOwnerEffectRegistryRealmLive = CommerceEnrollmentOwnerEf
     ),
   ),
 );
-const commerceEnrollmentContinuationRealmLive = CommerceEnrollmentContinuationLive.pipe(
+const commerceEnrollmentContinuationRealmLive = CommerceEnrollmentContinuationLive(ultramodernApiMarker).pipe(
+  Layer.provide(activeApplicationCompositionLive),
   Layer.provide(
     Layer.mergeAll(
       commerceEnrollmentOwnerTransactionRunnerProductionLive,
@@ -690,7 +700,7 @@ const commerceCustomerContextReadRuntime = readRuntimeCoreLive.pipe(
   Layer.provide(DatabaseConfigLive),
 );
 const configuredProductionExternalPortsLive = commerceCustomerContextProductionExternalPortsLive.pipe(
-  Layer.provide(ActiveApplicationCompositionConfigLive),
+  Layer.provide(activeApplicationCompositionLive),
 );
 const productionActionRuntimeLive = commerceCustomerContextActionRuntime.pipe(
   Layer.provideMerge(configuredProductionExternalPortsLive),
@@ -921,20 +931,19 @@ export const makeCommerceCustomerContextApiRuntime = (
     // so every namespace-carrying gateway assertion this vertical is handed needs the registration
     // here. A deployment that supplies its own registry alongside the redemption store overrides
     // this one, which is why the owned registration is merged first.
-    // The gateway verification material is a configuration reference rather than a service, so it
-    // is supplied as part of the context the handler tree is built in: the audience-bound verifier
-    // and the admission path both read it there rather than from the process environment.
     Layer.provide(
       Layer.mergeAll(
         CommerceAuthenticationNamespaceRegistryLive,
         actionPrincipalVerifierLive,
         gatewayAssertionRedemption,
-        gatewayVerification,
       ),
     ),
   );
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, CommerceUnitTransportLive)),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
+    // The deployment configuration belongs to the whole assembly: source HTTP, admission and
+    // gateway verification capture the same configuration and transport references.
+    Layer.provide(gatewayVerification),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({

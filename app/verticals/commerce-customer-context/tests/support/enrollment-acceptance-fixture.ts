@@ -5,6 +5,7 @@ import { Context, Effect, Schema } from 'effect';
 import { layerTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { acquireFixturePgClient } from './fixture-pg-client.ts';
+import { installEnrollmentTestAuthority } from './enrollment-composition-authority.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
 import {
   commerceCustomerContextRelations,
@@ -46,6 +47,7 @@ export interface EnrollmentAcceptanceFixture {
   readonly admin: EnrollmentAcceptanceDatabase;
   /** Removes every Attempt and owner operation of the fixture Tenant. */
   readonly cleanup: () => Effect.Effect<void>;
+  readonly compositionRevision: string;
   /** The production generic owner store, backed by one real transaction per phase. */
   readonly ownerStore: CommerceEnrollmentOwnerAttemptStore;
   readonly run: CommerceEnrollmentOwnerTransactionRun;
@@ -126,7 +128,9 @@ const acceptanceWorkerRun =
 /** Acquires the admin and runtime clients and builds the production owner store on the runtime role. */
 export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeEnrollmentAcceptanceFixture(
   scope: CommerceEnrollmentOwnerScope,
+  compositionRevision: string,
 ) {
+  yield* installEnrollmentTestAuthority(compositionRevision);
   const connections = yield* loadDatabaseConnectionPair();
   const adminClient = yield* acquireFixturePgClient(connections.admin.connectionString);
   const runtimeClient = yield* acquireFixturePgClient(connections.runtime.connectionString, 4);
@@ -140,6 +144,15 @@ export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeE
     admin
       .transaction((transaction) =>
         Effect.gen(function* deleteFixtureRows() {
+          yield* transaction.execute(
+            sql`
+            delete from core.application_composition_durable_work
+            where owner_module_key = 'commerce.customer-context'
+              and (work_id like ${`enrollment-attempt:${scope.tenantId}:%`}
+                or work_id like ${`enrollment-operation:${scope.tenantId}:%`})
+          `,
+            'objects',
+          );
           yield* transaction.execute(sql`set local session_replication_role = 'replica'`, 'objects');
           yield* transaction
             .delete(portalEnrollmentOwnerOperations)
@@ -154,6 +167,7 @@ export const makeEnrollmentAcceptanceFixture = Effect.fnUntraced(function* makeE
   const fixture: EnrollmentAcceptanceFixture = {
     admin,
     cleanup,
+    compositionRevision,
     ownerStore: commerceEnrollmentOwnerAttemptStoreForRun(scope, run),
     run,
     runRequestScoped: acceptanceWorkerRun(runtime, scope),

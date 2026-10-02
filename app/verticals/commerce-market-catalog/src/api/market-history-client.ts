@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface MarketHistoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type MarketHistoryAuthorizedInvocation = readonly [
@@ -44,6 +45,10 @@ export const executeMarketHistory = (
   payload: MarketHistoryRequest,
   ...[requestCorrelation, options = {}]: MarketHistoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeMarketHistoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeMarketHistoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

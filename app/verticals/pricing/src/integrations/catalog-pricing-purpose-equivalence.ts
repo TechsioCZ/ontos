@@ -35,7 +35,7 @@ type Executor = (
   payload: PricingPurposeEquivalenceRequest,
   credential: Redacted.Redacted,
   requestCorrelation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<unknown, ClientFailure>;
 
 export interface CatalogPricingPurposeEquivalencePort {
@@ -242,6 +242,7 @@ const projectResolution = (response: PricingPurposeEquivalenceResponse) => {
 
 const makePort = (dependencies: {
   readonly context: {
+    readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
     readonly tenantId: string;
@@ -281,12 +282,16 @@ const makePort = (dependencies: {
       const { baseUrl, credential } = yield* dependencies.issuer
         .issue({
           audience: 'catalog',
+          compositionRevision: dependencies.context.compositionRevision,
           legalEntityId: dependencies.context.legalEntityId,
           requestCorrelation: dependencies.context.requestCorrelation,
         })
         .pipe(Effect.mapError((cause) => unavailable('Catalog Pricing-purpose equivalence is unavailable', cause)));
       const rawResponse = yield* dependencies
-        .execute(request, credential, dependencies.context.requestCorrelation, { baseUrl })
+        .execute(request, credential, dependencies.context.requestCorrelation, {
+          baseUrl,
+          compositionRevision: dependencies.context.compositionRevision,
+        })
         .pipe(Effect.mapError((cause) => unavailable('Catalog Pricing-purpose equivalence is unavailable', cause)));
       const response = yield* Schema.decodeUnknownEffect(PricingPurposeEquivalenceResponseSchema)(rawResponse).pipe(
         Effect.mapError((cause) =>
@@ -307,7 +312,12 @@ const makePort = (dependencies: {
   });
 
 export const catalogPricingPurposeEquivalencePortFromEnvironment = (
-  context: { readonly legalEntityId: string; readonly requestCorrelation: string; readonly tenantId: string },
+  context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+    readonly tenantId: string;
+  },
   execute: Executor = executeAuthorized,
 ): Effect.Effect<CatalogPricingPurposeEquivalencePort> =>
   Effect.serviceOption(CatalogSelectionGatewayCredentialService).pipe(

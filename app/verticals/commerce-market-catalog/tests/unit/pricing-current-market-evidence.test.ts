@@ -1,7 +1,17 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { ReadPermissionDenied, TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import {
+  ReadPermissionDenied,
+  TrustedPrincipalContextSchema,
+  scopedRoutineInvokerFromTransaction,
+} from '@app/core-runtime';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import {
+  OperationalScopeTransaction,
+  installOperationalScopeFromTransactionService,
+} from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
+import type { OperationalScopeTransactionService } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 
 import {
   PricingCurrentMarketEvidenceRequestSchema,
@@ -27,6 +37,11 @@ const lifecycleId = '55555555-5555-4555-8555-555555555555';
 const operationTime = '2026-09-28T12:00:00.000Z';
 const observedAt = '2026-09-28T12:00:00.300Z';
 const boundary = '2026-10-01T00:00:00.000Z';
+const compositionRevision = 'a'.repeat(64);
+
+const unusedDatabaseOperation = (): never => {
+  throw new Error('This owner routine fixture does not use CRUD operations');
+};
 
 const request = Schema.decodeUnknownSync(PricingCurrentMarketEvidenceRequestSchema)({
   commercialScope: {
@@ -241,20 +256,32 @@ describe('Pricing Current Market evidence owner boundary', () => {
     Effect.gen(function* governedPersistence() {
       let routineKey = '';
       let input: unknown;
-      const transaction = {
-        invoke: (
-          { routineKey: invokedRoutineKey }: { readonly routineKey: string },
-          [routineInput]: readonly [unknown],
-        ) => {
-          routineKey = invokedRoutineKey;
-          input = routineInput;
-          return Effect.succeed([{ payload: presentSnapshot }]);
-        },
+      const routineInvoker = scopedRoutineInvokerFromTransaction(
+        () => Effect.succeed([{ payload: presentSnapshot }]),
+        operationalScope,
+      );
+      const transactionService: OperationalScopeTransactionService = {
+        delete: unusedDatabaseOperation,
+        insert: unusedDatabaseOperation,
+        install: () => Effect.void,
+        scopedRoutineInvoker: () => ({
+          invoke: (routine, values) => {
+            ({ routineKey } = routine);
+            [input] = values;
+            return routineInvoker.invoke(routine, values);
+          },
+        }),
+        select: unusedDatabaseOperation,
+        update: unusedDatabaseOperation,
+        verify: Effect.succeed(Option.some({ legal_entity_id: sellerId, tenant_id: tenantId })),
       };
+      const transaction = yield* installOperationalScopeFromTransactionService(operationalScope).pipe(
+        Effect.provideService(OperationalScopeTransaction, transactionService),
+      );
       const ownerPersistence = yield* pricingCurrentMarketEvidencePersistenceForScope(
-        // @ts-expect-error The focused fixture supplies only the governed routine invoker exercised here.
         transaction,
         operationalScope,
+        compositionRevision,
       );
       const snapshot = yield* ownerPersistence.readCurrent(request);
       expect(routineKey).toBe('pricing-current-market-evidence.read-current');

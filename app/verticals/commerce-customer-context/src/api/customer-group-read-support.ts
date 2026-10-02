@@ -4,10 +4,8 @@ import { Effect } from 'effect';
 import type { CommerceCustomerProfileSubject } from '../../shared/domain/group-contract.ts';
 import type { CustomerGroupLookupOutcome, CustomerGroupPersistence } from '../../shared/domain/group-service.ts';
 import type { CustomerGroupRef } from '../../shared/resources/customer-group.ts';
-import { customerGroupServiceFactory } from '../actions/customer-group-action-support.ts';
 
-export const customerGroupReadServiceFactory: typeof customerGroupServiceFactory = (transaction, scope) =>
-  customerGroupServiceFactory(transaction, scope);
+export { customerGroupServiceFactory as customerGroupReadServiceFactory } from '../actions/customer-group-action-support.ts';
 
 export const customerGroupReadUnavailable = (cause?: unknown): ReadHandlerUnavailable => {
   const failure = new ReadHandlerUnavailable({

@@ -258,10 +258,11 @@ export const makeExactPriceResolutionService = (
 export const exactPriceResolutionServiceForScope: ReadServiceFactory<ExactPriceResolutionService> = (
   transaction,
   scope,
+  compositionRevision,
 ) =>
   Effect.all(
     {
-      currencySupport: currencySupportPersistenceForScope(transaction, scope),
+      currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
       price: pricePersistenceForScope(transaction, scope),
     },
     { concurrency: 2 },

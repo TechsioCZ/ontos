@@ -1,0 +1,14 @@
+{
+  "modules": [
+    { "appId": "assortment" },
+    { "appId": "party-registry" },
+    { "appId": "commerce-customer-context" },
+    { "appId": "payment-term-catalog" },
+    { "appId": "commerce-market-catalog" },
+    { "appId": "catalog" },
+    { "appId": "pricing" },
+    { "appId": "storefront-registry" },
+    { "appId": "price-group-catalog" },
+    { "appId": "inventory" }
+  ]
+}

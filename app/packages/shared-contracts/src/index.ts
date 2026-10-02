@@ -73,6 +73,7 @@ export {
   GatewayContextRequestSchema,
   GatewayContextResponseSchema,
   GatewayInternalProblemSchema,
+  GatewayReloadRequiredProblemSchema,
   GatewayTrustedPrincipalContextSchema,
   GatewayUnavailableProblemSchema,
   decodeGatewayContextClaims,
@@ -95,6 +96,7 @@ export type {
   GatewayContextRequest,
   GatewayContextResponse,
   GatewayInternalProblem,
+  GatewayReloadRequiredProblem,
   GatewayTrustedPrincipalContext,
   GatewayUnavailableProblem,
 } from './gateway-context.ts';
@@ -114,6 +116,11 @@ export type {
 } from '@modern-js/bff-effect/microvertical-api';
 export { makeOperationGateway } from './operation-gateway.ts';
 export type { OperationGateway, OperationGatewayAttempt, OperationGatewayIssuer } from './operation-gateway.ts';
+export {
+  DocumentCompositionRevisionError,
+  getDocumentCompositionRevision,
+  pinDocumentCompositionRevision,
+} from './document-composition-revision.ts';
 
 export const UltramodernPublicSitemapChangeFrequencySchema = Schema.Literals([
   'always',

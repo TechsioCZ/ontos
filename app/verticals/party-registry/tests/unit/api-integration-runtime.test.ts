@@ -8,6 +8,9 @@ import { assert, expect, it } from 'effect-rstest';
 import { Arbitrary } from 'effect/unstable/arbitrary';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
+import { FetchHttpClient } from 'effect/unstable/http';
+
 import { makePartyRegistryApiRuntime, partyRegistryFoundationLive } from '../../api/index.ts';
 import { partyRegistryCorsAllowedHeaders, partyRegistryCorsAllowedMethods } from '../../api/read-server-support.ts';
 import { partyRegistryApi, partyRegistryReadinessSchema } from '../../shared/api.ts';
@@ -41,6 +44,10 @@ const commaSeparatedHeader = (value: string | null): readonly string[] =>
 const makeAssertion = () =>
   Effect.gen(function* signRuntimeAssemblyAssertion() {
     const issuer = 'https://shell.runtime-assembly.test';
+    const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+      [ultramodernApiMarker.appId],
+      ultramodernApiMarker.buildMarker,
+    );
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
       ...(yield* Effect.promise(() => exportJWK(publicKey))),
@@ -49,7 +56,12 @@ const makeAssertion = () =>
       use: 'sig',
     };
     const token = yield* Effect.promise(() =>
-      new SignJWT({ principal, ver: 1 })
+      new SignJWT({
+        compositionRevision: compositionSnapshot.composition.revision,
+        principal,
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
+        ver: 1,
+      })
         .setProtectedHeader({
           alg: 'EdDSA',
           kid: 'party-runtime-assembly-test',
@@ -64,6 +76,7 @@ const makeAssertion = () =>
         .sign(privateKey),
     );
     return {
+      compositionSnapshot,
       issuer,
       publicJwks: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
         keys: [publicJwk],
@@ -204,8 +217,14 @@ it.live(
       };
       const actionRuntimeLayer = Layer.mergeAll(
         Layer.succeed(ActionRuntime, actionRuntime),
+        Layer.succeed(FetchHttpClient.Fetch, (input, init) => {
+          const request = new Request(input, init);
+          expect(request.url).toBe('https://composition.runtime-assembly.test/active');
+          return Promise.resolve(Response.json(assertion.compositionSnapshot));
+        }),
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
+            ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: 'https://composition.runtime-assembly.test/active',
             ONTOS_GATEWAY_ISSUER: assertion.issuer,
             ONTOS_GATEWAY_PUBLIC_JWKS: assertion.publicJwks,
           }),
@@ -269,6 +288,7 @@ it.live(
         authorization: `Bearer ${assertion.token}`,
         'content-type': 'application/json',
         'x-correlation-id': 'runtime-assembly-proof',
+        'x-ontos-composition-revision': assertion.compositionSnapshot.composition.revision,
       };
       const counterpartyRef = {
         moduleId: 'party.registry',
@@ -492,11 +512,20 @@ it.live(
       expect(partySearchCalls).toBe(1);
       expect(counterpartySearchCalls).toBe(1);
       expect(searchLayerLoads).toBe(1);
+      const callsBeforePreflight = {
+        actionCalls,
+        actionCommitCalls,
+        aresCalls,
+        counterpartySearchCalls,
+        partySearchCalls,
+        readCalls,
+        redemptionCalls,
+      };
       const preflight = yield* Effect.promise(() =>
         runtime.handler(
           new Request('http://localhost/party-registry/readiness', {
             headers: {
-              'access-control-request-headers': 'Authorization, X-Correlation-Id',
+              'access-control-request-headers': 'Authorization, X-Correlation-Id, X-Ontos-Composition-Revision',
               'access-control-request-method': 'GET',
               origin: 'http://localhost:3020',
             },
@@ -512,6 +541,18 @@ it.live(
       expect(commaSeparatedHeader(preflight.headers.get('access-control-allow-headers'))).toEqual(
         [...partyRegistryCorsAllowedHeaders].toSorted(),
       );
+      expect(commaSeparatedHeader(preflight.headers.get('access-control-allow-headers'))).toContain(
+        'X-Ontos-Composition-Revision',
+      );
+      expect({
+        actionCalls,
+        actionCommitCalls,
+        aresCalls,
+        counterpartySearchCalls,
+        partySearchCalls,
+        readCalls,
+        redemptionCalls,
+      }).toEqual(callsBeforePreflight);
       expect(preflight.headers.get('access-control-max-age')).toBe('600');
       const loopbackPreflight = yield* Effect.promise(() =>
         runtime.handler(

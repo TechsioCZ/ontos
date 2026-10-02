@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CustomerProfileReadClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CustomerProfileReadAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCustomerProfileRead = (
   payload: CustomerProfileReadRequest,
   ...[requestCorrelation, options = {}]: CustomerProfileReadOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCustomerProfileReadWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCustomerProfileReadWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

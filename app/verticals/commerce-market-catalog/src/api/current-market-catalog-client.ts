@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CurrentMarketCatalogClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CurrentMarketCatalogAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCurrentMarketCatalog = (
   payload: CurrentMarketCatalogRequest,
   ...[requestCorrelation, options = {}]: CurrentMarketCatalogOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCurrentMarketCatalogWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCurrentMarketCatalogWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

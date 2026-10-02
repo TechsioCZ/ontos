@@ -1,7 +1,8 @@
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
-  ActionRuntimeLive,
-  ActiveApplicationCompositionConfigLive,
+  makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -21,8 +22,9 @@ import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime, HttpRouter } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Tracer } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
 import { pricingApi, pricingOperationContexts } from '../shared/api.ts';
-import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import { pricingCurrentDecisionOwnerFinalFenceGatewaysLive } from '../src/integrations/current-pricing-decision-owner-final-fence.ts';
 import { pricingOrdinaryCurrentPublicationLive } from '../src/integrations/material-evidence-owner-final-fence.ts';
 import { manageQuotationFreshCurrentAuthorityLive } from '../src/actions/manage-quotation.action.ts';
@@ -96,16 +98,24 @@ const runtimeObservabilityLive = Layer.mergeAll(
   Layer.succeed(Tracer.Tracer, Tracer.make({ span: (options) => new Tracer.NativeSpan(options) })),
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 );
+const compositionHttpClientLive = FetchHttpClient.layer.pipe(
+  Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+);
+const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(compositionSourceLive),
+);
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
 const operationalScopeResolverLive = OperationalScopeResolverLive.pipe(
   Layer.provide(Layer.mergeAll(CorePersistenceLive, ContextAccessLive)),
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
-const pricingActionRuntimeLive = ActionRuntimeLive.pipe(
+const pricingActionRuntimeLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,
+      activeApplicationCompositionLive,
       ActionRepositoryLive,
       ActionPermissionLive,
       ContextAccessLive,
@@ -191,7 +201,8 @@ export const governedReadApiHandlersLive = Layer.mergeAll(
   ),
   // </generated-governed-http-handler-support-layers>
   GovernedReadLayer.provide(pricingGatewayAssertionRedemptionDatabaseLive),
-  GovernedReadLayer.provide(ActiveApplicationCompositionConfigLive),
+  GovernedReadLayer.provide(activeApplicationCompositionLive),
+  Layer.provide(compositionSourceLive),
 );
 type PricingApiGroups = (typeof pricingApi.groups)[keyof typeof pricingApi.groups];
 type PricingHandlerRequirements =

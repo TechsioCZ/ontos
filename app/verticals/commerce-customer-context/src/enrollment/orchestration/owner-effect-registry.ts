@@ -50,10 +50,7 @@ import {
   existingAccountRequestDigest,
 } from '../journeys/existing-account.ts';
 import type { JourneyTransitionSpec } from '../journeys/journey-contracts.ts';
-import {
-  retailPartyCandidateOwnerEffect,
-  retailPartyCandidateOwnerExecutors,
-} from '../journeys/retail-self-enrollment-party-owner.ts';
+import { retailPartyCandidateOwnerEffect } from '../journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailPartyCandidateOwnerInput } from '../journeys/retail-self-enrollment-party-owner.ts';
 import type { RetailSelfEnrollmentPreparationSubject } from '../journeys/retail-self-enrollment-preparation.ts';
 import {
@@ -290,10 +287,13 @@ const partyEntry: RegistryEntry = Effect.fn('CommerceEnrollmentOwnerEffectRegist
     { concurrency: 2 },
   );
   return registered(
-    retailPartyCandidateOwnerEffect(
-      { candidate, requestCorrelation: context.requestCorrelation, tenantId: context.attempt.tenantId },
-      retailPartyCandidateOwnerExecutors,
-    ),
+    retailPartyCandidateOwnerEffect({
+      candidate,
+      compositionRevision: context.attempt.compositionRevision,
+      legalEntityId: context.subject.sellingLegalEntityRef.resourceId,
+      requestCorrelation: context.requestCorrelation,
+      tenantId: context.attempt.tenantId,
+    }),
     requestDigest,
   );
 });
@@ -427,19 +427,18 @@ const ensureProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactio
       transition,
       context,
     );
+    const input = {
+      compositionRevision: context.attempt.compositionRevision,
+      effectiveAt: context.attempt.createdAt,
+      partyRef: partyRef.value,
+      requestCorrelation: context.requestCorrelation,
+      sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
+    };
     return registered(
-      retailCustomerProfileOwnerEffect(
-        {
-          effectiveAt: context.attempt.createdAt,
-          partyRef: partyRef.value,
-          requestCorrelation: context.requestCorrelation,
-          sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
-        },
-        {
-          commitResolution: ensureProfileCommitResolution(run, context, partyRef.value.resourceId),
-          ensureProfile: retailCustomerProfileActionExecutor,
-        },
-      ),
+      retailCustomerProfileOwnerEffect(input, {
+        commitResolution: ensureProfileCommitResolution(run, context, partyRef.value.resourceId),
+        ensureProfile: retailCustomerProfileActionExecutor(input),
+      }),
       requestDigest,
     );
   });
@@ -478,22 +477,21 @@ const bindProfileEntry = (run: Option.Option<CommerceEnrollmentOwnerTransactionR
       transition,
       context,
     );
+    const input = {
+      compositionRevision: context.attempt.compositionRevision,
+      effectiveAt: context.attempt.createdAt,
+      enrollmentEvidenceRef: String(context.attempt.portalEnrollmentAttemptId),
+      principalRef: context.subject.principalRef,
+      profileRef,
+      reason: RETAIL_PORTAL_BINDING_REASON,
+      requestCorrelation: context.requestCorrelation,
+      sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
+    };
     return registered(
-      retailPortalBindingOwnerEffect(
-        {
-          effectiveAt: context.attempt.createdAt,
-          enrollmentEvidenceRef: String(context.attempt.portalEnrollmentAttemptId),
-          principalRef: context.subject.principalRef,
-          profileRef,
-          reason: RETAIL_PORTAL_BINDING_REASON,
-          requestCorrelation: context.requestCorrelation,
-          sellingLegalEntityRef: context.subject.sellingLegalEntityRef,
-        },
-        {
-          bindProfile: retailPortalBindingActionExecutor,
-          commitResolution: bindProfileCommitResolution(run, context, String(profileResourceId.value)),
-        },
-      ),
+      retailPortalBindingOwnerEffect(input, {
+        bindProfile: retailPortalBindingActionExecutor(input),
+        commitResolution: bindProfileCommitResolution(run, context, String(profileResourceId.value)),
+      }),
       requestDigest,
     );
   });
@@ -816,7 +814,11 @@ const coreReserveEntry = (seam: CoreIdentitySeam): RegistryEntry =>
             rejectFor(context, 'The Attempt provider subject could not be encoded for the Core reconciliation read'),
           ),
         ),
-        request: existingAccountCoreIdentityReserveRequest({ accountSubject, authenticationRef }).pipe(
+        request: existingAccountCoreIdentityReserveRequest({
+          accountSubject,
+          authenticationRef,
+          compositionRevision: context.attempt.compositionRevision,
+        }).pipe(
           Effect.mapError(
             rejectFor(
               context,
@@ -872,6 +874,7 @@ const coreActivateEntry = (seam: CoreIdentitySeam): RegistryEntry =>
         request: existingAccountCoreIdentityActivateRequest({
           authBindingId: reserved.value,
           authenticationRef: coreAuthenticationRef(context),
+          compositionRevision: context.attempt.compositionRevision,
           expectedRevision: binding.bindingRevision,
         }).pipe(
           Effect.mapError(

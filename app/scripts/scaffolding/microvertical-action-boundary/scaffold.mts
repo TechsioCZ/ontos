@@ -75,11 +75,14 @@ export const renderActionPrincipalServer = (
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { GatewayPrincipalVerifierLive, bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import type {
   GatewayPrincipalVerificationWithRedemptionOptions,
 } from '@app/gateway-principal-verifier/server';
 import { Effect, Layer, Redacted } from 'effect';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 export {
   ACTION_PRINCIPAL_BEARER_CHALLENGE,
@@ -108,14 +111,19 @@ export { GatewayPrincipalVerifierConfiguration as ActionPrincipalVerifier } from
  * principal's binding against (without it every governed route answers
  * \`operation_context_unavailable\`).
  */
-export const ActionPrincipalVerifierLive = Layer.mergeAll(
+export const ActionPrincipalVerifierLive: Layer.Layer<
+  Layer.Success<typeof GatewayPrincipalVerifierLive | typeof ActiveApplicationCompositionConfigLive | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>>,
+  Layer.Error<typeof GatewayPrincipalVerifierLive | typeof ActiveApplicationCompositionConfigLive | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>>,
+  Layer.Services<typeof GatewayPrincipalVerifierLive | typeof ActiveApplicationCompositionConfigLive | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>>
+> = Layer.mergeAll(
   GatewayPrincipalVerifierLive,
+  ActiveApplicationCompositionConfigLive,
   staffAuthenticationNamespaceRegistryLayer([ACTION_GATEWAY_AUDIENCE]),
 );
 export type ActionPrincipalVerificationOptions =
   GatewayPrincipalVerificationWithRedemptionOptions;
 
-const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE);
+const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE, ultramodernApiMarker);
 
 export const verifyActionPrincipal = (
   authorization: string | undefined,
@@ -241,6 +249,15 @@ export const planActionBoundaryScaffold = (
           marker: 'export const authenticateOperationPrincipal',
           migration:
             'Preserve owner adaptations and export authenticateOperationPrincipal using makeMicroverticalHttpPrincipalAuthentication with the audience-bound verifier; provide ActionPrincipalVerifierLive at the owning API runtime before generating governed contributions.',
+        },
+        {
+          marker: 'bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE, ultramodernApiMarker)',
+          migration: 'Bind the gateway principal verifier to this owner release with ultramodernApiMarker.',
+        },
+        {
+          marker: 'ActiveApplicationCompositionConfigLive,',
+          migration:
+            'Merge ActiveApplicationCompositionConfigLive into ActionPrincipalVerifierLive so each operation validates current release authority.',
         },
         {
           // Core revalidates the staff namespace every Shell-issued assertion names; a runtime

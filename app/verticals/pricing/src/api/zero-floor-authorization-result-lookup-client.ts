@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ZeroFloorAuthorizationResultLookupClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ZeroFloorAuthorizationResultLookupAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeZeroFloorAuthorizationResultLookup = (
   payload: ZeroFloorAuthorizationResultLookupRequest,
   ...[requestCorrelation, options = {}]: ZeroFloorAuthorizationResultLookupOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeZeroFloorAuthorizationResultLookupWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeZeroFloorAuthorizationResultLookupWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -136,6 +136,7 @@ const actionContextFor = (
   actionInvocationId,
   addDomainEvent: () => Effect.die('not used by persistence adapter test'),
   addOutboxMessage: () => Effect.die('not used by persistence adapter test'),
+  compositionRevision: 'a'.repeat(64),
   recordAuditEvidence: () => Effect.die('not used by persistence adapter test'),
   recordDataAccess: () => Effect.die('not used by persistence adapter test'),
   scope,

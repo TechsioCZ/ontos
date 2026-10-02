@@ -36,7 +36,7 @@ const activationOwnerFacts = {
 const gateway = Layer.succeed(CatalogQuantityGatewayCredentialService, {
   issue: () =>
     Effect.succeed({
-      baseUrl: new URL('https://catalog.example.test'),
+      baseUrl: new URL('https://shell.example.test/owner-api'),
       credential: Redacted.make('Bearer owner-issued'),
     }),
 });
@@ -76,6 +76,7 @@ describe('Catalog Quantity production adapter', () => {
       const failure = yield* unavailableCatalogQuantityGatewayCredentialIssuer
         .issue({
           audience: 'catalog',
+          compositionRevision: 'a'.repeat(64),
           legalEntityId: '20000000-0000-4000-8000-000000000001',
           requestCorrelation: 'quantity-test',
         })
@@ -103,7 +104,11 @@ describe('Catalog Quantity production adapter', () => {
       const ready = yield* decodeReady;
       const calls: unknown[] = [];
       const port = yield* catalogQuantityPortFromEnvironment(
-        { legalEntityId: '20000000-0000-4000-8000-000000000001', requestCorrelation: 'quantity-test' },
+        {
+          compositionRevision: 'a'.repeat(64),
+          legalEntityId: '20000000-0000-4000-8000-000000000001',
+          requestCorrelation: 'quantity-test',
+        },
         (payload, credential, correlation, options) => {
           calls.push({ correlation, credential: Redacted.value(credential), options, payload });
           return Effect.succeed(ready);
@@ -118,7 +123,7 @@ describe('Catalog Quantity production adapter', () => {
         {
           correlation: 'quantity-test',
           credential: 'Bearer owner-issued',
-          options: { baseUrl: new URL('https://catalog.example.test') },
+          options: { baseUrl: new URL('https://shell.example.test/owner-api'), compositionRevision: 'a'.repeat(64) },
           payload: { amount: '7', purpose: 'PURCHASE_ACCEPTANCE', selection },
         },
       ]);
@@ -131,6 +136,7 @@ describe('Catalog Quantity production adapter', () => {
           },
           payload: {
             audience: 'catalog',
+            compositionRevision: 'a'.repeat(64),
             legalEntityId: '20000000-0000-4000-8000-000000000001',
           },
         },
@@ -150,7 +156,12 @@ describe('Catalog Quantity production adapter', () => {
         makeCatalogQuantityGatewayCredentialLayer((payload, options) =>
           Effect.sync(() => {
             gatewayRequests.push({ options, payload });
-            return { expiresAt: 1_700_000_300, token: 'owner-issued' };
+            return {
+              apiBaseUrl: '/owner-api',
+              compositionRevision: 'a'.repeat(64),
+              expiresAt: 1_700_000_300,
+              token: 'owner-issued',
+            };
           }),
         ),
       ),
@@ -158,7 +169,6 @@ describe('Catalog Quantity production adapter', () => {
         ConfigProvider.layer(
           ConfigProvider.fromUnknown(
             {
-              ONTOS_CATALOG_BASE_URL: 'https://catalog.example.test',
               ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: 'customer-context-owner-key',
               ONTOS_SHELL_GATEWAY_BASE_URL: 'https://shell.example.test',
             },
@@ -174,7 +184,11 @@ describe('Catalog Quantity production adapter', () => {
       const ready = yield* decodeReady;
       let ownerReadExecuted = false;
       const port = yield* catalogQuantityPortFromEnvironment(
-        { legalEntityId: '20000000-0000-4000-8000-000000000001', requestCorrelation: 'quantity-test' },
+        {
+          compositionRevision: 'a'.repeat(64),
+          legalEntityId: '20000000-0000-4000-8000-000000000001',
+          requestCorrelation: 'quantity-test',
+        },
         () => {
           ownerReadExecuted = true;
           return Effect.succeed(ready);
@@ -204,7 +218,11 @@ describe('Catalog Quantity production adapter', () => {
     Effect.gen(function* mapsOwnerFailures() {
       for (const status of ['INVALID', 'STALE', 'UNVERIFIABLE'] as const) {
         const port = yield* catalogQuantityPortFromEnvironment(
-          { legalEntityId: '20000000-0000-4000-8000-000000000001', requestCorrelation: 'quantity-test' },
+          {
+            compositionRevision: 'a'.repeat(64),
+            legalEntityId: '20000000-0000-4000-8000-000000000001',
+            requestCorrelation: 'quantity-test',
+          },
           () => Effect.succeed({ reason: `${status} owner result`, status }),
         );
         const failure = yield* port
@@ -223,7 +241,11 @@ describe('Catalog Quantity production adapter', () => {
     Effect.gen(function* rejectsForeignTenant() {
       const ready = yield* decodeReady;
       const port = yield* catalogQuantityPortFromEnvironment(
-        { legalEntityId: '20000000-0000-4000-8000-000000000001', requestCorrelation: 'quantity-test' },
+        {
+          compositionRevision: 'a'.repeat(64),
+          legalEntityId: '20000000-0000-4000-8000-000000000001',
+          requestCorrelation: 'quantity-test',
+        },
         () => Effect.succeed(ready),
       );
       const failure = yield* port

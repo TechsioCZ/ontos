@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RetireControlledAttributeValueRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RetireControlledAttributeValueRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRetireControlledAttributeValueRecovery = (
   payload: RetireControlledAttributeValueRecoveryRequest,
   ...[requestCorrelation, options = {}]: RetireControlledAttributeValueRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRetireControlledAttributeValueRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRetireControlledAttributeValueRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

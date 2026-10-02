@@ -9,6 +9,7 @@ import { PriceGroupOwnerGatewayUnavailable as OwnerUnavailable } from './price-g
 export interface CommercePriceGroupResolutionGatewayCredentialIssuer {
   readonly issue: (input: {
     readonly audience: 'commerce-customer-context';
+    readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
   }) => Effect.Effect<PriceGroupOwnerGatewayConnection, PriceGroupOwnerGatewayUnavailable>;

@@ -34,8 +34,10 @@ import { defineAction } from '../../../packages/core-runtime/src/actions/definit
 import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import { GatewayAssertionRedemptionService } from '../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
+import { ActiveApplicationCompositionService } from '../../../packages/core-runtime/src/modules/active-application-composition.ts';
 import { defineSystemModuleEntrypoint } from '../../../packages/core-runtime/src/modules/module-entrypoint.ts';
 import { makeActionTestHarness } from '../../../packages/core-runtime/src/testing/actions.ts';
+import { makeApplicationCompositionSnapshotFixture } from '../../../packages/core-runtime/src/testing/module-contract.ts';
 import type { staffAuthenticationNamespaceRegistryLayer } from '../../../packages/core-runtime/src/auth/staff-authentication-namespace.ts';
 import type { GatewayPrincipalVerifierLive } from '../../../packages/gateway-principal-verifier/src/server.ts';
 import {
@@ -434,6 +436,7 @@ const fixtureName = {
   coreIdentityAction: 'change-user-binding-status',
   coreIdentityModule: 'core.identity',
   coreIdentityTopic: 'core.identity.user-binding-status-changed.v1',
+  customerDetailPage: 'customer-detail',
   customerEditPage: 'customer-edit',
   inventoryItems: 'inventory-items',
   ordersCreated: 'orders.created',
@@ -446,13 +449,13 @@ const fixtureName = {
   stockLevels: 'stock-levels',
 } as const;
 const rootPackageFile = 'package.json';
+const fixtureBuildMarker = 'scaffold-build';
 const coreRuntimePackageFile = 'packages/core-runtime/package.json';
 const coreRuntimePackageEntryExport = './src/index.ts';
 const coreRuntimeIndexFile = 'packages/core-runtime/src/index.ts';
 const coreRuntimeModuleEntrypointFile = 'packages/core-runtime/src/modules/module-entrypoint.ts';
 const coreActionCatalogFile = 'packages/core-runtime/src/modules/actions/catalog.ts';
 const shellSentinelFile = 'apps/shell-super-app/src/sentinel.ts';
-const shellVerticalClientsFile = 'apps/shell-super-app/src/api/vertical-clients.ts';
 const inventoryManifestFile = 'verticals/inventory-stock/vertical.manifest.ts';
 const inventoryRegistrationFile = 'verticals/inventory-stock/vertical.registration.ts';
 const inventoryFederationConfigFile = 'verticals/inventory-stock/module-federation.config.ts';
@@ -492,6 +495,8 @@ const billingWorkersIndexFile = 'verticals/billing/src/workers/index.ts';
 const inventoryTsconfigFile = 'verticals/inventory-stock/tsconfig.json';
 const inventoryEnglishLocaleFile = 'verticals/inventory-stock/locales/en/inventory.json';
 const inventoryOrdersRouteFile = 'verticals/inventory-stock/src/routes/[lang]/orders/page.tsx';
+const inventoryCustomerEditRouteFile =
+  'verticals/inventory-stock/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx';
 const effectNodeModulePath = 'node_modules/effect';
 const pluginBffNodeModulePath = 'node_modules/@modern-js/plugin-bff';
 const bffEffectNodeModulePath = 'node_modules/@modern-js/bff-effect';
@@ -574,6 +579,11 @@ const makeGatewayKey = (
 const createVertical = (root: string, vertical: FixtureVertical): Effect.Effect<void, unknown> =>
   Effect.gen(function* mergedScenario15() {
     yield* write(root, `verticals/${vertical.slug}/module-federation.config.ts`, 'export default { exposes: {} };\n');
+    yield* write(
+      root,
+      `verticals/${vertical.slug}/shared/ultramodern-build.ts`,
+      `export const ultramodernApiMarker = { appId: '${vertical.appId}', buildMarker: '${fixtureBuildMarker}' } as const;\n`,
+    );
     yield* write(
       root,
       `verticals/${vertical.slug}/tsconfig.json`,
@@ -696,6 +706,7 @@ export const ${resourcesName} = {
       `verticals/${vertical.slug}/src/routes/ultramodern-route-head.tsx`,
       'export const UltramodernRouteHead = () => null;\n',
     );
+    yield* write(root, `verticals/${vertical.slug}/src/routes/index.css`, '.fixture-owner-style { display: block; }\n');
   });
 
 const createFixture = (): Effect.Effect<Fixture, unknown> =>
@@ -722,15 +733,6 @@ export const coreActionCatalog = [
 `,
     );
     yield* write(root, shellSentinelFile, 'export const shell = true;\n');
-    yield* write(
-      root,
-      shellVerticalClientsFile,
-      `export const ultramodernVerticalClients = [
-  // @ontos-codegen-start shell-page-clients
-  // @ontos-codegen-end shell-page-clients
-] as const;
-`,
-    );
     yield* createVertical(root, inventoryVertical);
     yield* createVertical(root, billingVertical);
     yield* createVertical(root, hrVertical);
@@ -1203,7 +1205,7 @@ console.log(JSON.stringify({ calls, endpointRequestsAfterGatewayFailure, gateway
           { cwd: fixture.root, encoding: 'utf-8' },
         );
         expect(result.error).toBeUndefined();
-        expect(result.status, result.stderr).toBe(0);
+        expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
         const proof = yield* Schema.decodeUnknownEffect(
           Schema.fromJsonString(
             Schema.Struct({
@@ -1481,6 +1483,8 @@ it.live(
           { concurrency: 'unbounded' },
         );
         expect(nextManifest).toMatch(/inventory\.stock\.component\.inventory-summary/u);
+        expect(nextManifest).toMatch(/expose: '\.\/InventorySummary'/u);
+        expect(nextManifest).toMatch(/expose: '\.\/InventoryAlerts'/u);
         expect(nextManifest).toMatch(/inventory\.stock\.search\.inventory-items/u);
         expect(nextManifest).toMatch(/inventory\.stock\.report\.stock-levels/u);
         expect(registration).toMatch(/import\('\.\/src\/api\/resource-detail-client\.ts'\)/u);
@@ -2483,7 +2487,9 @@ it.live(
           expect(source).toMatch(/ACTION_GATEWAY_AUDIENCE = 'inventory-stock'/u);
         }
         expect(server).toMatch(/@app\/gateway-principal-verifier\/server/u);
-        expect(server).toMatch(/bindGatewayPrincipalVerifier\(ACTION_GATEWAY_AUDIENCE\)/u);
+        expect(server).toMatch(/bindGatewayPrincipalVerifier\(ACTION_GATEWAY_AUDIENCE, ultramodernApiMarker\)/u);
+        expect(server).toMatch(/from '\.\.\/\.\.\/shared\/ultramodern-build\.ts'/u);
+        expect(server).toMatch(/ActiveApplicationCompositionConfigLive/u);
         expect(server).not.toMatch(/createLocalJWKSet|decodeProtectedHeader|jwtVerify|PublicVerificationKeySchema/u);
         expect(client).toMatch(/makeOperationGateway as makeSharedOperationGateway/u);
         expect(client).toMatch(/makeSharedOperationGateway\(ACTION_GATEWAY_AUDIENCE, acquire\)/u);
@@ -2595,10 +2601,7 @@ it.live(
         const generated = yield* readFixtureFile(fixture.root, inventoryActionPrincipalFile);
         const stale = generated
           .replace(/^import \{ staffAuthenticationNamespaceRegistryLayer \}.*\n/mu, '')
-          .replace(
-            /\/\*\*\n \* What this runtime needs[\s\S]*?\n\);\n/u,
-            'export { GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive };\n',
-          );
+          .replace(/staffAuthenticationNamespaceRegistryLayer\(\[ACTION_GATEWAY_AUDIENCE\]\)/u, 'Layer.empty');
         expect(stale).not.toMatch(/AuthenticationNamespaceRegistry/u);
         yield* write(fixture.root, inventoryActionPrincipalFile, stale);
         const before = yield* snapshotTree(fixture.root);
@@ -2735,6 +2738,11 @@ it.live(
         );
         const current = yield* makeGatewayKey('current');
         const retiring = yield* makeGatewayKey('retiring');
+        const approvedSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+          [inventorySlug, 'billing'],
+          fixtureBuildMarker,
+        );
+        const compositionService = { load: Effect.succeed(approvedSnapshot) };
         const principal = {
           authBindingId: '30000000-0000-4000-8000-000000000001',
           authContextRef: 'better-auth-session:scaffold-test',
@@ -2749,13 +2757,20 @@ it.live(
         ) {
           return yield* issueGatewayContextAssertion({
             audience,
+            compositionRevision: approvedSnapshot.composition.revision,
             principal,
           }).pipe(
             Effect.provide(
               makeGatewayIssuerLayer({
                 currentTimeSeconds: Effect.succeed(issuedAt),
                 generateJti: Effect.succeed(fixtureGatewayJti),
-                loadAudiences: Effect.succeed(new Set([audience])),
+                loadAdmission: Effect.succeed({
+                  audiences: new Map([
+                    [inventorySlug, fixtureBuildMarker],
+                    ['billing', fixtureBuildMarker],
+                  ]),
+                  revision: approvedSnapshot.composition.revision,
+                }),
                 loadConfig: Effect.succeed(configuration),
               }),
             ),
@@ -2772,19 +2787,23 @@ it.live(
         const retiringAssertion = yield* issue(retiring.configuration, 1_700_000_000);
         const testRedemption = { consume: () => Effect.void };
         const verify = (token: string, override: GeneratedPrincipalEnvironment = environment, now = 1_700_000_001) =>
-          generatedModule.verifyActionPrincipal(`Bearer ${token}`, {
-            currentTimeSeconds: Effect.succeed(now),
-            environment: override,
-            redemption: testRedemption,
-          });
+          generatedModule
+            .verifyActionPrincipal(`Bearer ${token}`, {
+              currentTimeSeconds: Effect.succeed(now),
+              environment: override,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService));
 
         expect(yield* verify(currentAssertion.token)).toEqual(principal);
         expect(
-          yield* billingGeneratedModule.verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
-            currentTimeSeconds: Effect.succeed(1_700_000_001),
-            environment,
-            redemption: testRedemption,
-          }),
+          yield* billingGeneratedModule
+            .verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
+              currentTimeSeconds: Effect.succeed(1_700_000_001),
+              environment,
+              redemption: testRedemption,
+            })
+            .pipe(Effect.provideService(ActiveApplicationCompositionService, compositionService)),
         ).toEqual(principal);
         yield* expectFailure(
           generatedModule.verifyActionPrincipal(`Bearer ${billingAssertion.token}`, {
@@ -2990,7 +3009,11 @@ it.live(
                 environment: endpointEnvironment,
                 redemption: testRedemption,
               })
-              .pipe(Effect.tap(markActionReached), Effect.catchTags(generatedPrincipalErrorHandlers)),
+              .pipe(
+                Effect.provideService(ActiveApplicationCompositionService, compositionService),
+                Effect.tap(markActionReached),
+                Effect.catchTags(generatedPrincipalErrorHandlers),
+              ),
           ),
         );
         const actionRuntime = defineEffectBff({
@@ -4177,7 +4200,14 @@ export const outboxWorkerLayer = Layer.merge(OutboxWorkerInfrastructureLive, out
           .toBe(`// @generated by scaffold:outbox-worker worker-host
 // @ontos-outbox-worker-host-owner billing.core
 import { Layer } from 'effect';
-import { defineOutboxWorkerEntry, extractOutboxWorkerSubscriptions } from '@app/core-runtime/outbox/worker';
+import { FetchHttpClient } from 'effect/unstable/http';
+import {
+  ActiveApplicationCompositionConfigLive,
+  defineOutboxWorkerEntry,
+  extractOutboxWorkerSubscriptions,
+} from '@app/core-runtime/outbox/worker';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { outboxWorkers } from '../workers/index.ts';
 import {
   outboxWorkerCorePersistenceLive,
@@ -4189,7 +4219,21 @@ import {
 /** The combined Outbox Worker host polls this entry in its own runtime under its own claim owner. */
 export const outboxWorkerEntry = defineOutboxWorkerEntry({
   claimOwnerPrefix: 'billing.core-outbox-worker',
-  layer: outboxWorkerDefinitionLayer.pipe(
+  expectedDeployment: ultramodernApiMarker,
+  layer: Layer.merge(
+    ActiveApplicationCompositionConfigLive.pipe(
+      Layer.provide(
+        ActiveApplicationCompositionSourceLive.pipe(
+          Layer.provide(
+            FetchHttpClient.layer.pipe(
+              Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+            ),
+          ),
+        ),
+      ),
+    ),
+    outboxWorkerDefinitionLayer,
+  ).pipe(
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),
@@ -4500,7 +4544,7 @@ it.live(
   Effect.fn(function* scenario78() {
     yield* withFixture(
       Effect.fn(function* scenario79(fixture) {
-        const shellBefore = yield* readFixtureFile(fixture.root, shellSentinelFile);
+        const shellBefore = yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId));
         const englishLocalePath = path.join(fixture.root, inventoryEnglishLocaleFile);
         yield* Effect.promise(() =>
           writeFile(englishLocalePath, '{\r\n    "inventory": {"existing":"en-preserved"}\r\n}', 'utf-8'),
@@ -4514,15 +4558,17 @@ it.live(
             refreshes.push(appId);
           },
         );
-        expect(refreshes).toEqual([inventorySlug, shellAppId]);
+        expect(refreshes).toEqual([inventorySlug]);
         const page = yield* readFixtureFile(
           fixture.root,
           'verticals/inventory-stock/src/routes/[lang]/inventory-stock/purchase-orders/page.tsx',
         );
-        expect(page).toBe(`import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
+        expect(page).toBe(`import { FederatedI18nBoundary, useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { UltramodernRouteHead } from '../../../ultramodern-route-head';
+import { inventoryStockI18nResources } from '../../../../i18n/resources';
+import '../../../index.css';
 
-export const PurchaseOrdersPage = () => {
+const PurchaseOrdersPageContent = () => {
   const { t } = useModernI18n();
   const headingId = 'purchase-orders-heading';
 
@@ -4544,45 +4590,35 @@ export const PurchaseOrdersPage = () => {
   );
 };
 
+export const PurchaseOrdersPage = () => (
+  <FederatedI18nBoundary
+    defaultNamespace="inventory"
+    fallbackLanguage="en"
+    resources={inventoryStockI18nResources}
+    supportedLanguages={['en', 'cs']}
+  >
+    <PurchaseOrdersPageContent />
+  </FederatedI18nBoundary>
+);
+
 export default PurchaseOrdersPage;
 `);
         const manifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
         const registration = yield* readFixtureFile(fixture.root, inventoryRegistrationFile);
         const federation = yield* readFixtureFile(fixture.root, inventoryFederationConfigFile);
-        const federatedPage = yield* readFixtureFile(
-          fixture.root,
-          'verticals/inventory-stock/src/federation/page-purchase-orders.tsx',
-        );
-        const shellClients = yield* readFixtureFile(fixture.root, shellVerticalClientsFile);
         expect(manifest).toMatch(/inventory\.stock\.navigation\.purchase-orders/u);
         expect(manifest).toMatch(/inventory\.stock\.page\.purchase-orders/u);
         expect(manifest).toMatch(/routePath: '\/inventory-stock\/purchase-orders'/u);
         expect(registration).toMatch(/page-purchase-orders/u);
-        expect(federation).toMatch(/'\.\/PagePurchaseOrders': '\.\/src\/federation\/page-purchase-orders\.tsx'/u);
-        expect(federatedPage).toMatch(/<FederatedI18nBoundary/u);
-        expect(federatedPage).toMatch(/resources=\{inventoryStockI18nResources\}/u);
-        expect(shellClients).toMatch(
-          /appId: 'inventory-stock',\s*componentKey: 'inventory\.stock\.page-purchase-orders',\s*load: \(\) => import\('inventoryStock\/PagePurchaseOrders'\)/u,
+        expect(federation).toMatch(
+          /'\.\/PagePurchaseOrders': '\.\/src\/routes\/\[lang\]\/inventory-stock\/purchase-orders\/page\.tsx'/u,
         );
-        expect(
-          yield* readFixtureFile(
-            fixture.root,
-            'apps/shell-super-app/src/routes/[lang]/inventory-stock/purchase-orders/page.tsx',
-          ),
-        ).toBe(`export { default } from '../../modules/[moduleId]/page.tsx';
-`);
-        expect(
-          yield* readFixtureFile(
-            fixture.root,
-            'apps/shell-super-app/src/routes/[lang]/inventory-stock/purchase-orders/page.data.ts',
-          ),
-        ).toMatch(/entrypointKey: 'inventory\.stock\.page\.purchase-orders'/u);
-        expect(
-          yield* readFixtureFile(
-            fixture.root,
-            'apps/shell-super-app/src/routes/[lang]/inventory-stock/purchase-orders/route.meta.ts',
-          ),
-        ).toMatch(/canonicalPath: '\/inventory-stock\/purchase-orders'/u);
+        expect(manifest).toMatch(/expose: '\.\/PagePurchaseOrders'/u);
+        expect(page).toMatch(/<FederatedI18nBoundary/u);
+        expect(page).toMatch(/resources=\{inventoryStockI18nResources\}/u);
+        expect(Object.keys(yield* snapshotTree(fixture.root))).not.toContain(
+          'verticals/inventory-stock/src/federation/page-purchase-orders.tsx',
+        );
         expect(
           yield* readFixtureFile(
             fixture.root,
@@ -4635,8 +4671,8 @@ export { routeMeta };
           description: 'Tato stránka je připravena k implementaci.',
           title: 'Nová stránka',
         });
-        expect(yield* readFixtureFile(fixture.root, shellSentinelFile)).toBe(shellBefore);
-        expect(page).not.toMatch(/fetch\(|useState|useEffect|<style|\.css'|\.description|\.empty/u);
+        expect(yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId))).toEqual(shellBefore);
+        expect(page).not.toMatch(/fetch\(|useState|useEffect|<style|\.description|\.empty/u);
       }),
     );
   }),
@@ -4734,7 +4770,7 @@ export const useModernI18n = () => {
           writeFile(
             runnerPath,
             `import { renderToStaticMarkup } from 'react-dom/server';
-import Page from './verticals/inventory-stock/src/federation/page-customers.tsx';
+import Page from './verticals/inventory-stock/src/routes/[lang]/inventory-stock/customers/page.tsx';
 
 process.stdout.write(renderToStaticMarkup(<Page />));
 `,
@@ -4749,6 +4785,7 @@ process.stdout.write(renderToStaticMarkup(<Page />));
         );
         expect(bundle.error).toBeUndefined();
         expect(bundle.status, bundle.stderr).toBe(0);
+        expect(yield* readFixtureFile(fixture.root, 'render-generated-page.css')).toMatch(/\.fixture-owner-style/u);
         const renderLanguage = (language: 'cs' | 'en') =>
           spawnSync(process.execPath, [bundlePath], {
             cwd: fixture.root,
@@ -4771,11 +4808,8 @@ it.live(
   Effect.fn(function* scenario85() {
     yield* withFixture(
       Effect.fn(function* scenario86(fixture) {
-        const formattedOwnerPaths = [
-          inventoryManifestFile,
-          inventoryRegistrationFile,
-          shellVerticalClientsFile,
-        ] as const;
+        const shellBefore = yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId));
+        const formattedOwnerPaths = [inventoryManifestFile, inventoryRegistrationFile] as const;
         const formatOwners = Effect.fn(function* scenario87() {
           for (const relativePath of formattedOwnerPaths) {
             const filePath = path.join(fixture.root, relativePath);
@@ -4814,13 +4848,11 @@ it.live(
 
         const manifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
         const registration = yield* readFixtureFile(fixture.root, inventoryRegistrationFile);
-        const shellClients = yield* readFixtureFile(fixture.root, shellVerticalClientsFile);
         yield* Effect.all(
           ['customer-notes', 'customers', fixtureName.purchaseOrdersPage].map(
             Effect.fn(function* scenario89(page) {
               expect(manifest).toMatch(new RegExp(`inventory\\.stock\\.page\\.${page}`, 'u'));
               expect(registration).toMatch(new RegExp(`'page-${page}'`, 'u'));
-              expect(shellClients).toMatch(new RegExp(`inventory\\.stock\\.page-${page}`, 'u'));
               yield* Effect.promise(() =>
                 stat(
                   path.join(
@@ -4833,6 +4865,7 @@ it.live(
           ),
           { concurrency: 'unbounded' },
         );
+        expect(yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId))).toEqual(shellBefore);
       }),
     );
   }),
@@ -4858,9 +4891,6 @@ it.live(
         expect(page).toMatch(/from '\.\.\/\.\.\/\.\.\/ultramodern-route-head'/u);
         const manifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
         expect(manifest).toMatch(/routePath: '\/purchasing\/orders'/u);
-        expect(
-          yield* readFixtureFile(fixture.root, 'apps/shell-super-app/src/routes/[lang]/purchasing/orders/page.data.ts'),
-        ).toMatch(/entrypointKey: 'inventory\.stock\.page\.purchase-orders'/u);
         const beforeRerun = yield* snapshotTree(fixture.root);
         yield* run(fixture, scaffoldCommand.microverticalPage, [
           scaffoldFlag.vertical,
@@ -4947,6 +4977,7 @@ it.live(
   Effect.fn(function* scenario95() {
     yield* withFixture(
       Effect.fn(function* scenario96(fixture) {
+        const shellBefore = yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId));
         yield* write(
           fixture.root,
           inventoryFederationConfigFile,
@@ -4971,19 +5002,11 @@ it.live(
         yield* run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
 
         const ownerRoute = 'verticals/inventory-stock/src/routes/[lang]/contacts/customers/[id]/edit';
-        const shellRoute = 'apps/shell-super-app/src/routes/[lang]/contacts/customers/[id]/edit';
         const page = yield* readFixtureFile(fixture.root, `${ownerRoute}/page.tsx`);
         const ownerMetadata = yield* readFixtureFile(fixture.root, `${ownerRoute}/route.meta.ts`);
-        const shellLoader = yield* readFixtureFile(fixture.root, `${shellRoute}/page.data.ts`);
-        const shellMetadata = yield* readFixtureFile(fixture.root, `${shellRoute}/route.meta.ts`);
         const manifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
         const registration = yield* readFixtureFile(fixture.root, inventoryRegistrationFile);
         const federation = yield* readFixtureFile(fixture.root, inventoryFederationConfigFile);
-        const federatedPage = yield* readFixtureFile(
-          fixture.root,
-          'verticals/inventory-stock/src/federation/page-customer-edit.tsx',
-        );
-        const shellClients = yield* readFixtureFile(fixture.root, shellVerticalClientsFile);
 
         expect(page).toMatch(/export const CustomerEditPageRouteParams = Schema\.Struct/u);
         expect(page).toMatch(/id: Schema\.String\.pipe\(Schema\.brand\('CustomerEditPageIdRouteParameter'\)\)/u);
@@ -4993,19 +5016,16 @@ it.live(
         expect(page).toMatch(/void routeParams;/u);
         expect(ownerMetadata).toMatch(/canonicalPath: '\/contacts\/customers\/:id\/edit'/u);
         expect(ownerMetadata).toMatch(/en: '\/contacts\/customers\/:id\/edit'/u);
-        expect(shellMetadata).toMatch(/canonicalPath: '\/contacts\/customers\/:id\/edit'/u);
         expect(manifest).toMatch(/routePath: '\/contacts\/customers\/:id\/edit'/u);
         expect(manifest).toMatch(/inventory\.stock\.page\.customer-edit/u);
         expect(manifest).not.toMatch(/inventory\.stock\.navigation\.customer-edit/u);
         expect(registration).toMatch(/'page-customer-edit'/u);
-        expect(federation).toMatch(/'\.\/PageCustomerEdit'/u);
-        expect(federatedPage).toMatch(/type CustomerEditPageRouteParams/u);
-        expect(federatedPage).not.toMatch(/Schema\.Struct/u);
-        expect(federatedPage).toMatch(/<CustomerEditPage routeParams=\{routeParams\} \/>/u);
-        expect(shellClients).toMatch(/inventory\.stock\.page-customer-edit/u);
-        expect(shellLoader).toMatch(/selectRouteParams/u);
-        expect(shellLoader).toMatch(/const routeParameterNames = \['id'\] as const;/u);
-        expect(shellLoader).toMatch(/routeParams: selectRouteParams\(params, routeParameterNames\)/u);
+        expect(federation).toMatch(
+          /'\.\/PageCustomerEdit': '\.\/src\/routes\/\[lang\]\/contacts\/customers\/\[id\]\/edit\/page\.tsx'/u,
+        );
+        expect(manifest).toMatch(/expose: '\.\/PageCustomerEdit'/u);
+        expect(page).toMatch(/<FederatedI18nBoundary/u);
+        expect(page).toMatch(/<CustomerEditPageContent routeParams=\{routeParams\} \/>/u);
         expect(yield* readFixtureFile(fixture.root, inventoryEnglishLocaleFile)).toMatch(/"customerEdit"/u);
         expect(yield* readFixtureFile(fixture.root, 'verticals/inventory-stock/locales/cs/inventory.json')).toMatch(
           /"customerEdit"/u,
@@ -5014,6 +5034,7 @@ it.live(
         const afterFirstRun = yield* snapshotTree(fixture.root);
         yield* run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
         expect(yield* snapshotTree(fixture.root)).toEqual(afterFirstRun);
+        expect(yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId))).toEqual(shellBefore);
       }),
     );
   }),
@@ -5033,15 +5054,13 @@ it.live(
 
     yield* withFixture(
       Effect.fn(function* scenario98(fixture) {
+        const shellBefore = yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId));
         const ownerRoute = 'verticals/inventory-stock/src/routes/[lang]/contacts/customers/[id]/contacts/[contactId]';
-        const shellRoute = 'apps/shell-super-app/src/routes/[lang]/contacts/customers/[id]/contacts/[contactId]';
 
         yield* run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
 
         const page = yield* readFixtureFile(fixture.root, `${ownerRoute}/page.tsx`);
         const ownerMetadata = yield* readFixtureFile(fixture.root, `${ownerRoute}/route.meta.ts`);
-        const shellLoader = yield* readFixtureFile(fixture.root, `${shellRoute}/page.data.ts`);
-        const shellMetadata = yield* readFixtureFile(fixture.root, `${shellRoute}/route.meta.ts`);
         const manifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
 
         expect(page).toMatch(/export const ContactDetailPageRouteParams = Schema\.Struct/u);
@@ -5052,18 +5071,15 @@ it.live(
         expect(page).toMatch(/export type ContactDetailPageRouteParams = typeof ContactDetailPageRouteParams\.Type/u);
         expect(page).toMatch(/Schema\.toStandardSchemaV1\(\s*ContactDetailPageRouteParams,?\s*\)/u);
         expect(ownerMetadata).toMatch(/canonicalPath: '\/contacts\/customers\/:id\/contacts\/:contactId'/u);
-        expect(shellMetadata).toMatch(/canonicalPath: '\/contacts\/customers\/:id\/contacts\/:contactId'/u);
         expect(manifest).toMatch(/routePath: '\/contacts\/customers\/:id\/contacts\/:contactId'/u);
         expect(manifest).toMatch(/inventory\.stock\.page\.contact-detail/u);
         expect(manifest).not.toMatch(/inventory\.stock\.navigation\.contact-detail/u);
-        expect(shellLoader).toMatch(/const routeParameterNames = \['id', 'contactId'\] as const;/u);
-        expect(shellLoader).toMatch(/routeParams: selectRouteParams\(params, routeParameterNames\)/u);
         yield* Effect.promise(() => stat(path.join(fixture.root, ownerRoute)));
-        yield* Effect.promise(() => stat(path.join(fixture.root, shellRoute)));
 
         const afterFirstRun = yield* snapshotTree(fixture.root);
         yield* run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
         expect(yield* snapshotTree(fixture.root)).toEqual(afterFirstRun);
+        expect(yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId))).toEqual(shellBefore);
       }),
     );
 
@@ -5086,7 +5102,7 @@ it.live(
 );
 
 it.live(
-  'rejects unsafe dynamic parameters and dynamic route collisions without writing',
+  'rejects unsafe dynamic parameters and equivalent route collisions without writing',
   Effect.fn(function* scenario100() {
     yield* Effect.all(
       [
@@ -5124,7 +5140,7 @@ it.live(
               scaffoldFlag.vertical,
               inventorySlug,
               '--page',
-              'customer-detail',
+              fixtureName.customerDetailPage,
               '--url',
               customerDetailUrl,
             ]);
@@ -5154,10 +5170,7 @@ it.live(
               customerEditUrl,
             ];
             yield* run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
-            const pagePath = path.join(
-              fixture.root,
-              'verticals/inventory-stock/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx',
-            );
+            const pagePath = path.join(fixture.root, inventoryCustomerEditRouteFile);
             const pageSource = yield* Effect.promise(() => readFile(pagePath, 'utf-8'));
             yield* Effect.promise(() => writeFile(pagePath, `${pageSource}\n// developer edit\n`, 'utf-8'));
             yield* assertScaffoldRefused(fixture, scaffoldCommand.microverticalPage, generatorArguments, /collides/u);
@@ -5167,7 +5180,7 @@ it.live(
           Effect.fn(function* scenario105(fixture) {
             yield* write(
               fixture.root,
-              'verticals/inventory-stock/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx',
+              inventoryCustomerEditRouteFile,
               'export default function PartialPage() { return null; }\n',
             );
             yield* assertScaffoldRefused(
@@ -5180,6 +5193,7 @@ it.live(
         ),
         withFixture(
           Effect.fn(function* scenario106(fixture) {
+            const shellBefore = yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId));
             yield* run(fixture, scaffoldCommand.microverticalPage, [
               scaffoldFlag.vertical,
               inventorySlug,
@@ -5188,19 +5202,18 @@ it.live(
               '--url',
               '/inventory/customers/new',
             ]);
-            yield* assertScaffoldRefused(
-              fixture,
-              scaffoldCommand.microverticalPage,
-              [
-                scaffoldFlag.vertical,
-                inventorySlug,
-                '--page',
-                fixtureName.customerEditPage,
-                '--url',
-                customerDetailUrl,
-              ],
-              /static route segment|collides/u,
-            );
+            yield* run(fixture, scaffoldCommand.microverticalPage, [
+              scaffoldFlag.vertical,
+              inventorySlug,
+              '--page',
+              fixtureName.customerEditPage,
+              '--url',
+              customerDetailUrl,
+            ]);
+            const manifest = yield* readFixtureFile(fixture.root, inventoryManifestFile);
+            expect(manifest).toMatch(/routePath: '\/inventory\/customers\/new'/u);
+            expect(manifest).toMatch(/routePath: '\/inventory\/customers\/:id'/u);
+            expect(yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId))).toEqual(shellBefore);
           }),
         ),
         withFixture(
@@ -5213,11 +5226,6 @@ it.live(
               '--url',
               '/shared/customers/:id/edit',
             ]);
-            yield* Effect.promise(() =>
-              rm(path.join(fixture.root, 'apps/shell-super-app/src/routes/[lang]/shared/customers/[id]/edit'), {
-                recursive: true,
-              }),
-            );
             yield* assertScaffoldRefused(
               fixture,
               scaffoldCommand.microverticalPage,
@@ -5230,6 +5238,19 @@ it.live(
                 '/shared/customers/:id/edit',
               ],
               /already registered by billing/u,
+            );
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              [
+                scaffoldFlag.vertical,
+                inventorySlug,
+                '--page',
+                fixtureName.customerEditPage,
+                '--url',
+                '/shared/customers/:customerId/edit',
+              ],
+              /routing collision.*registered by billing/u,
             );
           }),
         ),
@@ -5248,7 +5269,7 @@ it.live(
           scaffoldFlag.vertical,
           inventorySlug,
           '--page',
-          'customer-detail',
+          fixtureName.customerDetailPage,
           '--url',
           customerDetailUrl,
         ]);
@@ -5257,6 +5278,7 @@ it.live(
           'apps/shell-super-app/src/routes/[lang]/inventory/customers/new/page.tsx',
           'export default function ExistingStaticSibling() { return null; }\n',
         );
+        const shellBefore = yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId));
 
         yield* run(fixture, scaffoldCommand.microverticalPage, [
           scaffoldFlag.vertical,
@@ -5267,11 +5289,8 @@ it.live(
           customerEditUrl,
         ]);
 
-        yield* Effect.promise(() =>
-          stat(
-            path.join(fixture.root, 'apps/shell-super-app/src/routes/[lang]/inventory/customers/[id]/edit/page.tsx'),
-          ),
-        );
+        yield* Effect.promise(() => stat(path.join(fixture.root, inventoryCustomerEditRouteFile)));
+        expect(yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId))).toEqual(shellBefore);
       }),
     );
   }),
@@ -5282,6 +5301,61 @@ it.live(
   Effect.fn(function* scenario110() {
     yield* Effect.all(
       [
+        ...['$', '[...tail]', '*tail'].map((catchAllSegment) =>
+          withFixture(
+            Effect.fn(function* nativeCatchAllBlocksDynamicSuffix(fixture) {
+              yield* run(fixture, scaffoldCommand.microverticalPage, [
+                scaffoldFlag.vertical,
+                inventorySlug,
+                '--page',
+                fixtureName.customerDetailPage,
+                '--url',
+                customerDetailUrl,
+              ]);
+              yield* write(
+                fixture.root,
+                `apps/shell-super-app/src/routes/[lang]/inventory/customers/new/${catchAllSegment}/page.tsx`,
+                'export default function NativeCatchAllPage() { return null; }\n',
+              );
+              yield* assertScaffoldRefused(
+                fixture,
+                scaffoldCommand.microverticalPage,
+                [
+                  scaffoldFlag.vertical,
+                  inventorySlug,
+                  '--page',
+                  fixtureName.customerEditPage,
+                  '--url',
+                  '/inventory/customers/:id/edit/details',
+                ],
+                /reserved|collision|collides/u,
+              );
+            }),
+          ),
+        ),
+        withFixture(
+          Effect.fn(function* nativeRouteBlocksDynamicSuffix(fixture) {
+            yield* run(fixture, scaffoldCommand.microverticalPage, [
+              scaffoldFlag.vertical,
+              inventorySlug,
+              '--page',
+              fixtureName.customerDetailPage,
+              '--url',
+              customerDetailUrl,
+            ]);
+            yield* write(
+              fixture.root,
+              'apps/shell-super-app/src/routes/[lang]/inventory/customers/new/edit/page.tsx',
+              'export default function NativeEditPage() { return null; }\n',
+            );
+            yield* assertScaffoldRefused(
+              fixture,
+              scaffoldCommand.microverticalPage,
+              [scaffoldFlag.vertical, inventorySlug, '--page', fixtureName.customerEditPage, '--url', customerEditUrl],
+              /reserved|collision|collides/u,
+            );
+          }),
+        ),
         withFixture(
           Effect.fn(function* scenario111(fixture) {
             yield* write(
@@ -5322,11 +5396,6 @@ it.live(
               '--url',
               '/shared/customers',
             ]);
-            yield* Effect.promise(() =>
-              rm(path.join(fixture.root, 'apps/shell-super-app/src/routes/[lang]/shared/customers'), {
-                recursive: true,
-              }),
-            );
             yield* assertScaffoldRefused(
               fixture,
               scaffoldCommand.microverticalPage,
@@ -5444,7 +5513,10 @@ it.live(
             yield* Effect.promise(() =>
               writeFile(
                 federationPath,
-                federation.replace("'./src/federation/page-orders.tsx'", "'./src/federation/page-other.tsx'"),
+                federation.replace(
+                  "'./src/routes/[lang]/inventory-stock/orders/page.tsx'",
+                  "'./src/routes/[lang]/inventory-stock/other/page.tsx'",
+                ),
                 'utf-8',
               ),
             );
@@ -5456,25 +5528,40 @@ it.live(
             );
           }),
         ),
-        withFixture(
-          Effect.fn(function* scenario120(fixture) {
-            const generatorArguments = [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'];
-            yield* run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
-            yield* write(
-              fixture.root,
-              'apps/shell-super-app/src/routes/[lang]/inventory-stock/orders/developer-note.ts',
-              'export const developerNote = true;\n',
-            );
-            yield* assertScaffoldRefused(
-              fixture,
-              scaffoldCommand.microverticalPage,
-              generatorArguments,
-              /already exists|collides/u,
-            );
-          }),
-        ),
       ],
       { concurrency: 'unbounded' },
+    );
+  }),
+);
+
+it.live(
+  'generates and reruns owner pages without reading or changing the Shell page registry or runtime catchall',
+  Effect.fn(function* ownerPageIgnoresShellRegistry() {
+    yield* withFixture(
+      Effect.fn(function* shellRemainsUnchanged(fixture) {
+        yield* write(
+          fixture.root,
+          'apps/shell-super-app/src/api/vertical-clients.ts',
+          'export const developerOwnedShellContent = true;\n',
+        );
+        yield* write(
+          fixture.root,
+          'apps/shell-super-app/src/routes/[lang]/$/route.meta.ts',
+          'export default { id: "runtime-module-page", public: false, indexable: false };\n',
+        );
+        yield* write(
+          fixture.root,
+          'apps/shell-super-app/src/routes/[lang]/$.tsx',
+          'export default function RuntimeModulePage() { return null; }\n',
+        );
+        const shellBefore = yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId));
+        const generatorArguments = [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'];
+        yield* run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
+        expect(yield* snapshotTree(path.join(fixture.root, 'apps', shellAppId))).toEqual(shellBefore);
+        const afterFirstRun = yield* snapshotTree(fixture.root);
+        yield* run(fixture, scaffoldCommand.microverticalPage, generatorArguments);
+        expect(yield* snapshotTree(fixture.root)).toEqual(afterFirstRun);
+      }),
     );
   }),
 );
@@ -5525,19 +5612,6 @@ export const OrdersPage = () => {
 };
 
 export default OrdersPage;
-`,
-        );
-        yield* write(
-          fixture.root,
-          'apps/shell-super-app/src/routes/[lang]/orders/page.data.ts',
-          `import { loader as loadModuleTarget } from '../modules/[moduleId]/page.data.ts';
-
-interface ShellPageLoaderArguments {
-  readonly request: Request;
-}
-
-export const loader = ({ request }: ShellPageLoaderArguments) =>
-  loadModuleTarget({ params: { moduleId: 'inventory.stock' }, request });
 `,
         );
         yield* Effect.all(
@@ -5621,6 +5695,17 @@ it.live(
   'page prerequisite and nested-route failures are preflighted, while refresh failure is safely rerunnable',
   Effect.fn(function* scenario126() {
     yield* withFixture(
+      Effect.fn(function* missingOwnerStylesheet(fixture) {
+        yield* Effect.promise(() => rm(path.join(fixture.root, 'verticals/inventory-stock/src/routes/index.css')));
+        yield* assertScaffoldRefused(
+          fixture,
+          scaffoldCommand.microverticalPage,
+          [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'],
+          /stylesheet is missing/u,
+        );
+      }),
+    );
+    yield* withFixture(
       Effect.fn(function* scenario127(fixture) {
         yield* Effect.promise(() =>
           rm(path.join(fixture.root, 'verticals/inventory-stock/src/routes/ultramodern-route-head.tsx')),
@@ -5690,7 +5775,7 @@ it.live(
             refreshes.push(appId);
           },
         );
-        expect(refreshes).toEqual([inventorySlug, shellAppId]);
+        expect(refreshes).toEqual([inventorySlug]);
         expect(yield* snapshotTree(fixture.root)).toEqual(afterRefreshFailure);
       }),
     );
@@ -5761,7 +5846,7 @@ const runCombinedScenario = (fixture: Fixture): Effect.Effect<Readonly<Record<st
       fixture,
       scaffoldCommand.microverticalPage,
       [scaffoldFlag.vertical, inventorySlug, '--page', 'orders'],
-      (appId) => expect([inventorySlug, shellAppId].includes(appId)).toBe(true),
+      (appId) => expect(appId).toBe(inventorySlug),
     );
     yield* run(fixture, scaffoldCommand.microverticalPage, [
       scaffoldFlag.vertical,
@@ -5839,7 +5924,6 @@ it.live(
           'verticals/inventory-stock/src/policies/stock-available.policy.ts',
           'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/page.tsx',
           'verticals/inventory-stock/src/routes/[lang]/inventory-stock/orders/route.meta.ts',
-          'verticals/inventory-stock/src/federation/page-orders.tsx',
           inventoryActionPrincipalFile,
           inventoryActionHttpRunnerFile,
           inventoryActionGatewayFile,
@@ -5938,6 +6022,7 @@ it.live(
               ['node_modules/@types/node', 'node_modules/@types/node', 'dir'],
               ['packages/core-runtime/src/actions', 'packages/core-runtime/src/actions', 'dir'],
               ['packages/core-runtime/src/db', 'packages/core-runtime/src/db', 'dir'],
+              ['packages/core-runtime/src/outbox', 'packages/core-runtime/src/outbox', 'dir'],
               ['packages/core-runtime/src/operations', 'packages/core-runtime/src/operations', 'dir'],
               ['packages/core-runtime/src/database', 'packages/core-runtime/src/database', 'dir'],
               ['packages/core-runtime/src/environment', 'packages/core-runtime/src/environment', 'dir'],

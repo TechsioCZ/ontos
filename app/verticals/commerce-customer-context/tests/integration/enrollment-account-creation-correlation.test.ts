@@ -54,6 +54,7 @@ import {
   startEnrollmentAcceptanceAttempt,
 } from '../support/enrollment-acceptance-fixture.ts';
 import { acquireOutlivingCleanup } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { ENROLLMENT_TEST_COMPOSITION_REVISION } from '../support/enrollment-composition-authority.ts';
 
 /**
  * Better Auth can commit the account row and still lose its answer — a timed-out call, an unusable
@@ -146,6 +147,7 @@ const createAccountFor = (fixture: CorrelationFixture) =>
 
 /** The Attempt as a lost provider answer leaves it: claimed, revision fenced, and no subject. */
 const lostAnswerAttempt = (fixture: CorrelationFixture): EnrollmentAttemptSnapshot => ({
+  compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
   createdAt: DateTime.makeUnsafe('2026-09-20T10:00:00.000Z'),
   createdByPrincipalId: actorPrincipalId,
   intentDigest: 'a'.repeat(64),
@@ -164,6 +166,7 @@ const reconciliationInputFor = (
 ): CommerceEnrollmentOwnerReconciliationInput => ({
   ...Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
     actorPrincipalId,
+    compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
     correlationId: `commerce-enrollment-owner:${ownerInvocationId}`,
     expectedRevision: 1,
     ownerInvocationId,
@@ -401,10 +404,11 @@ it.live('re-dispatches the account-creation transition after a claim-only crash 
     Effect.gen(function* redispatchesAfterClaimOnlyCrash() {
       const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)(randomUUID());
       const owningActorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
-      const acceptance = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const acceptance = yield* makeEnrollmentAcceptanceFixture({ tenantId }, ENROLLMENT_TEST_COMPOSITION_REVISION);
       const attempt = yield* startEnrollmentAcceptanceAttempt(acceptance, {
         actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID()),
         actorPrincipalId: owningActorPrincipalId,
+        compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
         intentDigest: Schema.decodeSync(EnrollmentDigestSchema)('a'.repeat(64)),
         intentKey,
         journey: 'RETAIL_SELF_ENROLLMENT',
@@ -416,6 +420,7 @@ it.live('re-dispatches the account-creation transition after a claim-only crash 
       const requestDigest = 'c'.repeat(64);
       const transition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
         actorPrincipalId: owningActorPrincipalId,
+        compositionRevision: attempt.compositionRevision,
         correlationId: `commerce-enrollment-owner:${ownerInvocationId}`,
         expectedRevision: attempt.revision,
         ownerInvocationId,

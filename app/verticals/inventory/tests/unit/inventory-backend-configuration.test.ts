@@ -25,6 +25,8 @@ import {
 } from '../../src/actions/select-inventory-backend.action.ts';
 import { inventoryBackendConfigurationCurrentRead } from '../../src/api/inventory-backend-configuration-current.read.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '0199ffff-ffff-7fff-bfff-ffffffffffff';
 const customerConfigurationId = 'customer-configuration-1';
 const decodePayload = Schema.decodeUnknownSync(SelectInventoryBackendPayloadSchema);
@@ -70,14 +72,17 @@ const makeMemoryPersistence = () => {
 
 describe('Inventory Backend configuration', () => {
   it('requires Inventory Migration permission for the exact configuration target', () => {
-    const scope = trustVerifiedGatewayPrincipalContext({
-      authBindingId: '0199ffff-ffff-7fff-bfff-fffffffffffd',
-      authContextRef: 'test:inventory-backend-configuration',
-      authMethod: 'api_key',
-      correlationId: 'inventory-backend-configuration',
-      principalId: '0199ffff-ffff-7fff-bfff-fffffffffffc',
-      tenantId,
-    });
+    const scope = trustVerifiedGatewayPrincipalContext(
+      {
+        authBindingId: '0199ffff-ffff-7fff-bfff-fffffffffffd',
+        authContextRef: 'test:inventory-backend-configuration',
+        authMethod: 'api_key',
+        correlationId: 'inventory-backend-configuration',
+        principalId: '0199ffff-ffff-7fff-bfff-fffffffffffc',
+        tenantId,
+      },
+      compositionRevision,
+    );
 
     expect(getActionBusinessPermissionTargetResolver(selectInventoryBackendAction)?.(externalPayload, scope)).toEqual({
       permission: 'inventory.migration.manage',

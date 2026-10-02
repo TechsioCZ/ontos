@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface AssignCatalogMediaRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type AssignCatalogMediaRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeAssignCatalogMediaRecovery = (
   payload: AssignCatalogMediaRecoveryRequest,
   ...[requestCorrelation, options = {}]: AssignCatalogMediaRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeAssignCatalogMediaRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeAssignCatalogMediaRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

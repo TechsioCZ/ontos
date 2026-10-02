@@ -4,7 +4,10 @@ import {
   CommerceEnrollmentContinuation,
   CommerceEnrollmentContinuationLive,
 } from '../../src/enrollment/continuation/enrollment-continuation.ts';
-import type { CommerceEnrollmentContinuationService } from '../../src/enrollment/continuation/enrollment-continuation.ts';
+import type {
+  CommerceEnrollmentContinuationService,
+  CommerceEnrollmentContinuationSweepPass,
+} from '../../src/enrollment/continuation/enrollment-continuation.ts';
 import type { CommerceEnrollmentAttemptError } from '../../src/enrollment/attempts/errors.ts';
 import { journeyTransitionIdentity } from '../../src/enrollment/journeys/journey-contracts.ts';
 import type { JourneyTransitionSpec } from '../../src/enrollment/journeys/journey-contracts.ts';
@@ -21,6 +24,8 @@ import type {
 import { CommerceEnrollmentPreparationSubjectResolver } from '../../src/enrollment/orchestration/preparation-subject.ts';
 import type { RetailSelfEnrollmentPreparationSubject } from '../../src/enrollment/journeys/retail-self-enrollment-preparation.ts';
 import { EnrollmentDigestSchema, enrollmentDigest } from '../../shared/enrollment-contracts.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { enrollmentApplicationCompositionLayer } from './enrollment-application-composition.ts';
 import { PORTAL_ACCOUNT_CREATION_TRANSITION_KEY } from '../../src/enrollment/orchestration/prepared-owner-authority.ts';
 import { enrollmentAcceptanceScriptedOwner } from './enrollment-acceptance-owner-script.ts';
 import type {
@@ -105,12 +110,13 @@ export const makeEnrollmentContinuationHarness = Effect.fnUntraced(function* mak
   });
   const continuation = yield* CommerceEnrollmentContinuation.pipe(
     Effect.provide(
-      CommerceEnrollmentContinuationLive.pipe(
+      CommerceEnrollmentContinuationLive(ultramodernApiMarker).pipe(
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(CommerceEnrollmentOwnerTransactionRunner, { run, runWorker }),
             registryLive,
             subjectLive,
+            enrollmentApplicationCompositionLayer,
           ),
         ),
       ),
@@ -132,11 +138,15 @@ export const enrollmentContinuationForTenants = (
   tenantIds: readonly string[],
 ): CommerceEnrollmentContinuationService => {
   const scenarioTenants = new Set<string>(tenantIds);
+  const belongsToScenario = (row: { readonly tenantId: string }): boolean => scenarioTenants.has(row.tenantId);
   return {
     advance: continuation.advance,
-    claimSweep: continuation.claimSweep,
-    listDue: (input) =>
-      continuation.listDue(input).pipe(Effect.map((rows) => rows.filter((row) => scenarioTenants.has(row.tenantId)))),
+    openSweepPass: continuation.openSweepPass.pipe(
+      Effect.map((pass): CommerceEnrollmentContinuationSweepPass => ({
+        ...pass,
+        listDue: (input) => pass.listDue(input).pipe(Effect.map((rows) => rows.filter(belongsToScenario))),
+      })),
+    ),
   };
 };
 

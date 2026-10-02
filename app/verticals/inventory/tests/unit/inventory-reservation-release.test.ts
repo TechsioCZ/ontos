@@ -46,6 +46,8 @@ import {
   InventoryReservationReleaseExecution,
 } from '../../src/workers/execute-inventory-reservation-release.worker.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = LegalEntityIdSchema.make('22222222-2222-4222-8222-222222222222');
 const reservationId = '33333333-3333-4333-8333-333333333333';
@@ -381,6 +383,7 @@ describe('Inventory Reservation Release', () => {
       const context: OutboxWorkerHandlerContext = {
         attemptNumber: 1,
         claimId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        compositionRevision,
         consumerModuleKey: 'commerce.inventory',
         deliveryId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
         domainEventId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',

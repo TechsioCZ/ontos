@@ -1,6 +1,9 @@
 import { Effect, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
+import type { OutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
+
 import {
   CORE_SEARCH_INGESTION_REGISTRATIONS,
   CORE_SEARCH_PARTY_LIFECYCLE_TOPICS,
@@ -13,6 +16,23 @@ import {
 } from '../../src/search/projection.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
+const workerContext = (overrides: Partial<OutboxWorkerHandlerContext> = {}): OutboxWorkerHandlerContext =>
+  attestOutboxWorkerHandlerContext({
+    attemptNumber: 1,
+    claimId: '50000000-0000-4000-8000-000000000001',
+    compositionRevision: 'a'.repeat(64),
+    consumerModuleKey: 'party.registry',
+    deliveryId: '50000000-0000-4000-8000-000000000002',
+    domainEventId: '50000000-0000-4000-8000-000000000003',
+    legalEntityScope: 'forbidden',
+    messageId: '50000000-0000-4000-8000-000000000004',
+    producerModuleKey: 'party.registry',
+    tenantId,
+    tenantSequenceNo: 1n,
+    topic: 'party.registry.party-updated.v1',
+    workerKey: 'party.registry.project-party-updated-to-search',
+    ...overrides,
+  });
 const ref = {
   moduleId: 'party.registry',
   resourceId: '30000000-0000-4000-8000-000000000001',
@@ -53,15 +73,45 @@ it('declares one immutable Core registration for every closed Party lifecycle to
   ).toBe(true);
 });
 
+it.effect('ingestion rejects caller-created contexts and trusted claims with mismatching ownership', () => {
+  const store = makeInMemoryCoreSearchProjectionStore();
+  const ingestion = makeCoreSearchIngestion(store);
+  const contexts = [
+    { ...workerContext() },
+    workerContext({ compositionRevision: 'not-a-release' }),
+    workerContext({ tenantId: '10000000-0000-4000-8000-000000000002' }),
+    workerContext({ producerModuleKey: 'foreign.module' }),
+    workerContext({ consumerModuleKey: 'foreign.module' }),
+    workerContext({ topic: 'party.registry.party-created.v1' }),
+    workerContext({ workerKey: 'party.registry.project-party-created-to-search' }),
+  ];
+  return Effect.gen(function* rejectInvalidIngestionContexts() {
+    for (const context of contexts) {
+      const failure = yield* Effect.flip(ingestion.ingest(observation('1', 'Party'), context));
+      expect(Predicate.isTagged(failure, 'CoreSearchProjectionInvalid')).toBe(true);
+    }
+    const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
+    expect(
+      yield* runtime.search({
+        includeArchived: false,
+        moduleId: ref.moduleId,
+        query: 'party',
+        resourceType: ref.resourceType,
+        tenantId,
+      }),
+    ).toEqual([]);
+  });
+});
+
 it.effect('ingests duplicate and out-of-order post-commit observations idempotently', () => {
   const store = makeInMemoryCoreSearchProjectionStore();
   const ingestion = makeCoreSearchIngestion(store);
 
   return Effect.gen(function* ingestObservationsIdempotently() {
     const runtime = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
-    yield* ingestion.ingest(observation('2', 'Current title'));
-    yield* ingestion.ingest(observation('2', 'Current title'));
-    yield* ingestion.ingest(observation('1', 'Stale title'));
+    yield* ingestion.ingest(observation('2', 'Current title'), workerContext());
+    yield* ingestion.ingest(observation('2', 'Current title'), workerContext());
+    yield* ingestion.ingest(observation('1', 'Stale title'), workerContext());
 
     const hits = yield* runtime.search({
       includeArchived: false,
@@ -83,13 +133,16 @@ it.effect('identifier updates accept only their generated self-consumer worker',
     workerKey: 'party.registry.project-official-identifier-updated-to-search',
   };
   return Effect.gen(function* acceptOnlyGeneratedWorker() {
-    yield* ingestion.ingest(update);
-    yield* ingestion.ingest(update);
+    yield* ingestion.ingest(update, workerContext({ topic: update.topic, workerKey: update.workerKey }));
+    yield* ingestion.ingest(update, workerContext({ topic: update.topic, workerKey: update.workerKey }));
     const denied = yield* Effect.flip(
-      ingestion.ingest({
-        ...update,
-        workerKey: 'party.registry.project-official-identifier-added-to-search',
-      }),
+      ingestion.ingest(
+        {
+          ...update,
+          workerKey: 'party.registry.project-official-identifier-added-to-search',
+        },
+        workerContext({ topic: update.topic, workerKey: update.workerKey }),
+      ),
     );
     expect(Predicate.isTagged(denied, 'CoreSearchProjectionInvalid')).toBe(true);
   });
@@ -119,7 +172,7 @@ it.effect('rejects undeclared topics and sequence/document identity mismatches',
   return Effect.gen(function* testInvalidObservations() {
     const failures = yield* Effect.forEach(
       invalidObservations,
-      (invalidObservation) => Effect.flip(ingestion.ingest(invalidObservation)),
+      (invalidObservation) => Effect.flip(ingestion.ingest(invalidObservation, workerContext())),
       { concurrency: 'unbounded' },
     );
     for (const failure of failures) {

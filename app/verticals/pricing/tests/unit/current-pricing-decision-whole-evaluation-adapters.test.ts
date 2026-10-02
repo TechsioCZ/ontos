@@ -67,12 +67,12 @@ const transaction = scopedRoutineInvokerFromTransaction(() => Effect.succeed([])
 const externalOwnerEvidenceValidation = makePricingExternalOwnerEvidenceValidationService();
 
 const adaptersForScope = () =>
-  currentPricingDecisionWholeEvaluationAdaptersForScope(transaction, scope).pipe(
+  currentPricingDecisionWholeEvaluationAdaptersForScope(transaction, scope, 'a'.repeat(64)).pipe(
     Effect.provideService(PricingExternalOwnerEvidenceValidation, externalOwnerEvidenceValidation),
   );
 
 const evaluationForScope = () =>
-  currentPricingDecisionWholeEvaluationForScope(transaction, scope).pipe(
+  currentPricingDecisionWholeEvaluationForScope(transaction, scope, 'a'.repeat(64)).pipe(
     Effect.provideService(PricingExternalOwnerEvidenceValidation, externalOwnerEvidenceValidation),
   );
 

@@ -74,6 +74,7 @@ it.effect('Update Party records metadata-only invariant evidence with its event 
       {
         ...collector,
         actionInvocationId,
+        compositionRevision: 'a'.repeat(64),
         scope,
         services: {
           update: () => Effect.succeed({ _tag: 'found', value: party }),
@@ -100,6 +101,7 @@ it.effect('Archive Party records metadata-only invariant evidence with its event
       {
         ...collector,
         actionInvocationId,
+        compositionRevision: 'a'.repeat(64),
         scope,
         services: {
           transition: () => Effect.succeed({ _tag: 'found', value: party }),
@@ -126,6 +128,7 @@ it.effect('Unarchive Party records metadata-only invariant evidence with its eve
       {
         ...collector,
         actionInvocationId,
+        compositionRevision: 'a'.repeat(64),
         scope,
         services: {
           unarchive: () => Effect.succeed({ _tag: 'found', value: party }),

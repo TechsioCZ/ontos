@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CatalogToStockBindingResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CatalogToStockBindingResolutionAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCatalogToStockBindingResolution = (
   payload: CatalogToStockBindingResolutionRequest,
   ...[requestCorrelation, options = {}]: CatalogToStockBindingResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCatalogToStockBindingResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCatalogToStockBindingResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

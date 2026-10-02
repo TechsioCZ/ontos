@@ -48,6 +48,8 @@ import { makeInventorySourceConflictService } from '../../src/services/inventory
 import type { InventorySourceConflictPersistence } from '../../src/services/inventory-source-conflict.service.ts';
 import { resolveInventorySourceConflictAction } from '../../src/actions/resolve-inventory-source-conflict.action.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '00000000-0000-4000-8000-000000000001';
 const configurationId = '00000000-0000-4000-8000-000000000002';
 const positionOneId = '00000000-0000-4000-8000-000000000003';
@@ -377,14 +379,17 @@ describe('Inventory external source conflicts', () => {
       },
       resolvedAt: '2026-09-24T11:00:00.000Z',
     });
-    const scope = trustVerifiedGatewayPrincipalContext({
-      authBindingId: '00000000-0000-4000-8000-000000000018',
-      authContextRef: 'test:inventory-source-conflict',
-      authMethod: 'api_key',
-      correlationId: 'inventory-source-conflict',
-      principalId: '00000000-0000-4000-8000-000000000019',
-      tenantId,
-    });
+    const scope = trustVerifiedGatewayPrincipalContext(
+      {
+        authBindingId: '00000000-0000-4000-8000-000000000018',
+        authContextRef: 'test:inventory-source-conflict',
+        authMethod: 'api_key',
+        correlationId: 'inventory-source-conflict',
+        principalId: '00000000-0000-4000-8000-000000000019',
+        tenantId,
+      },
+      compositionRevision,
+    );
 
     expect(getActionBusinessPermissionTargetResolver(resolveInventorySourceConflictAction)?.(input, scope)).toEqual({
       permission: 'inventory.recovery.execute',

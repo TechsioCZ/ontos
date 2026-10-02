@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ListRecordedVariantsClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ListRecordedVariantsAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeListRecordedVariants = (
   payload: ListRecordedVariantsRequest,
   ...[requestCorrelation, options = {}]: ListRecordedVariantsOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeListRecordedVariantsWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeListRecordedVariantsWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

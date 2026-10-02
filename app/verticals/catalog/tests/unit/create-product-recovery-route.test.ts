@@ -8,11 +8,15 @@ import {
   ReadRuntime,
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
+import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makeCatalogApiRuntime } from '../../api/index.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 const principal = {
   authBindingId: '66666666-6666-4666-8666-666666666666',
@@ -25,6 +29,13 @@ const invocationId = '33333333-3333-4333-8333-333333333333';
 
 it.live('routes an authenticated recovery request with both governed runtimes available', () =>
   Effect.gen(function* invokeRecoveryRoute() {
+    const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+      ['catalog'],
+      ultramodernApiMarker.buildMarker,
+    );
+    const compositionDocument = yield* Schema.encodeEffect(
+      Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+    )(compositionSnapshot);
     const issuer = 'https://shell.catalog-recovery-route.test';
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
@@ -34,7 +45,12 @@ it.live('routes an authenticated recovery request with both governed runtimes av
       use: 'sig',
     };
     const token = yield* Effect.promise(() =>
-      new SignJWT({ principal, ver: 1 })
+      new SignJWT({
+        compositionRevision: compositionSnapshot.composition.revision,
+        principal,
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
+        ver: 1,
+      })
         .setProtectedHeader({ alg: 'EdDSA', kid: 'catalog-recovery-route-test', typ: 'JWT' })
         .setIssuer(issuer)
         .setAudience('catalog')
@@ -71,6 +87,7 @@ it.live('routes an authenticated recovery request with both governed runtimes av
       Layer.succeed(ReadRuntime, readRuntime),
       Layer.mergeAll(
         Layer.succeed(ActionRuntime, actionRuntime),
+        Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(compositionDocument) }),
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
             ONTOS_GATEWAY_ISSUER: issuer,

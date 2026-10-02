@@ -9,6 +9,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PartiesSearchClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PartiesSearchAuthorizedInvocation = readonly [
@@ -46,6 +47,10 @@ export const loadPartiesClient = (
   payload: PartiesProviderRequest,
   ...[requestCorrelation, options = {}]: PartiesSearchOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    loadPartiesClientWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    loadPartiesClientWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

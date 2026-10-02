@@ -1,13 +1,15 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
-  ActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
+  makeActionRuntimeLive,
 } from '@app/core-runtime';
 import type { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import {
   ActionPermissionLive,
   ActionRepositoryLive,
@@ -20,6 +22,7 @@ import type { EffectBffRuntimeAssembly } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { catalogImportAcceptanceServiceFactoryLive } from '../src/persistence/catalog-import-acceptance-service.ts';
 import { catalogLocalOverrideServiceFactoryLive } from '../src/persistence/catalog-local-override-service.ts';
@@ -235,7 +238,7 @@ import { variantHistoryReadApiLive } from './variant-history-read-server.ts';
 // </generated-governed-http-handler-imports>
 
 import { catalogApi, catalogMarkerSchema, catalogOperationContexts } from '../shared/api.ts';
-import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 import {
   catalogCorsAllowedHeaders,
   catalogCorsAllowedMethods,
@@ -301,11 +304,19 @@ const catalogSourceActionPersistenceLive = catalogSourceActionPersistenceFactory
     ),
   ),
 );
-const catalogActionRuntime = ActionRuntimeLive.pipe(
+const nativeHttpClientLive = FetchHttpClient.layer.pipe(
+  Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+);
+const nativeCompositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(nativeHttpClientLive));
+const activeApplicationCompositionLive = ActiveApplicationCompositionConfigLive.pipe(
+  Layer.provide(nativeCompositionSourceLive),
+);
+const catalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
   Layer.provide(catalogSourceActionPersistenceLive),
   Layer.provide(
     Layer.mergeAll(
       CorePersistenceLive,
+      activeApplicationCompositionLive,
       ActionRepositoryLive,
       ActionPermissionLive,
       ContextAccessLive,
@@ -548,7 +559,10 @@ export const makeCatalogApiRuntime = (
     updateProductRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     variantHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     // </generated-governed-http-handler-layers>
-  ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
+  ).pipe(
+    Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)),
+    Layer.provide(nativeCompositionSourceLive),
+  );
   type CatalogHandlerRequirements =
     | (typeof apiHandlersLive extends Layer.Layer<infer _Services, infer _Error, infer Requirements>
         ? Requirements

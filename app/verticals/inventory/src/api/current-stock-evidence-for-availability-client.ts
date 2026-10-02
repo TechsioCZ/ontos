@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CurrentStockEvidenceForAvailabilityClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CurrentStockEvidenceForAvailabilityAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCurrentStockEvidenceForAvailability = (
   payload: CurrentStockEvidenceForAvailabilityRequest,
   ...[requestCorrelation, options = {}]: CurrentStockEvidenceForAvailabilityOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCurrentStockEvidenceForAvailabilityWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCurrentStockEvidenceForAvailabilityWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

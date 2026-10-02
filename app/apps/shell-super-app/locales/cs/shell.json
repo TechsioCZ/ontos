@@ -123,6 +123,7 @@
       "incompatible": "Nasazený vstupní bod modulu není kompatibilní.",
       "loading": "Načítání modulu…",
       "not_found": "Tento modul není v aktuálním kontextu dostupný.",
+      "reload_required": "Je dostupná nová verze aplikace. Pro pokračování obnovte stránku.",
       "selection_required": "Před otevřením modulu vyberte právní subjekt.",
       "seoDescription": "Autorizované pracovní prostředí modulu OntOS.",
       "title": "Modul",

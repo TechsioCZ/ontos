@@ -253,6 +253,7 @@ export type ActionHandler<
 export type ActionServiceFactory<Services, Requirements = never> = (
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
+  compositionRevision: string,
 ) => Effect.Effect<Services, OperationContextUnavailable, Requirements>;
 
 /** Runs only for a decoded successful result inside the owning Action transaction. */

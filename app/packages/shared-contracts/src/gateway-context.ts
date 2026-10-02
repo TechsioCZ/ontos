@@ -5,6 +5,7 @@ import {
   HttpApi,
   HttpApiEndpoint,
   HttpApiGroup,
+  HttpApiSchema,
   Schema,
   makeEffectHttpApiClient,
 } from '@modern-js/bff-effect/effect-client';
@@ -12,7 +13,7 @@ import type { HttpClientError } from '@modern-js/bff-effect/effect-client';
 import { Context } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 
-import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './problem-details.ts';
+import { problemDetailsContentType, problemDetailsFields } from './problem-details.ts';
 
 export const GATEWAY_ASSERTION_VERSION = 1 as const;
 export const EXTERNAL_GATEWAY_ASSERTION_VERSION = 2 as const;
@@ -23,6 +24,8 @@ const nonEmptyString = Schema.String.check(Schema.isMinLength(1));
 const uuid = Schema.String.check(Schema.isUUID());
 const LegalEntityIdSchema = uuid.pipe(Schema.brand('LegalEntityId'));
 const epochSeconds = Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0));
+const compositionRevision = Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u));
+const targetBuildMarker = nonEmptyString.check(Schema.isMaxLength(200), Schema.isTrimmed());
 export const GatewayAudienceSchema = nonEmptyString.check(
   Schema.makeFilter((value) =>
     /^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$/u.test(value) ? undefined : 'audience must be a stable topology app ID',
@@ -43,12 +46,14 @@ export type GatewayContextProtectedHeader = Schema.Schema.Type<typeof GatewayCon
 
 export const GatewayContextClaimsSchema = Schema.Struct({
   aud: GatewayAudienceSchema,
+  compositionRevision,
   exp: epochSeconds,
   iat: epochSeconds,
   iss: nonEmptyString,
   jti: uuid,
   principal: GatewayTrustedPrincipalContextSchema,
   sub: uuid,
+  targetBuildMarker,
   ver: Schema.Literal(GATEWAY_ASSERTION_VERSION),
 }).check(
   Schema.makeFilter((claims) => {
@@ -78,12 +83,14 @@ export const GatewayContextClaimsSchema = Schema.Struct({
 /** Version 2 retains the signing and lifetime contract; admission remains a receiving-runtime duty. */
 export const GatewayContextV2ClaimsSchema = Schema.Struct({
   aud: GatewayAudienceSchema,
+  compositionRevision,
   exp: epochSeconds,
   iat: epochSeconds,
   iss: nonEmptyString,
   jti: uuid,
   principal: GatewayTrustedPrincipalContextSchema,
   sub: uuid,
+  targetBuildMarker,
   ver: Schema.Literal(EXTERNAL_GATEWAY_ASSERTION_VERSION),
 }).check(
   Schema.makeFilter((claims) => [
@@ -120,35 +127,64 @@ export const decodeGatewayContextProtectedHeader = Schema.decodeUnknownEffect(Ga
 
 export const GatewayContextRequestSchema = Schema.Struct({
   audience: GatewayAudienceSchema,
+  compositionRevision,
   legalEntityId: Schema.optionalKey(LegalEntityIdSchema),
 });
 export type GatewayContextRequest = typeof GatewayContextRequestSchema.Encoded;
 
 export const GatewayContextResponseSchema = Schema.Struct({
+  apiBaseUrl: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(1000),
+    Schema.isPattern(/^\/(?!\/)[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/u),
+  ),
+  compositionRevision,
   expiresAt: epochSeconds,
   token: nonEmptyString,
 });
 export type GatewayContextResponse = Schema.Schema.Type<typeof GatewayContextResponseSchema>;
 
-export const GatewayAuthenticationRequiredProblemSchema = makeProblemDetailsSchema(
-  'GatewayAuthenticationRequiredProblem',
-  401,
-);
+export const GatewayAuthenticationRequiredProblemSchema = Schema.TaggedStruct('GatewayAuthenticationRequiredProblem', {
+  ...problemDetailsFields,
+  status: Schema.Literal(401),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(401));
 
-export const GatewayAudienceInvalidProblemSchema = makeProblemDetailsSchema('GatewayAudienceInvalidProblem', 400);
+export const GatewayAudienceInvalidProblemSchema = Schema.TaggedStruct('GatewayAudienceInvalidProblem', {
+  ...problemDetailsFields,
+  status: Schema.Literal(400),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(400));
 
-export const GatewayUnavailableProblemSchema = makeRetryableProblemDetailsSchema('GatewayUnavailableProblem', 503);
+export const GatewayReloadRequiredProblemSchema = Schema.TaggedStruct('GatewayReloadRequiredProblem', {
+  ...problemDetailsFields,
+  reloadRequired: Schema.Literal(true),
+  status: Schema.Literal(409),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(409));
 
-export const GatewayInternalProblemSchema = makeProblemDetailsSchema('GatewayInternalProblem', 500);
-const GatewayForbiddenProblemSchema = makeProblemDetailsSchema('GatewayForbiddenProblem', 403);
-export const GatewayRateLimitedProblemSchema = makeProblemDetailsSchema('GatewayRateLimitedProblem', 429, {
+export const GatewayUnavailableProblemSchema = Schema.TaggedStruct('GatewayUnavailableProblem', {
+  ...problemDetailsFields,
+  retryable: Schema.Literal(true),
+  status: Schema.Literal(503),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(503));
+
+export const GatewayInternalProblemSchema = Schema.TaggedStruct('GatewayInternalProblem', {
+  ...problemDetailsFields,
+  status: Schema.Literal(500),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(500));
+export const GatewayForbiddenProblemSchema = Schema.TaggedStruct('GatewayForbiddenProblem', {
+  ...problemDetailsFields,
+  status: Schema.Literal(403),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(403));
+export const GatewayRateLimitedProblemSchema = Schema.TaggedStruct('GatewayRateLimitedProblem', {
+  ...problemDetailsFields,
   retryAfterSeconds: Schema.Finite,
-});
+  status: Schema.Literal(429),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(429));
 
 export type GatewayAuthenticationRequiredProblem = Schema.Schema.Type<
   typeof GatewayAuthenticationRequiredProblemSchema
 >;
 export type GatewayAudienceInvalidProblem = Schema.Schema.Type<typeof GatewayAudienceInvalidProblemSchema>;
+export type GatewayReloadRequiredProblem = Schema.Schema.Type<typeof GatewayReloadRequiredProblemSchema>;
 export type GatewayUnavailableProblem = Schema.Schema.Type<typeof GatewayUnavailableProblemSchema>;
 export type GatewayInternalProblem = Schema.Schema.Type<typeof GatewayInternalProblemSchema>;
 type GatewayForbiddenProblem = Schema.Schema.Type<typeof GatewayForbiddenProblemSchema>;
@@ -157,6 +193,7 @@ type GatewayRateLimitedProblem = Schema.Schema.Type<typeof GatewayRateLimitedPro
 export type GatewayContextProblem =
   | GatewayAuthenticationRequiredProblem
   | GatewayAudienceInvalidProblem
+  | GatewayReloadRequiredProblem
   | GatewayForbiddenProblem
   | GatewayRateLimitedProblem
   | GatewayUnavailableProblem
@@ -172,6 +209,7 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
       error: [
         GatewayAuthenticationRequiredProblemSchema,
         GatewayAudienceInvalidProblemSchema,
+        GatewayReloadRequiredProblemSchema,
         GatewayForbiddenProblemSchema,
         GatewayUnavailableProblemSchema,
         GatewayInternalProblemSchema,
@@ -185,6 +223,7 @@ export const GatewayContextApiGroup = HttpApiGroup.make('gatewayContext')
       error: [
         GatewayAuthenticationRequiredProblemSchema,
         GatewayAudienceInvalidProblemSchema,
+        GatewayReloadRequiredProblemSchema,
         GatewayForbiddenProblemSchema,
         GatewayRateLimitedProblemSchema,
         GatewayUnavailableProblemSchema,

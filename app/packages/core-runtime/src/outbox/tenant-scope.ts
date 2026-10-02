@@ -7,6 +7,7 @@ import { tenants } from '../db/schema.ts';
 import { scopedRoutineInvokerFromTransaction } from '../db/scoped-routine.ts';
 import type { ScopedRoutineInvoker } from '../db/scoped-routine.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
 import { outboxWorkerCompletionPublisherFor, persistOutboxWorkerCompletion } from './completion-publication.ts';
 import type { OutboxWorkerCompletionPublisher } from './completion-publication.ts';
 import type { OutboxWorkerHandlerContext } from './definition.ts';
@@ -61,6 +62,7 @@ const unavailable = (cause?: unknown) =>
 const hasVerifiedTenantOnlyContext = (context: OutboxWorkerHandlerContext): boolean =>
   isVerifiedOutboxWorkerHandlerContext(context) &&
   context.legalEntityScope === 'forbidden' &&
+  /^[\da-f]{64}$/u.test(context.compositionRevision) &&
   uuidPattern.test(context.tenantId);
 
 export const makeOutboxWorkerTenantScope = (
@@ -115,6 +117,9 @@ const makePostgresOutboxWorkerTenantScopeBackend = (database: {
         Effect.fn('OutboxWorkerTenantScope.transaction')(function* runTenantScopeTransaction(
           transaction: CoreTransaction,
         ) {
+          yield* lockApplicationCompositionAuthority(transaction, context.compositionRevision, 'worker').pipe(
+            Effect.mapError(unavailable),
+          );
           const settings = yield* transaction
             .execute<ScopeSettingRow>(
               sql`

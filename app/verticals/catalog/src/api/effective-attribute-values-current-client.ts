@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface EffectiveAttributeValuesCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type EffectiveAttributeValuesCurrentAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeEffectiveAttributeValuesCurrent = (
   payload: EffectiveAttributeValuesCurrentRequest,
   ...[requestCorrelation, options = {}]: EffectiveAttributeValuesCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeEffectiveAttributeValuesCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeEffectiveAttributeValuesCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

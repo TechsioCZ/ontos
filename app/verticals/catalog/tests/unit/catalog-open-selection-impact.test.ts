@@ -1,4 +1,5 @@
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { getActionServiceFactory } from '../../../../packages/core-runtime/src/actions/definition.ts';
@@ -11,6 +12,7 @@ import {
   readCartOpenSelectionPopulation,
 } from '../../shared/domain/catalog-open-selection-population.ts';
 import { CatalogSelectionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { setProductAttributeValuesAction } from '../../src/actions/set-product-attribute-values.action.ts';
 import { catalogOpenSelectionImpactForScope } from '../../src/persistence/catalog-open-selection-impact.ts';
 
@@ -95,10 +97,12 @@ describe('Catalog open-selection impact', () => {
   it.effect('injects the public Cart service into an affected Attribute Action factory', () =>
     Effect.gen(function* actionFactoryBinding() {
       const port = population([]);
+      const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
       const services = yield* getActionServiceFactory(setProductAttributeValuesAction)(
         // @ts-expect-error The impact check over an empty population never reads Catalog persistence.
         untouchedTransaction,
         scope,
+        snapshot.composition.revision,
       ).pipe(Effect.provideService(CartOpenSelectionPopulationService, port));
       expect(yield* services.assessOpenSelectionImpact(productRef)).toBeUndefined();
     }),

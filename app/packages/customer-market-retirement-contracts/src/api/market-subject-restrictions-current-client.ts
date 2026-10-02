@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface MarketSubjectRestrictionsCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type MarketSubjectRestrictionsCurrentAuthorizedInvocation = readonly [
@@ -48,6 +49,10 @@ export const executeMarketSubjectRestrictionsCurrent = (
   payload: MarketSubjectRestrictionsCurrentRequest,
   ...[requestCorrelation, options = {}]: MarketSubjectRestrictionsCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeMarketSubjectRestrictionsCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeMarketSubjectRestrictionsCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -26,6 +26,7 @@ const configuration = Config.all({
 type GatewayContextIssue = (
   payload: {
     readonly audience: 'price-group-catalog';
+    readonly compositionRevision: string;
   },
   options: ApiKeyGatewayContextClientOptions,
 ) => Effect.Effect<GatewayContextResponse, GatewayContextClientError>;
@@ -64,11 +65,13 @@ export const makePriceGroupCatalogGatewayCredentialIssuer = (
     issue: Effect.fn('PriceGroupCatalogGatewayCredentialIssuer.issue')(
       function* issuePriceGroupCatalogGatewayCredential(input: {
         readonly audience: 'price-group-catalog';
+        readonly compositionRevision: string;
         readonly requestCorrelation: string;
       }) {
         const response = yield* issue(
           {
             audience: input.audience,
+            compositionRevision: input.compositionRevision,
           },
           {
             apiKey: configured.apiKey,
@@ -76,7 +79,13 @@ export const makePriceGroupCatalogGatewayCredentialIssuer = (
             requestCorrelation: input.requestCorrelation,
           },
         ).pipe(Effect.mapError(unavailable));
-        return Redacted.make(`Bearer ${response.token}`);
+        if (response.compositionRevision !== input.compositionRevision) {
+          return yield* unavailable('The issued credential does not match the captured composition revision');
+        }
+        return {
+          baseUrl: new URL(response.apiBaseUrl, configured.baseUrl),
+          credential: Redacted.make(`Bearer ${response.token}`),
+        };
       },
     ),
   });

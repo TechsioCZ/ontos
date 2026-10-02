@@ -1,15 +1,40 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
-import { Config, Console, DateTime, Duration, Effect, FileSystem, Layer, Option, Path, Schedule, Schema } from 'effect';
+import { eq, sql } from 'drizzle-orm';
+import {
+  Config,
+  Console,
+  DateTime,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schedule,
+  Schema,
+  Stream,
+} from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
+import { ChildProcess } from 'effect/unstable/process';
 import { FetchHttpClient, HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import { parse as parseYaml } from 'yaml';
 
 import {
+  configureRuntimeCompositionSource,
+  validateNativeCompositionSourceUrl,
+} from './configure-runtime-composition-source.mts';
+
+import {
   ONTOS_MODULE_CONTRACT_MAX_BYTES,
+  ApplicationCompositionSchema,
+  ApplicationCompositionArtifactReferenceSchema,
   ONTOS_MODULE_CONTRACT_PATH,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   OntosDeploymentAppIdSchema,
+  OntosShellRuntimeContractSchema,
+  validateActiveApplicationCompositionSnapshot,
 } from '../packages/core-runtime/src/index.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
@@ -20,14 +45,28 @@ import {
   deriveActiveApplicationCompositionSnapshot,
   encodeActiveApplicationCompositionSnapshot,
 } from './active-application-composition.mts';
-import type { ObservedArtifact, ObservedModuleDeployment } from './active-application-composition.mts';
+import type { ActiveApplicationCompositionSnapshot } from '../packages/core-runtime/src/index.ts';
 import {
-  DeployTargetSchema,
-  OUTBOX_WORKER_HOST,
-  OutboxWorkerModeSchema,
-  dedicatedOutboxWorkerSetup,
-} from './outbox-worker-delivery.mjs';
-import type { DeployTarget, OutboxWorkerMode } from './outbox-worker-delivery.mjs';
+  ApplicationCompositionBackendSchema,
+  ONTOS_APPLICATION_COMPOSITION_MAX_MODULES,
+} from '../packages/core-runtime/src/modules/application-composition.ts';
+import { quiesceInitialCompositionCutover, verifyInitialCompositionCutover } from './initial-composition-cutover.mts';
+import { DeploymentEnvironmentSchema } from './materialize-zerops-environment.mts';
+import { observeApplicationCompositionBackend } from './observe-application-composition-backend.mts';
+import { moduleReleaseAssetWorkerName } from '../packages/core-runtime/src/http/module-release-identity.ts';
+import { CoreDatabase } from '../packages/core-runtime/src/db/client.ts';
+import { applicationCompositionAuthority } from '../packages/core-runtime/src/db/schema.ts';
+import {
+  ApplicationCompositionAuthorityAdminDatabaseLive,
+  publishApplicationCompositionAuthoritySnapshot,
+  resumeApplicationCompositionDurableWork,
+  runApplicationCompositionMigration,
+  verifyInitialApplicationCompositionPublicationEnvironment,
+  withApplicationCompositionPublicationLock,
+} from './application-composition-authority-publication.mts';
+import type { ObservedArtifact, ObservedModuleDeployment } from './active-application-composition.mts';
+import { OUTBOX_WORKER_HOST, OutboxWorkerModeSchema, dedicatedOutboxWorkerSetup } from './outbox-worker-delivery.mjs';
+import type { OutboxWorkerMode } from './outbox-worker-delivery.mjs';
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from './zerops-public-api.mts';
 
@@ -35,16 +74,8 @@ const SHELL_APP_ID = 'shell-super-app';
 const SHELL_ZEROPS_SETUP = 'shellsuperapp';
 const MF_MANIFEST_PATH = '/mf-manifest.json';
 const BUILD_PROOF_ENVIRONMENT = 'build-proof';
-const CONSUMER_READINESS_TIMEOUT = Duration.minutes(5);
-const CONSUMER_READINESS_POLL = Duration.seconds(5);
 const PUBLICATION_READBACK_POLL = Duration.seconds(3);
 const PUBLICATION_READBACK_TIMEOUT = Duration.minutes(2);
-const CONSUMER_PREFLIGHT = `test -n "$${ACTIVE_APPLICATION_COMPOSITION_POLICY.projectVariable}"`;
-
-/** The environment's `DEPLOY_TARGET` variable; unset means `zerops`. */
-const readDeployTarget = Config.schema(DeployTargetSchema, 'DEPLOY_TARGET').pipe(
-  Config.withDefault<DeployTarget>('zerops'),
-);
 
 /**
  * The environment's `OUTBOX_WORKER_MODE` variable. It has no default: an environment that did not choose
@@ -52,7 +83,7 @@ const readDeployTarget = Config.schema(DeployTargetSchema, 'DEPLOY_TARGET').pipe
  */
 const readOutboxWorkerMode = Config.schema(OutboxWorkerModeSchema, 'OUTBOX_WORKER_MODE');
 
-/** One deployed unit could not be observed; recovery keys on the unit's app ID. */
+/** One required deployed artifact could not be observed; the complete publication fails. */
 export class ActiveApplicationCompositionObservationError extends Schema.TaggedError<ActiveApplicationCompositionObservationError>()(
   'ActiveApplicationCompositionObservationError',
   { appId: OntosDeploymentAppIdSchema, cause: Schema.optional(Schema.Defect()), message: Schema.String },
@@ -86,7 +117,6 @@ const CloudflarePlacementSchema = Schema.Struct({
 type CloudflarePlacement = typeof CloudflarePlacementSchema.Type;
 
 const StageVariablesSchema = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
-const SetupListJsonSchema = Schema.fromJsonString(Schema.Array(Schema.String));
 
 const otherOutboxWorkerMode = (mode: OutboxWorkerMode): OutboxWorkerMode =>
   mode === 'dedicated' ? 'host' : 'dedicated';
@@ -101,63 +131,6 @@ const otherModeWorkerSetupNames = (
       ? [OUTBOX_WORKER_HOST.stageSetup]
       : topology.verticals.map(({ id }) => dedicatedOutboxWorkerSetup(id)),
   );
-
-/** Zerops setups whose start preflight requires the published snapshot, whichever Outbox Worker mode runs. */
-const snapshotConsumerSetups = (zeropsYamlText: string) =>
-  Schema.decodeUnknownEffect(ZeropsYamlSchema)(parseYaml(zeropsYamlText)).pipe(
-    Effect.map(({ zerops }) =>
-      zerops.filter(({ run }) => run?.start?.includes(CONSUMER_PREFLIGHT) === true).map(({ setup }) => setup),
-    ),
-  );
-
-/**
- * Zerops setups whose start preflight requires the published snapshot; they are its consumers. Only
- * the Outbox Worker mode's services run: the dedicated owner workers, or the one Outbox Worker host.
- */
-export const compositionConsumerSetups = (
-  zeropsYamlText: string,
-  topology: { readonly verticals: readonly { readonly id: string }[] },
-  mode: OutboxWorkerMode,
-) => {
-  const otherMode = otherModeWorkerSetupNames(topology, mode);
-  return snapshotConsumerSetups(zeropsYamlText).pipe(
-    Effect.map((consumers) => consumers.filter((setup) => !otherMode.has(setup))),
-  );
-};
-
-/**
- * The consumers a deploy target runs on Zerops. On `zerops` that is every consumer. On `cloudflare` the
- * delivery units run as Workers, so only the consumers that are no delivery unit (the outbox workers)
- * are Zerops services this publication restarts.
- */
-export const targetConsumerSetups = (
-  consumers: readonly string[],
-  target: DeployTarget,
-  deliveryUnitSetups: ReadonlySet<string>,
-): readonly string[] => (target === 'zerops' ? consumers : consumers.filter((setup) => !deliveryUnitSetups.has(setup)));
-
-/** A snapshot consumer that runs as a placed Worker and reads the snapshot from its Worker secret. */
-export interface EdgeCompositionConsumer {
-  readonly packageName: string;
-  readonly workerName: string;
-}
-
-/**
- * The placed Workers among the snapshot consumers. A Worker has no Zerops project variable, so on the
- * `cloudflare` target each publication must also reach them as a Worker secret of the same name.
- */
-export const edgeCompositionConsumers = (
-  consumers: readonly string[],
-  topology: typeof TopologySchema.Type,
-  placement: CloudflarePlacement,
-): readonly EdgeCompositionConsumer[] =>
-  topology.verticals.flatMap(({ cloudflare, id, package: packageName }) => {
-    if (!consumers.includes(id) || !placement.units.includes(id)) {
-      return [];
-    }
-    const workerName = cloudflare?.workerName;
-    return packageName === undefined || workerName === undefined ? [] : [{ packageName, workerName }];
-  });
 
 /** The Worker public URL variable of a placed unit, the one its edge build and output verifier read. */
 export const cloudflarePublicUrlVariable = (appId: string): string =>
@@ -203,40 +176,6 @@ const readTopology = readWorkspaceText('topology', 'reference-topology.json').pi
   Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(TopologySchema))),
 );
 
-const readPlacement = readWorkspaceText('topology', 'cloudflare-placement.json').pipe(
-  Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(CloudflarePlacementSchema))),
-);
-
-/** The Zerops setup that serves a delivery unit on the `zerops` target. */
-const zeropsSetupOf = (appId: string): string => (appId === SHELL_APP_ID ? SHELL_ZEROPS_SETUP : appId);
-
-const readConsumerSetups = (target: DeployTarget, mode: OutboxWorkerMode) =>
-  Effect.gen(function* readConsumerSetupsEffect() {
-    const [zeropsYaml, topology] = yield* Effect.all([readZeropsYaml, readTopology], {
-      concurrency: 2,
-    });
-    const consumers = yield* compositionConsumerSetups(zeropsYaml, topology, mode);
-    return targetConsumerSetups(
-      consumers,
-      target,
-      new Set([SHELL_ZEROPS_SETUP, ...topology.verticals.map(({ id }) => zeropsSetupOf(id))]),
-    );
-  });
-
-/** The placed Worker consumers the deploy target must hand each publication to; none on `zerops`. */
-export const readEdgeConsumers = (target: DeployTarget) =>
-  Effect.gen(function* readEdgeConsumersEffect() {
-    if (target !== 'cloudflare') {
-      return [];
-    }
-    const [zeropsYaml, topology, placement] = yield* Effect.all([readZeropsYaml, readTopology, readPlacement], {
-      concurrency: 3,
-    });
-    // Placed Workers are no Outbox Worker, so the Outbox Worker mode does not change this set.
-    const consumers = yield* snapshotConsumerSetups(zeropsYaml);
-    return edgeCompositionConsumers(consumers, topology, placement);
-  });
-
 const writeGitHubOutput = (line: string) =>
   Effect.gen(function* appendGitHubOutput() {
     const outputPath = yield* Config.option(Config.String('GITHUB_OUTPUT'));
@@ -251,7 +190,12 @@ const unobservable = (appId: string, message: string) => (cause: unknown) =>
   new ActiveApplicationCompositionObservationError({ appId, cause, message });
 
 /** Bounded, uncached fetch of the exact bytes one deployed service serves. */
-const fetchArtifact = Effect.fn('ActiveApplicationComposition.fetchArtifact')(function* fetchArtifact(
+interface ArtifactBody {
+  readonly bytes: number;
+  readonly chunks: readonly Uint8Array[];
+}
+
+export const fetchArtifact = Effect.fn('ActiveApplicationComposition.fetchArtifact')(function* fetchArtifact(
   appId: string,
   url: string,
 ) {
@@ -259,7 +203,23 @@ const fetchArtifact = Effect.fn('ActiveApplicationComposition.fetchArtifact')(fu
   const body = yield* client
     .execute(HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader('cache-control', 'no-cache')))
     .pipe(
-      Effect.flatMap((response) => response.arrayBuffer),
+      Effect.flatMap((response) =>
+        Stream.runFoldEffect(
+          response.stream,
+          (): ArtifactBody => ({ bytes: 0, chunks: [] }),
+          (previous, chunk) => {
+            const bytes = previous.bytes + chunk.byteLength;
+            return bytes > ONTOS_MODULE_CONTRACT_MAX_BYTES
+              ? Effect.fail(
+                  new ActiveApplicationCompositionObservationError({
+                    appId,
+                    message: `${url} exceeds the artifact size bound`,
+                  }),
+                )
+              : Effect.succeed({ bytes, chunks: [...previous.chunks, chunk] });
+          },
+        ),
+      ),
       Effect.mapError(unobservable(appId, `${url} could not be observed`)),
       Effect.timeoutOrElse({
         duration: ARTIFACT_FETCH_TIMEOUT,
@@ -267,39 +227,15 @@ const fetchArtifact = Effect.fn('ActiveApplicationComposition.fetchArtifact')(fu
           Effect.fail(new ActiveApplicationCompositionObservationError({ appId, message: `${url} timed out` })),
       }),
     );
-  if (body.byteLength > ONTOS_MODULE_CONTRACT_MAX_BYTES) {
-    return yield* new ActiveApplicationCompositionObservationError({
-      appId,
-      message: `${url} exceeds the artifact size bound`,
-    });
+  const bytes = new Uint8Array(body.bytes);
+  let offset = 0;
+  for (const chunk of body.chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
   }
-  const artifact: ObservedArtifact = { bytes: new Uint8Array(body), url };
+  const artifact: ObservedArtifact = { bytes, url };
   return artifact;
 });
-
-interface StageUnit {
-  readonly origin: string;
-  readonly vertical: TopologyVertical;
-}
-
-const observeStageModule = ({ origin, vertical }: StageUnit) =>
-  vertical.surfaceProfile === 'api-only'
-    ? fetchArtifact(vertical.id, artifactUrl(origin, ONTOS_MODULE_CONTRACT_PATH)).pipe(
-        Effect.map((contract): ObservedModuleDeployment => ({ appId: vertical.id, contract })),
-      )
-    : Effect.all(
-        [
-          fetchArtifact(vertical.id, artifactUrl(origin, ONTOS_MODULE_CONTRACT_PATH)),
-          fetchArtifact(vertical.id, artifactUrl(origin, MF_MANIFEST_PATH)),
-        ],
-        { concurrency: 2 },
-      ).pipe(
-        Effect.map(([contract, federationManifest]): ObservedModuleDeployment => ({
-          appId: vertical.id,
-          contract,
-          federationManifest,
-        })),
-      );
 
 /** The stage service id of a setup, or `undefined` when the stage has no such service. */
 const provisionedStageServiceId = Effect.fn('ActiveApplicationComposition.provisionedStageServiceId')(
@@ -322,69 +258,356 @@ const stageServiceId = Effect.fn('ActiveApplicationComposition.stageServiceId')(
   return serviceId;
 });
 
-const publicOrigin = Effect.fn('ActiveApplicationComposition.publicOrigin')(function* publicOrigin(
-  environment: ReadonlyMap<string, string>,
-  setup: string,
-) {
-  const api = yield* ZeropsPublicApi;
-  const service = yield* api.serviceStack(yield* stageServiceId(setup));
-  if (!service.subdomainAccess) {
-    return yield* new ZeropsApiError({ message: `${setup} has its public Zerops subdomain disabled` });
-  }
-  const origin = environment.get(`${service.name}_zeropsSubdomain`);
-  if (origin === undefined) {
-    return yield* new ZeropsApiError({ message: `the project env file has no ${service.name}_zeropsSubdomain` });
-  }
-  return origin;
+/** Only the provider-native KV value endpoint may receive a publication credential. */
+export const publicationUrl = Config.String(ACTIVE_APPLICATION_COMPOSITION_POLICY.sourceUrlVariable).pipe(
+  Effect.flatMap(validateNativeCompositionSourceUrl),
+);
+
+const providerFailure = (message: string) => () =>
+  new ActiveApplicationCompositionPublicationError({ message, reason: 'publication_failed' });
+
+const publicationClient = Effect.gen(function* publicationClient() {
+  const client = yield* HttpClient.HttpClient;
+  const token = yield* Config.Redacted('CLOUDFLARE_API_TOKEN');
+  return client.pipe(HttpClient.mapRequest((request) => HttpClientRequest.bearerToken(request, Redacted.value(token))));
 });
+
+/** Reads native provider storage directly; consumers use a distinct read-only credential. */
+export const readPublishedSnapshot = Effect.gen(function* readPublishedSnapshot() {
+  const [client, url] = yield* Effect.all([publicationClient, publicationUrl]);
+  return yield* client
+    .execute(HttpClientRequest.get(url).pipe(HttpClientRequest.setHeader('cache-control', 'no-cache')))
+    .pipe(
+      Effect.flatMap((response) =>
+        Effect.gen(function* decodePublishedSnapshotResponse() {
+          if (response.status === 404) {
+            return Option.none<string>();
+          }
+          if (response.status !== 200) {
+            return yield* new ActiveApplicationCompositionPublicationError({
+              message: `composition storage read returned HTTP ${String(response.status)}`,
+              reason: 'publication_failed',
+            });
+          }
+          return Option.some(yield* response.text);
+        }),
+      ),
+      Effect.mapError(providerFailure('composition storage could not be read')),
+      Effect.timeoutOrElse({
+        duration: ARTIFACT_FETCH_TIMEOUT,
+        orElse: () =>
+          Effect.fail(
+            new ActiveApplicationCompositionPublicationError({
+              message: 'composition storage read timed out',
+              reason: 'publication_failed',
+            }),
+          ),
+      }),
+    );
+});
+
+/** Caller holds the publication lock through using these exact approved release pins. */
+export const readCurrentApprovedApplicationCompositionSnapshot = Effect.gen(
+  function* readCurrentApprovedApplicationCompositionSnapshot() {
+    const stored = yield* readPublishedSnapshot;
+    if (Option.isNone(stored)) {
+      return yield* providerFailure('a published Application Composition is required')();
+    }
+    const snapshot = yield* decodeActiveApplicationCompositionSnapshot(stored.value);
+    const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot);
+    const database = yield* CoreDatabase;
+    const [authority] = yield* database.executor
+      .select({
+        phase: applicationCompositionAuthority.phase,
+        revision: applicationCompositionAuthority.revision,
+        unexpired: sql<boolean>`${applicationCompositionAuthority.validUntil} > clock_timestamp()`,
+      })
+      .from(applicationCompositionAuthority)
+      .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+    if (authority?.phase !== 'active' || authority.revision !== approved.composition.revision || !authority.unexpired) {
+      return yield* providerFailure(
+        'the published release requires the current active and unexpired database authority',
+      )();
+    }
+    return approved;
+  },
+);
+
+/** Caller holds the publication lock through this check and the native ingress write. */
+export const assertPublishedShellIngressSnapshot = Effect.fn('ActiveApplicationComposition.assertShellIngress')(
+  function* assertPublishedShellIngressSnapshot(receipt: {
+    readonly deployment: { readonly appId: string; readonly buildMarker: string };
+    readonly federationManifest: { readonly sha256: string; readonly url: string };
+    readonly runtimeContract: { readonly sha256: string; readonly url: string };
+  }) {
+    const approved = yield* readCurrentApprovedApplicationCompositionSnapshot;
+    const { shell } = approved.composition;
+    if (
+      shell.deployment.appId !== receipt.deployment.appId ||
+      shell.deployment.buildMarker !== receipt.deployment.buildMarker ||
+      shell.runtimeContract.url !== receipt.runtimeContract.url ||
+      shell.runtimeContract.sha256 !== receipt.runtimeContract.sha256 ||
+      shell.federationManifest.url !== receipt.federationManifest.url ||
+      shell.federationManifest.sha256 !== receipt.federationManifest.sha256
+    ) {
+      return yield* providerFailure('Shell ingress receipt does not match the current approved release')();
+    }
+    return yield* Effect.void;
+  },
+);
+
+const ProviderWriteSchema = Schema.Struct({ success: Schema.Boolean });
 
 /**
- * Resolves each delivery unit's public origin on the deploy target: the Zerops subdomain of its
- * service, or the Worker URL its edge build is given.
+ * The native database publication lock covers this entire operation. KV has no compare-and-swap:
+ * provider readback checks this write, but cannot provide a distributed transaction or global visibility.
  */
-type OriginOf = (
-  appId: string,
-) => Effect.Effect<
-  string,
-  ActiveApplicationCompositionPublicationError | Config.ConfigError | Schema.SchemaError | ZeropsApiError,
-  ZeropsPublicApi
->;
+const isRetainedAssetUrl = (url: URL, expectedWorker: string): boolean => {
+  const [worker, account, provider, tld, ...extra] = url.hostname.split('.');
+  return (
+    worker === expectedWorker &&
+    account !== undefined &&
+    account !== '' &&
+    provider === 'workers' &&
+    tld === 'dev' &&
+    extra.length === 0 &&
+    url.protocol === 'https:' &&
+    url.search === '' &&
+    url.hash === ''
+  );
+};
 
-const originResolver = Effect.fn('ActiveApplicationComposition.originResolver')(function* originResolver(
-  target: DeployTarget,
+export const assertRetainedReleaseArtifactPaths = (snapshot: ActiveApplicationCompositionSnapshot) =>
+  Effect.gen(function* validateRetainedReleaseArtifactPaths() {
+    const shellWorker = yield* moduleReleaseAssetWorkerName(
+      snapshot.composition.shell.deployment.appId,
+      snapshot.composition.shell.deployment.buildMarker,
+    );
+    const shellRuntime = new URL(snapshot.composition.shell.runtimeContract.url);
+    const shellManifest = new URL(snapshot.composition.shell.federationManifest.url);
+    if (
+      !isRetainedAssetUrl(shellRuntime, shellWorker) ||
+      shellRuntime.pathname !== ONTOS_SHELL_RUNTIME_CONTRACT_PATH ||
+      !isRetainedAssetUrl(shellManifest, shellWorker) ||
+      shellManifest.origin !== shellRuntime.origin ||
+      shellManifest.pathname !== MF_MANIFEST_PATH
+    ) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'Shell artifacts must use their retained native release Worker',
+        reason: 'invalid_observation',
+      });
+    }
+    return yield* Effect.forEach(
+      snapshot.composition.modules,
+      (module) =>
+        Effect.gen(function* validateRetainedArtifactUrls() {
+          const expectedWorker = yield* moduleReleaseAssetWorkerName(
+            module.deployment.appId,
+            module.deployment.buildMarker,
+          );
+          const contract = new URL(module.contract.url);
+          const canonicalOrigin = isRetainedAssetUrl(contract, expectedWorker);
+          const canonicalManifest =
+            module.federation.execution === 'server' ||
+            (isRetainedAssetUrl(new URL(module.federation.manifest.url), expectedWorker) &&
+              new URL(module.federation.manifest.url).origin === contract.origin &&
+              new URL(module.federation.manifest.url).pathname === MF_MANIFEST_PATH);
+          if (!canonicalOrigin || contract.pathname !== ONTOS_MODULE_CONTRACT_PATH || !canonicalManifest) {
+            return yield* new ActiveApplicationCompositionPublicationError({
+              message: `module ${module.moduleId} artifacts must use their retained native release Worker`,
+              reason: 'invalid_observation',
+            });
+          }
+          return yield* Effect.void;
+        }),
+      { discard: true },
+    );
+  });
+
+export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSnapshot')(function* publishSnapshot<
+  InitialFailure,
+  InitialRequirements,
+>(
+  input: ActiveApplicationCompositionSnapshot,
+  snapshotFile: Option.Option<string>,
+  verifyInitialCutover: Effect.Effect<void, InitialFailure, InitialRequirements>,
+  retainedShellRevision?: string,
 ) {
-  if (target === 'cloudflare') {
-    const placement = yield* readPlacement;
-    const workerOrigin: OriginOf = (appId) => cloudflareOrigin(placement, appId);
-    return workerOrigin;
+  const snapshot = yield* validateActiveApplicationCompositionSnapshot(input).pipe(
+    Effect.mapError(
+      () =>
+        new ActiveApplicationCompositionPublicationError({
+          message: 'the complete Application Composition snapshot is invalid or expired',
+          reason: 'invalid_observation',
+        }),
+    ),
+  );
+  yield* assertRetainedReleaseArtifactPaths(snapshot);
+  const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
+  yield* publishApplicationCompositionAuthoritySnapshot(
+    snapshot,
+    Effect.gen(function* publishProviderPointer() {
+      const current = yield* readPublishedSnapshot;
+      yield* assertNoConflictingPublication(current, snapshot);
+      if (retainedShellRevision !== undefined) {
+        if (Option.isNone(current)) {
+          return yield* providerFailure('retained Shell pins require their current approved release')();
+        }
+        const previous = yield* decodeActiveApplicationCompositionSnapshot(current.value).pipe(
+          Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+        );
+        if (
+          previous.composition.revision !== retainedShellRevision ||
+          !Schema.toEquivalence(ApplicationCompositionSchema.fields.shell)(
+            previous.composition.shell,
+            snapshot.composition.shell,
+          )
+        ) {
+          return yield* providerFailure('retained Shell pins no longer match their current approved release')();
+        }
+      }
+      const [client, url] = yield* Effect.all([publicationClient, publicationUrl]);
+      const result = yield* client
+        .execute(HttpClientRequest.put(url).pipe(HttpClientRequest.bodyText(encoded, 'application/octet-stream')))
+        .pipe(
+          Effect.flatMap((response) =>
+            Effect.gen(function* decodePublicationResponse() {
+              if (response.status < 200 || response.status >= 300) {
+                return yield* new ActiveApplicationCompositionPublicationError({
+                  message: `composition storage write returned HTTP ${String(response.status)}`,
+                  reason: 'publication_failed',
+                });
+              }
+              return yield* response.json;
+            }),
+          ),
+          Effect.flatMap(Schema.decodeUnknownEffect(ProviderWriteSchema)),
+          Effect.mapError(providerFailure('composition storage write failed')),
+          Effect.timeoutOrElse({
+            duration: ARTIFACT_FETCH_TIMEOUT,
+            orElse: () =>
+              Effect.fail(
+                new ActiveApplicationCompositionPublicationError({
+                  message: 'composition storage write timed out',
+                  reason: 'publication_failed',
+                }),
+              ),
+          }),
+        );
+      if (!result.success) {
+        return yield* new ActiveApplicationCompositionPublicationError({
+          message: 'composition storage rejected the write',
+          reason: 'publication_failed',
+        });
+      }
+      yield* readPublishedSnapshot.pipe(
+        Effect.repeat({
+          schedule: Schedule.spaced(PUBLICATION_READBACK_POLL),
+          until: (value) => Option.contains(value, encoded),
+        }),
+        Effect.timeoutOrElse({
+          duration: PUBLICATION_READBACK_TIMEOUT,
+          orElse: () =>
+            Effect.fail(
+              new ActiveApplicationCompositionPublicationError({
+                message: 'composition storage readback did not return the published value',
+                reason: 'publication_failed',
+              }),
+            ),
+        }),
+      );
+      return snapshot;
+    }),
+    verifyInitialCutover,
+  );
+  if (Option.isSome(snapshotFile)) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem.writeFileString(snapshotFile.value, encoded);
   }
-  const api = yield* ZeropsPublicApi;
-  const envFile = yield* api.projectEnvFile(yield* Config.String('ZEROPS_PROJECT_ID'));
-  const subdomainOrigin: OriginOf = (appId) => publicOrigin(envFile, zeropsSetupOf(appId));
-  return subdomainOrigin;
+  yield* Effect.logInfo('Published the complete approved Application Composition', {
+    modules: snapshot.composition.modules.map(({ federation, moduleId }) => `${moduleId} (${federation.execution})`),
+    revision: snapshot.composition.revision,
+    validUntil: DateTime.formatIso(snapshot.validUntil),
+  });
+  return snapshot;
 });
 
-/** Observes every installed module except explicitly pending ones, then publishes one snapshot. */
-const publishOnce = Effect.fn('ActiveApplicationComposition.publishOnce')(function* publishOnce(
+/** A reviewed publisher input selects artifacts; placement never installs a module implicitly. */
+export const ApplicationCompositionPublicationCandidateSchema = Schema.Struct({
+  modules: Schema.Array(
+    Schema.Struct({
+      appId: OntosDeploymentAppIdSchema,
+      backend: ApplicationCompositionBackendSchema,
+      contractUrl: ApplicationCompositionArtifactReferenceSchema.fields.url,
+      federationManifestUrl: Schema.optionalKey(ApplicationCompositionArtifactReferenceSchema.fields.url),
+    }),
+  ).check(Schema.isMaxLength(ONTOS_APPLICATION_COMPOSITION_MAX_MODULES)),
+  retainedShellRevision: Schema.optionalKey(ApplicationCompositionSchema.fields.revision),
+  shell: Schema.Struct({
+    deployment: OntosShellRuntimeContractSchema.fields.deployment,
+    federationManifest: ApplicationCompositionArtifactReferenceSchema,
+    runtimeContract: ApplicationCompositionArtifactReferenceSchema,
+  }),
+});
+type PublicationCandidate = typeof ApplicationCompositionPublicationCandidateSchema.Type;
+
+const readPublicationCandidate = (file: string) =>
+  Effect.gen(function* readCandidateFile() {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const canonical = yield* fileSystem.realPath(path.resolve(file));
+    if (canonical.split(path.sep).some((segment) => segment.startsWith('.env'))) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'the candidate must be a dedicated artifact file',
+        reason: 'invalid_observation',
+      });
+    }
+    const bytes = yield* fileSystem.readFile(canonical);
+    if (bytes.byteLength > 1024 * 1024) {
+      return yield* new ActiveApplicationCompositionPublicationError({
+        message: 'the candidate exceeds its byte budget',
+        reason: 'invalid_observation',
+      });
+    }
+    const text = yield* Effect.try({
+      catch: () =>
+        new ActiveApplicationCompositionPublicationError({
+          message: 'the candidate is not UTF-8',
+          reason: 'invalid_observation',
+        }),
+      try: () => new TextDecoder('utf-8', { fatal: true }).decode(bytes),
+    });
+    return yield* Schema.decodeEffect(Schema.fromJsonString(ApplicationCompositionPublicationCandidateSchema), {
+      onExcessProperty: 'error',
+    })(text);
+  });
+
+/** Full installation observation. Runtime availability never filters this approved inventory. */
+export const observeCandidate = Effect.fn('ActiveApplicationComposition.observeCandidate')(function* observeCandidate(
   environment: string,
-  excludedApps: readonly string[],
-  target: DeployTarget,
-  snapshotFile: Option.Option<string>,
+  candidate: PublicationCandidate,
 ) {
-  const api = yield* ZeropsPublicApi;
-  const projectId = yield* Config.String('ZEROPS_PROJECT_ID');
-  const [topology, originOf] = yield* Effect.all([readTopology, originResolver(target)], { concurrency: 2 });
-  const units = yield* Effect.forEach(
-    topology.verticals.filter(({ id }) => !excludedApps.includes(id)),
-    (vertical) => originOf(vertical.id).pipe(Effect.map((origin): StageUnit => ({ origin, vertical }))),
-    { concurrency: 4 },
-  );
-  const shellOrigin = yield* originOf(SHELL_APP_ID);
   const [modules, runtimeContract, federationManifest, observedAt] = yield* Effect.all(
     [
-      Effect.forEach(units, observeStageModule, { concurrency: 4 }),
-      fetchArtifact(SHELL_APP_ID, artifactUrl(shellOrigin, ONTOS_SHELL_RUNTIME_CONTRACT_PATH)),
-      fetchArtifact(SHELL_APP_ID, artifactUrl(shellOrigin, MF_MANIFEST_PATH)),
+      Effect.forEach(
+        candidate.modules,
+        (module) =>
+          Effect.gen(function* observeCandidateModule() {
+            const contract = yield* fetchArtifact(module.appId, module.contractUrl);
+            const backend = yield* observeApplicationCompositionBackend({
+              appId: module.appId,
+              backend: module.backend,
+              contract,
+            });
+            const common: ObservedModuleDeployment = { appId: module.appId, backend, contract };
+            return module.federationManifestUrl === undefined
+              ? common
+              : { ...common, federationManifest: yield* fetchArtifact(module.appId, module.federationManifestUrl) };
+          }),
+        { concurrency: 4 },
+      ),
+      fetchArtifact(SHELL_APP_ID, candidate.shell.runtimeContract.url),
+      fetchArtifact(SHELL_APP_ID, candidate.shell.federationManifest.url),
       DateTime.now,
     ],
     { concurrency: 3 },
@@ -396,113 +619,211 @@ const publishOnce = Effect.fn('ActiveApplicationComposition.publishOnce')(functi
     shell: { federationManifest, runtimeContract },
     validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
   });
-  const encoded = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
-  const key = ACTIVE_APPLICATION_COMPOSITION_POLICY.projectVariable;
-  const existing = (yield* api.projectEnvs(projectId)).find((env) => env.key === key);
-  yield* assertNoConflictingPublication(Option.fromNullishOr(existing?.content), snapshot);
-  yield* api.upsertProjectEnv(projectId, existing, key, encoded);
-  // Project variables are listed through Zerops search, which reflects a finished write only eventually.
-  const published = yield* api.projectEnvs(projectId).pipe(
-    Effect.map((envs) => envs.find((env) => env.key === key)?.content),
-    // A search that has not indexed the project yet is the same lag as a stale value: poll again.
-    Effect.catchIf(
-      (error) => error.reason === 'project_not_indexed',
-      () => Effect.void,
-    ),
-    Effect.repeat({
-      schedule: Schedule.spaced(PUBLICATION_READBACK_POLL),
-      until: (content) => content === encoded,
-    }),
-    Effect.timeoutOrElse({
-      duration: PUBLICATION_READBACK_TIMEOUT,
-      orElse: () =>
-        Effect.fail(new ZeropsApiError({ message: `${key} does not hold the value that was just published` })),
-    }),
-  );
-  yield* decodeActiveApplicationCompositionSnapshot(published ?? '');
-  // Placed Worker consumers have no Zerops project variable; the deploy hands them this file as a Worker secret.
-  if (Option.isSome(snapshotFile)) {
-    const fileSystem = yield* FileSystem.FileSystem;
-    yield* fileSystem.writeFileString(snapshotFile.value, encoded);
+  const observedShell = snapshot.composition.shell;
+  if (
+    observedShell.deployment.appId !== candidate.shell.deployment.appId ||
+    observedShell.deployment.buildMarker !== candidate.shell.deployment.buildMarker ||
+    observedShell.runtimeContract.sha256 !== candidate.shell.runtimeContract.sha256 ||
+    observedShell.federationManifest.sha256 !== candidate.shell.federationManifest.sha256
+  ) {
+    return yield* new ActiveApplicationCompositionPublicationError({
+      message: 'observed Shell artifacts differ from the exact approved candidate deployment or digests',
+      reason: 'invalid_observation',
+    });
   }
-  yield* Effect.logInfo('Published the active Application Composition', {
-    modules: snapshot.composition.modules.map(({ federation, moduleId }) => `${moduleId} (${federation.execution})`),
-    revision: snapshot.composition.revision,
-    validUntil: DateTime.formatIso(snapshot.validUntil),
-  });
   return snapshot;
 });
 
-/** Consumers read the variable only at process start, so every publication restarts them. */
-const restartConsumers = Effect.fn('ActiveApplicationComposition.restartConsumers')(function* restartConsumers(
-  target: DeployTarget,
-  mode: OutboxWorkerMode,
-) {
-  const api = yield* ZeropsPublicApi;
-  const [consumers, topology, originOf] = yield* Effect.all(
-    [readConsumerSetups(target, mode), readTopology, originResolver(target)],
-    { concurrency: 3 },
-  );
-  yield* Effect.forEach(
-    consumers,
-    Effect.fnUntraced(function* restartConsumer(setup) {
-      yield* api.restartService(yield* stageServiceId(setup));
-      if (topology.verticals.some(({ id }) => id === setup)) {
-        const origin = yield* originOf(setup);
-        yield* fetchArtifact(setup, artifactUrl(origin, ONTOS_MODULE_CONTRACT_PATH)).pipe(
-          Effect.retry(Schedule.spaced(CONSUMER_READINESS_POLL)),
-          Effect.timeoutOrElse({
-            duration: CONSUMER_READINESS_TIMEOUT,
-            orElse: () =>
-              Effect.fail(
-                new ActiveApplicationCompositionObservationError({
-                  appId: setup,
-                  message: `${setup} did not become ready`,
-                }),
-              ),
-          }),
-        );
-      }
-      return yield* Effect.logInfo(`Restarted composition consumer ${setup}`);
+const configuredInitialCutover = (environment: string) =>
+  Effect.gen(function* verifyConfiguredInitialCutover() {
+    const [inventoryFile, receiptFile] = yield* Effect.all([
+      Config.String('ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE'),
+      Config.String('ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE'),
+    ]);
+    yield* verifyInitialCompositionCutover({ environment, inventoryFile, receiptFile });
+  });
+
+const quiesceInitialCutoverCommand = Command.make(
+  'quiesce-initial-cutover',
+  {
+    environment: Flag.String('environment'),
+    inventoryFile: Flag.String('inventory-file'),
+    receiptFile: Flag.String('receipt-file'),
+  },
+  quiesceInitialCompositionCutover,
+);
+
+const verifyInitialCutoverCommand = Command.make(
+  'verify-initial-cutover',
+  { environment: Flag.String('environment') },
+  ({ environment }) => verifyInitialApplicationCompositionPublicationEnvironment(configuredInitialCutover(environment)),
+).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+
+const migrateCommand = Command.make(
+  'migrate',
+  {
+    environment: Flag.String('environment'),
+    projectId: Flag.String('project-id'),
+    serviceId: Flag.String('service-id'),
+    versionName: Flag.String('version-name'),
+    zeropsYamlPath: Flag.String('zerops-yaml-path'),
+  },
+  ({ environment, projectId, serviceId, versionName, zeropsYamlPath }) =>
+    Effect.gen(function* migrateUnderNativePublicationLock() {
+      const path = yield* Path.Path;
+      const api = yield* ZeropsPublicApi;
+      const deployment = Effect.acquireUseRelease(
+        Effect.void,
+        () =>
+          Effect.scoped(
+            Effect.gen(function* runVerifiedRemoteMigrator() {
+              const process = yield* ChildProcess.make(
+                'zcli',
+                [
+                  'push',
+                  '--working-dir',
+                  '.',
+                  '--zerops-yaml-path',
+                  path.resolve(zeropsYamlPath),
+                  '--workspace-state',
+                  'clean',
+                  '--deploy-git-folder',
+                  '--project-id',
+                  projectId,
+                  '--service-id',
+                  serviceId,
+                  '--setup',
+                  'migrator',
+                  '--version-name',
+                  versionName,
+                ],
+                { cwd: path.resolve(import.meta.dirname, '../..'), stderr: 'inherit', stdout: 'inherit' },
+              );
+              const exitCode = yield* process.exitCode;
+              if (exitCode !== 0) {
+                return yield* providerFailure('The native verified migrator deployment failed')();
+              }
+              return yield* Effect.void;
+            }),
+          ),
+        () =>
+          Effect.gen(function* stopCompletedRemoteMigrator() {
+            yield* api.stopService(serviceId);
+            const stopped = yield* api.findServiceStack(serviceId);
+            if (Option.isNone(stopped) || stopped.value.status !== 'STOPPED') {
+              return yield* providerFailure('The native migrator did not stop after its deployment')();
+            }
+            return yield* Effect.void;
+          }).pipe(
+            Effect.mapError(providerFailure('The native migrator could not be independently verified as stopped')),
+            Effect.orDie,
+          ),
+      );
+      yield* runApplicationCompositionMigration(deployment, configuredInitialCutover(environment));
     }),
-    { concurrency: 1, discard: true },
-  );
-});
+).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+
+const resumeDurableWorkCommand = Command.make(
+  'resume-durable-work',
+  { expectedRevision: Flag.String('expected-revision') },
+  ({ expectedRevision }) => resumeApplicationCompositionDurableWork(expectedRevision),
+).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+
+const captureApprovedSnapshotCommand = Command.make(
+  'capture-approved-snapshot',
+  {
+    environment: Flag.Literals('environment', DeploymentEnvironmentSchema.literals),
+    snapshotFile: Flag.String('snapshot-file'),
+  },
+  ({ environment, snapshotFile }) =>
+    withApplicationCompositionPublicationLock(
+      Effect.gen(function* captureApprovedSnapshot() {
+        const approved = yield* readCurrentApprovedApplicationCompositionSnapshot;
+        yield* assertRetainedReleaseArtifactPaths(approved);
+        const fileSystem = yield* FileSystem.FileSystem;
+        const encoded = yield* encodeActiveApplicationCompositionSnapshot(approved);
+        yield* fileSystem.writeFileString(snapshotFile, encoded);
+        yield* Effect.logInfo('Captured the exact approved release before migration', {
+          environment,
+          revision: approved.composition.revision,
+        });
+      }),
+    ),
+).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
 
 const publishCommand = Command.make(
   'publish',
   {
+    candidateFile: Flag.String('candidate-file'),
     environment: Flag.String('environment'),
-    excludedApps: Flag.String('exclude-app').pipe(Flag.atLeast(0)),
-    recoverConsumers: Flag.Boolean('recover-consumers').pipe(Flag.withDefault(false)),
-    restartConsumers: Flag.Boolean('restart-consumers').pipe(Flag.withDefault(false)),
     snapshotFile: Flag.String('snapshot-file').pipe(Flag.optional),
   },
-  ({ environment, excludedApps, recoverConsumers, restartConsumers: restart, snapshotFile }) =>
-    Effect.gen(function* publish() {
-      const target = yield* readDeployTarget;
-      const mode = yield* readOutboxWorkerMode;
-      const consumers = yield* readConsumerSetups(target, mode);
-      const complete = publishOnce(environment, excludedApps, target, snapshotFile).pipe(
-        Effect.andThen(restart ? restartConsumers(target, mode) : Effect.void),
-      );
-      if (!recoverConsumers) {
-        return yield* complete;
-      }
-      // A consumer that stopped because its snapshot expired cannot be observed. Publish the inventory
-      // without it, restart it on that snapshot, then observe and publish the complete inventory.
-      return yield* complete.pipe(
-        Effect.catchTag('ActiveApplicationCompositionObservationError', (error) =>
-          consumers.includes(error.appId)
-            ? Effect.logWarning(`Composition consumer ${error.appId} is unobservable; recovering it`).pipe(
-                Effect.andThen(publishOnce(environment, [...excludedApps, ...consumers], target, snapshotFile)),
-                Effect.andThen(restartConsumers(target, mode)),
-                Effect.andThen(complete),
-              )
-            : Effect.fail(error),
+  ({ candidateFile, environment, snapshotFile }) =>
+    readPublicationCandidate(candidateFile).pipe(
+      Effect.flatMap((candidate) =>
+        observeCandidate(environment, candidate).pipe(
+          Effect.flatMap((snapshot) =>
+            publishSnapshot(
+              snapshot,
+              snapshotFile,
+              configuredInitialCutover(environment),
+              candidate.retainedShellRevision,
+            ),
+          ),
         ),
-      );
+      ),
+    ),
+).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+
+const refreshCommand = Command.make(
+  'refresh',
+  {
+    environment: Flag.String('environment'),
+  },
+  ({ environment }) =>
+    Effect.gen(function* refreshComposition() {
+      const current = yield* readPublishedSnapshot;
+      if (Option.isNone(current)) {
+        return yield* new ActiveApplicationCompositionPublicationError({
+          message: 'composition storage has no approved release to refresh',
+          reason: 'invalid_observation',
+        });
+      }
+      const approved = yield* decodeActiveApplicationCompositionSnapshot(current.value);
+      const candidate: PublicationCandidate = {
+        modules: approved.composition.modules.map((module) => {
+          const common = { appId: module.deployment.appId, backend: module.backend, contractUrl: module.contract.url };
+          return module.federation.execution === 'browser'
+            ? { ...common, federationManifestUrl: module.federation.manifest.url }
+            : common;
+        }),
+        shell: {
+          deployment: approved.composition.shell.deployment,
+          federationManifest: approved.composition.shell.federationManifest,
+          runtimeContract: approved.composition.shell.runtimeContract,
+        },
+      };
+      const snapshot = yield* observeCandidate(environment, candidate);
+      if (snapshot.composition.revision !== approved.composition.revision) {
+        return yield* new ActiveApplicationCompositionPublicationError({
+          message: 'refresh observed different release artifacts; an explicit promotion is required',
+          reason: 'conflicting_revision',
+        });
+      }
+      return yield* publishSnapshot(snapshot, Option.none(), configuredInitialCutover(environment));
     }),
+).pipe(Command.provide(() => ApplicationCompositionAuthorityAdminDatabaseLive));
+
+const configureSourceCommand = Command.make('configure-source', {}, () =>
+  Effect.gen(function* configureSource() {
+    const [projectId, url, readToken] = yield* Effect.all([
+      Config.String('ZEROPS_PROJECT_ID'),
+      publicationUrl,
+      Config.Redacted('ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN'),
+    ]);
+    yield* configureRuntimeCompositionSource({ projectId, readToken, url });
+    return yield* Effect.logInfo('Configured the stable native composition source');
+  }),
 );
 
 const ensurePublicAccessCommand = Command.make('ensure-public-access', { setup: Flag.String('setup') }, ({ setup }) =>
@@ -616,33 +937,6 @@ const stageServiceIdCommand = Command.make('stage-service-id', { setup: Flag.Str
   stageServiceId(setup).pipe(Effect.flatMap(Console.log)),
 );
 
-const EdgeConsumersJsonSchema = Schema.fromJsonString(
-  Schema.Array(Schema.Struct({ packageName: Schema.String, workerName: Schema.String })),
-);
-
-/** Writes `edge_consumers`: the placed Worker consumers that need each publication as a Worker secret. */
-const edgeConsumersCommand = Command.make('edge-consumers', {}, () =>
-  Effect.gen(function* edgeConsumers() {
-    const json = yield* readDeployTarget.pipe(
-      Effect.flatMap(readEdgeConsumers),
-      Effect.flatMap(Schema.encodeEffect(EdgeConsumersJsonSchema)),
-    );
-    yield* Effect.logInfo(`Edge composition consumers: ${json}`);
-    return yield* writeGitHubOutput(`edge_consumers=${json}`);
-  }),
-);
-
-const consumersCommand = Command.make('consumers', {}, () =>
-  Effect.gen(function* consumers() {
-    const json = yield* Effect.all([readDeployTarget, readOutboxWorkerMode]).pipe(
-      Effect.flatMap(([target, mode]) => readConsumerSetups(target, mode)),
-      Effect.flatMap(Schema.encodeEffect(SetupListJsonSchema)),
-    );
-    yield* Effect.logInfo(`Composition consumers: ${json}`);
-    return yield* writeGitHubOutput(`consumers=${json}`);
-  }),
-);
-
 const readBuiltArtifact = (appId: string, url: string, ...segments: readonly string[]) =>
   Effect.gen(function* readBuiltArtifactFile() {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -664,7 +958,11 @@ const observeBuiltModule = (vertical: TopologyVertical) => {
   );
   if (vertical.surfaceProfile === 'api-only') {
     return contract.pipe(
-      Effect.map((artifact): ObservedModuleDeployment => ({ appId: vertical.id, contract: artifact })),
+      Effect.map((artifact): ObservedModuleDeployment => ({
+        appId: vertical.id,
+        backend: { baseUrl: `${origin}/`, transport: 'node-http' },
+        contract: artifact,
+      })),
     );
   }
   const manifest = readBuiltArtifact(
@@ -678,6 +976,7 @@ const observeBuiltModule = (vertical: TopologyVertical) => {
   return Effect.all([contract, manifest], { concurrency: 2 }).pipe(
     Effect.map(([artifact, federationManifest]): ObservedModuleDeployment => ({
       appId: vertical.id,
+      backend: { baseUrl: `${origin}/`, transport: 'node-http' },
       contract: artifact,
       federationManifest,
     })),
@@ -745,10 +1044,15 @@ const proveBuildCommand = Command.make('prove-build', {}, () =>
 
 const cli = Command.make('publish-active-application-composition').pipe(
   Command.withSubcommands([
+    captureApprovedSnapshotCommand,
     publishCommand,
+    refreshCommand,
+    configureSourceCommand,
+    quiesceInitialCutoverCommand,
+    verifyInitialCutoverCommand,
+    migrateCommand,
+    resumeDurableWorkCommand,
     ensurePublicAccessCommand,
-    consumersCommand,
-    edgeConsumersCommand,
     proveBuildCommand,
     stageServiceIdCommand,
     stopServiceCommand,
@@ -763,7 +1067,13 @@ if (import.meta.main) {
     Layer.build(
       Layer.effectDiscard(main).pipe(
         Layer.provide(ZeropsPublicApiLive),
-        Layer.provide(Layer.merge(NodeServices.layer, FetchHttpClient.layer)),
+        Layer.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            FetchHttpClient.layer,
+            Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
+          ),
+        ),
       ),
     ).pipe(Effect.scoped),
   );

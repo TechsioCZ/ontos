@@ -1,4 +1,9 @@
 import { createHmac, randomUUID } from 'node:crypto';
+import {
+  enrollmentApplicationCompositionLayer,
+  enrollmentApplicationCompositionRevision,
+} from '../support/enrollment-application-composition.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import { v1 } from '@authzed/authzed-node';
 
@@ -157,7 +162,11 @@ const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL')
 );
 
 /** Resend is answered locally: creation now awaits delivery, so the transport must accept. */
-const acceptingResendFetch: typeof fetch = () => Promise.resolve(Response.json({ id: 'accepted' }));
+const acceptingResendFetch: typeof fetch = (input, init) => {
+  const request = new Request(input, init);
+  expect(request.url).toBe('https://api.resend.com/emails');
+  return Promise.resolve(Response.json({ id: 'accepted' }));
+};
 
 const emailDeliveryConfigurationFor = (deliveryFetch: typeof fetch) =>
   Layer.mergeAll(
@@ -181,12 +190,8 @@ const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive(
     COMMERCE_PORTAL_AUTH_URL: ORIGIN,
   });
   return commercePortalAuthRealmLive.pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(
-        Layer.succeed(CommercePortalAuthConfig, configuration),
-        emailDeliveryConfigurationFor(deliveryFetch),
-      ),
-    ),
+    Layer.provide(emailDeliveryConfigurationFor(deliveryFetch)),
+    Layer.provideMerge(Layer.succeed(CommercePortalAuthConfig, configuration)),
   );
 });
 
@@ -440,8 +445,10 @@ const continuationLive = Effect.fnUntraced(function* continuationLive(
   const subjectResolverLive = CommerceEnrollmentPreparationSubjectResolverLive.pipe(
     Layer.provide(Layer.mergeAll(transactionRunnerLive, coreIdentityLive, coreIdentityConfigurationLive)),
   );
-  return CommerceEnrollmentContinuationLive.pipe(
-    Layer.provide(Layer.mergeAll(transactionRunnerLive, registryLive, subjectResolverLive)),
+  return CommerceEnrollmentContinuationLive(ultramodernApiMarker).pipe(
+    Layer.provide(
+      Layer.mergeAll(transactionRunnerLive, registryLive, subjectResolverLive, enrollmentApplicationCompositionLayer),
+    ),
   );
 });
 
@@ -649,6 +656,7 @@ const startAcceptanceEnrollment = Effect.fnUntraced(function* startAcceptanceEnr
     ...intent,
     actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID()),
     actorPrincipalId,
+    compositionRevision: fixture.compositionRevision,
     tenantId: Schema.decodeSync(EnrollmentTenantIdSchema)(fixture.scope.tenantId),
   });
 });
@@ -672,7 +680,10 @@ it.live('records the created portal account on the transition the start route cl
     Effect.gen(function* recordsTheCreatedPortalAccount() {
       const tenantId = randomUUID();
       const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
-      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const fixture = yield* makeEnrollmentAcceptanceFixture(
+        { tenantId },
+        yield* enrollmentApplicationCompositionRevision,
+      );
       const startInput = startInputFor(`enrollment-http-${randomUUID()}@example.test`);
       const attempt = yield* startAcceptanceEnrollment(fixture, startInput, actorPrincipalId);
       const claim = yield* commercePortalAuthEnrollmentAccountCreationClaim(
@@ -779,7 +790,10 @@ it.live('replays the owner claim of a start retried under the same Idempotency-K
     Effect.gen(function* retriedStartReplaysItsClaim() {
       const tenantId = randomUUID();
       const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
-      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const fixture = yield* makeEnrollmentAcceptanceFixture(
+        { tenantId },
+        yield* enrollmentApplicationCompositionRevision,
+      );
       const startInput = startInputFor(`enrollment-http-${randomUUID()}@example.test`);
       const attempt = yield* startAcceptanceEnrollment(fixture, startInput, actorPrincipalId);
 
@@ -882,7 +896,10 @@ it.live(
       Effect.gen(function* foreignPrincipalReadsNothing() {
         const tenantId = randomUUID();
         const creatorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
         const runtime = yield* authenticatedRuntime(gateway);
         const attempt = yield* startAcceptanceEnrollment(
@@ -1158,7 +1175,10 @@ it.live(
       Effect.gen(function* recordsTheAuthenticatedOwnerSubject() {
         const tenantId = randomUUID();
         const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const owner = yield* makeSignedInPortalAccount();
         const scope = yield* Effect.scope;
         const realm = yield* Layer.buildWithScope(yield* configuredRealmLive(), scope);
@@ -1281,7 +1301,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* refusesAForeignAccountOwner() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
         const runtime = yield* authenticatedRuntime(gateway);
         const owner = yield* makeSignedInPortalAccount();
@@ -1372,7 +1395,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* unverifiableStartChargesNoBudget() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
         const runtime = yield* authenticatedRuntime(gateway);
         const email = `enrollment-http-${randomUUID()}@example.test`;
@@ -1433,7 +1459,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* enrollmentBudgetIsPerPrincipal() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
         const runtime = yield* authenticatedRuntime(gateway);
         const email = `enrollment-http-${randomUUID()}@example.test`;
@@ -1487,7 +1516,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* counterpartyInvitationBudgetIsPerAddress() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         // No Action grants at all: the budget below is spent before any governed Action runs, so
         // this Principal never needs authorization to exhaust it.
         const realm = yield* makeCounterpartyInvitationRealm(fixture, {
@@ -1546,7 +1578,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* refusesAnUnauthenticatedExistingAccountStart() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
         const runtime = yield* authenticatedRuntime(gateway);
         const owner = yield* makeSignedInPortalAccount();
@@ -1608,7 +1643,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* existingAccountBudgetGatesTheOwnershipProbe() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
         const runtime = yield* authenticatedRuntime(gateway);
         const principalId = randomUUID();
@@ -1687,7 +1725,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* addressBudgetIsPerPrincipalAndAddress() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
         const runtime = yield* authenticatedRuntime(gateway);
         const enroller = randomUUID();
@@ -1734,7 +1775,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* existingAccountBudgetIsPerPrincipalAndSession() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const gateway = yield* makeAcceptanceGatewayIssuer(READ_ISSUER, READ_KEY_ID);
         const runtime = yield* authenticatedRuntime(gateway);
         const principalId = randomUUID();
@@ -2005,7 +2049,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* startRedeemsTheCallerAssertionOnce() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const subject = yield* seedGovernedStartSubject(tenantId);
         yield* seedGovernedStartAuthorization(subject);
         const gateway = yield* makeAcceptanceGatewayIssuer(GOVERNED_START_ISSUER, GOVERNED_START_KEY_ID);
@@ -2100,7 +2147,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* governedStartCommitsEveryAction() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const subject = yield* seedGovernedStartSubject(tenantId);
         yield* seedGovernedStartAuthorization(subject);
         const gateway = yield* makeAcceptanceGatewayIssuer(GOVERNED_START_ISSUER, GOVERNED_START_KEY_ID);
@@ -2233,7 +2283,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* convergenceRefusesAForeignPrincipal() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const first = yield* seedGovernedStartSubject(tenantId);
         yield* seedGovernedStartAuthorization(first);
         const second = yield* seedSecondGovernedStartPrincipal(tenantId, first.legalEntityId);
@@ -2318,7 +2371,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* answersRejectedStartWithTerminalFailure() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const subject = yield* seedGovernedStartSubject(tenantId);
         yield* seedGovernedStartAuthorization(subject);
         const gateway = yield* makeAcceptanceGatewayIssuer(GOVERNED_START_ISSUER, GOVERNED_START_KEY_ID);
@@ -2418,7 +2474,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* governedRecordCommits() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const subject = yield* seedGovernedStartSubject(tenantId);
         yield* seedGovernedStartAuthorization(subject, [RECORD_ACTION_KEY]);
         let deliveryAvailable = false;
@@ -2591,7 +2650,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* reconciliationRequiresVerificationDelivery() {
         const tenantId = randomUUID();
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const fixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId },
+          yield* enrollmentApplicationCompositionRevision,
+        );
         const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)(randomUUID());
         const email = `enrollment-http-${randomUUID()}@example.test`;
         yield* removePortalAccountsOnClose(email);

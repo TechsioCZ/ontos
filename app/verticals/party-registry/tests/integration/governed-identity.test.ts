@@ -10,6 +10,7 @@ import {
   runAction,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { and, eq } from 'drizzle-orm';
 import { Effect, Exit, Layer, Redacted, Predicate, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
@@ -19,6 +20,7 @@ import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { committedCreateResult } from '../../shared/domain/matching-contracts.ts';
 import type { PartyRef } from '../../shared/resources/party.ts';
@@ -91,7 +93,11 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* governedIdentityTestEffect() {
-        const connections = yield* loadDatabaseConnectionPair();
+        const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+        const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+          [ultramodernApiMarker.appId],
+          ultramodernApiMarker.buildMarker,
+        );
         const actionKeys = [
           createPartyAction,
           counterpartyCreateAction,
@@ -108,6 +114,7 @@ it.live(
           makeLiveOperationFixture({
             actionKeys,
             authenticationNamespaceId: testAuthenticationNamespaceId,
+            compositionRevision: compositionSnapshot.composition.revision,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }).pipe(Effect.orDie),
           (resource) => resource.close().pipe(Effect.orDie),
@@ -116,6 +123,7 @@ it.live(
           makeLiveOperationFixture({
             actionKeys,
             authenticationNamespaceId: testAuthenticationNamespaceId,
+            compositionRevision: compositionSnapshot.composition.revision,
             runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
           }).pipe(Effect.orDie),
           (resource) => resource.close().pipe(Effect.orDie),

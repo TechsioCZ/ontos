@@ -19,6 +19,7 @@ const counterpartyId = '40000000-0000-4000-8000-000000000001';
 const context: OutboxWorkerHandlerContext = {
   attemptNumber: 1,
   claimId: 'claim',
+  compositionRevision: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   deliveryId: 'delivery',
   domainEventId: 'event',
   messageId: 'message',
@@ -60,8 +61,12 @@ const harness = (
     }),
   } as unknown as CoreSearchSnapshotReadExecutor;
   const snapshot: CoreSearchWorkerSnapshotService = {
-    read: (_context, readSnapshot) =>
-      readSnapshot({
+    read: (receivedContext, readSnapshot) => {
+      expect(receivedContext).toBe(context);
+      expect(receivedContext.compositionRevision).toBe(
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      );
+      return readSnapshot({
         eventWatermark: '99',
         forLegalEntity: (id, read) => {
           scopes.push(id);
@@ -74,7 +79,8 @@ const harness = (
           return read(executor);
         },
         tenantId,
-      }),
+      });
+    },
   };
   return {
     columns,

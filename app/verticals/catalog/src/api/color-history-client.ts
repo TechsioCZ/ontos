@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ColorHistoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ColorHistoryAuthorizedInvocation = readonly [
@@ -44,6 +45,10 @@ export const executeColorHistory = (
   payload: ColorHistoryRequest,
   ...[requestCorrelation, options = {}]: ColorHistoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeColorHistoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeColorHistoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

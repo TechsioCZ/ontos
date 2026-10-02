@@ -4,14 +4,13 @@
   "private": true,
   "exports": {
     "./api": "./shared/api.ts",
-    "./api/client": "./src/api/auth-client.ts",
-    "./api/clients": "./src/api/vertical-clients.ts"
+    "./api/client": "./src/api/auth-client.ts"
   },
   "scripts": {
     "dev": "modern dev",
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target dist && ultramodern-create ultramodern public-surface --app shell-super-app --target dist && modern deploy --skip-build --deploy-target node",
     "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-shell-runtime-contract.mts --shell-directory . --target cloudflare-dist && ultramodern-create ultramodern public-surface --app shell-super-app --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
-    "cloudflare:deploy": "pnpm run cloudflare:build && ultramodern-create ultramodern cloudflare-output-verify --app shell-super-app --require-public-urls && wrangler deploy --config .output/wrangler.json",
+    "cloudflare:deploy": "node ../../scripts/immutable-shell-release.mts ingress-deploy --app-directory .",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app shell-super-app",
     "serve": "modern serve",
@@ -26,20 +25,11 @@
     "test:unit": "rstest --project unit"
   },
   "dependencies": {
-    "@app/assortment": "workspace:*",
     "@app/better-auth-effect-drizzle": "workspace:*",
-    "@app/catalog": "workspace:*",
     "@app/commerce-customer-context": "workspace:*",
-    "@app/commerce-market-catalog": "workspace:*",
     "@app/core-runtime": "workspace:*",
-    "@app/inventory": "workspace:*",
-    "@app/party-registry": "workspace:*",
-    "@app/payment-term-catalog": "workspace:*",
-    "@app/price-group-catalog": "workspace:*",
-    "@app/pricing": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@app/shared-design-tokens": "workspace:*",
-    "@app/storefront-registry": "workspace:*",
     "@authzed/authzed-node": "1.6.1",
     "@better-auth/api-key": "1.7.6",
     "@effect/opentelemetry": "4.0.0-rc.117",
@@ -98,12 +88,5 @@
     "role": "shell",
     "appId": "shell-super-app",
     "topology": "../../topology/reference-topology.json"
-  },
-  "zephyr:dependencies": {
-    "partyRegistry": "@app/party-registry@workspace:*",
-    "commerceMarketCatalog": "@app/commerce-market-catalog@workspace:*",
-    "catalog": "@app/catalog@workspace:*",
-    "assortment": "@app/assortment@workspace:*",
-    "inventory": "@app/inventory@workspace:*"
   }
 }

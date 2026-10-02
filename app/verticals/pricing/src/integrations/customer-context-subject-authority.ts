@@ -29,7 +29,7 @@ type VerificationExecutor = (
   payload: VerificationRequest,
   credential: Redacted.Redacted,
   requestCorrelation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<VerificationResponse, VerificationFailure>;
 
 const executeVerification: VerificationExecutor = (payload, credential, requestCorrelation, options) =>
@@ -131,6 +131,7 @@ const mapOwnerResponse = (
 };
 
 const makeCustomerContextSubjectAuthority = (dependencies: {
+  readonly compositionRevision: string;
   readonly execute: VerificationExecutor;
   readonly issuer: CurrentPricingDecisionCustomerContextGatewayIssuerService;
   readonly requestCorrelation: string;
@@ -141,12 +142,16 @@ const makeCustomerContextSubjectAuthority = (dependencies: {
         dependencies.issuer
           .issue({
             audience: 'commerce-customer-context',
+            compositionRevision: dependencies.compositionRevision,
             principal: input.scope.principal,
             requestCorrelation: dependencies.requestCorrelation,
           })
           .pipe(
             Effect.flatMap(({ baseUrl, credential }) =>
-              dependencies.execute(payload, credential, dependencies.requestCorrelation, { baseUrl }),
+              dependencies.execute(payload, credential, dependencies.requestCorrelation, {
+                baseUrl,
+                compositionRevision: dependencies.compositionRevision,
+              }),
             ),
             Effect.mapError((cause) => unavailable(cause)),
             Effect.flatMap((response) => mapOwnerResponse(input, payload, response)),
@@ -157,11 +162,13 @@ const makeCustomerContextSubjectAuthority = (dependencies: {
 
 export const currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment = (
   requestCorrelation: string,
+  compositionRevision: string,
   execute: VerificationExecutor = executeVerification,
 ): Effect.Effect<CurrentPricingDecisionSubjectAuthorityService> =>
   Effect.serviceOption(CurrentPricingDecisionCustomerContextGatewayIssuer).pipe(
     Effect.map((issuerOption) =>
       makeCustomerContextSubjectAuthority({
+        compositionRevision,
         execute,
         issuer: Option.isSome(issuerOption)
           ? issuerOption.value

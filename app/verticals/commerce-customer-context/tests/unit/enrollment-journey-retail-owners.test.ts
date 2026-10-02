@@ -41,9 +41,7 @@ import type {
 import { retailSelfEnrollmentPrepareStep } from '../../src/enrollment/journeys/retail-self-enrollment-preparation.ts';
 import {
   CommerceActionCommitResolutionFailed,
-  retailCustomerProfileActionExecutor,
   retailCustomerProfileOwnerEffect,
-  retailPortalBindingActionExecutor,
   retailPortalBindingOwnerEffect,
   retailPortalGrantsAreComplete,
 } from '../../src/enrollment/journeys/retail-self-enrollment-profile-owners.ts';
@@ -131,10 +129,17 @@ const candidate: RetailPartyCandidateOwnerInput['candidate'] = {
   validFrom: effectiveAt,
 };
 
-const partyOwnerInput: RetailPartyCandidateOwnerInput = { candidate, requestCorrelation, tenantId };
+const partyOwnerInput: RetailPartyCandidateOwnerInput = {
+  candidate,
+  compositionRevision: 'c'.repeat(64),
+  legalEntityId: '50000000-0000-4000-8000-000000000001',
+  requestCorrelation,
+  tenantId,
+};
 
 const transition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
   actorPrincipalId,
+  compositionRevision: 'c'.repeat(64),
   correlationId: requestCorrelation,
   expectedRevision: 1,
   ownerInvocationId,
@@ -378,6 +383,7 @@ const ensureResult = (state: EnsureRetailCustomerProfileResult['state']): Ensure
 });
 
 const profileOwnerInput: RetailCustomerProfileOwnerInput = {
+  compositionRevision: 'a'.repeat(64),
   effectiveAt,
   partyRef,
   requestCorrelation,
@@ -490,6 +496,7 @@ const bindingResult = (staged: boolean, complete = true): RetailPortalBindingRes
 };
 
 const bindingOwnerInput: RetailPortalBindingOwnerInput = {
+  compositionRevision: 'a'.repeat(64),
   effectiveAt,
   enrollmentEvidenceRef: 'enrollment-evidence-1',
   principalRef,
@@ -631,11 +638,44 @@ it.effect('vouches for nothing that depends on a Party the journey has not resol
   }),
 );
 
-it('publishes production executors over the vertical typed Action clients', () => {
-  const productionExecutors: readonly [
-    RetailCustomerProfileOwnerExecutors['ensureProfile'],
-    RetailPortalBindingOwnerExecutors['bindProfile'],
-  ] = [retailCustomerProfileActionExecutor, retailPortalBindingActionExecutor];
-  expect(productionExecutors).toHaveLength(2);
-  expect(productionExecutors.every((executor) => executor.length === 3)).toBe(true);
-});
+it.effect('rejects a Create result that would link the Attempt to a Party in another Tenant', () =>
+  Effect.gen(function* foreignTenantCreateResult() {
+    const foreignTenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('90000000-0000-4000-8000-000000000001');
+    const failure = yield* retailPartyCandidateOwnerEffect(
+      partyOwnerInput,
+      partyExecutors({
+        createParty: () =>
+          Effect.succeed({ decisionRef, outcome: 'CREATED', partyRef: { ...partyRef, tenantId: foreignTenantId } }),
+        matchParty: () => Effect.succeed(matchResponse('NO_MATCH', [])),
+      }),
+    )
+      .dispatch(transition)
+      .pipe(Effect.flip);
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
+    expect(failure.reason).toContain('original Attempt Tenant');
+  }),
+);
+
+it.effect('rejects a recovered decision owned by another Tenant before producing durable success', () =>
+  Effect.gen(function* foreignTenantRecoveryResult() {
+    const foreignTenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('90000000-0000-4000-8000-000000000001');
+    const failure = yield* retailPartyCandidateOwnerEffect(
+      partyOwnerInput,
+      partyExecutors({
+        recoverPartyCreate: () =>
+          Effect.succeed({
+            _tag: 'PartyCreateRecovered',
+            result: {
+              decisionRef: { ...decisionRef, tenantId: foreignTenantId },
+              outcome: 'CREATED',
+              partyRef,
+            },
+          }),
+      }),
+    )
+      .reconcile(reconciliationInput)
+      .pipe(Effect.flip);
+    expect(Schema.is(CommerceEnrollmentOwnerEffectUnavailable)(failure)).toBe(true);
+    expect(failure.reason).toContain('original Attempt Tenant');
+  }),
+);

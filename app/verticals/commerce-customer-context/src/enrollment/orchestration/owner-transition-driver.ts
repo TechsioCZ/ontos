@@ -26,6 +26,7 @@ import {
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
   EnrollmentBoundedTextSchema,
+  EnrollmentCompositionRevisionSchema,
   EnrollmentDigestSchema,
   EnrollmentKeySchema,
   EnrollmentModuleKeySchema,
@@ -79,6 +80,7 @@ type EnrollmentResourceId = typeof EnrollmentResourceIdSchema.Type;
  */
 export const CommerceEnrollmentOwnerTransitionSchema = Schema.Struct({
   actorPrincipalId: EnrollmentPrincipalIdSchema,
+  compositionRevision: EnrollmentCompositionRevisionSchema,
   correlationId: Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(200)).pipe(
     Schema.brand('CommerceEnrollmentOwnerCorrelationId'),
   ),
@@ -539,6 +541,9 @@ export const commerceEnrollmentOwnerTransitionDriverFor = (
     const claim = yield* options.attempt
       .claimTransition(claimInput)
       .pipe(Effect.flatMap(claimedOrIndeterminate(input)));
+    if (claim.attempt.compositionRevision !== input.compositionRevision) {
+      return yield* invalid('The owner transition does not match the durable Attempt Application Composition revision');
+    }
     if (claim.operation.status === 'SUCCEEDED') {
       return { claim, outcome: 'REPLAYED' };
     }
@@ -582,7 +587,12 @@ export const commerceEnrollmentOwnerTransitionDriverFor = (
     rawInput: CommerceEnrollmentOwnerTransition,
   ): Effect.fn.Return<CommerceEnrollmentOwnerTransitionReconciliationResult, CommerceEnrollmentAttemptError> {
     const requested = yield* decodeDriverInput(rawInput);
-    let attempt = yield* options.attempt.read(readAttemptIdentity(requested));
+    let attempt = yield* options.attempt.read(readAttemptIdentity(requested)).pipe(
+      Effect.filterOrFail(
+        (snapshot) => snapshot.compositionRevision === requested.compositionRevision,
+        () => invalid('The reconciliation does not match the durable Attempt Application Composition revision'),
+      ),
+    );
     if (attempt.state === 'COMPLETE' || attempt.state === 'TERMINATED') {
       return yield* new CommerceEnrollmentAttemptRejected({
         attemptId: requested.portalEnrollmentAttemptId,
@@ -623,7 +633,12 @@ export const commerceEnrollmentOwnerTransitionDriverFor = (
       yield* options.attempt.claimTransition(fenceInput);
       ({ attempt, operation } = yield* Effect.all(
         {
-          attempt: options.attempt.read(readAttemptIdentity(requested)),
+          attempt: options.attempt.read(readAttemptIdentity(requested)).pipe(
+            Effect.filterOrFail(
+              (snapshot) => snapshot.compositionRevision === requested.compositionRevision,
+              () => invalid('The fenced Attempt changed its original Application Composition revision'),
+            ),
+          ),
           operation: options.attempt.readOwnerOperation(readOperationIdentity(requested)),
         },
         { concurrency: 2 },
@@ -801,7 +816,10 @@ export const commerceEnrollmentCoreIdentityOwnerEffectFor = (
     const mutationOptions = { ...options.clientOptions(input), idempotencyKey: input.ownerInvocationId };
     if (request.operation === 'reserve') {
       const result = yield* options.client
-        .reservePrincipalBinding(request.payload, mutationOptions)
+        .reservePrincipalBinding(
+          { ...request.payload, compositionRevision: input.compositionRevision },
+          mutationOptions,
+        )
         .pipe(Effect.mapError(mapExternalIdentityError));
       if (
         result.outcome === 'EXISTING' &&
@@ -822,7 +840,7 @@ export const commerceEnrollmentCoreIdentityOwnerEffectFor = (
       });
     }
     const result = yield* options.client
-      .activatePrincipalBinding(request.payload, mutationOptions)
+      .activatePrincipalBinding({ ...request.payload, compositionRevision: input.compositionRevision }, mutationOptions)
       .pipe(Effect.mapError(mapExternalIdentityError));
     const { outcomeCode, resultReference } = yield* Effect.all(
       {

@@ -29,6 +29,7 @@ const traceparentOption = 'traceparent' as const;
 
 export interface ContactsClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly locale?: string;
   readonly operationContext?: OperationContext;
   readonly [traceparentOption]?: string;
@@ -52,10 +53,10 @@ const invoke = <Success, Failure>(
   context: OperationContext,
   operation: (client: ContactsClient) => Effect.Effect<Success, Failure>,
 ) =>
-  operationGateway.invoke((authorization) => {
+  operationGateway.invoke((authorization, { apiBaseUrl, compositionRevision }) => {
     const operationContext = options.operationContext ?? context;
     const requestContext = authenticatePartyRegistryHttpRequest(
-      partyRegistryHttpRequestContext({ ...options, operationContext }),
+      partyRegistryHttpRequestContext({ ...options, operationContext, baseUrl: apiBaseUrl, compositionRevision }),
       Redacted.make(authorization),
       options[correlationIdOption],
       'x-correlation-id',

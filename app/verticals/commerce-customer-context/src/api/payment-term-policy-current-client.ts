@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PaymentTermPolicyCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PaymentTermPolicyCurrentAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executePaymentTermPolicyCurrent = (
   payload: PaymentTermPolicyCurrentRequest,
   ...[requestCorrelation, options = {}]: PaymentTermPolicyCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePaymentTermPolicyCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePaymentTermPolicyCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

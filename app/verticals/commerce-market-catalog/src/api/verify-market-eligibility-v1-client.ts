@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface VerifyMarketEligibilityV1ClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type VerifyMarketEligibilityV1AuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeVerifyMarketEligibilityV1 = (
   payload: VerifyMarketEligibilityV1Request,
   ...[requestCorrelation, options = {}]: VerifyMarketEligibilityV1OperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeVerifyMarketEligibilityV1WithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeVerifyMarketEligibilityV1WithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

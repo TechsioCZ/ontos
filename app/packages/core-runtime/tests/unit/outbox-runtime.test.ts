@@ -75,6 +75,7 @@ const worker = <HandlerError, HandlerRequirements = never>(
 interface RepositoryProbe {
   readonly completed: OutboxClaim[];
   readonly failed: { readonly claim: OutboxClaim; readonly message: string }[];
+  readonly matchedRevisions: string[];
 }
 
 interface ControlledRepository {
@@ -95,7 +96,7 @@ const repository = (
 ): ControlledRepository => {
   const claims = [...(options.claims ?? [])];
   const failureStatuses = [...(options.failureStatuses ?? [])];
-  const probe: RepositoryProbe = { completed: [], failed: [] };
+  const probe: RepositoryProbe = { completed: [], failed: [], matchedRevisions: [] };
   return {
     probe,
     service: {
@@ -111,7 +112,11 @@ const repository = (
           probe.failed.push({ claim: claimed, message });
           return failureStatuses.shift() ?? 'pending';
         }),
-      matchUnmatched: () => Effect.succeed(options.match ?? { deliveriesCreated: 0, messagesMatched: 0 }),
+      matchUnmatched: (revision) =>
+        Effect.sync(() => {
+          probe.matchedRevisions.push(revision);
+          return options.match ?? { deliveriesCreated: 0, messagesMatched: 0 };
+        }),
     },
   };
 };
@@ -126,6 +131,7 @@ interface WorkerInvocation {
 const run = (service: OutboxRepositoryService, registration: NoRequirementsWorker = worker(() => Effect.void)) =>
   makeOutboxRuntime(service).runCycle({
     claimOwner: 'unit-runtime',
+    compositionRevision: 'a'.repeat(64),
     registrations: [registration],
     subscriptions: [registration.descriptor],
   });
@@ -150,17 +156,30 @@ it.effect('owner-local cycles do not perform global matching', () =>
   }),
 );
 
-it.effect('matches messages only through the explicit Core matcher snapshot', () =>
+it.effect('matches messages only through the explicit complete Core authority revision', () =>
   Effect.gen(function* explicitMatcherSnapshot() {
     const controlled = repository({
       match: { deliveriesCreated: 3, messagesMatched: 2 },
     });
-    const registration = worker(() => Effect.void);
     const result = yield* makeOutboxRuntime(controlled.service).matchMessages({
-      subscriptions: [registration.descriptor],
+      compositionRevision: 'a'.repeat(64),
     });
 
     expect(result).toEqual({ deliveriesCreated: 3, messagesMatched: 2 });
+    expect(controlled.probe.matchedRevisions).toEqual(['a'.repeat(64)]);
+  }),
+);
+
+it.effect('rejects malformed composition authority before touching unmatched messages', () =>
+  Effect.gen(function* malformedAuthorityRevision() {
+    const controlled = repository();
+    const error = yield* Effect.flip(
+      makeOutboxRuntime(controlled.service).matchMessages({
+        compositionRevision: 'unapproved',
+      }),
+    );
+    expect(Schema.is(OutboxWorkerDescriptorError)(error)).toBe(true);
+    expect(controlled.probe.matchedRevisions).toEqual([]);
   }),
 );
 
@@ -171,6 +190,7 @@ it.effect('rejects an owner-local worker missing from the installed subscription
     const error = yield* Effect.flip(
       makeOutboxRuntime(controlled.service).runCycle({
         claimOwner: 'unit-runtime',
+        compositionRevision: 'a'.repeat(64),
         registrations: [registration],
         subscriptions: [],
       }),
@@ -188,6 +208,7 @@ it.effect('rejects deployed owner descriptors without a matching local worker re
     const error = yield* Effect.flip(
       makeOutboxRuntime(controlled.service).runCycle({
         claimOwner: 'unit-runtime',
+        compositionRevision: 'a'.repeat(64),
         registrations: [registration],
         subscriptions: [
           registration.descriptor,
@@ -232,6 +253,7 @@ it.effect('decodes a published payload, supplies exact context, and completes su
         actorPrincipalId: '10000000-0000-4000-8000-000000000010',
         attemptNumber: 1,
         claimId: 'runtime:claim-1',
+        compositionRevision: 'a'.repeat(64),
         consumerModuleKey: 'consumer',
         correlationId: 'correlation-1',
         deliveryId: 'delivery-1',
@@ -278,6 +300,7 @@ it.effect('runs a worker with Effect services provided by its owning MicroVertic
     const result = yield* makeOutboxRuntime(controlled.service)
       .runCycle({
         claimOwner: 'unit-runtime',
+        compositionRevision: 'a'.repeat(64),
         registrations: [registration],
         subscriptions: [registration.descriptor],
       })

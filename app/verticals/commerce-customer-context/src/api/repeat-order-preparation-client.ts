@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RepeatOrderPreparationClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RepeatOrderPreparationAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRepeatOrderPreparation = (
   payload: RepeatOrderPreparationRequest,
   ...[requestCorrelation, options = {}]: RepeatOrderPreparationOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRepeatOrderPreparationWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRepeatOrderPreparationWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

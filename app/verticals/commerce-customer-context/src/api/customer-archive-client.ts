@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CustomerArchiveClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CustomerArchiveAuthorizedInvocation = readonly [
@@ -44,6 +45,10 @@ export const executeCustomerArchive = (
   payload: CustomerArchiveRequest,
   ...[requestCorrelation, options = {}]: CustomerArchiveOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCustomerArchiveWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCustomerArchiveWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PricingCurrentMarketEvidenceClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PricingCurrentMarketEvidenceAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executePricingCurrentMarketEvidence = (
   payload: PricingCurrentMarketEvidenceRequest,
   ...[requestCorrelation, options = {}]: PricingCurrentMarketEvidenceOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePricingCurrentMarketEvidenceWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePricingCurrentMarketEvidenceWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

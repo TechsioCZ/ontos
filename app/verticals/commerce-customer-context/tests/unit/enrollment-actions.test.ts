@@ -124,6 +124,7 @@ const terminatePayload: TerminatePortalEnrollmentPayload = Schema.decodeSync(Ter
 });
 
 const makeAttempt = (overrides: Partial<EnrollmentAttemptSnapshot> = {}): EnrollmentAttemptSnapshot => ({
+  compositionRevision: 'c'.repeat(64),
   createdAt: at,
   createdByPrincipalId: actorPrincipalId,
   intentDigest: 'a'.repeat(64),
@@ -183,6 +184,7 @@ const handlerContext = <Services>(collector: ReturnType<typeof collectorFor>, se
   actionInvocationId: String(actionInvocationId),
   addDomainEvent: collector.addDomainEvent,
   addOutboxMessage: collector.addOutboxMessage,
+  compositionRevision: 'c'.repeat(64),
   recordAuditEvidence: collector.recordAuditEvidence,
   recordDataAccess: collector.recordDataAccess,
   scope,
@@ -226,6 +228,7 @@ it.effect('start derives Actor, Tenant and Action invocation from trusted Core c
       throw new Error('start action did not return a committed Attempt result');
     }
     expect(result.outcome).toBe('CREATED');
+    expect(request?.compositionRevision).toBe('c'.repeat(64));
     expect(request?.actionInvocationId).toBe(actionInvocationId);
     expect(request?.actorPrincipalId).toBe(actorPrincipalId);
     expect(request?.tenantId).toBe(tenantId);

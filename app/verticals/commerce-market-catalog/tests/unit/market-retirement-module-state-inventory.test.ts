@@ -25,8 +25,10 @@ const request: MarketAffectedUseAssessmentRequest = {
 };
 const input = {
   actionInvocationId: '33333333-3333-4333-8333-333333333333',
+  compositionRevision: 'a'.repeat(64),
   effectiveAt,
   expectedMarketRevision: 3,
+  legalEntityId: '44444444-4444-4444-8444-444444444444',
   marketRef,
 } as const;
 
@@ -64,14 +66,23 @@ const verified: Extract<MarketAffectedUseAssessmentResponse, { readonly outcome:
 it.effect('delegates installed-owner completeness to the Customer Context authoritative assessment', () =>
   Effect.gen(function* delegatesOwnerInventory() {
     const calls: unknown[] = [];
-    const authority = makeMarketRetirementImpactAuthority((payload, correlation) => {
-      calls.push({ correlation, payload });
+    const authority = makeMarketRetirementImpactAuthority((payload, context) => {
+      calls.push({ context, payload });
       return Effect.succeed(verified);
     });
 
     const result = yield* authority.assessRetirementImpact(input);
 
-    expect(calls).toEqual([{ correlation: input.actionInvocationId, payload: request }]);
+    expect(calls).toEqual([
+      {
+        context: {
+          compositionRevision: input.compositionRevision,
+          legalEntityId: input.legalEntityId,
+          requestCorrelation: input.actionInvocationId,
+        },
+        payload: request,
+      },
+    ]);
     expect(result.assessmentDigest).toBe(verified.assessmentDigest);
     expect(result.requiredProviderModuleKeys).toEqual(['commerce.customer-context']);
   }),

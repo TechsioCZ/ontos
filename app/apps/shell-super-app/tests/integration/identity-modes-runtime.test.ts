@@ -369,6 +369,7 @@ it.live.each([
     const privateJwk = yield* Effect.tryPromise(() => exportJWK(privateKey));
     const assertion = yield* issueGatewayContextAssertion({
       audience: 'identity-integration',
+      compositionRevision: 'a'.repeat(64),
       principal: {
         authBindingId: apiKeyIdentity.authBindingId,
         authContextRef: `better-auth-api-key:${verified.providerKeyId}`,
@@ -381,7 +382,10 @@ it.live.each([
         makeGatewayIssuerLayer({
           currentTimeSeconds: Effect.succeed(1_800_000_000),
           generateJti: Effect.succeed(randomUUID()),
-          loadAudiences: Effect.succeed(new Set(['identity-integration'])),
+          loadAdmission: Effect.succeed({
+            audiences: new Map([['identity-integration', 'identity-integration-build']]),
+            revision: 'a'.repeat(64),
+          }),
           loadConfig: Effect.succeed({
             issuer: 'https://shell.identity-integration.test',
             privateJwk: {
@@ -412,6 +416,8 @@ it.live.each([
       principalId: originalPrincipalId,
       tenantId,
     });
+    expect(verifiedAssertion.payload['compositionRevision']).toBe('a'.repeat(64));
+    expect(verifiedAssertion.payload['targetBuildMarker']).toBe('identity-integration-build');
     expect(JSON.stringify(verifiedAssertion.payload).includes(Redacted.value(issued.secret))).toBe(false);
     yield* providePrincipalManagementRepository(
       actionRuntime.runAction({

@@ -131,7 +131,7 @@ it.effect('repository persistence failures carry the driver failure as their nat
     });
     const executor = yield* makeTestDatabase(() => Effect.fail(driverError));
     const failure = yield* makeOutboxRepository(executor)
-      .matchUnmatched([], DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-03T10:00:00Z')))
+      .matchUnmatched('a'.repeat(64), DateTime.toDateUtc(DateTime.makeUnsafe('2026-08-03T10:00:00Z')))
       .pipe(Effect.flip);
     expect(failure).toBeInstanceOf(PersistenceFailure);
     expect(failure.reason).toBe('The Outbox Worker persistence operation failed');

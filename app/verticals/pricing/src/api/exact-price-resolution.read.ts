@@ -152,7 +152,11 @@ export const toExactPriceResolutionResponse = (
   );
 };
 
-const exactPriceResolutionServiceForScope = (transaction: ScopedTransactionExecutor, scope: OperationalScope) => {
+const exactPriceResolutionServiceForScope = (
+  transaction: ScopedTransactionExecutor,
+  scope: OperationalScope,
+  compositionRevision: string | undefined,
+) => {
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
     return Effect.fail(
@@ -162,7 +166,7 @@ const exactPriceResolutionServiceForScope = (transaction: ScopedTransactionExecu
       }),
     );
   }
-  return brokenExplicitInputObservationPortForScope(transaction, scope).pipe(
+  return brokenExplicitInputObservationPortForScope(transaction, scope, compositionRevision).pipe(
     Effect.map((observations): ExactPriceResolutionReadServices => ({
       acquire: observations.acquire,
       legalEntityId,

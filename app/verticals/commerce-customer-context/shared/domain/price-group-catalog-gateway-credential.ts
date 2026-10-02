@@ -6,8 +6,12 @@ import { CustomerPriceGroupCatalogUnavailable } from './price-group-errors.ts';
 export interface PriceGroupCatalogGatewayCredentialIssuer {
   readonly issue: (input: {
     readonly audience: 'price-group-catalog';
+    readonly compositionRevision: string;
     readonly requestCorrelation: string;
-  }) => Effect.Effect<Redacted.Redacted, CustomerPriceGroupCatalogUnavailable>;
+  }) => Effect.Effect<
+    { readonly baseUrl: URL; readonly credential: Redacted.Redacted },
+    CustomerPriceGroupCatalogUnavailable
+  >;
 }
 
 export class PriceGroupCatalogGatewayCredentialService extends Context.Service<

@@ -21,7 +21,6 @@ import {
 } from '../../shared/domain/inventory-effect-ledger.ts';
 import type { InventoryEffectLedgerRecord } from '../../shared/domain/inventory-effect-ledger.ts';
 import { inventoryEffectLedgerPersistenceForScope } from '../persistence/inventory-effect-ledger-repository.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core invokes this owner-local service only after the governed read transaction and scope gate; expires: 2027-03-31.
 import { makeInventoryEffectLedgerService } from '../services/inventory-effect-ledger.service.ts';
 import type {
   InventoryEffectLedgerPersistence,

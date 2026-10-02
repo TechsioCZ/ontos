@@ -135,7 +135,7 @@ export const reserveMarketRetirementAction = defineAction(
     schemaVersion: '1',
   },
   handleReserveMarketRetirement,
-  (transaction, scope) => {
+  (transaction, scope, compositionRevision) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(
         new OperationContextUnavailable({
@@ -144,7 +144,7 @@ export const reserveMarketRetirementAction = defineAction(
         }),
       );
     }
-    return marketRetirementReservationServiceFactory(transaction, scope);
+    return marketRetirementReservationServiceFactory(transaction, scope, compositionRevision);
   },
 );
 

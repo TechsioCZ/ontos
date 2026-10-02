@@ -18,6 +18,7 @@ export interface OutboxWorkerHandlerContext extends Readonly<
 > {
   readonly attemptNumber: number;
   readonly claimId: string;
+  readonly compositionRevision: string;
   /** Core-attested owner identity. Legacy test contexts may omit it but cannot publish. */
   readonly consumerModuleKey?: string;
   readonly deliveryId: string;

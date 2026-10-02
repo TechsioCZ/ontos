@@ -497,6 +497,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ${optionsType} {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ${authorizedInvocationType} = readonly [
@@ -526,8 +527,12 @@ export const execute${type} = (
   payload: ${type}Request,
   ...[requestCorrelation, options = {}]: ${operationInvocationType}
 ) =>
-  operationGateway.invoke((credential) =>
-    execute${type}WithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    execute${type}WithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );
 `;
 };
@@ -614,6 +619,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ${optionsType} {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ${invocationTypePrefix}AuthorizedInvocation = readonly [
@@ -641,8 +647,12 @@ export const load${type}Client = (
   payload: ${type}ProviderRequest,
   ...[requestCorrelation, options = {}]: ${invocationTypePrefix}OperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    load${type}ClientWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    load${type}ClientWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );
 `;
 };
@@ -950,7 +960,7 @@ const slotLine = (
         [
           MODULE_MANIFEST_SHELL_COMPONENT_SLOT_START,
           MODULE_MANIFEST_SHELL_COMPONENT_SLOT_END,
-          `publicComponentContribution({ componentKey: '${key}', contributionKey: '${vertical.moduleId}.component.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.component.${name}', moduleKey: '${vertical.moduleId}', role: 'public_component', scope: 'tenant' } }),`,
+          `publicComponentContribution({ componentKey: '${key}', contributionKey: '${vertical.moduleId}.component.${name}', entrypoint: { access: 'read', authorization: ${renderReadAuthorization(config)}, entrypointKey: '${vertical.moduleId}.component.${name}', moduleKey: '${vertical.moduleId}', role: 'public_component', scope: 'tenant' }, expose: './${toPascalCase(name)}' }),`,
         ],
       ],
       registration: [

@@ -24,7 +24,7 @@ type CommerceResolutionExecutor = (
   payload: PriceGroupAssignmentResolutionRequest,
   credential: Redacted.Redacted,
   requestCorrelation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<unknown, CommerceResolutionClientFailure>;
 
 const executeAuthorizedCommerceResolution: CommerceResolutionExecutor = (
@@ -61,6 +61,7 @@ const sameProfile = (
 
 const makeCommerceResolutionPort = (dependencies: {
   readonly context: {
+    readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
     readonly tenantId: string;
@@ -82,6 +83,7 @@ const makeCommerceResolutionPort = (dependencies: {
     const { baseUrl, credential } = yield* dependencies.issuer
       .issue({
         audience: 'commerce-customer-context',
+        compositionRevision: dependencies.context.compositionRevision,
         legalEntityId: dependencies.context.legalEntityId,
         requestCorrelation: dependencies.context.requestCorrelation,
       })
@@ -91,7 +93,10 @@ const makeCommerceResolutionPort = (dependencies: {
         ),
       );
     const ownerResponse = yield* dependencies
-      .execute(payload, credential, dependencies.context.requestCorrelation, { baseUrl })
+      .execute(payload, credential, dependencies.context.requestCorrelation, {
+        baseUrl,
+        compositionRevision: dependencies.context.compositionRevision,
+      })
       .pipe(
         Effect.mapError((cause) =>
           failure('UNAVAILABLE', 'Commerce Customer Price Group resolution is unavailable', cause),
@@ -119,6 +124,7 @@ const makeCommerceResolutionPort = (dependencies: {
 
 export const commercePriceGroupResolutionPortFromEnvironment = (
   context: {
+    readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
     readonly tenantId: string;

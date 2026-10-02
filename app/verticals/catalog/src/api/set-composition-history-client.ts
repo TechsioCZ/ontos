@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface SetCompositionHistoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type SetCompositionHistoryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeSetCompositionHistory = (
   payload: SetCompositionHistoryRequest,
   ...[requestCorrelation, options = {}]: SetCompositionHistoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeSetCompositionHistoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeSetCompositionHistoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

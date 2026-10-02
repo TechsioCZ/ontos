@@ -749,7 +749,7 @@ describe('Commercial Fee management Actions issue #797', () => {
         const executed: unknown[] = [];
         const portFor = (response: CatalogSnapshotFixture) =>
           commercialFeeCatalogTargetAssessmentPortFromEnvironment(
-            { legalEntityId, requestCorrelation: trusted.requestCorrelationId },
+            { compositionRevision: 'a'.repeat(64), legalEntityId, requestCorrelation: trusted.requestCorrelationId },
             (payload, credential, requestCorrelation, options) =>
               Effect.sync(() => {
                 executed.push({
@@ -834,7 +834,7 @@ describe('Commercial Fee management Actions issue #797', () => {
         expect(writes).toBe(0);
         expect(executed[0]).toEqual({
           credential: 'Bearer catalog-owner-assertion',
-          options: { baseUrl: new URL('https://catalog.example.test') },
+          options: { baseUrl: new URL('https://catalog.example.test'), compositionRevision: 'a'.repeat(64) },
           payload: { productRef },
           requestCorrelation: trusted.requestCorrelationId,
         });

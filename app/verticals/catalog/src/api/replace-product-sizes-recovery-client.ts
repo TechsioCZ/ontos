@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ReplaceProductSizesRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ReplaceProductSizesRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeReplaceProductSizesRecovery = (
   payload: ReplaceProductSizesRecoveryRequest,
   ...[requestCorrelation, options = {}]: ReplaceProductSizesRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeReplaceProductSizesRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeReplaceProductSizesRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

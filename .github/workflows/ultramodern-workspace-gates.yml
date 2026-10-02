@@ -623,10 +623,18 @@ jobs:
         shard: [1, 2, 3, 4, 5]
         include:
           - { shard: 1, proof: none, units: verticals/catalog }
-          - { shard: 2, proof: none, units: verticals/commerce-customer-context verticals/storefront-registry }
+          - {
+              shard: 2,
+              proof: none,
+              units: verticals/commerce-customer-context verticals/storefront-registry,
+            }
           - { shard: 3, proof: none, units: verticals/assortment apps/shell-super-app }
           - { shard: 4, proof: none, units: verticals/party-registry verticals/inventory }
-          - { shard: 5, proof: node, units: verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog }
+          - {
+              shard: 5,
+              proof: node,
+              units: verticals/commerce-market-catalog verticals/price-group-catalog verticals/pricing verticals/payment-term-catalog,
+            }
     env:
       MODERN_PUBLIC_SITE_URL: http://localhost:8080
       ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
@@ -722,7 +730,6 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm active-composition:publish prove-build
 
-
   cloudflare-artifact-build:
     name: Build cloudflare artifacts (${{ matrix.shard }}/5)
     needs: [queue-proof]
@@ -741,8 +748,16 @@ jobs:
           - { shard: 1, proof: topology, units: verticals/assortment verticals/pricing }
           - { shard: 2, proof: none, units: verticals/party-registry verticals/price-group-catalog }
           - { shard: 3, proof: outputs, units: verticals/catalog verticals/storefront-registry }
-          - { shard: 4, proof: none, units: verticals/commerce-customer-context apps/shell-super-app }
-          - { shard: 5, proof: none, units: verticals/inventory verticals/commerce-market-catalog verticals/payment-term-catalog }
+          - {
+              shard: 4,
+              proof: none,
+              units: verticals/commerce-customer-context apps/shell-super-app,
+            }
+          - {
+              shard: 5,
+              proof: none,
+              units: verticals/inventory verticals/commerce-market-catalog verticals/payment-term-catalog,
+            }
     env:
       # Placeholder data-plane IDs: locally a Worker's HYPERDRIVE binding connects to the proof's
       # PostgreSQL, its SPICEDB binding is served by a local gateway Worker and its composition KV
@@ -1166,24 +1181,112 @@ jobs:
             echo "shell=$shell"
           } >>"$GITHUB_OUTPUT"
 
-  # Migrations and SpiceDB go first and alone: the edge deploy and the Zerops units both wait only for this job,
-  # then run side by side. A plan without either finishes this job in seconds. Like the plan, it records no deployment.
+  # Incompatible first-cutover migrations require concrete provider quiescence first. Later releases
+  # already use the native authority fences; this guard then performs no provider stop or deletion.
+  initial-composition-cutover-guard:
+    name: Verify first-cutover provider quiescence before migrations
+    if: >-
+      ${{ !cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success'
+      && (needs.deploy-target.outputs.target == 'zerops' || needs.edge-plan.result == 'success') }}
+    needs: [workspace-gates, deploy-target, deploy-plan, edge-plan]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ needs.deploy-target.outputs.target == 'cloudflare' && needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
+      deployment: false
+    concurrency:
+      group: zerops-${{ inputs.environment || 'stage' }}
+      cancel-in-progress: false
+    permissions:
+      actions: read
+      contents: read
+    env:
+      DEPLOY_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
+      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
+      ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE: ${{ vars.ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE }}
+      ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE: .initial-composition-cutover/initial-composition-cutover-receipt.json
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout main revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install the app workspace
+        uses: ./.github/actions/install-app
+
+      - name: Download the initial provider quiescence receipt
+        if: vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: initial-composition-cutover-receipt
+          path: app/.initial-composition-cutover
+          github-token: ${{ github.token }}
+          run-id: ${{ vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID }}
+
+      - name: Connect the runner to the private Zerops database network
+        id: composition-vpn
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      - name: Require native provider quiescence before the first authority exists
+        working-directory: app
+        run: mise exec -- pnpm active-composition:publish verify-initial-cutover --environment "$DEPLOY_ENVIRONMENT"
+
+      - name: Capture the approved Shell pins before migration
+        if: needs.deploy-target.outputs.target == 'cloudflare' && !contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
+        working-directory: app
+        run: mise exec -- pnpm active-composition:publish capture-approved-snapshot --environment "$DEPLOY_ENVIRONMENT" --snapshot-file "$RUNNER_TEMP/retained-approved-shell-snapshot.json"
+
+      - name: Archive the approved snapshot for the unchanged Shell
+        if: needs.deploy-target.outputs.target == 'cloudflare' && !contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: retained-approved-shell-snapshot
+          path: ${{ runner.temp }}/retained-approved-shell-snapshot.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
+
+  # A schema change drains and seals the old authority before touching its database. The native
+  # publisher session lock stays held through verified migration and migrator stop completion.
   deploy-migrations:
     name: Migrate the environment's database and SpiceDB after the gates
-    if: ${{ !cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success' }}
-    needs: [workspace-gates, deploy-target, deploy-plan]
+    if: ${{ !cancelled() && needs.workspace-gates.result == 'success' && needs.deploy-plan.result == 'success' && needs.initial-composition-cutover-guard.result == 'success' }}
+    needs: [workspace-gates, deploy-target, deploy-plan, initial-composition-cutover-guard]
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment:
-      name: ${{ needs.deploy-target.outputs.environment }}
+      name: ${{ needs.deploy-target.outputs.target == 'cloudflare' && needs.deploy-target.outputs.environment == 'stage' && 'stage-edge' || needs.deploy-target.outputs.environment }}
       deployment: false
-    # Migrations publish nothing, so they take their own lock, not the zerops group the composition refresh
-    # waits on: the publication guarantee lives entirely in deploy-zerops, which holds that group. Migrations
-    # stay backward compatible, so a refresh that runs after them still serves the previous deployment.
+    # Provider quiescence precedes the incompatible initial migration; publication fences govern later releases.
     concurrency:
       group: zerops-migrations-${{ inputs.environment || 'stage' }}
       cancel-in-progress: false
     permissions:
+      actions: read
       contents: read
     env:
       DEPLOY_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
@@ -1191,6 +1294,13 @@ jobs:
       ZEROPS_MIGRATOR_SERVICE_ID: ${{ vars.ZEROPS_MIGRATOR_SERVICE_ID }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_SPICEDB_SERVICE_ID: ${{ vars.ZEROPS_SPICEDB_SERVICE_ID }}
+      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
+      ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE: ${{ vars.ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE }}
+      ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE: .initial-composition-cutover/initial-composition-cutover-receipt.json
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
     steps:
       - name: Harden Runner
         if: env.INFRASTRUCTURE == 'true'
@@ -1209,18 +1319,21 @@ jobs:
         if: env.INFRASTRUCTURE == 'true'
         uses: ./.github/actions/install-app
 
+      - name: Download the initial provider retirement receipt for migration
+        if: needs.deploy-plan.outputs.migrator == 'true' && vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: initial-composition-cutover-receipt
+          path: app/.initial-composition-cutover
+          github-token: ${{ github.token }}
+          run-id: ${{ vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID }}
+
       - name: Install Zerops CLI
         if: env.INFRASTRUCTURE == 'true'
         # mise owns Node, so its shims must learn the globally installed zcli binary.
         run: |
           npm install --global @zerops/zcli@1.1.0
           mise reshim
-
-      - name: Authenticate to Zerops
-        if: env.INFRASTRUCTURE == 'true'
-        env:
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: zcli login "$ZEROPS_TOKEN"
 
       # app/zerops.yaml describes stage. Every push reads a copy that names the deploying environment, so
       # another environment's builds and runtimes never run stage-only behaviour. Production's copy also
@@ -1239,18 +1352,27 @@ jobs:
           mise exec -- pnpm --silent zerops:materialize-environment "${materialize_arguments[@]}"
           echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
 
+      - name: Connect the runner to the private Zerops database network
+        id: composition-vpn
+        if: needs.deploy-plan.outputs.migrator == 'true'
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
       - name: Run verified database migrations
         if: needs.deploy-plan.outputs.migrator == 'true'
         id: migrator
+        working-directory: app
         run: >-
-          zcli push
-          --working-dir .
+          mise exec -- pnpm active-composition:publish migrate
+          --environment "$DEPLOY_ENVIRONMENT"
           --zerops-yaml-path "$ZEROPS_YAML_PATH"
-          --workspace-state clean
-          --deploy-git-folder
           --project-id "$ZEROPS_PROJECT_ID"
           --service-id "$ZEROPS_MIGRATOR_SERVICE_ID"
-          --setup migrator
           --version-name "$GITHUB_SHA"
 
       - name: Show bounded migrator logs after failure
@@ -1262,14 +1384,6 @@ jobs:
           --service-id "$ZEROPS_MIGRATOR_SERVICE_ID"
           --limit 200
           --minimum-severity DEBUG
-
-      # zcli waits for the stop process and exits non-zero when it fails, so a migrator left running fails the deploy.
-      - name: Stop migrator after any attempted migration
-        if: always() && steps.migrator.outcome != 'skipped'
-        run: >-
-          zcli service stop
-          --project-id "$ZEROPS_PROJECT_ID"
-          --service-id "$ZEROPS_MIGRATOR_SERVICE_ID"
 
       - name: Deploy SpiceDB when affected
         if: needs.deploy-plan.outputs.spicedb == 'true'
@@ -1295,6 +1409,16 @@ jobs:
           --limit 200
           --minimum-severity DEBUG
 
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
+
   # The environment's deployment: the providers, outbox workers and Shell that run on Zerops, beside the edge deploy.
   deploy-zerops:
     name: Deploy the environment's Zerops services after merge to main
@@ -1310,6 +1434,7 @@ jobs:
       group: zerops-${{ inputs.environment || 'stage' }}
       cancel-in-progress: false
     permissions:
+      actions: read
       contents: read
     env:
       DEPLOY_ENVIRONMENT: ${{ needs.deploy-target.outputs.environment }}
@@ -1317,6 +1442,8 @@ jobs:
       OUTBOX_WORKER_MODE: ${{ needs.deploy-target.outputs.outbox-worker-mode }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ZEROPS_SHELL_SERVICE_ID: ${{ vars.ZEROPS_SHELL_SERVICE_ID }}
+      ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE: ${{ vars.ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE }}
+      ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE: .initial-composition-cutover/initial-composition-cutover-receipt.json
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
@@ -1332,18 +1459,21 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
+      - name: Download the initial provider quiescence receipt for Node publication
+        if: needs.deploy-plan.outputs.any == 'true' && env.DEPLOY_TARGET == 'zerops' && vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: initial-composition-cutover-receipt
+          path: app/.initial-composition-cutover
+          github-token: ${{ github.token }}
+          run-id: ${{ vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID }}
+
       - name: Install Zerops CLI
         if: needs.deploy-plan.outputs.any == 'true'
         # mise owns Node, so its shims must learn the globally installed zcli binary.
         run: |
           npm install --global @zerops/zcli@1.1.0
           mise reshim
-
-      - name: Authenticate to Zerops
-        if: needs.deploy-plan.outputs.any == 'true'
-        env:
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: zcli login "$ZEROPS_TOKEN"
 
       - name: Materialize the environment's zerops.yaml
         if: needs.deploy-plan.outputs.any == 'true'
@@ -1359,23 +1489,13 @@ jobs:
           mise exec -- pnpm --silent zerops:materialize-environment "${materialize_arguments[@]}"
           echo "ZEROPS_YAML_PATH=$ZEROPS_YAML_PATH" >>"$GITHUB_ENV"
 
-      - name: Resolve active Application Composition consumers
-        id: composition
-        if: needs.deploy-plan.outputs.any == 'true'
-        working-directory: app
-        run: mise exec -- pnpm --silent active-composition:publish consumers
-
-      - name: Deploy affected providers that do not consume the active composition
+      - name: Deploy affected providers
         if: needs.deploy-plan.outputs.providers != '[]'
         env:
-          CONSUMERS_JSON: ${{ steps.composition.outputs.consumers }}
-          PROVIDERS_JSON: ${{ needs.deploy-plan.outputs.providers }}
+          UNITS_JSON: ${{ needs.deploy-plan.outputs.providers }}
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: |
-          UNITS_JSON="$(jq -c --argjson consumers "$CONSUMERS_JSON" '[.[] | select(IN($consumers[]) | not)]' <<<"$PROVIDERS_JSON")"
-          export UNITS_JSON
-          app/scripts/push-zerops-units.sh
+        run: app/scripts/push-zerops-units.sh
 
       - name: Deploy Shell after affected providers
         if: needs.deploy-plan.outputs.shell == 'true'
@@ -1386,52 +1506,30 @@ jobs:
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: app/scripts/push-zerops-units.sh
 
-      # Consumers refuse to start without the snapshot. Publish the observed inventory without the consumers
-      # about to be deployed, so they start on a current snapshot, then observe them and publish it complete.
-      - name: Publish the active Application Composition before its consumers deploy
-        id: planned-consumers
-        if: needs.deploy-plan.outputs.any == 'true'
-        working-directory: app
-        env:
-          CONSUMERS_JSON: ${{ steps.composition.outputs.consumers }}
-          PROVIDERS_JSON: ${{ needs.deploy-plan.outputs.providers }}
-          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: |
-          planned="$(jq -c --argjson consumers "$CONSUMERS_JSON" '[.[] | select(IN($consumers[]))]' <<<"$PROVIDERS_JSON")"
-          echo "units=$planned" >> "$GITHUB_OUTPUT"
-          if [[ "$planned" == '[]' ]]; then
-            echo 'No composition consumer is planned; the complete publication follows.'
-            exit 0
-          fi
-          # On Cloudflare a new or moved Worker is unobservable until deploy-cloudflare ships it, so the
-          # consumers start on the current snapshot and publish-edge-composition publishes after the edge deploy.
-          if [[ "$DEPLOY_TARGET" == cloudflare ]]; then
-            echo 'The Cloudflare target publishes after the edge deploy; consumers start on the current snapshot.'
-            exit 0
-          fi
-          exclusions=()
-          while IFS= read -r unit; do
-            exclusions+=(--exclude-app "$unit")
-          done < <(jq -r '.[]' <<<"$planned")
-          mise exec -- pnpm active-composition:publish publish --environment "$DEPLOY_ENVIRONMENT" "${exclusions[@]}"
+      # Every publication stays inside the environment lock; all hosts read the same native KV value.
+      - name: Connect the runner to the private Zerops database network
+        id: composition-vpn
+        if: needs.deploy-plan.outputs.any == 'true' && env.DEPLOY_TARGET == 'zerops'
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
 
-      - name: Deploy affected composition consumers
-        if: steps.planned-consumers.outputs.units != '' && steps.planned-consumers.outputs.units != '[]'
-        env:
-          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
-          UNITS_JSON: ${{ steps.planned-consumers.outputs.units }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: app/scripts/push-zerops-units.sh
-
-      # On Cloudflare, publish-edge-composition publishes and restarts the consumers after the edge deploy.
-      - name: Publish the complete active Application Composition and restart its consumers
+      - name: Publish the complete active Application Composition
         if: needs.deploy-plan.outputs.any == 'true' && env.DEPLOY_TARGET == 'zerops'
         working-directory: app
         env:
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: mise exec -- pnpm active-composition:publish publish --environment "$DEPLOY_ENVIRONMENT" --restart-consumers
+          ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
+          COMPOSITION_CANDIDATE_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+        run: mise exec -- pnpm active-composition:publish publish --environment "$DEPLOY_ENVIRONMENT" --candidate-file "$COMPOSITION_CANDIDATE_FILE"
 
       # Switching OUTBOX_WORKER_MODE leaves the other mode's Outbox Workers running. The plan names them in every
       # run that deploys this mode's workers, so exactly one set of workers delivers the outbox.
@@ -1450,12 +1548,24 @@ jobs:
       - name: Show bounded Shell logs after failure
         if: failure() && steps.shell.outcome == 'failure'
         continue-on-error: true
+        env:
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: >-
           zcli service log
           --project-id "$ZEROPS_PROJECT_ID"
           --service-id "$ZEROPS_SHELL_SERVICE_ID"
           --limit 200
           --minimum-severity DEBUG
+
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
 
   # The edge deploy runs only when the repository is configured for Cloudflare: the
   # CLOUDFLARE_ACCOUNT_ID variable, the `stage-edge` CLOUDFLARE_API_TOKEN secret, and a complete
@@ -1475,6 +1585,7 @@ jobs:
       contents: read
     outputs:
       configured: ${{ steps.configuration.outputs.configured }}
+      workers_dev_subdomain: ${{ steps.configuration.outputs.workers_dev_subdomain }}
     steps:
       - name: Checkout the edge placement
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -1489,10 +1600,20 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           DEPLOY_TARGET: ${{ needs.deploy-target.outputs.target }}
+          CLOUDFLARE_WORKERS_DEV_SUBDOMAIN: ${{ vars.CLOUDFLARE_WORKERS_DEV_SUBDOMAIN }}
+          ONTOS_IMMUTABLE_RELEASE_SECRETS: ${{ secrets.ONTOS_IMMUTABLE_RELEASE_SECRETS }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+          ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
         run: |
           missing=()
           [[ -n "$CLOUDFLARE_ACCOUNT_ID" ]] || missing+=('the CLOUDFLARE_ACCOUNT_ID variable')
           [[ -n "$CLOUDFLARE_API_TOKEN" ]] || missing+=('the stage-edge CLOUDFLARE_API_TOKEN secret')
+          [[ -n "$CLOUDFLARE_WORKERS_DEV_SUBDOMAIN" ]] || missing+=('the CLOUDFLARE_WORKERS_DEV_SUBDOMAIN variable')
+          [[ -n "$ONTOS_IMMUTABLE_RELEASE_SECRETS" ]] || missing+=('the stage-edge ONTOS_IMMUTABLE_RELEASE_SECRETS secret')
+          [[ -n "$DATABASE_URL" && -n "$DATABASE_ADMIN_URL" ]] || missing+=('the stage-edge runtime and administrative database secrets')
+          [[ -n "$ZEROPS_PROJECT_ID" && -n "$ZEROPS_TOKEN" ]] || missing+=('the stage-edge Zerops project and private-network token')
           # The placed units bake the Shell origin into their API CORS allowlist, the output
           # verifier requires every Worker's public URL, and every Worker binds the private data
           # plane: PostgreSQL through its Hyperdrive config, SpiceDB through its Workers VPC service.
@@ -1501,6 +1622,7 @@ jobs:
           done < <(jq -r '.buildEnvironment as $environment | (["ULTRAMODERN_MF_DEV_ORIGIN", "ULTRAMODERN_CLOUDFLARE_HYPERDRIVE_ID", "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID", "ULTRAMODERN_CLOUDFLARE_COMPOSITION_KV_ID"] + [.units[] | "ULTRAMODERN_PUBLIC_URL_" + (ascii_upcase | gsub("-"; "_"))])[] | select(($environment[.] // "") == "")' app/topology/cloudflare-placement.json)
           if [[ ${#missing[@]} -eq 0 ]]; then
             echo 'configured=true' >>"$GITHUB_OUTPUT"
+            printf 'workers_dev_subdomain=%s\n' "$CLOUDFLARE_WORKERS_DEV_SUBDOMAIN" >>"$GITHUB_OUTPUT"
             exit 0
           fi
           echo 'configured=false' >>"$GITHUB_OUTPUT"
@@ -1514,12 +1636,9 @@ jobs:
           echo "::notice title=Edge deploy not configured::Missing ${joined//,/, }; edge units were not deployed."
 
   # Edge units (topology/cloudflare-placement.json) ship as Cloudflare Workers. edge-plan and edge-build
-  # wait only for the deploy target, so they run beside the migrations; deploy-cloudflare changes Workers
-  # only once deploy-migrations has migrated the database and SpiceDB, so Worker code never runs
-  # against an older schema. The Zerops units deploy beside them. The `stage-edge` environment keeps
-  # its own deployment history: edge-plan plans against the last successful edge deployment, so a
-  # failed or skipped edge deploy is never hidden by a successful Zerops one. Unconfigured
-  # repositories skip all three, so they record nothing.
+  # wait only for the deploy target. Retained artifact upload does not change the live Shell.
+  # Only successful publication followed by the approved ingress update records stage-edge history,
+  # so a failed promotion cannot hide the Shell build still needed by a later recovery.
   edge-plan:
     name: Plan the edge units to deploy
     if: ${{ !cancelled() && needs.edge-deploy-readiness.outputs.configured == 'true' }}
@@ -1530,7 +1649,8 @@ jobs:
       contents: read
       deployments: read
     outputs:
-      cloudflare: ${{ steps.impact.outputs.cloudflare }}
+      cloudflare: ${{ steps.selection.outputs.cloudflare }}
+      workers_dev_subdomain: ${{ needs.edge-deploy-readiness.outputs.workers_dev_subdomain }}
       cloudflare_retirements: ${{ steps.impact.outputs.cloudflare_retirements }}
     steps:
       - name: Harden Runner
@@ -1603,6 +1723,21 @@ jobs:
             "${base_arguments[@]}" \
             --head "$GITHUB_SHA"
 
+      - name: Select the complete reviewed release
+        id: selection
+        working-directory: app
+        env:
+          IMPACTED_UNITS_JSON: ${{ steps.impact.outputs.cloudflare }}
+          COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
+        run: |
+          git ls-files --error-unmatch "$COMPOSITION_INTENT_FILE" >/dev/null
+          printf '%s\n' "$IMPACTED_UNITS_JSON" >"$RUNNER_TEMP/impacted-edge-units.json"
+          mise exec -- pnpm exec node scripts/immutable-application-release.mts select \
+            --intent-file "$COMPOSITION_INTENT_FILE" \
+            --impacted-units-file "$RUNNER_TEMP/impacted-edge-units.json" \
+            --selection-file "$RUNNER_TEMP/reviewed-edge-units.json"
+          printf 'cloudflare=%s\n' "$(jq -c . "$RUNNER_TEMP/reviewed-edge-units.json")" >>"$GITHUB_OUTPUT"
+
   # Each planned unit builds on its own runner: a build is CPU-bound, and a hosted runner of this
   # private repository has two cores, so builds side by side on one runner take as long as in a row.
   # Building runs dependency code (bundlers, build plugins, the framework CLI), so these jobs get no
@@ -1634,7 +1769,25 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      # The build step runs the unit's `cloudflare:deploy` up to, but not including, Wrangler.
+      - name: Plan the immutable module artifact origin
+        timeout-minutes: 5
+        working-directory: app
+        env:
+          UNIT_ID: ${{ matrix.unit.id }}
+          WORKERS_DEV_SUBDOMAIN: ${{ needs.edge-plan.outputs.workers_dev_subdomain }}
+          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+        run: |
+          mkdir -p ".codex/reports/releases/$UNIT_ID"
+          if [[ "$UNIT_ID" == shell-super-app ]]; then
+            mise exec -- pnpm exec node scripts/immutable-shell-release.mts plan \
+              --workers-dev-subdomain "$WORKERS_DEV_SUBDOMAIN" \
+              --plan-file ".codex/reports/releases/$UNIT_ID/plan.json"
+          else
+            mise exec -- pnpm exec node scripts/immutable-application-release.mts plan \
+              --vertical "$UNIT_ID" --workers-dev-subdomain "$WORKERS_DEV_SUBDOMAIN" \
+              --plan-file ".codex/reports/releases/$UNIT_ID/plan.json"
+          fi
+
       - name: Build and verify the planned edge unit
         timeout-minutes: 25
         working-directory: app
@@ -1645,32 +1798,33 @@ jobs:
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
         run: |
-          # Worker public URLs, binding names and the Shell origin are reviewed edge configuration
-          # (topology/cloudflare-placement.json `buildEnvironment`), so changing them replans every
-          # placed unit.
           while IFS=$'\t' read -r key value; do
             export "$key=$value"
           done < <(jq -r '.buildEnvironment | to_entries[] | [.key, .value] | @tsv' topology/cloudflare-placement.json)
+          # MODERN_ASSET_PREFIX is pinned for every unit. Shell retains its reviewed site/API origin.
+          while IFS=$'\t' read -r key value; do
+            export "$key=$value"
+          done < <(jq -r '.buildEnvironment | to_entries[] | [.key, .value] | @tsv' ".codex/reports/releases/$UNIT_ID/plan.json")
           mise exec -- pnpm --filter "$UNIT_PACKAGE" run cloudflare:build
           mise exec -- pnpm --filter "$UNIT_PACKAGE" exec ultramodern-create ultramodern cloudflare-output-verify --app "$UNIT_ID" --require-public-urls
-          # Wrangler deploys the name in the built config; the deploy snapshots and restores the
-          # planned topology name, so they must be the same Worker.
-          built_worker="$(mise exec -- pnpm --filter "$UNIT_PACKAGE" exec jq -r '.name' .output/wrangler.json)"
-          if [[ "$built_worker" != "$UNIT_WORKER" ]]; then
-            echo "$UNIT_ID builds Worker $built_worker, but topology places $UNIT_WORKER; no Worker was changed." >&2
-            exit 1
+          if [[ "$UNIT_ID" == shell-super-app ]]; then
+            built_worker="$(mise exec -- pnpm --filter "$UNIT_PACKAGE" exec jq -r '.name' .output/wrangler.json)"
+            [[ "$built_worker" == "$UNIT_WORKER" ]] || exit 1
           fi
 
-      # Everything the build wrote inside the unit is ignored by git; node_modules is the install.
       - name: Pack the edge unit's build output
         working-directory: app
         env:
+          UNIT_ID: ${{ matrix.unit.id }}
           UNIT_PACKAGE: ${{ matrix.unit.packageName }}
         run: |
           unit_directory="$(realpath --relative-to=. "$(mise exec -- pnpm --filter "$UNIT_PACKAGE" exec pwd)")"
+          files="$RUNNER_TEMP/edge-unit-files"
           git ls-files --others --ignored --exclude-standard --directory -z -- "$unit_directory" \
-            | grep -zv '/node_modules/$' \
-            | tar --null --files-from=- --create --zstd --file "$RUNNER_TEMP/edge-unit.tar.zst"
+            | grep -zv '/node_modules/$' >"$files"
+          test -f ".codex/reports/releases/$UNIT_ID/plan.json"
+          printf '%s\0' ".codex/reports/releases/$UNIT_ID" >>"$files"
+          tar --null --files-from="$files" --create --zstd --file "$RUNNER_TEMP/edge-unit.tar.zst"
 
       - name: Upload the edge unit's build output
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1682,24 +1836,24 @@ jobs:
           retention-days: 1
 
   deploy-cloudflare:
-    name: Deploy edge units to Cloudflare Workers after the stage migration
+    name: Retain the reviewed Cloudflare release artifacts
     # Results are checked explicitly: a merge-queue-proven run skips the gates, and a skipped ancestor would
     # otherwise skip every job below it through the implicit success().
-    # A plan with no units skips edge-build; the deploy still runs, so its deployment records the revision.
+    # A plan with no units skips edge-build; the artifact job still assembles its complete candidate.
     if: >-
       ${{ !cancelled() && needs.deploy-migrations.result == 'success' && needs.edge-plan.result == 'success'
       && (needs.edge-build.result == 'success' || (needs.edge-build.result == 'skipped' && needs.edge-plan.outputs.cloudflare == '[]')) }}
     needs: [deploy-target, deploy-migrations, edge-plan, edge-build]
     runs-on: ubuntu-latest
-    # One edge deploy at a time; a newer pending run replaces an older one, and it plans from the last
-    # successful edge deployment, so it ships the skipped run's changes too.
+    # Artifact creation, authority changes, refresh and publication share the environment lock.
     concurrency:
-      group: edge-stage
+      group: zerops-stage
       cancel-in-progress: false
-    # Step timeouts leave the restore step its own budget inside the job deadline, so a hung
-    # deploy or proof still ends with every changed Worker restored.
+    # Failed releases remain retained. Database or queue changes forbid automatic code rollback.
     timeout-minutes: 90
-    environment: stage-edge
+    environment:
+      name: stage-edge
+      deployment: false
     permissions:
       contents: read
       deployments: read
@@ -1740,245 +1894,156 @@ jobs:
               echo "Edge unit $id has no built .output/wrangler.json; no Worker was changed." >&2
               exit 1
             fi
+            test -f ".codex/reports/releases/$id/plan.json"
           done
 
-      - name: Deploy planned edge units in dependency order
+      - name: Connect the runner to the private Zerops database network
+        id: composition-vpn
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      - name: Deploy the reviewed immutable module releases
         id: deploy
-        timeout-minutes: 15
+        timeout-minutes: 45
         working-directory: app
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_UNITS_JSON: ${{ needs.edge-plan.outputs.cloudflare }}
-          EDGE_DEPLOY_STATE: ${{ runner.temp }}/edge-deploy-state.tsv
-          EDGE_DEPLOYED_VERSIONS: ${{ runner.temp }}/edge-deployed-versions.tsv
-          EDGE_PROVEN_MARKER: 'Proven by cloudflare:proof at '
+          ALL_RELEASE_SECRETS: ${{ secrets.ONTOS_IMMUTABLE_RELEASE_SECRETS }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
         run: |
-          # Snapshot every planned Worker's rollback target before changing any of them: the version
-          # of its latest deployment recorded as proven (see "Record the proven edge Worker
-          # versions"). The active version is no target by itself: a secret change or a manual deploy
-          # makes a new version nobody proved. A Worker with history but no proven deployment is
-          # recorded as `unproven` and is never rolled back. Only Cloudflare's "Worker not found"
-          # (API code 10007) means a first deployment; any other failure aborts before anything is
-          # deployed.
-          mapfile -t units < <(jq -r '.[] | [.packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
-          declare -A previous_versions=()
+          mkdir -p "$RUNNER_TEMP/application-release-receipts"
+          mapfile -t units < <(jq -r '.[] | select(.id != "shell-super-app") | [.id, .path] | @tsv' <<<"$CLOUDFLARE_UNITS_JSON")
           for unit in "${units[@]}"; do
-            IFS=$'\t' read -r package worker <<<"$unit"
-            history="$RUNNER_TEMP/deployments-list-$worker.json"
-            status_log="$RUNNER_TEMP/deployments-list-$worker.log"
-            if mise exec -- pnpm --filter "$package" exec wrangler deployments list --name "$worker" --json >"$history" 2>"$status_log"; then
-              previous_version="$(jq -er --arg marker "$EDGE_PROVEN_MARKER" '
-                [.[] | select((.annotations["workers/message"] // "") | startswith($marker))]
-                | sort_by(.created_on) | last
-                | if . == null then "unproven" else .versions | map(select(.percentage == 100)) | .[0].version_id end
-              ' "$history")"
-              previous_versions["$worker"]="$previous_version"
-            elif grep -q 'code: 10007' "$status_log"; then
-              previous_versions["$worker"]=''
-            else
-              cat "$status_log" >&2
-              echo "Could not read the deployments of $worker; no Worker was changed." >&2
-              exit 1
-            fi
-          done
-          # Each Worker is recorded with its snapshot before its deploy starts, so the restore step
-          # covers a deploy that fails halfway.
-          # The version each deploy creates is read from Wrangler's output file, so the proof marks
-          # exactly the versions this run deployed.
-          : >"$EDGE_DEPLOY_STATE"
-          : >"$EDGE_DEPLOYED_VERSIONS"
-          for unit in "${units[@]}"; do
-            IFS=$'\t' read -r package worker <<<"$unit"
-            printf '%s\t%s\t%s\n' "$package" "$worker" "${previous_versions[$worker]}" >>"$EDGE_DEPLOY_STATE"
-            deploy_output="$RUNNER_TEMP/wrangler-deploy-$worker.ndjson"
-            WRANGLER_OUTPUT_FILE_PATH="$deploy_output" mise exec -- pnpm --filter "$package" exec wrangler deploy --config .output/wrangler.json
-            deployed_version="$(jq -ser 'map(select(.type == "deploy")) | last | .version_id' "$deploy_output")"
-            printf '%s\t%s\t%s\n' "$package" "$worker" "$deployed_version" >>"$EDGE_DEPLOYED_VERSIONS"
+            IFS=$'\t' read -r id unit_path <<<"$unit"
+            export ONTOS_IMMUTABLE_RELEASE_SECRETS
+            ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer --arg app "$id" '.[$app] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")"
+            mise exec -- pnpm exec node scripts/immutable-application-release.mts deploy \
+              --app-directory "$unit_path" \
+              --plan-file ".codex/reports/releases/$id/plan.json" \
+              --receipt-file "$RUNNER_TEMP/application-release-receipts/$id.json"
           done
 
-      - name: Prove the deployed edge units on their public URLs
-        timeout-minutes: 15
+      - name: Retain the changed Shell frontend artifacts
+        id: shell-deploy
+        timeout-minutes: 20
         working-directory: app
         env:
-          # The Access service token, so the proof passes once stage sits behind Cloudflare Access.
-          CF_ACCESS_CLIENT_ID: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_UNITS_JSON: ${{ needs.edge-plan.outputs.cloudflare }}
-          ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
-          ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
+          ALL_RELEASE_SECRETS: ${{ secrets.ONTOS_IMMUTABLE_RELEASE_SECRETS }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
         run: |
-          while IFS=$'\t' read -r key value; do
-            export "$key=$value"
-          done < <(jq -r '.buildEnvironment | to_entries[] | [.key, .value] | @tsv' topology/cloudflare-placement.json)
-          # Every unit is deployed by now, so their proofs only read public URLs and run side by side.
-          mapfile -t packages < <(jq -r '.[].packageName' <<<"$CLOUDFLARE_UNITS_JSON")
-          declare -A proofs=()
-          for package in "${packages[@]}"; do
-            mise exec -- pnpm --filter "$package" run cloudflare:proof >"$RUNNER_TEMP/edge-proof-${package//[@\/]/_}.log" 2>&1 &
-            proofs[$!]="$package"
-          done
-          failed=()
-          for pid in "${!proofs[@]}"; do
-            package="${proofs[$pid]}"
-            status=0
-            wait "$pid" || status=$?
-            echo "::group::Proof $package (exit $status)"
-            cat "$RUNNER_TEMP/edge-proof-${package//[@\/]/_}.log"
-            echo '::endgroup::'
-            if [[ $status -ne 0 ]]; then
-              failed+=("$package")
-            fi
-          done
-          if [[ ${#failed[@]} -gt 0 ]]; then
-            echo "::error title=Edge proof failed::${failed[*]} failed its proof on the public URL."
-            exit 1
+          # Retained frontend assets are separate from the one public UI/API ingress.
+          if jq -e 'any(.[]; .id == "shell-super-app")' <<<"$CLOUDFLARE_UNITS_JSON" >/dev/null; then
+            export ONTOS_IMMUTABLE_RELEASE_SECRETS
+            ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer '.["shell-super-app"] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")"
+            mise exec -- pnpm exec node scripts/immutable-shell-release.mts deploy \
+              --app-directory apps/shell-super-app \
+              --plan-file .codex/reports/releases/shell-super-app/plan.json \
+              --receipt-file "$RUNNER_TEMP/application-release-receipts/shell-super-app.json"
           fi
 
-      # Each version this run deployed is recorded as proven once its proof passed, by redeploying it
-      # at 100% with the proven marker as the deployment message. It must still be the active
-      # version: anything that replaced it since the proof was never proven. Traffic does not
-      # change; a later failed run rolls back to the newest version recorded this way.
-      - name: Record the proven edge Worker versions
+      - name: Archive the exact retained Shell release receipt
+        if: contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: shell-artifact-release-receipt
+          path: ${{ runner.temp }}/application-release-receipts/shell-super-app.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Download the approved snapshot captured before migration
+        if: ${{ !contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app') }}
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: retained-approved-shell-snapshot
+          path: ${{ runner.temp }}/retained-approved-shell
+
+      - name: Assemble the complete candidate from retained deployment receipts
+        id: candidate
         timeout-minutes: 5
         working-directory: app
         env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          EDGE_DEPLOYED_VERSIONS: ${{ runner.temp }}/edge-deployed-versions.tsv
-          EDGE_PROVEN_MARKER: 'Proven by cloudflare:proof at '
+          COMPOSITION_INTENT_FILE: ${{ vars.ONTOS_APPLICATION_COMPOSITION_CANDIDATE_FILE || 'topology/application-release-intent.json' }}
+          SHELL_SELECTED: ${{ contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app') }}
         run: |
-          mapfile -t deployed <"$EDGE_DEPLOYED_VERSIONS"
-          for unit in "${deployed[@]}"; do
-            IFS=$'\t' read -r package worker proven_version <<<"$unit"
-            active="$(mise exec -- pnpm --filter "$package" exec wrangler deployments status --name "$worker" --json \
-              | jq -er '.versions | map(select(.percentage == 100)) | .[0].version_id')"
-            if [[ "$active" != "$proven_version" ]]; then
-              echo "$worker serves $active, not the proven $proven_version; it is not recorded as proven." >&2
-              exit 1
-            fi
-            mise exec -- pnpm --filter "$package" exec wrangler versions deploy "$proven_version@100" --name "$worker" --message "$EDGE_PROVEN_MARKER$GITHUB_SHA" --yes
-          done
-
-      # Retirement is two-phase. The deploy that drops a Worker from placement leaves it running, so
-      # a rollback of its dependents still finds it. Once this run has proven the new topology, each
-      # retired Worker that still exists is reported for an operator to delete
-      # (`wrangler delete`); CI never deletes a Worker. The check is read-only and never fails the run.
-      - name: Report retired Workers that still exist
-        if: needs.edge-plan.outputs.cloudflare_retirements != '[]'
-        timeout-minutes: 5
-        working-directory: app
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_RETIREMENTS_JSON: ${{ needs.edge-plan.outputs.cloudflare_retirements }}
-        run: |
-          mapfile -t retirements < <(jq -r '.[] | [.packageName, .workerName] | @tsv' <<<"$CLOUDFLARE_RETIREMENTS_JSON")
-          for retirement in "${retirements[@]}"; do
-            IFS=$'\t' read -r package worker <<<"$retirement"
-            status_log="$RUNNER_TEMP/retired-status-$worker.log"
-            if mise exec -- pnpm --filter "$package" exec wrangler deployments status --name "$worker" --json >/dev/null 2>"$status_log"; then
-              echo "::warning title=Retired edge Worker still exists::No placed unit deploys $worker any more; delete it (wrangler delete --name $worker)."
-            elif grep -q 'code: 10007' "$status_log"; then
-              echo "$worker is retired"
-            else
-              echo "::warning title=Retired edge Worker not checked::Could not read $worker; check it is deleted."
-            fi
-          done
-
-      # Worker versions are immutable. After a failed deploy or proof, each Worker this run
-      # deployed returns to its snapshotted state: its newest proven version, or no Worker at all
-      # when this run created it. A Worker with no proven version is not rolled back and is
-      # reported. A Worker counts as restored only once that state is
-      # observed; anything left on the candidate is reported. A cancelled run restores too: its
-      # deploy may have stopped after some Workers changed.
-      - name: Restore the edge Workers this run deployed
-        if: (failure() || cancelled()) && steps.deploy.outcome != 'skipped'
-        timeout-minutes: 10
-        working-directory: app
-        env:
-          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          EDGE_DEPLOY_STATE: ${{ runner.temp }}/edge-deploy-state.tsv
-          EDGE_PROVEN_MARKER: 'Proven by cloudflare:proof at '
-        run: |
-          # A restore deploys a proven version, so its deployment carries the proven marker too:
-          # failed runs never push the newest proven deployment out of the listed history.
-          active_version() {
-            mise exec -- pnpm --filter "$1" exec wrangler deployments status --name "$2" --json \
-              | jq -er '.versions | map(select(.percentage == 100)) | .[0].version_id'
-          }
-          absent() {
-            local status_log="$RUNNER_TEMP/restore-status-$2.log"
-            ! active_version "$1" "$2" >/dev/null 2>"$status_log" && grep -q 'code: 10007' "$status_log"
-          }
-          deployed=()
-          if [[ -f "$EDGE_DEPLOY_STATE" ]]; then
-            mapfile -t deployed <"$EDGE_DEPLOY_STATE"
+          git ls-files --error-unmatch "$COMPOSITION_INTENT_FILE" >/dev/null
+          receipts=()
+          while IFS= read -r id; do
+            receipts+=(--receipt-file "$RUNNER_TEMP/application-release-receipts/$id.json")
+          done < <(jq -r '.modules[].appId' "$COMPOSITION_INTENT_FILE")
+          if [[ "$SHELL_SELECTED" == 'true' ]]; then
+            receipts+=(--shell-receipt-file "$RUNNER_TEMP/application-release-receipts/shell-super-app.json")
+          else
+            receipts+=(--retained-shell-snapshot-file "$RUNNER_TEMP/retained-approved-shell/retained-approved-shell-snapshot.json")
           fi
-          unrestored=()
-          # Restore in reverse deploy order: a unit that binds another returns to its previous version
-          # before its binding target does, so no consumer is left calling an older provider.
-          for (( index = ${#deployed[@]} - 1; index >= 0; index-- )); do
-            IFS=$'\t' read -r deployed_package deployed_worker previous_version <<<"${deployed[index]}"
-            if [[ "$previous_version" == unproven ]]; then
-              # No version of this Worker ever passed its proof, so none is known to work. It is not
-              # rolled back to a version that may lack its bindings, and the run fails.
-              unrestored+=("$deployed_worker (no proven version to restore; not rolled back)")
-              continue
-            fi
-            if [[ -z "$previous_version" ]]; then
-              if absent "$deployed_package" "$deployed_worker"; then
-                echo "$deployed_worker, which this run was creating, does not exist"
-              elif mise exec -- pnpm --filter "$deployed_package" exec wrangler delete --name "$deployed_worker" --force \
-                && absent "$deployed_package" "$deployed_worker"; then
-                echo "Removed $deployed_worker, which this run created"
-              else
-                unrestored+=("$deployed_worker (created by this run and not removed)")
-              fi
-              continue
-            fi
-            if [[ "$(active_version "$deployed_package" "$deployed_worker" 2>/dev/null)" == "$previous_version" ]]; then
-              echo "$deployed_worker still serves $previous_version"
-            elif mise exec -- pnpm --filter "$deployed_package" exec wrangler rollback "$previous_version" --name "$deployed_worker" --message "${EDGE_PROVEN_MARKER}an earlier run; restored after $GITHUB_SHA failed" --yes \
-              && [[ "$(active_version "$deployed_package" "$deployed_worker")" == "$previous_version" ]]; then
-              echo "Restored $deployed_worker to $previous_version"
-            else
-              unrestored+=("$deployed_worker (expected $previous_version)")
-            fi
-          done
-          for worker_state in "${unrestored[@]}"; do
-            echo "::error title=Edge Worker not restored::$worker_state is still serving $GITHUB_SHA"
-          done
-          [[ ${#unrestored[@]} -eq 0 ]]
+          mise exec -- pnpm exec node scripts/immutable-application-release.mts candidate \
+            --intent-file "$COMPOSITION_INTENT_FILE" "${receipts[@]}" \
+            --candidate-file "$RUNNER_TEMP/active-application-composition-candidate.json"
 
-  # On the Cloudflare target the snapshot observes the Workers, so it is published again once the edge
-  # deploy has replaced them, and the consumers left on Zerops (the outbox workers) restart on it.
+      - name: Upload the approved complete Application Composition candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: approved-application-composition-candidate
+          path: ${{ runner.temp }}/active-application-composition-candidate.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Preserve failed release artifacts
+        if: failure() || cancelled()
+        run: |
+          echo 'Immutable release artifacts remain retained. Promotion was not approved; no automatic rollback or release deletion is safe after database or queue changes.'
+
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
+
+  # The complete edge release is published once its artifacts are observable. Publication and
+  # readback hold the same stage lock as refresh; there is no detached second KV writer.
   publish-edge-composition:
-    name: Publish the active Application Composition after the edge deploy
+    name: Publish the complete Application Composition after the edge deploy
     if: >-
       ${{ !cancelled() && needs.deploy-zerops.result == 'success' && needs.deploy-cloudflare.result == 'success'
       && needs.deploy-target.outputs.target == 'cloudflare' }}
-    # It restarts the Zerops consumers, so it also waits for deploy-zerops to finish deploying them.
     needs: [deploy-target, deploy-zerops, deploy-cloudflare]
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Publishing is not a deployment: it must not become the stage deploy's diff base.
     environment:
-      name: stage
+      name: stage-edge
       deployment: false
     concurrency:
       group: zerops-stage
       cancel-in-progress: false
     permissions:
+      actions: read
       contents: read
-    outputs:
-      edge-consumers: ${{ steps.edge-consumers.outputs.edge_consumers }}
-      snapshot: ${{ steps.publish.outputs.snapshot }}
     env:
       DEPLOY_TARGET: cloudflare
       OUTBOX_WORKER_MODE: ${{ needs.deploy-target.outputs.outbox-worker-mode }}
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
+      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
+      COMPOSITION_CANDIDATE_FILE: .composition-candidate/active-application-composition-candidate.json
+      ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE: ${{ vars.ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE }}
+      ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE: .initial-composition-cutover/initial-composition-cutover-receipt.json
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
@@ -1993,39 +2058,65 @@ jobs:
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      - name: Publish the observed Workers and restart the Zerops consumers
-        id: publish
+      - name: Download this deployment's complete approved candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: approved-application-composition-candidate
+          path: app/.composition-candidate
+
+      - name: Download the initial provider quiescence receipt
+        if: vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: initial-composition-cutover-receipt
+          path: app/.initial-composition-cutover
+          github-token: ${{ github.token }}
+          run-id: ${{ vars.ONTOS_INITIAL_COMPOSITION_CUTOVER_RUN_ID }}
+
+      - name: Connect the runner to the private Zerops database network
+        id: composition-vpn
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      - name: Publish the complete observed release without restarting consumers
         working-directory: app
         env:
-          SNAPSHOT_FILE: ${{ runner.temp }}/active-application-composition.json
           STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
           ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: |
-          mise exec -- pnpm active-composition:publish publish --environment stage --restart-consumers \
-            --snapshot-file "$SNAPSHOT_FILE"
-          # The encoded snapshot is one JSON line, and it holds no secret.
-          echo "snapshot=$(<"$SNAPSHOT_FILE")" >>"$GITHUB_OUTPUT"
+        run: mise exec -- pnpm active-composition:publish publish --environment stage --candidate-file "$COMPOSITION_CANDIDATE_FILE"
 
-      - name: Resolve the placed Workers that consume the snapshot
-        id: edge-consumers
-        working-directory: app
-        run: mise exec -- pnpm --silent active-composition:publish edge-consumers
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
 
-  # A placed Worker has no Zerops project variable, and the snapshot outgrows a Worker secret, so the
-  # placed consumers read the publication from the stage composition KV namespace. Only stage-edge holds
-  # the Cloudflare token, so this runs there, without creating a deployment. Writing the key deploys nothing.
-  sync-edge-composition:
-    name: Hand the published Application Composition to its Worker consumers
+  # Old durable work finishes before publication. The live Shell changes afterward, while its
+  # native publication lock verifies that this exact retained release is still the active choice.
+  finalize-edge-deployment:
+    name: Activate the approved Shell ingress and record the edge deployment
     if: >-
-      ${{ !cancelled() && needs.publish-edge-composition.result == 'success'
-      && needs.publish-edge-composition.outputs.edge-consumers != '' && needs.publish-edge-composition.outputs.edge-consumers != '[]' }}
-    needs: [publish-edge-composition]
+      ${{ !cancelled() && needs.deploy-target.outputs.target == 'cloudflare'
+      && needs.edge-plan.result == 'success' && needs.deploy-cloudflare.result == 'success'
+      && needs.publish-edge-composition.result == 'success' }}
+    needs: [deploy-target, edge-plan, deploy-cloudflare, publish-edge-composition]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment:
-      name: stage-edge
-      deployment: false
+    timeout-minutes: 30
+    environment: stage-edge
+    concurrency:
+      group: zerops-stage
+      cancel-in-progress: false
     permissions:
+      actions: read
       contents: read
     steps:
       - name: Harden Runner
@@ -2033,17 +2124,74 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Checkout main revision
+      - name: Checkout the approved source revision
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Install the app workspace
         uses: ./.github/actions/install-app
 
-      - name: Write the snapshot to the composition KV namespace the consumer Workers read
+      - name: Download the exact changed Shell build
+        if: contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: edge-unit-shell-super-app
+          path: ${{ runner.temp }}/shell-build
+
+      - name: Download the exact retained Shell receipt
+        if: contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: shell-artifact-release-receipt
+          path: ${{ runner.temp }}/shell-receipt
+
+      - name: Unpack the approved Shell build
+        id: shell-unpack
+        if: contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
+        working-directory: app
+        run: |
+          tar --extract --zstd --file "$RUNNER_TEMP/shell-build/edge-unit.tar.zst"
+          test -f apps/shell-super-app/.output/wrangler.json
+          test -f .codex/reports/releases/shell-super-app/plan.json
+
+      - name: Connect the runner to the private Zerops database network
+        id: composition-vpn
+        if: contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: connect
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          database-url: ${{ secrets.DATABASE_URL }}
+          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
+
+      - name: Activate the currently approved Shell ingress
+        id: shell-ingress
+        if: contains(fromJSON(needs.edge-plan.outputs.cloudflare).*.id, 'shell-super-app')
+        timeout-minutes: 20
+        working-directory: app
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          SNAPSHOT_JSON: ${{ needs.publish-edge-composition.outputs.snapshot }}
-        run: app/scripts/put-edge-composition-snapshot.sh
+          ALL_RELEASE_SECRETS: ${{ secrets.ONTOS_IMMUTABLE_RELEASE_SECRETS }}
+          ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
+        run: |
+          export ONTOS_IMMUTABLE_RELEASE_SECRETS
+          ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer '.["shell-super-app"] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")"
+          mise exec -- pnpm exec node scripts/immutable-shell-release.mts ingress-deploy \
+            --app-directory apps/shell-super-app \
+            --receipt-file "$RUNNER_TEMP/shell-receipt/shell-super-app.json"
+
+      - name: Clear the runner-owned Zerops VPN
+        if: always() && steps.composition-vpn.outputs.state-directory != ''
+        uses: ./.github/actions/zerops-vpn
+        with:
+          operation: clear
+          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
+          token: ${{ secrets.ZEROPS_TOKEN }}
+          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
+          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}

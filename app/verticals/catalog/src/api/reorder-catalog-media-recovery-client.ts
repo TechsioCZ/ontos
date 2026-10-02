@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ReorderCatalogMediaRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ReorderCatalogMediaRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeReorderCatalogMediaRecovery = (
   payload: ReorderCatalogMediaRecoveryRequest,
   ...[requestCorrelation, options = {}]: ReorderCatalogMediaRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeReorderCatalogMediaRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeReorderCatalogMediaRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

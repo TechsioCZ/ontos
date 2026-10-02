@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface MarketBootstrapResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type MarketBootstrapResolutionAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeMarketBootstrapResolution = (
   payload: MarketBootstrapResolutionRequest,
   ...[requestCorrelation, options = {}]: MarketBootstrapResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeMarketBootstrapResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeMarketBootstrapResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

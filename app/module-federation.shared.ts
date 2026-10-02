@@ -17,26 +17,31 @@ export const createSharedRuntimeConfig = (versions: SharedRuntimeVersions) => ({
   '@modern-js/runtime': {
     requiredVersion: versions['@modern-js/runtime'],
     singleton: true,
+    strictVersion: true,
     treeShaking: false,
   },
   '@tanstack/react-router': {
     requiredVersion: versions['@tanstack/react-router'],
     singleton: true,
+    strictVersion: true,
     treeShaking: false,
   },
   react: {
     requiredVersion: versions.react,
     singleton: true,
+    strictVersion: true,
     treeShaking: false,
   },
   'react-dom': {
     requiredVersion: versions['react-dom'],
     singleton: true,
+    strictVersion: true,
     treeShaking: false,
   },
   'react-dom/client': {
     requiredVersion: versions['react-dom'],
     singleton: true,
+    strictVersion: true,
     treeShaking: false,
   },
 });

@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface DuplicateCandidateDetailClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type DuplicateCandidateDetailAuthorizedInvocation = readonly [
@@ -48,6 +49,10 @@ export const executeDuplicateCandidateDetail = (
   payload: DuplicateCandidateDetailRequest,
   ...[requestCorrelation, options = {}]: DuplicateCandidateDetailOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeDuplicateCandidateDetailWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeDuplicateCandidateDetailWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

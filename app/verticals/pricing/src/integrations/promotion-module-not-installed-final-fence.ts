@@ -27,7 +27,11 @@ const unavailable = (reason: string, cause?: unknown) => {
 const assertModuleAbsentAt = (
   snapshot: ActiveApplicationCompositionSnapshot,
   instant: string,
+  compositionRevision: string,
 ): Effect.Effect<ActiveApplicationCompositionSnapshot, PricingOwnerMaterialEvidenceFenceGatewayUnavailable> => {
+  if (snapshot.composition.revision !== compositionRevision) {
+    return Effect.fail(unavailable('Promotion module-absence evidence belongs to a different composition revision'));
+  }
   const checkedAt = DateTime.makeUnsafe(instant);
   if (
     DateTime.toEpochMillis(snapshot.observedAt) > DateTime.toEpochMillis(checkedAt) ||
@@ -47,12 +51,16 @@ const assertModuleAbsentAt = (
   return Effect.succeed(snapshot);
 };
 
-const loadAbsentModuleProof = (load: ActiveApplicationCompositionServiceContract['load'], instant: string) =>
+const loadAbsentModuleProof = (
+  load: ActiveApplicationCompositionServiceContract['load'],
+  instant: string,
+  compositionRevision: string,
+) =>
   load.pipe(
     Effect.mapError((cause) =>
       unavailable('Authoritative active Application Composition evidence for Promotion is unavailable', cause),
     ),
-    Effect.flatMap((snapshot) => assertModuleAbsentAt(snapshot, instant)),
+    Effect.flatMap((snapshot) => assertModuleAbsentAt(snapshot, instant, compositionRevision)),
   );
 
 /**
@@ -66,13 +74,13 @@ export const makePromotionModuleNotInstalledFinalFenceGateway = (
 ): PricingOwnerMaterialEvidenceFenceGateway => ({
   confirmObservedGenerationsThrough: Effect.fn(
     'PromotionModuleNotInstalledFinalFence.confirmObservedGenerationsThrough',
-  )(function* confirmPromotionModuleAbsence({ observations, through, typedSources }) {
+  )(function* confirmPromotionModuleAbsence({ compositionRevision, observations, through, typedSources }) {
     if (observations.length !== 0 || (typedSources !== undefined && typedSources.length !== 0)) {
       return yield* unavailable(
         'Application Composition cannot confirm selected Promotion owner evidence or its generation',
       );
     }
-    const snapshot = yield* loadAbsentModuleProof(load, through);
+    const snapshot = yield* loadAbsentModuleProof(load, through, compositionRevision);
     return {
       confirmations: [],
       verifiedThrough: DateTime.formatIso(DateTime.subtract(snapshot.validUntil, { milliseconds: 1 })),
@@ -80,7 +88,7 @@ export const makePromotionModuleNotInstalledFinalFenceGateway = (
   }),
   verifyOpaqueProofsAgainstCurrentState: Effect.fn(
     'PromotionModuleNotInstalledFinalFence.verifyOpaqueProofsAgainstCurrentState',
-  )(function* verifyPromotionModuleAbsence({ sources, typedSources, verificationContext }) {
+  )(function* verifyPromotionModuleAbsence({ compositionRevision, sources, typedSources, verificationContext }) {
     if (sources.length !== 0 || (typedSources !== undefined && typedSources.length !== 0)) {
       return yield* unavailable('Application Composition cannot verify selected Promotion contribution proof material');
     }
@@ -89,7 +97,7 @@ export const makePromotionModuleNotInstalledFinalFenceGateway = (
         'Exact candidate evaluation context is required for Promotion module-absence verification',
       );
     }
-    const snapshot = yield* loadAbsentModuleProof(load, verificationContext.evaluatedAt);
+    const snapshot = yield* loadAbsentModuleProof(load, verificationContext.evaluatedAt, compositionRevision);
     return {
       completedAt: DateTime.formatIso(snapshot.observedAt),
       observations: [],

@@ -104,6 +104,7 @@ export const verifyCurrentStorefrontApplicationV1Read = defineRead(
     schemaVersion: '1',
   },
   handleVerifyCurrentStorefrontApplicationV1,
-  (transaction, scope) => currentStorefrontApplicationPersistenceForScope(transaction, scope),
+  (transaction, scope, compositionRevision) =>
+    currentStorefrontApplicationPersistenceForScope(transaction, scope, compositionRevision),
   () => ({ kind: 'module', moduleId: storefrontRegistryModuleKey }),
 );

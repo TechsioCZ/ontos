@@ -5,6 +5,8 @@ import { describe, expect, it } from 'effect-rstest';
 import { CommercialContextGatewayCredentialService } from '../../shared/domain/commercial-context-gateway-credential.ts';
 import { commercialContextAssessmentPortFromEnvironment } from '../../src/integrations/commercial-context-evidence.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '22222222-2222-4222-8222-222222222222';
 const legalEntityId = '33333333-3333-4333-8333-333333333333';
 const assessedAt = DateTime.makeUnsafe('2026-09-27T10:00:00.000Z');
@@ -67,7 +69,7 @@ describe('Pricing commercial-context evidence integration', () => {
     Effect.gen(function* assessExactCommercialContext() {
       const requests: unknown[] = [];
       const port = yield* commercialContextAssessmentPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'define-price-commercial-context' },
+        { compositionRevision, legalEntityId, requestCorrelation: 'define-price-commercial-context' },
         (payload, credential, requestCorrelation, options) =>
           Effect.sync(() => {
             requests.push({ credential: Redacted.value(credential), options, payload, requestCorrelation });
@@ -85,7 +87,7 @@ describe('Pricing commercial-context evidence integration', () => {
       expect(requests).toEqual([
         {
           credential: 'Bearer market-owner-assertion',
-          options: { baseUrl: new URL('https://commerce-market.example.test') },
+          options: { baseUrl: new URL('https://commerce-market.example.test'), compositionRevision },
           payload: { at: assessedAt },
           requestCorrelation: 'define-price-commercial-context',
         },
@@ -98,7 +100,7 @@ describe('Pricing commercial-context evidence integration', () => {
   it.effect('returns definite invalidity for a complete snapshot without the exact tuple', () =>
     Effect.gen(function* rejectUnconfiguredTuple() {
       const port = yield* commercialContextAssessmentPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'define-price-commercial-context' },
+        { compositionRevision, legalEntityId, requestCorrelation: 'define-price-commercial-context' },
         () => Effect.succeed(response),
       );
 
@@ -128,7 +130,7 @@ describe('Pricing commercial-context evidence integration', () => {
         },
       ]) {
         const port = yield* commercialContextAssessmentPortFromEnvironment(
-          { legalEntityId, requestCorrelation: 'define-price-commercial-context' },
+          { compositionRevision, legalEntityId, requestCorrelation: 'define-price-commercial-context' },
           () => Effect.succeed(ownerResponse),
         );
         const failure = yield* port.assess({ assessedAt, commercialScope, tenantId }).pipe(Effect.flip);
@@ -141,7 +143,7 @@ describe('Pricing commercial-context evidence integration', () => {
     let credentialCalls = 0;
     return Effect.gen(function* rejectSubstitutedSeller() {
       const port = yield* commercialContextAssessmentPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'define-price-commercial-context' },
+        { compositionRevision, legalEntityId, requestCorrelation: 'define-price-commercial-context' },
         () => Effect.die('must not call the Commerce Market owner'),
       );
       const result = yield* port.assess({

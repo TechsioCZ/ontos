@@ -504,7 +504,6 @@ Options:
           return options.routeRefresh(input);
         };
         yield* refresh({ appId: result.appId, workspaceRoot });
-        yield* refresh({ appId: 'shell-super-app', workspaceRoot });
         return yield* Effect.void;
       }),
     flags: ['authorization', 'page', 'permission', 'url', 'vertical'],

@@ -1,9 +1,12 @@
 import { expect, it } from 'effect-rstest';
-import { eq } from 'drizzle-orm';
-import { Effect, Schema } from 'effect';
+import { eq, inArray, sql } from 'drizzle-orm';
+import { Effect, Predicate, Schema } from 'effect';
 import { makeCoreDatabase } from '../../src/db/client.ts';
-import { loadDatabaseConfig } from '../../src/db/config.ts';
-import { legalEntities, tenants } from '../../src/db/schema.ts';
+import { loadDatabaseConfig, loadDatabaseConnectionPair } from '../../src/db/config.ts';
+import { applicationCompositionAuthority, coreRelations, legalEntities, tenants } from '../../src/db/schema.ts';
+import type { CoreTransaction } from '../../src/db/types.ts';
+import { lockApplicationCompositionPublication } from '../../src/modules/application-composition-authority.ts';
+import { makeTestDatabaseFromClient, makeTestPgClient } from '../support/database.ts';
 import { defineScopedRoutine } from '../../src/db/scoped-routine.ts';
 import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import {
@@ -37,12 +40,18 @@ class OwnerProbeFailure extends Schema.TaggedError<OwnerProbeFailure>()('OwnerPr
 
 const CreatedPaymentTermPayloadSchema = Schema.TaggedStruct('created', {});
 
+const compositionRevision = 'a'.repeat(64);
+const promotedRevision = 'b'.repeat(64);
+
 const context = attestOutboxWorkerHandlerContext({
   actorPrincipalId: '32000000-0000-4000-8000-000000000001',
   attemptNumber: 1,
   claimId: 'claim-1',
+  compositionRevision,
+  consumerModuleKey: 'commerce.customer-context',
   deliveryId: 'delivery-1',
   domainEventId: 'event-1',
+  legalEntityScope: 'required',
   messageId: 'message-1',
   producerModuleKey: 'party.registry',
   tenantId,
@@ -55,6 +64,48 @@ it.live('runs owner callbacks once inside every current legal-entity scope of th
   Effect.gen(function* legalEntityFanoutIntegration() {
     const configuration = yield* loadDatabaseConfig();
     const database = yield* makeCoreDatabase(configuration);
+    const connections = yield* loadDatabaseConnectionPair();
+    const admin = yield* makeTestPgClient(connections.admin.connectionString);
+    const adminDatabase = yield* makeTestDatabaseFromClient(admin, coreRelations);
+    yield* Effect.acquireRelease(
+      adminDatabase.transaction(
+        Effect.fn('seedFanoutCompositionAuthority')(function* seedFanoutAuthority(transaction: CoreTransaction) {
+          yield* lockApplicationCompositionPublication(transaction);
+          const [previous] = yield* transaction
+            .select()
+            .from(applicationCompositionAuthority)
+            .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+          const authority = {
+            authorityKey: 'active',
+            phase: 'active',
+            revision: compositionRevision,
+            subscriptionsJson: [],
+            validUntil: sql`clock_timestamp() + interval '1 hour'`,
+          } as const;
+          yield* transaction.insert(applicationCompositionAuthority).values(authority).onConflictDoUpdate({
+            set: authority,
+            target: applicationCompositionAuthority.authorityKey,
+          });
+          return previous;
+        }),
+      ),
+      (previous) =>
+        adminDatabase
+          .transaction(
+            Effect.fn('restoreFanoutCompositionAuthority')(function* restoreFanoutAuthority(
+              transaction: CoreTransaction,
+            ) {
+              yield* lockApplicationCompositionPublication(transaction);
+              yield* transaction
+                .delete(applicationCompositionAuthority)
+                .where(inArray(applicationCompositionAuthority.revision, [compositionRevision, promotedRevision]));
+              if (previous !== undefined) {
+                yield* transaction.insert(applicationCompositionAuthority).values(previous);
+              }
+            }),
+          )
+          .pipe(Effect.orDie),
+    );
     const cleanup = Effect.gen(function* cleanupFanoutFixtures() {
       yield* database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, tenantId));
       yield* database.executor.delete(legalEntities).where(eq(legalEntities.tenantId, otherTenantId));
@@ -155,5 +206,41 @@ it.live('runs owner callbacks once inside every current legal-entity scope of th
       ),
     );
     expect(Schema.is(CreatedPaymentTermPayloadSchema)(retryPayload)).toBe(true);
+
+    // A new cycle may admit the unchanged owner under B; an already claimed A context
+    // cannot adopt B when it later attempts an owner transaction.
+    yield* adminDatabase.transaction(
+      Effect.fn('promoteFanoutCompositionAuthority')(function* promoteFanoutAuthority(transaction: CoreTransaction) {
+        yield* lockApplicationCompositionPublication(transaction);
+        yield* transaction
+          .update(applicationCompositionAuthority)
+          .set({ revision: promotedRevision, validUntil: sql`clock_timestamp() + interval '1 hour'` })
+          .where(eq(applicationCompositionAuthority.revision, compositionRevision));
+      }),
+    );
+    let staleCallbacks = 0;
+    const staleFailure = yield* fanout
+      .forEachScope(context, () =>
+        Effect.sync(() => {
+          staleCallbacks += 1;
+        }),
+      )
+      .pipe(Effect.flip);
+    expect(Predicate.isTagged(staleFailure, 'OutboxWorkerLegalEntityScopeError')).toBe(true);
+    expect(staleCallbacks).toBe(0);
+    expect(context.compositionRevision).toBe(compositionRevision);
+    const nextContext = attestOutboxWorkerHandlerContext({
+      ...context,
+      claimId: 'claim-2',
+      compositionRevision: promotedRevision,
+      deliveryId: 'delivery-2',
+    });
+    const promotedScopes: string[] = [];
+    yield* fanout.forEachScope(nextContext, (scope) =>
+      Effect.sync(() => {
+        promotedScopes.push(scope.legalEntityId);
+      }),
+    );
+    expect(promotedScopes).toEqual([legalEntityOne, legalEntityTwo, suspended]);
   }),
 );

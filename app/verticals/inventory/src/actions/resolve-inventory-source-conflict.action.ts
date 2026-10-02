@@ -16,7 +16,6 @@ import {
   ResolveInventorySourceConflictResultSchema,
 } from '../../shared/actions/resolve-inventory-source-conflict.ts';
 import type { ResolveInventorySourceConflictPayload } from '../../shared/actions/resolve-inventory-source-conflict.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core composes the owner-local resolver inside this generated transaction-scoped Action factory; expires: 2027-03-31.
 import { makeExternalStockCorrelationResolver } from '../../shared/domain/external-stock-correlation.ts';
 import { inventoryBackendConfigurationPersistenceForScope } from '../persistence/inventory-backend-configuration-repository.ts';
 import { externalStockCorrelationPersistenceForScope } from '../persistence/external-stock-correlation-repository.ts';
@@ -24,7 +23,6 @@ import { inventorySourceAssertionPersistenceForScope } from '../persistence/inve
 import { inventorySourceConflictPersistenceForScope } from '../persistence/inventory-source-conflict-repository.ts';
 import { stockPositionPersistenceForScope } from '../persistence/stock-position-repository.ts';
 import type { InventorySourceConflictService } from '../services/inventory-source-conflict.service.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core invokes this owner-local constructor only inside the generated transaction-scoped Action factory; expires: 2027-03-31.
 import { makeInventorySourceConflictService } from '../services/inventory-source-conflict.service.ts';
 
 export {

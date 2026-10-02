@@ -2,17 +2,23 @@
 declare module 'cloudflare:workers' {
   /** What a KV namespace text read resolves: the stored text, or null for a missing key. */
   type WorkersKvTextRead = string | null;
+  type WorkersKvStreamRead = ReadableStream<Uint8Array> | null;
+
+  interface WorkersKvRead {
+    (key: string, type: 'text'): Promise<WorkersKvTextRead>;
+    (key: string, type: 'stream'): Promise<WorkersKvStreamRead>;
+  }
 
   /** A binding as core-runtime sees it: service and VPC bindings fetch, KV namespaces get; others are decoded where read. */
   interface CoreRuntimeWorkerBinding {
     readonly fetch?: typeof globalThis.fetch;
-    readonly get?: (key: string, type: 'text') => Promise<WorkersKvTextRead>;
+    readonly get?: WorkersKvRead;
   }
 
   interface CoreRuntimeWorkerBindings {
     /** Workers KV namespace holding the published active Application Composition under key `active`. */
     readonly ONTOS_ACTIVE_APPLICATION_COMPOSITION?: {
-      readonly get: (key: string, type: 'text') => Promise<WorkersKvTextRead>;
+      readonly get: WorkersKvRead;
     };
     /** Bindings by name: `HYPERDRIVE`, and the Worker service bindings to other OntOS units. */
     readonly [serviceBinding: string]: CoreRuntimeWorkerBinding | undefined;
@@ -20,5 +26,8 @@ declare module 'cloudflare:workers' {
     readonly SPICEDB?: { readonly fetch: typeof globalThis.fetch };
   }
 
-  export const env: CoreRuntimeWorkerBindings;
+  export const env: CoreRuntimeWorkerBindings & {
+    readonly ONTOS_MODULES?: { readonly get: (name: string) => { readonly fetch: typeof globalThis.fetch } };
+    readonly ONTOS_MODULES_NAMESPACE?: string;
+  };
 }

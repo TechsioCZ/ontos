@@ -175,18 +175,20 @@ export const handleExecuteCommitmentProtectionEstablishment = Effect.fn(
       }),
     ),
   );
-  const finalization = yield* completionPlanFor(execution, request, prepared);
   const completionScopeMatched = yield* Ref.make(false);
   yield* fanout.forEachScope(context, (scope) =>
     scope.legalEntityId === request.legalEntityId
       ? Ref.set(completionScopeMatched, true).pipe(
           Effect.andThen(
-            Option.match(finalization, {
-              onNone: () => publishTerminalCompletion(scope, request),
-              onSome: ([attempt, outcome]) =>
-                execution
-                  .finalize(scope, attempt, outcome)
-                  .pipe(Effect.andThen(publishTerminalCompletion(scope, request))),
+            Effect.gen(function* attemptAndCompleteInAdmittedScope() {
+              const finalization = yield* completionPlanFor(execution, request, prepared);
+              return yield* Option.match(finalization, {
+                onNone: () => publishTerminalCompletion(scope, request),
+                onSome: ([attempt, outcome]) =>
+                  execution
+                    .finalize(scope, attempt, outcome)
+                    .pipe(Effect.andThen(publishTerminalCompletion(scope, request))),
+              });
             }),
           ),
         )

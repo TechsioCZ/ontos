@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface AssortmentSetCompositionV1ClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type AssortmentSetCompositionV1AuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeAssortmentSetCompositionV1 = (
   payload: AssortmentSetCompositionV1Request,
   ...[requestCorrelation, options = {}]: AssortmentSetCompositionV1OperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeAssortmentSetCompositionV1WithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeAssortmentSetCompositionV1WithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

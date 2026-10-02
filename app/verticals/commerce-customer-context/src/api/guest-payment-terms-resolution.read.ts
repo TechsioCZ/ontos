@@ -146,7 +146,17 @@ export const guestPaymentTermsResolutionEntrypoint = defineTenantModuleEntrypoin
 });
 
 export const makeGuestPaymentTermsResolutionServices = Effect.fn('GuestPaymentTermsResolutionRead.makeServices')(
-  function* makeGuestPaymentTermResolutionServices(_transaction: ScopedTransactionExecutor, scope: OperationalScope) {
+  function* guestPaymentTermResolutionServices(
+    _transaction: ScopedTransactionExecutor,
+    scope: OperationalScope,
+    compositionRevision: string | undefined,
+  ) {
+    if (compositionRevision === undefined) {
+      return yield* new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Cross-owner Read credentials require a verified composition revision',
+      });
+    }
     const { legalEntityId, trustedStorefrontId } = scope;
     if (legalEntityId === undefined || trustedStorefrontId === undefined) {
       return yield* new OperationContextUnavailable({
@@ -155,11 +165,16 @@ export const makeGuestPaymentTermsResolutionServices = Effect.fn('GuestPaymentTe
       });
     }
     const catalog = yield* paymentTermCatalogPortFromEnvironment({
+      compositionRevision,
       legalEntityId,
       requestCorrelation: scope.correlationId,
     });
     // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Deterministic owner-port construction; neither constructor performs the governed read.
-    const policyService = yield* customerCommercePolicyAdministrationServiceFactory(_transaction, scope);
+    const policyService = yield* customerCommercePolicyAdministrationServiceFactory(
+      _transaction,
+      scope,
+      compositionRevision,
+    );
     const policy = customerCommercePaymentTermsPolicyResolver(
       'GUEST',
       {

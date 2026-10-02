@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CorrectSkuRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CorrectSkuRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCorrectSkuRecovery = (
   payload: CorrectSkuRecoveryRequest,
   ...[requestCorrelation, options = {}]: CorrectSkuRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCorrectSkuRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCorrectSkuRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RenameProductCategoryRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RenameProductCategoryRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRenameProductCategoryRecovery = (
   payload: RenameProductCategoryRecoveryRequest,
   ...[requestCorrelation, options = {}]: RenameProductCategoryRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRenameProductCategoryRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRenameProductCategoryRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

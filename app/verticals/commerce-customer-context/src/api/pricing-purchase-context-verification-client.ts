@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PricingPurchaseContextVerificationClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PricingPurchaseContextVerificationAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executePricingPurchaseContextVerification = (
   payload: PricingPurchaseContextVerificationRequest,
   ...[requestCorrelation, options = {}]: PricingPurchaseContextVerificationOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePricingPurchaseContextVerificationWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePricingPurchaseContextVerificationWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

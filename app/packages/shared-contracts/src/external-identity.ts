@@ -10,10 +10,15 @@ import {
   ReadPrincipalBindingResultSchema,
   ResolveExternalSubjectResultSchema,
 } from '@app/core-runtime/auth/external-identity-contracts';
-import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
+import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiSchema, Schema } from '@modern-js/bff-effect/effect-client';
 
-import { GatewayAudienceSchema, GatewayContextResponseSchema } from './gateway-context.ts';
-import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from './problem-details.ts';
+import {
+  GatewayAudienceSchema,
+  GatewayContextRequestSchema,
+  GatewayContextResponseSchema,
+  GatewayReloadRequiredProblemSchema,
+} from './gateway-context.ts';
+import { problemDetailsContentType, problemDetailsFields } from './problem-details.ts';
 
 const LegalEntityIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('LegalEntityId'));
 const authenticationRef = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500));
@@ -22,24 +27,43 @@ const mutationHeaders = Schema.Struct({
   'x-correlation-id': Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
 });
 
-export const ExternalIdentityInvalidProblemSchema = makeProblemDetailsSchema('ExternalIdentityInvalidProblem', 400);
-export const ExternalIdentityUnauthorizedProblemSchema = makeProblemDetailsSchema(
-  'ExternalIdentityUnauthorizedProblem',
-  401,
-);
-export const ExternalIdentityForbiddenProblemSchema = makeProblemDetailsSchema('ExternalIdentityForbiddenProblem', 403);
-export const ExternalIdentityNotFoundProblemSchema = makeProblemDetailsSchema('ExternalIdentityNotFoundProblem', 404);
-export const ExternalIdentityConflictProblemSchema = makeProblemDetailsSchema('ExternalIdentityConflictProblem', 409);
-export const ExternalIdentityIneligibleProblemSchema = makeProblemDetailsSchema(
-  'ExternalIdentityIneligibleProblem',
-  422,
-);
-export const ExternalIdentityThrottledProblemSchema = makeProblemDetailsSchema('ExternalIdentityThrottledProblem', 429);
-export const ExternalIdentityInternalProblemSchema = makeProblemDetailsSchema('ExternalIdentityInternalProblem', 500);
-export const ExternalIdentityUnavailableProblemSchema = makeRetryableProblemDetailsSchema(
-  'ExternalIdentityUnavailableProblem',
-  503,
-);
+export const ExternalIdentityInvalidProblemSchema = Schema.TaggedStruct('ExternalIdentityInvalidProblem', {
+  ...problemDetailsFields,
+  status: Schema.Literal(400),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(400));
+export const ExternalIdentityUnauthorizedProblemSchema = Schema.TaggedStruct('ExternalIdentityUnauthorizedProblem', {
+  ...problemDetailsFields,
+  status: Schema.Literal(401),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(401));
+export const ExternalIdentityForbiddenProblemSchema = Schema.TaggedStruct('ExternalIdentityForbiddenProblem', {
+  ...problemDetailsFields,
+  status: Schema.Literal(403),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(403));
+export const ExternalIdentityNotFoundProblemSchema = Schema.TaggedStruct('ExternalIdentityNotFoundProblem', {
+  ...problemDetailsFields,
+  status: Schema.Literal(404),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(404));
+export const ExternalIdentityConflictProblemSchema = Schema.TaggedStruct('ExternalIdentityConflictProblem', {
+  ...problemDetailsFields,
+  status: Schema.Literal(409),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(409));
+export const ExternalIdentityIneligibleProblemSchema = Schema.TaggedStruct('ExternalIdentityIneligibleProblem', {
+  ...problemDetailsFields,
+  status: Schema.Literal(422),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(422));
+export const ExternalIdentityThrottledProblemSchema = Schema.TaggedStruct('ExternalIdentityThrottledProblem', {
+  ...problemDetailsFields,
+  status: Schema.Literal(429),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(429));
+export const ExternalIdentityInternalProblemSchema = Schema.TaggedStruct('ExternalIdentityInternalProblem', {
+  ...problemDetailsFields,
+  status: Schema.Literal(500),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(500));
+export const ExternalIdentityUnavailableProblemSchema = Schema.TaggedStruct('ExternalIdentityUnavailableProblem', {
+  ...problemDetailsFields,
+  retryable: Schema.Literal(true),
+  status: Schema.Literal(503),
+}).pipe(HttpApiSchema.asJson({ contentType: problemDetailsContentType }), HttpApiSchema.status(503));
 
 export const externalIdentityProblems = [
   ExternalIdentityInvalidProblemSchema,
@@ -51,23 +75,28 @@ export const externalIdentityProblems = [
   ExternalIdentityThrottledProblemSchema,
   ExternalIdentityInternalProblemSchema,
   ExternalIdentityUnavailableProblemSchema,
+  GatewayReloadRequiredProblemSchema,
 ] as const;
 
 export const ReservePrincipalBindingRequestSchema = Schema.Struct({
   authenticationRef,
+  compositionRevision: GatewayContextRequestSchema.fields.compositionRevision,
   reservation: ReservePrincipalBindingPayloadSchema,
 });
 export const ActivatePrincipalBindingRequestSchema = Schema.Struct({
   activation: ActivatePrincipalBindingPayloadSchema,
   authenticationRef,
+  compositionRevision: GatewayContextRequestSchema.fields.compositionRevision,
 });
 export const ChangePrincipalBindingStatusRequestSchema = Schema.Struct({
   authenticationRef: Schema.optionalKey(authenticationRef),
   change: ChangePrincipalBindingStatusPayloadSchema,
+  compositionRevision: GatewayContextRequestSchema.fields.compositionRevision,
 });
 export const ResolveExternalSubjectRequestSchema = Schema.Struct({
   ...ExternalAuthenticationSubjectSchema.fields,
   authenticationRef,
+  compositionRevision: GatewayContextRequestSchema.fields.compositionRevision,
 });
 export const ExternalGatewayContextRequestSchema = Schema.Struct({
   ...ResolveExternalSubjectRequestSchema.fields,

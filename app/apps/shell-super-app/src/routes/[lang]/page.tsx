@@ -6,7 +6,7 @@ import { StatusText } from '@techsio/ui-kit/atoms/status-text';
 import { AuthenticatedDashboardLayout } from '../shell-frame';
 import { UltramodernRouteHead } from '../ultramodern-route-head';
 import { useShellControls } from '../use-shell-controls.ts';
-import type { HomePageModel } from './page.data.ts';
+import type { HomePageModel } from './home-page-model.ts';
 
 interface HomeViewProps {
   readonly initialModel: HomePageModel;
@@ -30,13 +30,17 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
     );
   }
 
-  if (model.state === 'unavailable') {
+  if (model.state === 'unavailable' || model.state === 'reload_required' || controls.reloadRequired) {
     return (
       <>
         <UltramodernRouteHead />
         <main className="shell:flex shell:min-h-screen shell:items-center shell:justify-center shell:bg-(--color-page-bg) shell:p-4">
           <StatusText aria-live="polite" showIcon status="error">
-            {t('shell.dashboard.unavailable')}
+            {t(
+              model.state === 'reload_required' || controls.reloadRequired
+                ? 'shell.moduleTarget.reload_required'
+                : 'shell.dashboard.unavailable',
+            )}
           </StatusText>
         </main>
       </>
@@ -47,6 +51,7 @@ export const HomeView = ({ initialModel }: HomeViewProps) => {
     <>
       <UltramodernRouteHead />
       <AuthenticatedDashboardLayout
+        {...(model.compositionRevision === undefined ? {} : { compositionRevision: model.compositionRevision })}
         {...(model.selectedLegalEntityId === undefined ? {} : { currentLegalEntityId: model.selectedLegalEntityId })}
         currentTenantId={model.identity.tenantId}
         identity={{ displayName: model.identity.displayName }}

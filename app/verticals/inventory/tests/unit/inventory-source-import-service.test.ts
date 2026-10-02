@@ -25,6 +25,8 @@ import {
 import { makeInventorySourceImportService } from '../../src/services/inventory-source-import.service.ts';
 import type { InventorySourceImportOperations } from '../../src/services/inventory-source-import.service.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const positionId = '22222222-2222-4222-8222-222222222222';
 const itemId = '33333333-3333-4333-8333-333333333333';
@@ -167,14 +169,17 @@ describe('Inventory source import service', () => {
       authorizationTargetRef: first.positionRef,
       items: [first],
     });
-    const scope = trustVerifiedGatewayPrincipalContext({
-      authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
-      authContextRef: 'test:inventory-source-import',
-      authMethod: 'api_key',
-      correlationId: 'inventory-source-import',
-      principalId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
-      tenantId,
-    });
+    const scope = trustVerifiedGatewayPrincipalContext(
+      {
+        authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+        authContextRef: 'test:inventory-source-import',
+        authMethod: 'api_key',
+        correlationId: 'inventory-source-import',
+        principalId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+        tenantId,
+      },
+      compositionRevision,
+    );
 
     expect(getActionBusinessPermissionTargetResolver(importSourceAssertionAction)?.(payload, scope)).toEqual({
       permission: 'inventory.migration.manage',
@@ -262,19 +267,23 @@ describe('Inventory source import service', () => {
         actionInvocationId: actionId,
         addDomainEvent: () => Effect.die(new Error('unexpected domain event')),
         addOutboxMessage: () => Effect.die(new Error('unexpected outbox message')),
+        compositionRevision,
         recordAuditEvidence: () => Effect.die(new Error('unexpected audit evidence')),
         recordDataAccess: (access) =>
           Effect.sync(() => {
             accesses.push(access);
           }),
-        scope: trustVerifiedGatewayPrincipalContext({
-          authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
-          authContextRef: 'test:inventory-source-import-handler',
-          authMethod: 'api_key',
-          correlationId: 'inventory-source-import-handler',
-          principalId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
-          tenantId,
-        }),
+        scope: trustVerifiedGatewayPrincipalContext(
+          {
+            authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1',
+            authContextRef: 'test:inventory-source-import-handler',
+            authMethod: 'api_key',
+            correlationId: 'inventory-source-import-handler',
+            principalId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa2',
+            tenantId,
+          },
+          compositionRevision,
+        ),
         services: { importBatch: () => Effect.succeed(expected) },
       };
 

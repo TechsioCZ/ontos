@@ -14,6 +14,7 @@ class RuntimeRoleBootstrapError extends Schema.TaggedError<RuntimeRoleBootstrapE
 
 const quoteLiteral = (value: string): string => `'${value.replaceAll("'", "''")}'`;
 const quoteIdentifier = (value: string): string => `"${value.replaceAll('"', '""')}"`;
+const tableExistsQuery = 'select pg_catalog.to_regclass($1) is not null as exists';
 
 const queryFailure = (cause: SqlError): RuntimeRoleBootstrapError =>
   new RuntimeRoleBootstrapError({
@@ -84,6 +85,31 @@ const bootstrapRuntimeRole = (
         }),
       { concurrency: 1, discard: true },
     );
+    const compositionAuthorityExists = yield* query<{ exists: boolean }>(client, tableExistsQuery, [
+      'core.application_composition_authority',
+    ]);
+    if (compositionAuthorityExists[0]?.exists) {
+      yield* query(client, 'revoke all on table core.application_composition_authority from public, ontos_runtime');
+      yield* query(client, 'grant select on table core.application_composition_authority to ontos_runtime');
+    }
+    const durableWorkExists = yield* query<{ exists: boolean }>(client, tableExistsQuery, [
+      'core.application_composition_durable_work',
+    ]);
+    if (durableWorkExists[0]?.exists) {
+      yield* query(client, 'revoke all on table core.application_composition_durable_work from public, ontos_runtime');
+      yield* query(client, 'grant select on table core.application_composition_durable_work to ontos_runtime');
+    }
+    const durableWorkRoutineExists = yield* query<{ exists: boolean }>(
+      client,
+      'select pg_catalog.to_regprocedure($1) is not null as exists',
+      ['core.track_application_composition_durable_work(text,text,text,boolean)'],
+    );
+    if (durableWorkRoutineExists[0]?.exists) {
+      yield* query(
+        client,
+        'revoke all on function core.track_application_composition_durable_work(text,text,text,boolean) from public, ontos_runtime',
+      );
+    }
     const pricingSchemaExists = yield* query<{ exists: boolean }>(
       client,
       'select exists(select 1 from pg_catalog.pg_namespace where nspname = $1) as exists',
@@ -97,11 +123,7 @@ const bootstrapRuntimeRole = (
         ({ privileges, table }) =>
           Effect.gen(function* grantPricingTablePrivilegesEffect() {
             const qualifiedTable = `pricing.${quoteIdentifier(table)}`;
-            const tableExists = yield* query<{ exists: boolean }>(
-              client,
-              'select pg_catalog.to_regclass($1) is not null as exists',
-              [`pricing.${table}`],
-            );
+            const tableExists = yield* query<{ exists: boolean }>(client, tableExistsQuery, [`pricing.${table}`]);
             if (tableExists[0]?.exists) {
               yield* query(client, `revoke all on table ${qualifiedTable} from public, ontos_runtime`);
               yield* query(client, `grant ${privileges.join(', ')} on table ${qualifiedTable} to ontos_runtime`);

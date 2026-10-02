@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PackageOptionHistoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PackageOptionHistoryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executePackageOptionHistory = (
   payload: PackageOptionHistoryRequest,
   ...[requestCorrelation, options = {}]: PackageOptionHistoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePackageOptionHistoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePackageOptionHistoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

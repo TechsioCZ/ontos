@@ -15,7 +15,9 @@ import { OpsShell, renderCommand } from '../ops/ops-shell.mts';
 import type { OpsCommand, OpsShellService } from '../ops/ops-shell.mts';
 import { SPICEDB_GRPC_TLS, SPICEDB_HTTP_TLS, pemBlocks } from '../ops/spicedb-tls.mts';
 import type { ZeropsService } from '../ops/stage-operations.mts';
+import { ZeropsApiError } from '../zerops-public-api-error.mts';
 import { ZeropsPublicApi } from '../zerops-public-api.mts';
+import type { ZeropsServiceStackIdentity } from '../zerops-public-api.mts';
 
 /**
  * In-memory stand-ins for everything the stage operations touch: Zerops and GitHub behind the
@@ -475,7 +477,13 @@ export interface FakeZeropsApi {
 const notFaked = (operation: string) => () => Effect.die(new Error(`the fake Zerops API has no ${operation}`));
 
 /** A service secret becomes visible to `zcli project env` as `<hostname>_<KEY>`, as on Zerops. */
-export const fakeZeropsApi = (stage: FakeStage): FakeZeropsApi => {
+export const fakeZeropsApi = (
+  stage: FakeStage,
+  serviceIdentities: ReadonlyMap<
+    string,
+    Pick<ZeropsServiceStackIdentity, 'base' | 'isSystem' | 'subdomainAccess'>
+  > = new Map(),
+): FakeZeropsApi => {
   const serviceSecrets: FakeServiceSecret[] = [];
   const layer = Layer.succeed(
     ZeropsPublicApi,
@@ -488,11 +496,31 @@ export const fakeZeropsApi = (stage: FakeStage): FakeZeropsApi => {
           stage.projectValues.set(`${hostname}_${key}`, content);
           stage.sensitiveKeys.add(`${hostname}_${key}`);
         }),
+      deleteService: (serviceId) =>
+        Effect.gen(function* deleteFakeService() {
+          if (!stage.services.some(({ id }) => id === serviceId)) {
+            yield* new ZeropsApiError({ message: `fake Zerops service ${serviceId} does not exist` });
+          }
+          stage.services = stage.services.filter(({ id }) => id !== serviceId);
+        }),
       enableSubdomainAccess: notFaked('enableSubdomainAccess'),
       findServiceStack: notFaked('findServiceStack'),
+      findServiceStackIdentity: (serviceId) =>
+        Effect.suspend(() => {
+          const service = stage.services.find(({ id }) => id === serviceId);
+          if (service === undefined) {
+            return Effect.succeed(Option.none());
+          }
+          const identity = serviceIdentities.get(serviceId);
+          if (identity === undefined) {
+            return Effect.fail(
+              new ZeropsApiError({ message: `fake Zerops service ${serviceId} has no native identity` }),
+            );
+          }
+          return Effect.succeed(Option.some({ ...identity, name: service.hostname, status: service.status }));
+        }),
       projectEnvFile: notFaked('projectEnvFile'),
       projectEnvs: notFaked('projectEnvs'),
-      restartService: notFaked('restartService'),
       serviceSecrets: (serviceId) =>
         Effect.sync(() => {
           const prefix = `${stage.services.find(({ id }) => id === serviceId)?.hostname ?? serviceId}_`;

@@ -9,6 +9,8 @@ import {
   CORE_SCHEMA_NAME,
   CORE_TABLE_INVENTORY,
   actionInvocations,
+  applicationCompositionAuthority,
+  applicationCompositionDurableWork,
   domainEvents,
   principals,
 } from '../../src/db/schema.ts';
@@ -24,7 +26,7 @@ const getColumn = (name: string) => {
   }
   return column;
 };
-it('exports exactly the 18 Core tables in PostgreSQL schema core', () => {
+it('exports exactly the Core table inventory in PostgreSQL schema core', () => {
   const exportedTables: PgTable[] = [];
   for (const value of Object.values(schemaExports)) {
     if (isPgTable(value)) {
@@ -43,6 +45,52 @@ it('exports exactly the 18 Core tables in PostgreSQL schema core', () => {
   expect(new Set(qualifiedNames).size).toBe(CORE_TABLE_INVENTORY.length);
   expect(qualifiedNames.some((name) => name.startsWith('public.'))).toBe(false);
   expect(qualifiedNames.some((name) => /^(?:auth|ticketing|properties|property|accounting)\./u.test(name))).toBe(false);
+});
+it('keeps publication authority singleton state admin-owned with one read-only runtime policy', () => {
+  const config = getTableConfig(applicationCompositionAuthority);
+  const columns = new Map(config.columns.map((column) => [column.name, column]));
+  expect(config.enableRLS).toBe(true);
+  expect(config.policies).toHaveLength(1);
+  const [policy] = config.policies;
+  expect(policy?.name).toBe('core_application_composition_authority_select');
+  expect(policy?.for).toBe('select');
+  expect(policy?.to).toBe('ontos_runtime');
+  expect(policy?.withCheck).toBeUndefined();
+  for (const name of [
+    'authority_key',
+    'revision',
+    'phase',
+    'durable_work_admission',
+    'valid_until',
+    'subscriptions_json',
+    'updated_at',
+  ]) {
+    expect(columns.get(name)?.notNull).toBe(true);
+  }
+  const checks = new Map(
+    config.checks.map((constraint) => [constraint.name, dialect.sqlToQuery(constraint.value).sql]),
+  );
+  expect(checks.get('core_application_composition_authority_key_ck')).toContain("= 'active'");
+  expect(checks.get('core_application_composition_authority_revision_ck')).toContain('^[a-f0-9]{64}$');
+  expect(checks.get('core_application_composition_authority_phase_ck')).toContain(
+    "('active', 'draining', 'sealed', 'migrated')",
+  );
+  expect(checks.get('core_application_composition_authority_durable_admission_ck')).toContain("('open', 'closed')");
+});
+it('keeps durable owner work keyed by owner, original release, and work identity with runtime read-only access', () => {
+  const config = getTableConfig(applicationCompositionDurableWork);
+  expect(config.enableRLS).toBe(true);
+  expect(config.primaryKeys).toHaveLength(1);
+  expect(config.primaryKeys[0]?.columns.map((column) => column.name)).toEqual([
+    'owner_module_key',
+    'original_revision',
+    'work_id',
+  ]);
+  expect(config.policies).toHaveLength(1);
+  expect(config.policies[0]?.name).toBe('core_application_composition_durable_work_select');
+  expect(config.policies[0]?.for).toBe('select');
+  expect(config.policies[0]?.to).toBe('ontos_runtime');
+  expect(config.policies[0]?.withCheck).toBeUndefined();
 });
 it('supports pre-authentication Action Invocation rows and indeterminate outcomes', () => {
   expect(getColumn('principal_id').notNull).toBe(false);

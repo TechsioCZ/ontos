@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface InventorySourceConflictDetailClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type InventorySourceConflictDetailAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeInventorySourceConflictDetail = (
   payload: InventorySourceConflictDetailRequest,
   ...[requestCorrelation, options = {}]: InventorySourceConflictDetailOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeInventorySourceConflictDetailWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeInventorySourceConflictDetailWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

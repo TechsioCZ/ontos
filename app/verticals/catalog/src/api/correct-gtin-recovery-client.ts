@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CorrectGtinRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CorrectGtinRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCorrectGtinRecovery = (
   payload: CorrectGtinRecoveryRequest,
   ...[requestCorrelation, options = {}]: CorrectGtinRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCorrectGtinRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCorrectGtinRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface GtinCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type GtinCurrentAuthorizedInvocation = readonly [
@@ -44,6 +45,10 @@ export const executeGtinCurrent = (
   payload: GtinCurrentRequest,
   ...[requestCorrelation, options = {}]: GtinCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeGtinCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeGtinCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

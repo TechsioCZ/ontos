@@ -5,7 +5,51 @@ import type {
   RunGatedModuleEntrypointInput,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
-import { Cause, Clock, Deferred, Duration, Effect } from 'effect';
+import { pinDocumentCompositionRevision } from '@app/shared-contracts';
+import { Cause, Clock, Deferred, Duration, Effect, Schema, Semaphore } from 'effect';
+
+import type { ResolvedModuleTarget } from '../../shared/api.ts';
+
+export class BrowserModuleRevisionConflict extends Schema.TaggedError<BrowserModuleRevisionConflict>()(
+  'BrowserModuleRevisionConflict',
+  { cause: Schema.optionalKey(Schema.Unknown) },
+) {}
+
+/** A browser document cannot replace an admitted release or a registered remote container. */
+export const pinBrowserModuleTarget = Effect.fn('ModuleEntrypointLoader.pinBrowserModuleTarget')(
+  function* pinBrowserModuleTargetEffect(target: ResolvedModuleTarget, browserDocument: Document) {
+    yield* pinDocumentCompositionRevision(target.compositionRevision, browserDocument).pipe(
+      Effect.catchTag('DocumentCompositionRevisionError', (cause) =>
+        Effect.fail(new BrowserModuleRevisionConflict({ cause })),
+      ),
+    );
+    const { federation } = target;
+    const artifact = `${federation.manifest.url}\n${federation.manifest.sha256}`;
+    const identityKey = Symbol.for(`ontos.browser-federation.remote.${federation.remoteName}`);
+    const previousArtifact = Object.getOwnPropertyDescriptor(browserDocument, identityKey);
+    if (
+      previousArtifact !== undefined &&
+      (previousArtifact.value !== artifact ||
+        previousArtifact.configurable === true ||
+        previousArtifact.writable === true)
+    ) {
+      return yield* new BrowserModuleRevisionConflict();
+    }
+    if (previousArtifact === undefined) {
+      yield* Effect.try({
+        catch: (cause) => new BrowserModuleRevisionConflict({ cause }),
+        try: () =>
+          Object.defineProperty(browserDocument, identityKey, {
+            configurable: false,
+            enumerable: false,
+            value: artifact,
+            writable: false,
+          }),
+      });
+    }
+    return yield* Effect.void;
+  },
+);
 
 export type SettledModuleEntrypointLoad<Value> =
   | {
@@ -20,6 +64,10 @@ export type IdentifiedSettledModuleEntrypointLoad<Identity, Value> = SettledModu
 
 /** Bound for independent external module loads so one navigation cannot fan out without limit. */
 export const MODULE_LOAD_CONCURRENCY = 8;
+
+// The same browser runtime serves every navigation. A timed-out uncancellable load keeps its
+// permit even when another route starts a separate batch.
+const moduleLoadPermits = Semaphore.makeUnsafe(MODULE_LOAD_CONCURRENCY);
 
 const safelyCheckCompatibility = <Value>(value: Value, isCompatible: (value: Value) => boolean): boolean => {
   try {
@@ -143,7 +191,7 @@ export const settleModuleEntrypointLoads = <Identity, Value>(
       );
       // Detached: the settlement fibers only observe promises the JS runtime is already executing
       // and cannot cancel them, so they outlive the caller's deadline by design.
-      const settlements = Effect.forEach(pending, settlePendingLoad, {
+      const settlements = Effect.forEach(pending, (load) => moduleLoadPermits.withPermit(settlePendingLoad(load)), {
         concurrency: MODULE_LOAD_CONCURRENCY,
         discard: true,
       });
@@ -190,9 +238,3 @@ export const loadModuleEntrypointComposition = Effect.fn('ModuleEntrypointLoader
     });
   },
 );
-
-/** A resolved BFF target is the capability token that permits the browser-side lazy registry lookup. */
-export const resolveThenLoadModuleTarget = <Target, Value, ResolutionError, LoadError, Requirements>(
-  resolution: Effect.Effect<Target, ResolutionError, Requirements>,
-  load: (target: Target) => Effect.Effect<Value, LoadError, Requirements>,
-): Effect.Effect<Value, ResolutionError | LoadError, Requirements> => resolution.pipe(Effect.flatMap(load));

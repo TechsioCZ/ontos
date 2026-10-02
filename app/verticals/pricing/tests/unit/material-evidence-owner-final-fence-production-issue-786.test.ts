@@ -10,7 +10,7 @@ import {
   PricingOwnerMaterialEvidenceFenceGatewayUnavailable,
   PricingPricingMaterialEvidenceFenceGateway,
   PricingPromotionMaterialEvidenceFenceGateway,
-  pricingOrdinaryCurrentPublicationLive,
+  makePricingMaterialEvidenceOwnerFinalFence,
 } from '../../src/integrations/material-evidence-owner-final-fence.ts';
 import type {
   PricingOwnerMaterialEvidenceGenerationConfirmation,
@@ -19,6 +19,7 @@ import type {
 } from '../../src/integrations/material-evidence-owner-final-fence.ts';
 import {
   PricingMaterialEvidenceChangedAtFinalFence,
+  PricingMaterialEvidenceOwnerFinalFence,
   verifyPricingMaterialEvidenceOwnerFence,
 } from '../../src/services/material-evidence-final-validation.service.ts';
 import type {
@@ -166,7 +167,9 @@ const ownerLayers = (overrides?: {
   );
 
 const live = (overrides?: Parameters<typeof ownerLayers>[0]) =>
-  pricingOrdinaryCurrentPublicationLive.pipe(Layer.provide(ownerLayers(overrides)));
+  Layer.effect(PricingMaterialEvidenceOwnerFinalFence, makePricingMaterialEvidenceOwnerFinalFence('revision:786')).pipe(
+    Layer.provide(ownerLayers(overrides)),
+  );
 
 const sources = [
   sourceFor('commerce.pricing', 'PRICE', '2026-09-28T12:00:00.100Z', 'price'),

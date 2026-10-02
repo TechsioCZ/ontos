@@ -31,8 +31,10 @@ import type {
 import {
   CommercePortalAccountSubjectSchema,
   EnrollmentActionInvocationIdSchema,
+  EnrollmentCompositionRevisionSchema,
   EnrollmentEvidenceReferenceSchema,
   EnrollmentAttemptIdSchema,
+  EnrollmentAttemptSnapshotSchema,
   EnrollmentKeySchema,
   EnrollmentLeaseTokenSchema,
   EnrollmentModuleKeySchema,
@@ -42,6 +44,7 @@ import {
   EnrollmentTenantIdSchema,
   EnrollmentTransitionKeySchema,
   RecordEnrollmentOutcomeInputSchema,
+  StartEnrollmentAttemptInputSchema,
 } from '../../shared/enrollment-contracts.ts';
 
 const tenantId = Schema.decodeSync(EnrollmentTenantIdSchema)('10000000-0000-4000-8000-000000000001');
@@ -55,6 +58,7 @@ const ownerModuleKey = Schema.decodeSync(EnrollmentModuleKeySchema)('commerce.po
 const transitionKey = Schema.decodeSync(EnrollmentTransitionKeySchema)('provider.account.create');
 const workerId = Schema.decodeSync(EnrollmentKeySchema)('worker-1');
 const failureCode = Schema.decodeSync(EnrollmentKeySchema)('provider_failed');
+const compositionRevision = Schema.decodeSync(EnrollmentCompositionRevisionSchema)('c'.repeat(64));
 const at = DateTime.makeUnsafe('2026-09-16T10:00:00.000Z');
 const subject: CommercePortalAccountSubject = Schema.decodeSync(CommercePortalAccountSubjectSchema)({
   authenticationNamespaceId: 'ontos.commerce.portal.better-auth.v1',
@@ -62,18 +66,30 @@ const subject: CommercePortalAccountSubject = Schema.decodeSync(CommercePortalAc
   subjectType: 'user',
 });
 
-const attempt = (overrides: Partial<EnrollmentAttemptSnapshot> = {}): EnrollmentAttemptSnapshot => ({
-  createdAt: at,
-  createdByPrincipalId: actorPrincipalId,
+const attempt = (overrides: Partial<EnrollmentAttemptSnapshot> = {}): EnrollmentAttemptSnapshot =>
+  Schema.decodeSync(Schema.toType(EnrollmentAttemptSnapshotSchema))({
+    compositionRevision,
+    createdAt: at,
+    createdByPrincipalId: actorPrincipalId,
+    intentDigest: 'a'.repeat(64),
+    intentKey,
+    journey: 'RETAIL_SELF_ENROLLMENT',
+    portalEnrollmentAttemptId: attemptId,
+    revision: 1,
+    state: 'IN_PROGRESS',
+    tenantId,
+    updatedAt: at,
+    ...overrides,
+  });
+
+const startInput = Schema.decodeSync(StartEnrollmentAttemptInputSchema)({
+  actionInvocationId: invocationId,
+  actorPrincipalId,
+  compositionRevision,
   intentDigest: 'a'.repeat(64),
   intentKey,
   journey: 'RETAIL_SELF_ENROLLMENT',
-  portalEnrollmentAttemptId: attemptId,
-  revision: 1,
-  state: 'IN_PROGRESS',
   tenantId,
-  updatedAt: at,
-  ...overrides,
 });
 
 const operation: EnrollmentOwnerOperationSnapshot = {
@@ -179,6 +195,67 @@ const completionAuthority = (
 
 const errorCode = (effect: Effect.Effect<unknown, CommerceEnrollmentAttemptError>) =>
   effect.pipe(Effect.match({ onFailure: (error) => error.code, onSuccess: () => 'unexpected' }));
+
+it.effect('passes the captured release to creation and preserves it when the Attempt is replayed', () =>
+  Effect.gen(function* preserveOriginalCompositionRevision() {
+    const receivedRevisions: string[] = [];
+    let durableAttempt: EnrollmentAttemptSnapshot | undefined;
+    const service = commerceEnrollmentAttemptServiceForPersistence(
+      makePersistence({
+        create: (input) => {
+          receivedRevisions.push(input.compositionRevision);
+          if (durableAttempt === undefined) {
+            durableAttempt = attempt({ compositionRevision: input.compositionRevision });
+            return Effect.succeed({ attempt: durableAttempt, outcome: 'CREATED' as const });
+          }
+          return Effect.succeed({ attempt: durableAttempt, outcome: 'EXISTING' as const });
+        },
+      }),
+      reconciliationAuthority,
+      completionAuthority(),
+    );
+    const created = yield* service.start(startInput);
+    const replayed = yield* service.start({ ...startInput, compositionRevision: 'd'.repeat(64) });
+    expect(receivedRevisions).toEqual([compositionRevision, 'd'.repeat(64)]);
+    expect(created.outcome).toBe('CREATED');
+    expect(replayed.outcome).toBe('EXISTING');
+    expect(created.attempt.compositionRevision).toBe(compositionRevision);
+    expect(replayed.attempt.compositionRevision).toBe(compositionRevision);
+  }),
+);
+
+it('requires a valid release revision on both Start input and durable Attempt snapshots', () => {
+  const { compositionRevision: _startRevision, ...missingStartRevision } = startInput;
+  const snapshot = attempt();
+  const { compositionRevision: _snapshotRevision, ...missingSnapshotRevision } = snapshot;
+  expect(Schema.is(StartEnrollmentAttemptInputSchema)(missingStartRevision)).toBe(false);
+  expect(Schema.is(Schema.toType(EnrollmentAttemptSnapshotSchema))(missingSnapshotRevision)).toBe(false);
+  for (const revision of ['', 'release-1', 'a'.repeat(63), 'A'.repeat(64)]) {
+    expect(Schema.is(StartEnrollmentAttemptInputSchema)({ ...startInput, compositionRevision: revision })).toBe(false);
+    expect(
+      Schema.is(Schema.toType(EnrollmentAttemptSnapshotSchema))({ ...snapshot, compositionRevision: revision }),
+    ).toBe(false);
+  }
+});
+
+it.effect('rejects a malformed release revision before any persistence call', () =>
+  Effect.gen(function* rejectInvalidCompositionRevision() {
+    let createCalls = 0;
+    const service = commerceEnrollmentAttemptServiceForPersistence(
+      makePersistence({
+        create: () => {
+          createCalls += 1;
+          return Effect.succeed({ attempt: attempt(), outcome: 'CREATED' as const });
+        },
+      }),
+      reconciliationAuthority,
+      completionAuthority(),
+    );
+    const outcome = yield* errorCode(service.start({ ...startInput, compositionRevision: 'release-1' }));
+    expect(outcome).toBe('attempt_invalid');
+    expect(createCalls).toBe(0);
+  }),
+);
 
 it.effect('requires the owner reconciliation authority before persisting a resolution', () =>
   Effect.gen(function* requireAuthority() {

@@ -1,8 +1,10 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { ReviseAttributeDefinitionPayloadSchema } from '../../shared/actions/revise-attribute-definition.ts';
 import {
   handleReviseAttributeDefinition,
@@ -42,7 +44,10 @@ const scope = {
   correlationId: 'revise-attribute-definition-test',
 };
 
-const contextWith = (reviseDefinitionRules: AttributePersistence['reviseDefinitionRules']) => {
+const contextWith = (
+  compositionRevision: string,
+  reviseDefinitionRules: AttributePersistence['reviseDefinitionRules'],
+) => {
   const services: AttributePersistence = {
     createControlledValue: unexpected,
     createDefinition: unexpected,
@@ -56,6 +61,7 @@ const contextWith = (reviseDefinitionRules: AttributePersistence['reviseDefiniti
     actionInvocationId: '44444444-4444-4444-8444-444444444444',
     addDomainEvent: () => Effect.succeed(Object.create(null)),
     addOutboxMessage: () => Effect.void,
+    compositionRevision,
     recordAuditEvidence: () => Effect.void,
     recordDataAccess: () => Effect.void,
     scope,
@@ -80,7 +86,11 @@ describe('revise Attribute Definition Action', () => {
 
   it.effect('hands only rule fields and same-meaning evidence to the owner', () =>
     Effect.gen(function* handoff() {
-      const context = contextWith((input) =>
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const context = contextWith(compositionSnapshot.composition.revision, (input) =>
         Effect.sync(() => {
           expect(input.attributeDefinitionRef).toEqual(definitionRef);
           expect(input.expectedRevision).toBe(2);

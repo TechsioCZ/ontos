@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface GuestAttributionStatusClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type GuestAttributionStatusAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeGuestAttributionStatus = (
   payload: GuestAttributionStatusRequest,
   ...[requestCorrelation, options = {}]: GuestAttributionStatusOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeGuestAttributionStatusWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeGuestAttributionStatusWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

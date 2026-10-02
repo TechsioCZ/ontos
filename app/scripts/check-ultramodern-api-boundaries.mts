@@ -323,9 +323,10 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
     }
   }
   const shellClient = 'apps/shell-super-app/src/api/vertical-clients.ts';
-  if ((yield* exists('apps/shell-super-app')) && verticalDirectories.length > 0) {
-    assert(yield* exists(shellClient), `${shellClient} must aggregate vertical API clients.`);
-  }
+  yield* assertNoPath(
+    shellClient,
+    `${shellClient} is forbidden; governed API clients belong to their deployment owners.`,
+  );
 
   const assertApiRuntime = (apiEntry: string) =>
     Effect.gen(function* assertApiRuntimeEffect() {
@@ -504,8 +505,8 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
         Effect.flatMap(decodePackageJson),
       );
       assert(
-        shellPackageJson.exports?.['./api/clients'] === './src/api/vertical-clients.ts',
-        'apps/shell-super-app/package.json must export ./api/clients.',
+        shellPackageJson.exports?.['./api/clients'] === undefined,
+        'apps/shell-super-app/package.json must not export a compiled vertical API client registry.',
       );
     }
 

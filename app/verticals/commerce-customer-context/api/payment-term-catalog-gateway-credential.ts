@@ -26,6 +26,7 @@ const configuration = Config.all({
 type GatewayContextIssue = (
   payload: {
     readonly audience: 'payment-term-catalog';
+    readonly compositionRevision: string;
     readonly legalEntityId: string;
   },
   options: ApiKeyGatewayContextClientOptions,
@@ -67,12 +68,14 @@ export const makePaymentTermCatalogGatewayCredentialIssuer = (
     issue: Effect.fn('PaymentTermCatalogGatewayCredentialIssuer.issue')(
       function* issuePaymentTermCatalogGatewayCredential(input: {
         readonly audience: 'payment-term-catalog';
+        readonly compositionRevision: string;
         readonly legalEntityId: string;
         readonly requestCorrelation: string;
       }) {
         const response = yield* issue(
           {
             audience: input.audience,
+            compositionRevision: input.compositionRevision,
             legalEntityId: input.legalEntityId,
           },
           {
@@ -81,7 +84,13 @@ export const makePaymentTermCatalogGatewayCredentialIssuer = (
             requestCorrelation: input.requestCorrelation,
           },
         ).pipe(Effect.mapError(unavailable));
-        return Redacted.make(`Bearer ${response.token}`);
+        if (response.compositionRevision !== input.compositionRevision) {
+          return yield* unavailable('The issued credential does not match the captured composition revision');
+        }
+        return {
+          baseUrl: new URL(response.apiBaseUrl, configured.baseUrl),
+          credential: Redacted.make(`Bearer ${response.token}`),
+        };
       },
     ),
   });

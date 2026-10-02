@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 
@@ -14,11 +15,13 @@ import type { OntosShellRuntimeContract } from '../packages/core-runtime/src/ind
  * The Shell reports the Core-defined contribution ABI and the Core capabilities it provides so the
  * Application Composition publisher observes them from the deployed Shell instead of assuming them.
  */
-export const shellRuntimeContract: OntosShellRuntimeContract = Object.freeze({
-  contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
-  coreCapabilities: [],
-  schemaVersion: '1',
-});
+export const createShellRuntimeContract = (buildMarker: string): OntosShellRuntimeContract =>
+  Object.freeze<OntosShellRuntimeContract>({
+    contributionAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
+    coreCapabilities: [],
+    deployment: { appId: 'shell-super-app', buildMarker },
+    schemaVersion: '2',
+  });
 
 export class ShellRuntimeContractGenerationError extends Schema.TaggedError<ShellRuntimeContractGenerationError>()(
   'ShellRuntimeContractGenerationError',
@@ -26,6 +29,18 @@ export class ShellRuntimeContractGenerationError extends Schema.TaggedError<Shel
 ) {}
 
 const ShellRuntimeContractJsonSchema = Schema.fromJsonString(OntosShellRuntimeContractSchema, { space: 2 });
+const ShellTopologySchema = Schema.fromJsonString(
+  Schema.Struct({
+    shell: Schema.Struct({
+      deliveryUnit: Schema.Struct({
+        buildMarker: Schema.NonEmptyString,
+        unitId: Schema.Literal('app/shell-super-app'),
+      }),
+      id: Schema.Literal('shell-super-app'),
+      path: Schema.Literal('apps/shell-super-app'),
+    }),
+  }),
+);
 
 export const ShellRuntimeContractTargetSchema = Schema.Literals(['cloudflare-dist', 'dist']);
 type ShellRuntimeContractTarget = typeof ShellRuntimeContractTargetSchema.Type;
@@ -39,14 +54,39 @@ export const generateOntosShellRuntimeContract = Effect.fn('generateOntosShellRu
   function* generate(input: { readonly shellDirectory: string; readonly target: ShellRuntimeContractTarget }) {
     const fileSystem = yield* FileSystem.FileSystem;
     const platformPath = yield* Path.Path;
-    const encoded = yield* Schema.encodeEffect(ShellRuntimeContractJsonSchema)(shellRuntimeContract).pipe(
+    const shellDirectory = platformPath.resolve(input.shellDirectory);
+    const workspaceRoot = platformPath.resolve(shellDirectory, '../..');
+    const { shell } = yield* Schema.decodeUnknownEffect(ShellTopologySchema)(
+      yield* fileSystem.readFileString(platformPath.join(workspaceRoot, 'topology/reference-topology.json')),
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ShellRuntimeContractGenerationError({ cause, message: 'unable to read the Shell delivery identity' }),
+      ),
+    );
+    if (platformPath.resolve(workspaceRoot, shell.path) !== shellDirectory) {
+      return yield* new ShellRuntimeContractGenerationError({ message: 'the Shell directory does not match topology' });
+    }
+    const { buildMarker } = yield* Effect.try({
+      catch: (cause) =>
+        new ShellRuntimeContractGenerationError({ cause, message: 'unable to resolve the Shell release identity' }),
+      try: () =>
+        resolveUltramodernReleaseIdentity({
+          generationBuildMarker: shell.deliveryUnit.buildMarker,
+          unitId: shell.deliveryUnit.unitId,
+          workspaceRoot,
+        }),
+    });
+    const encoded = yield* Schema.encodeEffect(ShellRuntimeContractJsonSchema)(
+      createShellRuntimeContract(buildMarker),
+    ).pipe(
       Effect.mapError(
         (cause) =>
           new ShellRuntimeContractGenerationError({ cause, message: 'unable to encode the Shell runtime contract' }),
       ),
     );
     const outputPath = platformPath.join(
-      input.shellDirectory,
+      shellDirectory,
       outputRootByTarget[input.target],
       'public',
       ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1),

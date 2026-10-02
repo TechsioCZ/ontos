@@ -21,6 +21,8 @@ import { createPromisePortTypeResolver } from '../shared/no-promise-port-types.t
 import { optionRecord } from '../shared/options.ts';
 import { stringArray, booleanOption as boolean } from '../shared/options.ts';
 import { isTestFile, scopePath, matchesGlobs } from '../shared/paths.ts';
+import { provenance } from '../shared/provenance.ts';
+import { schemaIdentity } from '../shared/schema-identity.ts';
 
 const DEFAULT_INCLUDE = ['apps/**', 'verticals/**', 'packages/**', 'scripts/**', 'tools/**/tests/**'];
 const DEFAULT_IGNORE = [
@@ -92,6 +94,8 @@ function memberSegments(node: ESTree.Node): readonly string[] | null {
 }
 
 const FUNCTION_TYPES = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
+/** This public driver export owns its request-handler and server Promise protocols. */
+const SCHEMA_DRIVER_EXPORTS = new Map([['@modern-js/server-core/node', new Set(['createNodeServer'])]]);
 
 export const rule = defineRule({
   meta: {
@@ -309,11 +313,46 @@ export const rule = defineRule({
       );
       if (def) mirrorTypes.add(def.node);
     };
+    const immutableValue = (raw: any, seen = new Set<any>()): any => {
+      const node = unwrap(raw);
+      if (!node || seen.has(node)) return null;
+      seen.add(node);
+      if (node.type !== 'Identifier') return node;
+      const variable = variableFor(node, node.name);
+      const definition = variable?.defs.find((def: any) => immutableDefinition(def, variable));
+      return definition ? immutableValue(definition.node.init, seen) : null;
+    };
+    /** A local Schema declaration mirrors only the named export decoded from its native module. */
+    const markDecodedDriverTypes = (call: any): void => {
+      const decoder = unwrap(call.callee);
+      if (decoder?.type !== 'CallExpression') return;
+      if (!['decodeUnknownEffect', 'decodeUnknownSync'].includes(schemaIdentity(context, decoder.callee) ?? '')) {
+        return;
+      }
+      const moduleName = provenance(context, call.arguments[0]);
+      const exports = moduleName === null ? undefined : SCHEMA_DRIVER_EXPORTS.get(moduleName);
+      if (exports === undefined) return;
+      const codec = immutableValue(decoder.arguments[0]);
+      if (codec?.type !== 'CallExpression' || schemaIdentity(context, codec.callee) !== 'Struct') return;
+      const fields = immutableValue(codec.arguments[0]);
+      if (fields?.type !== 'ObjectExpression') return;
+      for (const property of fields.properties) {
+        if (property.type !== 'Property' || property.kind !== 'init') continue;
+        const name = property.computed ? computedKey(property.key) : (property.key.name ?? computedKey(property.key));
+        if (!exports.has(name)) continue;
+        const declaration = immutableValue(property.value);
+        if (declaration?.type !== 'CallExpression' || schemaIdentity(context, declaration.callee) !== 'declare')
+          continue;
+        const [type] = declaration.typeArguments?.params ?? [];
+        markType(type);
+      }
+    };
     walk(program, (node) => {
       if (node.type === 'VariableDeclarator' && externalValue(node.init)) markType(node.id.typeAnnotation);
       if (node.type === 'AssignmentPattern' && externalValue(node.right)) markType(node.left.typeAnnotation);
       if (FUNCTION_TYPES.has(node.type) && externalValue(node)) markType(node.returnType);
       if (node.type === 'TSSatisfiesExpression' && externalValue(node.expression)) markType(node.typeAnnotation);
+      if (node.type === 'CallExpression') markDecodedDriverTypes(node);
     });
     const withinMirror = (node: any): boolean => {
       for (let current = node; current; current = current.parent) if (mirrorTypes.has(current)) return true;

@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PartyOfficialIdentifierHistoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PartyOfficialIdentifierHistoryAuthorizedInvocation = readonly [
@@ -48,6 +49,10 @@ export const executePartyOfficialIdentifierHistory = (
   payload: PartyOfficialIdentifierHistoryRequest,
   ...[requestCorrelation, options = {}]: PartyOfficialIdentifierHistoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePartyOfficialIdentifierHistoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePartyOfficialIdentifierHistoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

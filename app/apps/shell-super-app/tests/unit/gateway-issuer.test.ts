@@ -8,6 +8,10 @@ import {
   GatewayContextV2ClaimsSchema,
 } from '@app/shared-contracts';
 
+import { makeActiveApplicationCompositionLayer } from '@app/core-runtime';
+import { makeModuleContractFixture } from '../../../../packages/core-runtime/src/testing/module-contract.ts';
+import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+
 import type { GatewayAssertionRedemption } from '../../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
 import {
   ActionPrincipalInvalidErrorSchema,
@@ -29,6 +33,7 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
 
 const issuer = 'https://shell.example.test';
+const compositionRevision = 'a'.repeat(64);
 const principal = {
   authBindingId: '10000000-0000-4000-8000-000000000001',
   authContextRef: 'better-auth-session:safe-reference',
@@ -78,7 +83,10 @@ const dependencies = (
 ): GatewayIssuerLayerOptions => ({
   currentTimeSeconds: Effect.succeed(1_700_000_000),
   generateJti: Effect.succeed('60000000-0000-4000-8000-000000000001'),
-  loadAudiences: Effect.succeed(new Set(['property-registry'])),
+  loadAdmission: Effect.succeed({
+    audiences: new Map([['property-registry', 'property-registry-build']]),
+    revision: compositionRevision,
+  }),
   loadConfig: Effect.succeed(configuration),
   ...overrides,
 });
@@ -86,10 +94,15 @@ const dependencies = (
 const issueGatewayContextAssertionWith = <Principal>(
   input: {
     readonly audience: string;
+    readonly compositionRevision?: string;
     readonly principal: Principal;
   },
   options: GatewayIssuerLayerOptions,
-) => issueGatewayContextAssertion(input).pipe(Effect.provide(makeGatewayIssuerLayer(options)));
+) =>
+  issueGatewayContextAssertion({
+    ...input,
+    compositionRevision: input.compositionRevision ?? compositionRevision,
+  }).pipe(Effect.provide(makeGatewayIssuerLayer(options)));
 
 it.effect('memoises configuration within the refresh window and issues signed assertions', () =>
   Effect.gen(function* testProgram2() {
@@ -107,10 +120,12 @@ it.effect('memoises configuration within the refresh window and issues signed as
       [
         issueGatewayContextAssertion({
           audience: 'property-registry',
+          compositionRevision,
           principal,
         }),
         issueGatewayContextAssertion({
           audience: 'property-registry',
+          compositionRevision,
           principal,
         }),
       ],
@@ -128,6 +143,10 @@ it.effect('memoises configuration within the refresh window and issues signed as
     );
 
     expect(result.expiresAt).toBe(1_700_000_300);
+    expect(result.compositionRevision).toBe(compositionRevision);
+    expect(result.apiBaseUrl).toBe(
+      '/shell-super-app-api/module-api/property-registry/property-registry-build/property-registry-api',
+    );
     expect(header).toEqual({
       alg: 'EdDSA',
       kid: 'current-2026-08',
@@ -135,12 +154,14 @@ it.effect('memoises configuration within the refresh window and issues signed as
     });
     expect(claims).toEqual({
       aud: 'property-registry',
+      compositionRevision,
       exp: 1_700_000_300,
       iat: 1_700_000_000,
       iss: issuer,
       jti: '60000000-0000-4000-8000-000000000001',
       principal,
       sub: principal.principalId,
+      targetBuildMarker: 'property-registry-build',
       ver: 1,
     });
     const legacyClaims = Schema.decodeUnknownSync(GatewayContextClaimsSchema)(claims);
@@ -175,6 +196,7 @@ it.effect('shares cached configuration across concurrent valid issuances', () =>
       Array.from({ length: 8 }, () =>
         issueGatewayContextAssertion({
           audience: 'property-registry',
+          compositionRevision,
           principal,
         }),
       ),
@@ -206,14 +228,27 @@ it.effect('shares cached configuration across concurrent valid issuances', () =>
 it.effect('issues and verifies v2 assertions for namespaced principals', () =>
   Effect.gen(function* testProgramNamespacedPrincipal() {
     const { configuration, publicKey } = yield* makeConfiguration();
-    const layer = makeGatewayIssuerLayer(dependencies(configuration));
+    const snapshot = yield* makeCompositionSnapshot([
+      makeModuleContractFixture({ appId: 'property-registry', moduleId: 'property.registry' }),
+    ]);
+    const selectedRevision = snapshot.composition.revision;
+    const layer = makeGatewayIssuerLayer(
+      dependencies(configuration, {
+        loadAdmission: Effect.succeed({
+          audiences: new Map([['property-registry', 'property-registry-build']]),
+          revision: selectedRevision,
+        }),
+      }),
+    );
     const [legacyResult, result] = yield* Effect.all([
       issueGatewayContextAssertion({
         audience: 'property-registry',
+        compositionRevision: selectedRevision,
         principal,
       }),
       issueGatewayContextAssertion({
         audience: 'property-registry',
+        compositionRevision: selectedRevision,
         principal: namespacedPrincipal,
       }),
     ]).pipe(Effect.provide(layer));
@@ -246,7 +281,10 @@ it.effect('issues and verifies v2 assertions for namespaced principals', () =>
         ],
       }),
     } as const;
-    const receiver = bindGatewayPrincipalVerifier('property-registry');
+    const receiver = bindGatewayPrincipalVerifier('property-registry', {
+      appId: 'property-registry',
+      buildMarker: 'property-registry-build',
+    });
     const receiverLayer = makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(receiverEnvironment));
     const mappedLegacy = yield* receiver
       .verify(Redacted.make(`Bearer ${legacyResult.token}`), {
@@ -277,7 +315,7 @@ it.effect('issues and verifies v2 assertions for namespaced principals', () =>
     expect(verifiedByReceiver.tenantId).toBe(namespacedPrincipal.tenantId);
 
     const wrongAudienceFailure = yield* Effect.flip(
-      bindGatewayPrincipalVerifier('billing')
+      bindGatewayPrincipalVerifier('billing', { appId: 'billing', buildMarker: 'billing-build' })
         .verify(Redacted.make(`Bearer ${result.token}`), {
           currentTimeSeconds: Effect.succeed(1_700_000_001),
         })
@@ -340,7 +378,15 @@ it.effect('issues and verifies v2 assertions for namespaced principals', () =>
       issuer,
       jti: '60000000-0000-4000-8000-000000000001',
     });
-  }),
+  }).pipe(
+    Effect.provide(
+      makeActiveApplicationCompositionLayer(
+        makeCompositionSnapshot([
+          makeModuleContractFixture({ appId: 'property-registry', moduleId: 'property.registry' }),
+        ]),
+      ),
+    ),
+  ),
 );
 
 it.effect('allows the next issuance after interrupting a pending key import', () =>
@@ -360,12 +406,15 @@ it.effect('allows the next issuance after interrupting a pending key import', ()
     });
     const result = yield* Effect.gen(function* interruptedImport() {
       const gatewayIssuer = yield* GatewayIssuer;
-      const first = yield* gatewayIssuer.issue({ audience: 'property-registry', principal }).pipe(Effect.forkChild);
+      const first = yield* gatewayIssuer
+        .issue({ audience: 'property-registry', compositionRevision, principal })
+        .pipe(Effect.forkChild);
       yield* Effect.promise(() => started.promise);
       yield* Fiber.interrupt(first);
       expect(Exit.isFailure(yield* Fiber.await(first))).toBe(true);
       return yield* gatewayIssuer.issue({
         audience: 'property-registry',
+        compositionRevision,
         principal,
       });
     }).pipe(Effect.provide(makeGatewayIssuerLayer(dependencies(configuration))));
@@ -403,10 +452,12 @@ it.effect('refreshes configuration after 30 seconds and replaces the rotated sig
     const [initialResult, rotatedResult] = yield* Effect.gen(function* gatewayRotationSequence() {
       const initial = yield* issueGatewayContextAssertion({
         audience: 'property-registry',
+        compositionRevision,
         principal,
       });
       const cached = yield* issueGatewayContextAssertion({
         audience: 'property-registry',
+        compositionRevision,
         principal,
       });
       expect(loadConfigCount).toBe(1);
@@ -414,6 +465,7 @@ it.effect('refreshes configuration after 30 seconds and replaces the rotated sig
       yield* TestClock.adjust('31 seconds');
       const rotated = yield* issueGatewayContextAssertion({
         audience: 'property-registry',
+        compositionRevision,
         principal,
       });
       return [initial, rotated] as const;
@@ -460,11 +512,13 @@ it.effect('does not cache configuration failures', () =>
       const configurationFailure = yield* Effect.flip(
         issueGatewayContextAssertion({
           audience: 'property-registry',
+          compositionRevision,
           principal,
         }),
       );
       const issuedResult = yield* issueGatewayContextAssertion({
         audience: 'property-registry',
+        compositionRevision,
         principal,
       });
       return [configurationFailure, issuedResult] as const;
@@ -488,11 +542,13 @@ it.effect('retries a failed key import on the next issuance', () =>
       const failed = yield* Effect.flip(
         issueGatewayContextAssertion({
           audience: 'property-registry',
+          compositionRevision,
           principal,
         }),
       );
       const issued = yield* issueGatewayContextAssertion({
         audience: 'property-registry',
+        compositionRevision,
         principal,
       });
       return [failed, issued] as const;
@@ -527,7 +583,7 @@ it.effect('fails closed for unknown audiences and invalid Effect-managed time', 
     );
     const timeError = yield* Effect.flip(
       issueGatewayContextAssertionWith(
-        { audience: 'property-registry', principal },
+        { audience: 'property-registry', compositionRevision, principal },
         dependencies(configuration, {
           currentTimeSeconds: Effect.succeed(-1),
         }),
@@ -548,6 +604,7 @@ it.effect('rejects transport correlation or any other excess principal claim', (
       issueGatewayContextAssertionWith(
         {
           audience: 'property-registry',
+          compositionRevision,
           principal: { ...principal, correlationId: 'must-remain-a-header' },
         },
         dependencies(configuration),
@@ -563,7 +620,7 @@ it.effect('identifies configuration and signing failures without exposing key ma
     const { configuration } = yield* makeConfiguration();
     const configurationError = yield* Effect.flip(
       issueGatewayContextAssertionWith(
-        { audience: 'property-registry', principal },
+        { audience: 'property-registry', compositionRevision, principal },
         dependencies(configuration, {
           loadConfig: parseGatewayIssuerConfig({}),
         }),
@@ -571,7 +628,7 @@ it.effect('identifies configuration and signing failures without exposing key ma
     );
     const signingError = yield* Effect.flip(
       issueGatewayContextAssertionWith(
-        { audience: 'property-registry', principal },
+        { audience: 'property-registry', compositionRevision, principal },
         dependencies({
           ...configuration,
           privateJwk: { ...configuration.privateJwk, d: 'invalid' },
@@ -638,5 +695,41 @@ it.effect('rejects missing configuration, HMAC keys, non-Ed25519 keys, and missi
       { concurrency: 'unbounded' },
     );
     expect(errors.every((error) => Predicate.isTagged(error, 'GatewayIssuerConfigError'))).toBe(true);
+  }),
+);
+
+it.effect('rejects stale document revisions before signing and reads admission for each issuance', () =>
+  Effect.gen(function* verifyFreshReleaseAdmission() {
+    const { configuration } = yield* makeConfiguration();
+    let admitted = true;
+    let loads = 0;
+    const options = dependencies(configuration, {
+      loadAdmission: Effect.sync(() => {
+        loads += 1;
+        return {
+          audiences: admitted ? new Map([['property-registry', 'property-registry-build']]) : new Map<string, string>(),
+          revision: compositionRevision,
+        };
+      }),
+    });
+    const stale = yield* Effect.flip(
+      issueGatewayContextAssertionWith(
+        { audience: 'property-registry', compositionRevision: 'b'.repeat(64), principal },
+        options,
+      ),
+    );
+    expect(stale.code).toBe('gateway_revision_unsupported');
+    const current = yield* issueGatewayContextAssertionWith(
+      { audience: 'property-registry', compositionRevision, principal },
+      options,
+    );
+    expect(decodeJwt(current.token)['compositionRevision']).toBe(compositionRevision);
+    expect(decodeJwt(current.token)['targetBuildMarker']).toBe('property-registry-build');
+    admitted = false;
+    const revoked = yield* Effect.flip(
+      issueGatewayContextAssertionWith({ audience: 'property-registry', compositionRevision, principal }, options),
+    );
+    expect(revoked.code).toBe('gateway_audience_invalid');
+    expect(loads).toBe(3);
   }),
 );

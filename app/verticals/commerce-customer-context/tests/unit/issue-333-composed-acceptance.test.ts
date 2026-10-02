@@ -294,6 +294,7 @@ it.effect('uses the Payment Term production adapter with the exact owner referen
   return Effect.gen(function* paymentTermOwnerAdapter() {
     const port = yield* paymentTermCatalogPortFromEnvironment(
       {
+        compositionRevision: 'a'.repeat(64),
         legalEntityId: fixtureScope.sellingLegalEntityId,
         requestCorrelation: 'czech-launch-payment-term',
       },
@@ -330,6 +331,7 @@ it.effect('uses the Payment Term production adapter with the exact owner referen
     expect(gatewayRequests).toEqual([
       {
         audience: 'payment-term-catalog',
+        compositionRevision: 'a'.repeat(64),
         legalEntityId: fixtureScope.sellingLegalEntityId,
         requestCorrelation: 'czech-launch-payment-term',
       },
@@ -341,7 +343,10 @@ it.effect('uses the Payment Term production adapter with the exact owner referen
         issue: (input) =>
           Effect.sync(() => {
             gatewayRequests.push(input);
-            return Redacted.make('Bearer payment-term-owner-issued');
+            return {
+              baseUrl: new URL('https://shell.example.test/owner-api'),
+              credential: Redacted.make('Bearer payment-term-owner-issued'),
+            };
           }),
       }),
     ),
@@ -366,7 +371,11 @@ it.effect('uses the Catalog production adapter and preserves owner quantity evid
       selection: catalogOwnerResponse.selection,
     });
     const port = yield* catalogQuantityPortFromEnvironment(
-      { legalEntityId: fixtureScope.sellingLegalEntityId, requestCorrelation: 'czech-launch-catalog-quantity' },
+      {
+        compositionRevision: 'a'.repeat(64),
+        legalEntityId: fixtureScope.sellingLegalEntityId,
+        requestCorrelation: 'czech-launch-catalog-quantity',
+      },
       (payload, credential, correlation, options) => {
         ownerCalls.push({ correlation, credential: Redacted.value(credential), options, payload });
         return Effect.succeed(catalogOwnerResponse);
@@ -382,7 +391,7 @@ it.effect('uses the Catalog production adapter and preserves owner quantity evid
       {
         correlation: 'czech-launch-catalog-quantity',
         credential: 'Bearer catalog-owner-issued',
-        options: { baseUrl: new URL('https://catalog.example.test') },
+        options: { baseUrl: new URL('https://shell.example.test/owner-api'), compositionRevision: 'a'.repeat(64) },
         payload: {
           amount: catalogOwnerResponse.quantity.requested,
           purpose: 'PURCHASE_ACCEPTANCE',
@@ -393,6 +402,7 @@ it.effect('uses the Catalog production adapter and preserves owner quantity evid
     expect(gatewayRequests).toEqual([
       {
         audience: 'catalog',
+        compositionRevision: 'a'.repeat(64),
         legalEntityId: fixtureScope.sellingLegalEntityId,
         requestCorrelation: 'czech-launch-catalog-quantity',
       },
@@ -421,7 +431,7 @@ it.effect('uses the Catalog production adapter and preserves owner quantity evid
           Effect.sync(() => {
             gatewayRequests.push(input);
             return {
-              baseUrl: new URL('https://catalog.example.test'),
+              baseUrl: new URL('https://shell.example.test/owner-api'),
               credential: Redacted.make('Bearer catalog-owner-issued'),
             };
           }),
@@ -450,7 +460,11 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
   };
   return Effect.gen(function* pricingOwnerAdapter() {
     const port = yield* purchaseCurrencyPricingPortFromEnvironment(
-      { legalEntityId: fixtureScope.sellingLegalEntityId, requestCorrelation: 'czech-launch-pricing' },
+      {
+        compositionRevision: 'a'.repeat(64),
+        legalEntityId: fixtureScope.sellingLegalEntityId,
+        requestCorrelation: 'czech-launch-pricing',
+      },
       (payload, credential, correlation, options) => {
         ownerCalls.push({ correlation, credential: Redacted.value(credential), options, payload });
         return Effect.succeed(pricingOwnerResponse);
@@ -465,7 +479,7 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
       {
         correlation: 'czech-launch-pricing',
         credential: 'Bearer pricing-owner-issued',
-        options: { baseUrl: new URL('https://pricing.example.test') },
+        options: { baseUrl: new URL('https://shell.example.test/owner-api'), compositionRevision: 'a'.repeat(64) },
         payload: {
           effectiveAt,
           tenantId: purchasingContext.tenantId,
@@ -475,6 +489,7 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
     expect(gatewayRequests).toEqual([
       {
         audience: 'pricing',
+        compositionRevision: 'a'.repeat(64),
         legalEntityId: fixtureScope.sellingLegalEntityId,
         requestCorrelation: 'czech-launch-pricing',
       },
@@ -487,7 +502,7 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
           Effect.sync(() => {
             gatewayRequests.push(input);
             return {
-              baseUrl: new URL('https://pricing.example.test'),
+              baseUrl: new URL('https://shell.example.test/owner-api'),
               credential: Redacted.make('Bearer pricing-owner-issued'),
             };
           }),

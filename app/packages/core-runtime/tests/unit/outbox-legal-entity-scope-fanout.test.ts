@@ -19,6 +19,7 @@ const legalEntityTwo = '30000000-0000-4000-8000-000000000002';
 const context = {
   attemptNumber: 1,
   claimId: 'claim-1',
+  compositionRevision: 'a'.repeat(64),
   deliveryId: 'delivery-1',
   domainEventId: 'event-1',
   messageId: 'message-1',

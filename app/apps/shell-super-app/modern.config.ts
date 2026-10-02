@@ -11,9 +11,7 @@ import { i18nPlugin } from '@modern-js/plugin-i18n';
 import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { moduleFederationPlugin } from '@module-federation/modern-js-v3';
 import { pluginTailwindcss } from '@rsbuild/plugin-tailwindcss';
-import { sortWith } from 'effect/Array';
 import { getOrElse as getOptionOrElse, getOrUndefined as getOptionOrUndefined } from 'effect/Option';
-import { String as StringOrder } from 'effect/Order';
 import { getOrThrow as getResultOrThrow, isSuccess as isResultSuccess } from 'effect/Result';
 import {
   Array as SchemaArray,
@@ -31,6 +29,7 @@ import {
   isBetween,
   isInt,
   isMinLength,
+  makeFilter,
 } from 'effect/Schema';
 import { transform } from 'effect/SchemaTransformation';
 import { withZephyr as withZephyrRspack } from 'zephyr-rspack-plugin';
@@ -43,11 +42,6 @@ import {
   createZephyrRspackPlugin,
   resolveCloudflareExternal,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
-import {
-  DeploymentAllowlistOverlaySchema,
-  DeploymentAllowlistTopologySchema,
-} from './api/modules/deployment-allowlist.ts';
-import { createModuleDeploymentAllowlistBuildInput } from './module-deployment-allowlist.config.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -94,9 +88,6 @@ const cloudflareWorkerConfig = cloudflareDeployEnabled
       publicUrlVariable: 'ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP',
     })
   : undefined;
-const cloudflareWorkerRemoteStubPath = fileURLToPath(
-  new URL('src/api/cloudflare-worker-remote-stub.ts', import.meta.url),
-);
 const effectApiSourceDirectory = fileURLToPath(new URL('api/', import.meta.url));
 /* oxlint-disable promise/prefer-await-to-callbacks -- Rspack externals use a callback API. expires: 2026-12-31. */
 const cloudflareRuntimeExternal = (
@@ -116,54 +107,24 @@ const zephyrRspackPlugin = (): CliPlugin<AppTools> =>
 const appId = 'shell-super-app';
 const moduleFederationConfigPath = fileURLToPath(new URL('module-federation.config.ts', import.meta.url));
 const referenceTopologyPath = fileURLToPath(new URL('../../topology/reference-topology.json', import.meta.url));
-const referenceTopology = getResultOrThrow(
-  decodeUnknownResult(fromJsonString(DeploymentAllowlistTopologySchema))(readFileSync(referenceTopologyPath, 'utf-8')),
-);
-// The Shell binds every vertical Worker under the vertical's topology identity: its Worker name, its
-// `workerDispatch.serviceBinding` and its BFF prefix. Module discovery and the deploy planner read the
-// same topology, so a renamed binding changes every caller at once.
-const ShellServiceBindingTopologySchema = Struct({
+// This is a build check of the native BFF convention, never a runtime module registry.
+const NativeBffTopologySchema = Struct({
   verticals: SchemaArray(
     Struct({
       api: Struct({ bff: Struct({ prefix: NonEmptyString }) }),
-      backendFederation: Struct({
-        executionSurfaces: Struct({
-          cloudflare: Struct({ workerDispatch: Struct({ serviceBinding: NonEmptyString }) }),
-        }),
-      }),
-      cloudflare: Struct({ workerName: NonEmptyString }),
-    }),
+      id: NonEmptyString,
+    }).pipe(
+      check(
+        makeFilter(({ api, id }) =>
+          api.bff.prefix === `/${id}-api` ? undefined : `Native module dispatch requires /${id}-api`,
+        ),
+      ),
+    ),
   ),
 });
-const verticalServiceBindings = sortWith(
-  getResultOrThrow(
-    decodeUnknownResult(fromJsonString(ShellServiceBindingTopologySchema))(
-      readFileSync(referenceTopologyPath, 'utf-8'),
-    ),
-  ).verticals.map(({ api, backendFederation, cloudflare }) => ({
-    binding: backendFederation.executionSurfaces.cloudflare.workerDispatch.serviceBinding,
-    prefix: api.bff.prefix,
-    service: cloudflare.workerName,
-  })),
-  ({ prefix }) => prefix,
-  StringOrder,
+getResultOrThrow(
+  decodeUnknownResult(fromJsonString(NativeBffTopologySchema))(readFileSync(referenceTopologyPath, 'utf-8')),
 );
-const developmentOverlayPath = fileURLToPath(
-  new URL('../../topology/local-overlays/development.json', import.meta.url),
-);
-const developmentOverlay = getResultOrThrow(
-  decodeUnknownResult(fromJsonString(DeploymentAllowlistOverlaySchema))(readFileSync(developmentOverlayPath, 'utf-8')),
-);
-const moduleDeploymentAllowlist = createModuleDeploymentAllowlistBuildInput({
-  cloudflareDeployEnabled,
-  developmentOverlay,
-  readEnvironment: getBuildConfigEnvironment,
-  topology: referenceTopology,
-});
-Object.assign(globalThis, {
-  ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology,
-  ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: moduleDeploymentAllowlist,
-});
 const cloudflareWorkerName = 'app-shell-super-app';
 const port = getOptionOrElse(
   getResultOrThrow(
@@ -226,7 +187,6 @@ export default defineConfig(
           compatibilityDate: '2026-06-02',
           name: cloudflareWorkerName,
           security: createCloudflareWorkerSecurity(),
-          services: verticalServiceBindings,
           ssr: true,
         },
       } satisfies NonNullable<AppToolsUserConfig['deploy']>,
@@ -312,8 +272,6 @@ export default defineConfig(
             '@modern-js/plugin-i18n/runtime$': '@modern-js/plugin-i18n/runtime/no-react-i18next',
           },
           globalVars: {
-            ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: referenceTopology,
-            ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: moduleDeploymentAllowlist,
             ULTRAMODERN_SITE_URL: siteUrl,
           },
           mainEntryName: 'index',
@@ -330,7 +288,12 @@ export default defineConfig(
               .uniqueName('shellSuperApp')
               .chunkLoadingGlobal('__ULTRAMODERN_SHELL_SUPER_APP_LOADED_CHUNKS__');
           },
-          rspack: ((config, { environment, rspack }) => {
+          rspack: ((config, { environment, isServer, rspack }) => {
+            config.plugins.push(
+              new rspack.DefinePlugin({
+                __ONTOS_BROWSER_BUILD__: !(isServer || environment.name === 'workerSSR'),
+              }),
+            );
             if (!cloudflareDeployEnabled) {
               return;
             }
@@ -348,10 +311,7 @@ export default defineConfig(
                 __dirname: false,
                 __filename: false,
               });
-              config.plugins.push(
-                ...createWorkerSsrPlugins(rspack, effectApiSourceDirectory),
-                new rspack.NormalModuleReplacementPlugin(/^partyRegistry\//u, cloudflareWorkerRemoteStubPath),
-              );
+              config.plugins.push(...createWorkerSsrPlugins(rspack, effectApiSourceDirectory));
             }
           }) satisfies RspackConfigHandler,
         },

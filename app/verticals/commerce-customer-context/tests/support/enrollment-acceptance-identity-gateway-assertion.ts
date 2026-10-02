@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { sql } from 'drizzle-orm';
-import { ConfigProvider, Effect } from 'effect';
-import type { Layer } from 'effect';
+import { ConfigProvider, Effect, Layer } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import type { JWK, KeyObject } from 'jose';
 
@@ -11,6 +11,10 @@ import {
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GATEWAY_ASSERTION_TTL_SECONDS,
 } from '../../../../packages/shared-contracts/src/gateway-context.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { enrollmentApplicationCompositionSnapshot } from './enrollment-application-composition.ts';
+
+const compositionSourceUrl = 'https://composition.enrollment-acceptance.test/active';
 
 /**
  * A portal gateway issuer for acceptance suites: an Ed25519 key pair, the verification material the
@@ -32,18 +36,25 @@ export const makeAcceptanceGatewayIssuer = Effect.fnUntraced(function* makeAccep
   issuer: string,
   keyId: string,
 ) {
+  const snapshot = yield* enrollmentApplicationCompositionSnapshot;
   const pair = yield* Effect.promise(async () => await generateKeyPair('EdDSA', { crv: 'Ed25519', extractable: true }));
   const exported = yield* Effect.promise(async () => await exportJWK(pair.publicKey));
   const publicJwk: JWK = { ...exported, alg: 'EdDSA', kid: keyId, use: 'sig' };
+  const configuration = ConfigProvider.fromUnknown({
+    ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: compositionSourceUrl,
+    ONTOS_GATEWAY_ISSUER: issuer,
+    ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+  });
   return {
     issuer,
     keyId,
     privateKey: pair.privateKey,
     publicJwk,
-    verificationLive: ConfigProvider.layer(
-      ConfigProvider.fromUnknown({
-        ONTOS_GATEWAY_ISSUER: issuer,
-        ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [publicJwk] }),
+    verificationLive: Layer.mergeAll(
+      ConfigProvider.layer(configuration),
+      Layer.succeed(FetchHttpClient.Fetch, async (input, init) => {
+        const request = new Request(input, init);
+        return request.url === compositionSourceUrl ? Response.json(snapshot) : await fetch(request);
       }),
     ),
   } satisfies AcceptanceGatewayIssuer;
@@ -80,9 +91,15 @@ export const issueAcceptanceGatewayAssertion = Effect.fnUntraced(function* issue
     return yield* Effect.die('The acceptance gateway could not read the deployment clock');
   }
   const issuedAt = Math.trunc(Number(epochRow.epoch));
+  const snapshot = yield* enrollmentApplicationCompositionSnapshot;
   return yield* Effect.promise(
     async () =>
-      await new SignJWT({ principal, ver: EXTERNAL_GATEWAY_ASSERTION_VERSION })
+      await new SignJWT({
+        compositionRevision: snapshot.composition.revision,
+        principal,
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
+        ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
+      })
         .setProtectedHeader({ alg: 'EdDSA', kid: gateway.keyId, typ: 'JWT' })
         .setAudience(audience)
         .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)

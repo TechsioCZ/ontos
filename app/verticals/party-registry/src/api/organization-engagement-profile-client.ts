@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface OrganizationEngagementProfileClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type OrganizationEngagementProfileAuthorizedInvocation = readonly [
@@ -48,6 +49,10 @@ export const executeOrganizationEngagementProfile = (
   payload: OrganizationEngagementProfileRequest,
   ...[requestCorrelation, options = {}]: OrganizationEngagementProfileOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeOrganizationEngagementProfileWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeOrganizationEngagementProfileWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

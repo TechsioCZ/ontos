@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import {
   ActionRuntime,
+  ActiveApplicationCompositionConfigLive,
+  ActiveApplicationCompositionService,
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
@@ -10,6 +12,7 @@ import {
   ModuleStateDeniedError,
   ReadRuntime,
   loadDatabaseConnectionPair,
+  makeActiveApplicationCompositionLayer,
 } from '@app/core-runtime';
 import type {
   ActionRuntimeService,
@@ -17,6 +20,8 @@ import type {
   ReadCoreError,
   ReadRuntimeService,
 } from '@app/core-runtime';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { RequestSchemaProblemSchema } from '@app/shared-contracts/problem-details';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
@@ -34,6 +39,7 @@ import { makePriceGroupCatalogApiRuntime } from '../../api/index.ts';
 import { priceGroupDefinitionReadApiLive } from '../../api/price-group-definition-read-server.ts';
 import { validatePriceGroupCompatibilityReadApiLive } from '../../api/validate-price-group-compatibility-read-server.ts';
 import { priceGroupCatalogApi } from '../../shared/api.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
   PriceGroupDefinitionAuthenticationProblemSchema,
   PriceGroupDefinitionDomainUnavailableProblemSchema,
@@ -222,8 +228,17 @@ type ReadFailure =
   | PriceGroupExpectedCurrentConflict
   | PriceGroupPersistenceUnavailable;
 
-const makeAssertion = (audience = 'price-group-catalog') =>
+const priceGroupCompositionSnapshot = makeApplicationCompositionSnapshotFixture(
+  [ultramodernApiMarker.appId],
+  ultramodernApiMarker.buildMarker,
+);
+
+const makeAssertion = (
+  audience = 'price-group-catalog',
+  releaseClaims: Readonly<{ compositionRevision?: string; targetBuildMarker?: string }> = {},
+) =>
   Effect.gen(function* signPriceGroupReadAssertion() {
+    const snapshot = yield* priceGroupCompositionSnapshot;
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
       ...(yield* Effect.promise(() => exportJWK(publicKey))),
@@ -232,7 +247,12 @@ const makeAssertion = (audience = 'price-group-catalog') =>
       use: 'sig',
     };
     const token = yield* Effect.promise(() =>
-      new SignJWT({ principal, ver: 1 })
+      new SignJWT({
+        compositionRevision: releaseClaims.compositionRevision ?? snapshot.composition.revision,
+        principal,
+        targetBuildMarker: releaseClaims.targetBuildMarker ?? ultramodernApiMarker.buildMarker,
+        ver: 1,
+      })
         .setProtectedHeader({ alg: 'EdDSA', kid: 'price-group-read-http-test', typ: 'JWT' })
         .setIssuer(issuer)
         .setAudience(audience)
@@ -265,6 +285,14 @@ const GatewayPrivateJwkSchema = Schema.Struct({
 
 const makeProductionAssertion = (audience = 'price-group-catalog') =>
   Effect.gen(function* signConfiguredPriceGroupReadAssertion() {
+    const snapshot = yield* ActiveApplicationCompositionService.pipe(
+      Effect.flatMap((service) => service.load),
+      Effect.provide(
+        ActiveApplicationCompositionConfigLive.pipe(
+          Layer.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer))),
+        ),
+      ),
+    );
     const configuredIssuer = yield* Config.String('ONTOS_GATEWAY_ISSUER');
     const encodedPrivateJwk = yield* Config.Redacted('ONTOS_GATEWAY_PRIVATE_JWK');
     const privateJwk = yield* Schema.decodeEffect(Schema.fromJsonString(GatewayPrivateJwkSchema))(
@@ -272,7 +300,12 @@ const makeProductionAssertion = (audience = 'price-group-catalog') =>
     );
     const privateKey = yield* Effect.promise(() => importJWK(privateJwk, 'EdDSA'));
     const token = yield* Effect.promise(() =>
-      new SignJWT({ principal, ver: 1 })
+      new SignJWT({
+        compositionRevision: snapshot.composition.revision,
+        principal,
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
+        ver: 1,
+      })
         .setProtectedHeader({ alg: 'EdDSA', kid: privateJwk.kid, typ: 'JWT' })
         .setIssuer(configuredIssuer)
         .setAudience(audience)
@@ -323,8 +356,12 @@ const makeReadRuntime = (definitionResult: typeof PriceGroupDefinitionResponseSc
   };
 };
 
+interface AssertionRuntimeConfiguration {
+  readonly environment: Readonly<Record<string, string>>;
+}
+
 const mountRuntime = (
-  environment: Readonly<Record<string, string>>,
+  configuration: AssertionRuntimeConfiguration,
   readRuntime: ReadRuntimeService,
   redemption: GatewayAssertionRedemption = nonPersistingRedemption,
 ) =>
@@ -336,10 +373,15 @@ const mountRuntime = (
       const readLayer = Layer.succeed(ReadRuntime, readRuntime);
       const redemptionLayer = Layer.succeed(GatewayAssertionRedemptionService, redemption);
       const handlers = Layer.mergeAll(priceGroupDefinitionReadApiLive, validatePriceGroupCompatibilityReadApiLive).pipe(
-        Layer.provide(ActionPrincipalVerifierLive),
+        Layer.provide(
+          Layer.mergeAll(
+            ActionPrincipalVerifierLive,
+            makeActiveApplicationCompositionLayer(priceGroupCompositionSnapshot),
+          ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive.pipe(Layer.provide(FetchHttpClient.layer)))),
+        ),
         Layer.provide(readLayer),
         Layer.provide(redemptionLayer),
-        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+        Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(configuration.environment))),
       );
       return HttpRouter.toWebHandler(
         HttpApiBuilder.layer(api).pipe(
@@ -413,7 +455,7 @@ describe('Price Group governed Read HTTP integration', () => {
     Effect.gen(function* decodeClosedPayload() {
       const assertion = yield* makeAssertion();
       const harness = makeReadRuntime();
-      const runtime = yield* mountRuntime(assertion.environment, harness.readRuntime);
+      const runtime = yield* mountRuntime(assertion, harness.readRuntime);
       const [endpoint] = endpoints;
       const browserRequest = (
         body: typeof PriceGroupDefinitionRequestSchema.Encoded | Readonly<{ unknownField: string }>,
@@ -459,7 +501,7 @@ describe('Price Group governed Read HTTP integration', () => {
     Effect.gen(function* decodeSuccessfulReads() {
       const assertion = yield* makeAssertion();
       const harness = makeReadRuntime();
-      const runtime = yield* mountRuntime(assertion.environment, harness.readRuntime);
+      const runtime = yield* mountRuntime(assertion, harness.readRuntime);
       const inMemoryFetch: typeof globalThis.fetch = (input, init) => handle(runtime, new Request(input, init));
       const authorization = `Bearer ${assertion.token}`;
 
@@ -488,7 +530,7 @@ describe('Price Group governed Read HTTP integration', () => {
     Effect.gen(function* decodeRetiredBoundary() {
       const assertion = yield* makeAssertion();
       const harness = makeReadRuntime(retiredDefinitionResponse);
-      const runtime = yield* mountRuntime(assertion.environment, harness.readRuntime);
+      const runtime = yield* mountRuntime(assertion, harness.readRuntime);
       const inMemoryFetch: typeof globalThis.fetch = (input, init) => handle(runtime, new Request(input, init));
 
       const decoded = yield* executePriceGroupDefinitionWithAuthorization(
@@ -513,7 +555,7 @@ describe('Price Group governed Read HTTP integration', () => {
     Effect.gen(function* mapCoreReadFailures() {
       const assertion = yield* makeAssertion();
       const harness = makeReadRuntime();
-      const runtime = yield* mountRuntime(assertion.environment, harness.readRuntime);
+      const runtime = yield* mountRuntime(assertion, harness.readRuntime);
       const initialReadCount = harness.readCount();
 
       for (const endpoint of endpoints) {
@@ -573,7 +615,7 @@ describe('Price Group governed Read HTTP integration', () => {
     Effect.gen(function* mapDomainReadFailures() {
       const assertion = yield* makeAssertion();
       const harness = makeReadRuntime();
-      const runtime = yield* mountRuntime(assertion.environment, harness.readRuntime);
+      const runtime = yield* mountRuntime(assertion, harness.readRuntime);
       const [, compatibilityEndpoint] = endpoints;
 
       harness.setFailure(
@@ -656,7 +698,7 @@ describe('Price Group governed Read HTTP integration', () => {
     Effect.gen(function* mapAuthenticationUnavailability() {
       const assertion = yield* makeAssertion();
       const harness = makeReadRuntime();
-      const runtime = yield* mountRuntime(assertion.environment, harness.readRuntime, {
+      const runtime = yield* mountRuntime(assertion, harness.readRuntime, {
         consume: () =>
           Effect.fail(
             new GatewayAssertionRedemptionUnavailableError({
@@ -688,7 +730,7 @@ describe('Price Group governed Read HTTP integration', () => {
       const assertion = yield* makeAssertion();
       const harness = makeReadRuntime();
       const consumed = new Set<string>();
-      const runtime = yield* mountRuntime(assertion.environment, harness.readRuntime, {
+      const runtime = yield* mountRuntime(assertion, harness.readRuntime, {
         consume: (input) =>
           Effect.suspend(() => {
             const key = `${input.issuer}\u0000${input.audience}\u0000${input.jti}`;
@@ -758,7 +800,7 @@ describe('Price Group governed Read HTTP integration', () => {
       const assertion = yield* makeAssertion('price-group-catalog-shadow');
       const harness = makeReadRuntime();
       let redemptionCalls = 0;
-      const runtime = yield* mountRuntime(assertion.environment, harness.readRuntime, {
+      const runtime = yield* mountRuntime(assertion, harness.readRuntime, {
         consume: () =>
           Effect.sync(() => {
             redemptionCalls += 1;
@@ -775,6 +817,35 @@ describe('Price Group governed Read HTTP integration', () => {
       expectSanitized(problem, [assertion.token, principalId, tenantId, 'price-group-catalog-shadow']);
       expect(redemptionCalls).toBe(0);
       expect(harness.readCount()).toBe(0);
+    }),
+  );
+
+  it.effect('rejects assertions for a different revision or owner release before redemption or Read execution', () =>
+    Effect.gen(function* rejectWrongRelease() {
+      for (const releaseClaims of [
+        { compositionRevision: 'f'.repeat(64) },
+        { targetBuildMarker: `${ultramodernApiMarker.buildMarker}-other` },
+      ]) {
+        const assertion = yield* makeAssertion('price-group-catalog', releaseClaims);
+        const harness = makeReadRuntime();
+        let redemptionCalls = 0;
+        const runtime = yield* mountRuntime(assertion, harness.readRuntime, {
+          consume: () =>
+            Effect.sync(() => {
+              redemptionCalls += 1;
+            }),
+        });
+        const [endpoint] = endpoints;
+
+        const response = yield* Effect.promise(() => handle(runtime, requestFor(endpoint, assertion.token)));
+        expect(response.status).toBe(401);
+        expect(response.headers.get('www-authenticate')).toBe('Bearer');
+        const problem = yield* readProblem(response);
+        expect(Schema.is(endpoint.authenticationProblem)(problem)).toBe(true);
+        expectSanitized(problem, [assertion.token, principalId, tenantId]);
+        expect(redemptionCalls).toBe(0);
+        expect(harness.readCount()).toBe(0);
+      }
     }),
   );
 });

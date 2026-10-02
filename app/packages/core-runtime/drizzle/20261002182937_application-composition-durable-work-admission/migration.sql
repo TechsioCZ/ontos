@@ -1,0 +1,2 @@
+ALTER TABLE "core"."application_composition_authority" ADD COLUMN "durable_work_admission" text DEFAULT 'open' NOT NULL;--> statement-breakpoint
+ALTER TABLE "core"."application_composition_authority" ADD CONSTRAINT "core_application_composition_authority_durable_admission_ck" CHECK ("durable_work_admission" in ('open', 'closed'));

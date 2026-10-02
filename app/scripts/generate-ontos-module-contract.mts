@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
 import { Effect, Exit, FileSystem, ManagedRuntime, Path, Predicate, Schema, Stream } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { HttpApi } from 'effect/unstable/httpapi';
@@ -80,11 +81,14 @@ const ModulePackageSchema = Schema.Struct({
   version: Schema.optional(Schema.String),
 });
 
+const DeliveryUnitIdSchema = Schema.String.pipe(Schema.brand('DeliveryUnitId'), Schema.decodeTo(Schema.String));
 const ReferenceTopologySchema = Schema.Struct({
   verticals: Schema.optional(
     Schema.Array(
       Schema.Struct({
-        deliveryUnit: Schema.optional(Schema.Struct({ buildMarker: Schema.optional(Schema.String) })),
+        deliveryUnit: Schema.optional(
+          Schema.Struct({ buildMarker: Schema.optional(Schema.String), unitId: Schema.optional(DeliveryUnitIdSchema) }),
+        ),
         id: Schema.optional(Schema.String),
         moduleFederation: Schema.optional(Schema.Struct({ name: Schema.optional(Schema.String) })),
         package: Schema.optional(Schema.String),
@@ -262,7 +266,7 @@ const componentExposes = (verticalDirectory: string) =>
       .readFileString(platformPath.join(verticalDirectory, 'module-federation.config.ts'))
       .pipe(Effect.mapError((cause) => failure('unable to read the Module Federation configuration', cause)));
     const exposes = new Set<string>();
-    const pattern = /['"](?<key>\.\/[A-Za-z][A-Za-z0-9_-]*)['"]\s*:\s*['"][^'"]+['"]/gu;
+    const pattern = /['"](?<key>\.\/[A-Za-z][A-Za-z0-9._-]*(?:\/[A-Za-z][A-Za-z0-9._-]*)*)['"]\s*:\s*['"][^'"]+['"]/gu;
     for (const match of config.matchAll(pattern)) {
       const key = match.groups?.key;
       if (key !== undefined) {
@@ -343,11 +347,25 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
     const { appId, moduleFederationName, topologyEntry } = yield* validateDeploymentIdentity;
     const exposes = yield* componentExposes(verticalDirectory);
     const validatePublicDescriptors = Effect.gen(function* validatePublicDescriptorsEffect() {
-      const componentKeys = Object.keys(owner.manifest.publicSurface.components);
-      for (const key of componentKeys) {
-        if (!exposes.has(`./${toPascalCase(key)}`)) {
+      const bindings = [
+        ...owner.manifest.publicSurface.shellContributions.pages,
+        ...owner.manifest.publicSurface.shellContributions.publicComponents,
+      ];
+      const components = [];
+      for (const key of Object.keys(owner.manifest.publicSurface.components)) {
+        const componentKey = `${owner.manifest.module.id}.${toKebab(key)}`;
+        const selectors = new Set(
+          bindings.filter((binding) => binding.componentKey === componentKey).map(({ expose }) => expose),
+        );
+        if (selectors.size > 1) {
+          return yield* failure(`public component ${key} has conflicting Shell Federation selectors`);
+        }
+        const [selector] = selectors;
+        const expose = selector ?? `./${toPascalCase(key)}`;
+        if (!exposes.has(expose)) {
           return yield* failure(`public component ${key} has no matching Module Federation exposure`);
         }
+        components.push({ expose, key: componentKey, mfBoundaryId: moduleFederationName });
       }
       const safeRuntime = extractVerticalRuntimeSafeDescriptors(owner.registration);
       const manifestActionKeys = sorted(
@@ -362,9 +380,9 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
         return yield* failure('manifest Actions and private runtime Action descriptors do not match');
       }
 
-      return { componentKeys, safeRuntime };
+      return { components, safeRuntime };
     });
-    const { componentKeys, safeRuntime } = yield* validatePublicDescriptors;
+    const { components, safeRuntime } = yield* validatePublicDescriptors;
     const events = yield* Effect.forEach(
       owner.manifest.publicSurface.events,
       (event) =>
@@ -390,11 +408,21 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
         operationKeys: deriveApiOperationKeys(value),
       });
     });
+    const releaseIdentity = yield* Effect.try({
+      catch: (cause) => failure('unable to resolve the module release identity', cause),
+      try: () =>
+        resolveUltramodernReleaseIdentity({
+          generationBuildMarker:
+            topologyEntry.deliveryUnit?.buildMarker ??
+            sha256(`${appId}:${packageJson.version ?? '0.0.0'}`).slice(0, 16),
+          unitId: topologyEntry.deliveryUnit?.unitId ?? `app/${appId}`,
+          workspaceRoot,
+        }),
+    });
     const contract = {
       deployment: {
         appId,
-        buildMarker:
-          topologyEntry.deliveryUnit?.buildMarker ?? sha256(`${appId}:${packageJson.version ?? '0.0.0'}`).slice(0, 16),
+        buildMarker: releaseIdentity.buildMarker,
       },
       manifest: {
         activation: owner.manifest.activation,
@@ -403,14 +431,7 @@ const deriveContract = (workspaceRoot: string, vertical: string, owner: LoadedOw
           actions: safeRuntime.actions,
           api: sorted(apiContracts, (left, right) => left.key.localeCompare(right.key)),
           businessPermissions: owner.manifest.publicSurface.businessPermissions ?? [],
-          components: sorted(
-            componentKeys.map((key) => ({
-              expose: `./${toPascalCase(key)}`,
-              key: `${owner.manifest.module.id}.${toKebab(key)}`,
-              mfBoundaryId: moduleFederationName,
-            })),
-            (left, right) => left.key.localeCompare(right.key),
-          ),
+          components: sorted(components, (left, right) => left.key.localeCompare(right.key)),
           events: sorted(events, (left, right) => left.key.localeCompare(right.key)),
           reports: owner.manifest.publicSurface.reports,
           resourceTypes: owner.manifest.publicSurface.resourceTypes,

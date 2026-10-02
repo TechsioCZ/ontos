@@ -32,6 +32,8 @@ import {
   handleEndExternalStockCorrelation,
 } from '../../src/actions/end-external-stock-correlation.action.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const principalId = '22222222-2222-4222-8222-222222222222';
 const firstCorrelationId = '33333333-3333-4333-8333-333333333333';
@@ -156,14 +158,17 @@ const makePersistence = () => {
   return { persistence, rows };
 };
 
-const scope = trustVerifiedGatewayPrincipalContext({
-  authBindingId: '77777777-7777-4777-8777-777777777777',
-  authContextRef: 'test:external-stock-correlation-actions',
-  authMethod: 'api_key',
-  correlationId: 'external-stock-correlation-actions-test',
-  principalId,
-  tenantId,
-});
+const scope = trustVerifiedGatewayPrincipalContext(
+  {
+    authBindingId: '77777777-7777-4777-8777-777777777777',
+    authContextRef: 'test:external-stock-correlation-actions',
+    authMethod: 'api_key',
+    correlationId: 'external-stock-correlation-actions-test',
+    principalId,
+    tenantId,
+  },
+  compositionRevision,
+);
 
 describe('External Stock Correlation lifecycle Actions', () => {
   it('declares three independently idempotent, exact-resource authorized Actions', () => {
@@ -231,6 +236,7 @@ describe('External Stock Correlation lifecycle Actions', () => {
         actionInvocationId: '88888888-8888-4888-8888-888888888888',
         addDomainEvent: establishCollector.addDomainEvent,
         addOutboxMessage: establishCollector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: establishCollector.recordAuditEvidence,
         recordDataAccess: establishCollector.recordDataAccess,
         scope,
@@ -252,6 +258,7 @@ describe('External Stock Correlation lifecycle Actions', () => {
         actionInvocationId: '99999999-9999-4999-8999-999999999999',
         addDomainEvent: correctCollector.addDomainEvent,
         addOutboxMessage: correctCollector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: correctCollector.recordAuditEvidence,
         recordDataAccess: correctCollector.recordDataAccess,
         scope,
@@ -273,6 +280,7 @@ describe('External Stock Correlation lifecycle Actions', () => {
         actionInvocationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         addDomainEvent: endCollector.addDomainEvent,
         addOutboxMessage: endCollector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: endCollector.recordAuditEvidence,
         recordDataAccess: endCollector.recordDataAccess,
         scope,
@@ -303,6 +311,7 @@ describe('External Stock Correlation lifecycle Actions', () => {
         actionInvocationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,
@@ -319,6 +328,7 @@ describe('External Stock Correlation lifecycle Actions', () => {
             actionInvocationId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
             addDomainEvent: collector.addDomainEvent,
             addOutboxMessage: collector.addOutboxMessage,
+            compositionRevision,
             recordAuditEvidence: collector.recordAuditEvidence,
             recordDataAccess: collector.recordDataAccess,
             scope,
@@ -345,6 +355,7 @@ describe('External Stock Correlation lifecycle Actions', () => {
           actionInvocationId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
           addDomainEvent: collector.addDomainEvent,
           addOutboxMessage: collector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: collector.recordAuditEvidence,
           recordDataAccess: collector.recordDataAccess,
           scope,

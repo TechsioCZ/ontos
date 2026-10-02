@@ -5,8 +5,11 @@ import { FetchHttpClient } from 'effect/unstable/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
+import { ActiveApplicationCompositionService } from '@app/core-runtime';
+import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
 import { makeGatewayPrincipalVerifierLayer } from '@app/gateway-principal-verifier/server';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import {
   CommercePortalAuthVerificationInvalidRequest,
   CommercePortalAuthVerificationService,
@@ -42,6 +45,7 @@ import {
   VerifyExternalAuthenticationRequestSchema,
   VerifyExternalAuthenticationResultSchema,
 } from '../../shared/portal-auth-contracts.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 const now = DateTime.makeUnsafe('2026-09-17T09:00:00.000Z');
 const request = Schema.decodeUnknownSync(CommercePortalAuthVerificationRequestSchema)({
@@ -134,6 +138,10 @@ const workloadAuthContextRef = 'gateway-api-key:commerce-workload-test';
 
 const makeSignedWorkloadFixture = () =>
   Effect.gen(function* makeSignedWorkloadFixtureEffect() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(
+      [ultramodernApiMarker.appId],
+      ultramodernApiMarker.buildMarker,
+    ).pipe(Effect.provideService(Clock.Clock, signedWorkloadClock));
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
       ...(yield* Effect.promise(() => exportJWK(publicKey))),
@@ -144,6 +152,7 @@ const makeSignedWorkloadFixture = () =>
     const issuedAt = Math.floor(signedWorkloadEpochMillis / 1000) - 30;
     const token = yield* Effect.promise(() =>
       new SignJWT({
+        compositionRevision: snapshot.composition.revision,
         principal: {
           authBindingId: workloadAuthBindingId,
           authContextRef: workloadAuthContextRef,
@@ -152,6 +161,7 @@ const makeSignedWorkloadFixture = () =>
           principalId: workloadPrincipalId,
           tenantId: request.tenantId,
         },
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
         ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
       })
         .setProtectedHeader({ alg: 'EdDSA', kid: 'commerce-workload-test', typ: 'JWT' })
@@ -169,13 +179,16 @@ const makeSignedWorkloadFixture = () =>
         keys: [publicJwk],
       }),
     };
-    return { environment, token };
+    return { environment, snapshot, token };
   });
 
-const makeSignedWorkloadAuthority = (environment: {
-  readonly ONTOS_GATEWAY_ISSUER: string;
-  readonly ONTOS_GATEWAY_PUBLIC_JWKS: string;
-}) => {
+const makeSignedWorkloadAuthority = (
+  environment: {
+    readonly ONTOS_GATEWAY_ISSUER: string;
+    readonly ONTOS_GATEWAY_PUBLIC_JWKS: string;
+  },
+  snapshot: ActiveApplicationCompositionSnapshot,
+) => {
   const grantConfiguration = Schema.decodeUnknownSync(CommercePortalAuthVerificationWorkloadGrantsSchema)({
     grants: [
       {
@@ -193,16 +206,20 @@ const makeSignedWorkloadAuthority = (environment: {
     commercePortalAuthVerificationWorkloadAuthorizationLive,
     Layer.succeed(CommercePortalAuthVerificationWorkloadGrantConfiguration, grantConfiguration),
     Layer.succeed(GatewayAssertionRedemptionService, { consume: () => Effect.void }),
+    Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(snapshot) }),
     makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(environment)),
   );
 };
 
-const makeSignedWorkloadApp = (environment: {
-  readonly ONTOS_GATEWAY_ISSUER: string;
-  readonly ONTOS_GATEWAY_PUBLIC_JWKS: string;
-}) =>
+const makeSignedWorkloadApp = (
+  environment: {
+    readonly ONTOS_GATEWAY_ISSUER: string;
+    readonly ONTOS_GATEWAY_PUBLIC_JWKS: string;
+  },
+  snapshot: ActiveApplicationCompositionSnapshot,
+) =>
   Effect.gen(function* makeSignedWorkloadAppEffect() {
-    const authority = makeSignedWorkloadAuthority(environment);
+    const authority = makeSignedWorkloadAuthority(environment, snapshot);
     const apiLayer = HttpApiBuilder.layer(CommercePortalAuthVerificationApi).pipe(
       Layer.provide(commercePortalAuthVerificationApiLive),
       Layer.provideMerge(authority),
@@ -333,7 +350,7 @@ it.effect('maps owner rejection, outage, and malformed payloads to fail-closed H
 it.effect('accepts a signed workload assertion through the real authority and HTTP boundary', () =>
   Effect.gen(function* signedWorkloadBoundary() {
     const fixture = yield* makeSignedWorkloadFixture();
-    const app = yield* makeSignedWorkloadApp(fixture.environment);
+    const app = yield* makeSignedWorkloadApp(fixture.environment, fixture.snapshot);
     const workloadAssertions: CommercePortalAuthVerificationWorkloadAssertionService = {
       acquire: () => Effect.succeed(Redacted.make(`Bearer ${fixture.token}`)),
     };

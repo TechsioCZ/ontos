@@ -16,13 +16,10 @@ import { CatalogToStockBindingUnavailable } from '../../shared/domain/catalog-to
 import { makeCatalogToStockBindingResolver } from '../../shared/domain/catalog-to-stock-binding.ts';
 import { InventoryBackendConfigurationPersistenceUnavailable } from '../../shared/domain/inventory-backend-configuration-persistence-unavailable.ts';
 import { inventoryBackendConfigurationPersistenceForScope } from '../persistence/inventory-backend-configuration-repository.ts';
-// oxlint-disable anti-slop-effect/no-service-constructor-imports -- Core invokes this generated transaction-scoped owner factory only after the governed Read scope gate; expires: 2027-03-31.
 import {
   catalogToStockBindingStockItemReader,
   makeDrizzleCatalogToStockBindingPersistence,
 } from '../persistence/catalog-to-stock-binding-repository.ts';
-// oxlint-enable anti-slop-effect/no-service-constructor-imports
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core invokes this generated transaction-scoped owner factory only after the governed Read scope gate; expires: 2027-03-31.
 import { makeDrizzleStockItemRepository } from '../persistence/stock-item-repository.ts';
 
 export const CatalogToStockBindingResolutionDomainErrorSchema = Schema.Union([

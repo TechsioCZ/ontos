@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CreateVariantRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CreateVariantRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCreateVariantRecovery = (
   payload: CreateVariantRecoveryRequest,
   ...[requestCorrelation, options = {}]: CreateVariantRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCreateVariantRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCreateVariantRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

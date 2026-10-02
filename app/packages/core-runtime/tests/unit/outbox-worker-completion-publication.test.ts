@@ -39,6 +39,7 @@ const definition = defineOutboxWorkerCompletion({
 const context = {
   attemptNumber: 1,
   claimId: 'claim-one',
+  compositionRevision: 'a'.repeat(64),
   consumerModuleKey,
   deliveryId: 'delivery-one',
   domainEventId: 'request-event-one',

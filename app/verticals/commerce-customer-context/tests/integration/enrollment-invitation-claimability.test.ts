@@ -35,6 +35,7 @@ import {
 } from '../../src/portal-auth/persistence/portal-auth-database.ts';
 import { user, verification } from '../../src/portal-auth/persistence/portal-auth-tables.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
+import { enrollmentApplicationCompositionRevision } from '../support/enrollment-application-composition.ts';
 import {
   makeEnrollmentAcceptanceFixture,
   readEnrollmentAcceptanceOperations,
@@ -78,7 +79,11 @@ const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL')
 );
 
 /** Resend is answered locally: creation now awaits delivery, so the transport must accept. */
-const acceptingResendFetch: typeof fetch = () => Promise.resolve(Response.json({ id: 'accepted' }));
+const acceptingResendFetch: typeof fetch = (input, init) => {
+  const request = new Request(input, init);
+  expect(request.url).toBe('https://api.resend.com/emails');
+  return Promise.resolve(Response.json({ id: 'accepted' }));
+};
 
 const emailDeliveryConfiguration = Layer.mergeAll(
   Layer.succeed(ResendEmailDeliveryConfig, {
@@ -102,9 +107,8 @@ const portalAuthConfiguration = Effect.fnUntraced(function* portalAuthConfigurat
 const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive() {
   const configuration = yield* portalAuthConfiguration();
   return commercePortalAuthRealmLive.pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(Layer.succeed(CommercePortalAuthConfig, configuration), emailDeliveryConfiguration),
-    ),
+    Layer.provide(emailDeliveryConfiguration),
+    Layer.provideMerge(Layer.succeed(CommercePortalAuthConfig, configuration)),
   );
 });
 
@@ -243,7 +247,8 @@ interface ClaimabilityScenario {
 /** A deployed runtime and a real Counterparty realm, with no invitation issued yet. */
 const claimabilityScenario = Effect.fnUntraced(function* claimabilityScenario() {
   const tenantId = randomUUID();
-  const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+  const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+  const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
   const realm = yield* makeCounterpartyInvitationRealm(fixture, {
     recipientActionKeys: [],
     storefrontActionKeys: [START_ACTION_KEY, CLAIM_TRANSITION_ACTION_KEY],
@@ -311,7 +316,10 @@ it.live(
     Effect.scoped(
       Effect.gen(function* refusesAForeignTenantInvitation() {
         const scenario = yield* claimabilityScenario();
-        const foreignFixture = yield* makeEnrollmentAcceptanceFixture({ tenantId: randomUUID() });
+        const foreignFixture = yield* makeEnrollmentAcceptanceFixture(
+          { tenantId: randomUUID() },
+          scenario.fixture.compositionRevision,
+        );
         const foreignRealm = yield* makeCounterpartyInvitationRealm(foreignFixture, {
           recipientActionKeys: [],
           storefrontActionKeys: [],

@@ -3,7 +3,10 @@ import { expect, it } from 'effect-rstest';
 
 import type { AttemptClaimResult, AttemptRecordResult } from '../../src/enrollment/attempts/attempt-persistence.ts';
 import type { CommerceEnrollmentAttemptService } from '../../src/enrollment/attempts/attempt-service.ts';
-import { CommerceEnrollmentAttemptIndeterminate } from '../../src/enrollment/attempts/errors.ts';
+import {
+  CommerceEnrollmentAttemptIndeterminate,
+  CommerceEnrollmentAttemptRejected,
+} from '../../src/enrollment/attempts/errors.ts';
 import { OWNER_RECONCILIATION_REQUIRED_FAILURE_CODE } from '../../src/enrollment/journeys/retail-self-enrollment-contracts.ts';
 import {
   CommerceEnrollmentOwnerEffectIndeterminate,
@@ -46,8 +49,15 @@ import {
   EnrollmentTenantIdSchema,
   EnrollmentTransitionKeySchema,
 } from '../../shared/enrollment-contracts.ts';
-import type { ReadPrincipalBindingRequest } from '@app/shared-contracts/server/external-identity-client';
+import type {
+  ActivatePrincipalBindingRequest,
+  ExternalIdentityClientPort,
+  ExternalIdentityMutationClientOptions,
+  ReadPrincipalBindingRequest,
+  ReservePrincipalBindingRequest,
+} from '@app/shared-contracts/server/external-identity-client';
 import {
+  ActivatePrincipalBindingResultSchema,
   AuthBindingIdSchema,
   AuthenticationNamespaceIdSchema,
   ProviderSubjectIdSchema,
@@ -66,12 +76,15 @@ const ownerModuleKey = Schema.decodeSync(EnrollmentModuleKeySchema)('commerce.po
 const transitionKey = Schema.decodeSync(EnrollmentTransitionKeySchema)('provider.account.create');
 const workerId = Schema.decodeSync(EnrollmentKeySchema)('worker-1');
 const requestDigest = 'a'.repeat(64);
+const compositionRevision = 'c'.repeat(64);
+const laterCompositionRevision = 'd'.repeat(64);
 const at = DateTime.makeUnsafe('2026-09-17T10:00:00.000Z');
 const activeUntil = DateTime.makeUnsafe('2099-09-17T10:00:00.000Z');
 const expiredAt = DateTime.makeUnsafe('1960-09-17T10:00:00.000Z');
 
 const transition: CommerceEnrollmentOwnerTransition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
   actorPrincipalId,
+  compositionRevision,
   correlationId: 'owner-driver-unit',
   expectedRevision: 1,
   ownerInvocationId,
@@ -83,6 +96,7 @@ const transition: CommerceEnrollmentOwnerTransition = Schema.decodeSync(Commerce
 });
 
 const attempt = (overrides: Partial<EnrollmentAttemptSnapshot> = {}): EnrollmentAttemptSnapshot => ({
+  compositionRevision,
   createdAt: at,
   createdByPrincipalId: actorPrincipalId,
   intentDigest: 'b'.repeat(64),
@@ -167,14 +181,153 @@ const makeAttemptStore = (
   };
 };
 
-const successfulOwner = (onDispatch?: () => void): CommerceEnrollmentOwnerEffect => ({
-  dispatch: () =>
+const successfulOwner = (
+  onDispatch?: (input: CommerceEnrollmentOwnerTransition) => void,
+): CommerceEnrollmentOwnerEffect => ({
+  dispatch: (input) =>
     Effect.sync(() => {
-      onDispatch?.();
+      onDispatch?.(input);
       return outcome;
     }),
   reconcile: () => Effect.succeed({ actorPrincipalId, reconciliationRef, status: 'SUCCEEDED' as const }),
 });
+
+it.effect('rejects missing or malformed composition revisions before accessing the Attempt store', () =>
+  Effect.gen(function* rejectsUnpinnedOwnerInput() {
+    let storeCalls = 0;
+    const missingRevision = { ...transition };
+    expect(Reflect.deleteProperty(missingRevision, 'compositionRevision')).toBe(true);
+    const driver = commerceEnrollmentOwnerTransitionDriverFor({
+      attempt: makeAttemptStore(claimResult(), {
+        claimTransition: () =>
+          Effect.sync(() => {
+            storeCalls += 1;
+            return claimResult();
+          }),
+        read: () =>
+          Effect.sync(() => {
+            storeCalls += 1;
+            return attempt();
+          }),
+      }),
+      owner: successfulOwner(),
+      workerId: () => workerId,
+    });
+    const inputs = [missingRevision, { ...transition, compositionRevision: 'invalid' }];
+    for (const input of inputs) {
+      expect(yield* Effect.flip(driver.execute(input))).toBeInstanceOf(CommerceEnrollmentAttemptRejected);
+      expect(yield* Effect.flip(driver.reconcile(input))).toBeInstanceOf(CommerceEnrollmentAttemptRejected);
+    }
+    expect(storeCalls).toBe(0);
+  }),
+);
+
+it.effect('rejects a mismatched original composition before dispatch, successful replay, or held-lease return', () =>
+  Effect.gen(function* rejectsClaimFromAnotherRelease() {
+    let dispatches = 0;
+    const mismatchedAttempt = attempt({ compositionRevision: laterCompositionRevision });
+    const claims = [
+      claimResult({ attempt: mismatchedAttempt }),
+      claimResult({ attempt: mismatchedAttempt, operation: operation({ status: 'SUCCEEDED' }) }),
+      claimResult({ attempt: mismatchedAttempt, outcome: 'ALREADY_CLAIMED' }),
+    ];
+    const owner = successfulOwner(() => {
+      dispatches += 1;
+    });
+    for (const claim of claims) {
+      const driver = commerceEnrollmentOwnerTransitionDriverFor({
+        attempt: makeAttemptStore(claim),
+        owner,
+        workerId: () => workerId,
+      });
+      expect(yield* Effect.flip(driver.execute(transition))).toBeInstanceOf(CommerceEnrollmentAttemptRejected);
+    }
+    expect(dispatches).toBe(0);
+  }),
+);
+
+it.effect('rejects initial reconciliation revision mismatch before reading the owner operation', () =>
+  Effect.gen(function* rejectsReconciliationFromAnotherRelease() {
+    let operationReads = 0;
+    let ownerReads = 0;
+    const driver = commerceEnrollmentOwnerTransitionDriverFor({
+      attempt: makeAttemptStore(claimResult(), {
+        read: () =>
+          Effect.succeed(
+            attempt({ compositionRevision: laterCompositionRevision, revision: transition.expectedRevision }),
+          ),
+        readOwnerOperation: () =>
+          Effect.sync(() => {
+            operationReads += 1;
+            return operation({ status: 'SUCCEEDED' });
+          }),
+      }),
+      owner: {
+        ...successfulOwner(),
+        reconcile: () =>
+          Effect.sync(() => {
+            ownerReads += 1;
+            return { actorPrincipalId, reconciliationRef, status: 'SUCCEEDED' as const };
+          }),
+      },
+      workerId: () => workerId,
+    });
+    expect(yield* Effect.flip(driver.reconcile(transition))).toBeInstanceOf(CommerceEnrollmentAttemptRejected);
+    expect(operationReads).toBe(0);
+    expect(ownerReads).toBe(0);
+  }),
+);
+
+it.effect('rechecks the original revision after an expired lease is fenced before owner reads or replay', () =>
+  Effect.gen(function* rejectsChangedRevisionAfterFence() {
+    const refreshedStatuses: readonly EnrollmentOwnerOperationSnapshot['status'][] = ['INDETERMINATE', 'SUCCEEDED'];
+    for (const status of refreshedStatuses) {
+      let attemptReads = 0;
+      let operationReads = 0;
+      let fences = 0;
+      let ownerReads = 0;
+      const store = makeAttemptStore(claimResult(), {
+        claimTransition: () =>
+          Effect.sync(() => {
+            fences += 1;
+            return claimResult();
+          }),
+        read: () =>
+          Effect.sync(() => {
+            attemptReads += 1;
+            return attempt(
+              attemptReads === 1
+                ? { revision: transition.expectedRevision }
+                : { compositionRevision: laterCompositionRevision, revision: transition.expectedRevision + 1 },
+            );
+          }),
+        readOwnerOperation: () =>
+          Effect.sync(() => {
+            operationReads += 1;
+            return operation(
+              operationReads === 1 ? { lease: { leaseExpiresAt: expiredAt, leaseToken, workerId } } : { status },
+            );
+          }),
+      });
+      const driver = commerceEnrollmentOwnerTransitionDriverFor({
+        attempt: store,
+        owner: {
+          ...successfulOwner(),
+          reconcile: () =>
+            Effect.sync(() => {
+              ownerReads += 1;
+              return { actorPrincipalId, reconciliationRef, status: 'SUCCEEDED' as const };
+            }),
+        },
+        workerId: () => workerId,
+      });
+      expect(yield* Effect.flip(driver.reconcile(transition))).toBeInstanceOf(CommerceEnrollmentAttemptRejected);
+      expect(fences).toBe(1);
+      expect(attemptReads).toBe(2);
+      expect(ownerReads).toBe(0);
+    }
+  }),
+);
 
 it.effect('dispatches only from a claimed immutable active lease and records the owner result', () =>
   Effect.gen(function* dispatchesAfterClaim() {
@@ -189,8 +342,9 @@ it.effect('dispatches only from a claimed immutable active lease and records the
     });
     const driver = commerceEnrollmentOwnerTransitionDriverFor({
       attempt: store,
-      owner: successfulOwner(() => {
+      owner: successfulOwner((input) => {
         dispatches += 1;
+        expect(input.compositionRevision).toBe(compositionRevision);
       }),
       workerId: () => workerId,
     });
@@ -411,9 +565,10 @@ it.effect('reconciles a FAILED operation the owner left pending, not a terminal 
       attempt: store,
       owner: {
         dispatch: () => Effect.die('unused dispatch'),
-        reconcile: () =>
+        reconcile: (input) =>
           Effect.sync(() => {
             reconciliations += 1;
+            expect(input.compositionRevision).toBe(compositionRevision);
             return { actorPrincipalId, reconciliationRef, status: 'SUCCEEDED' as const };
           }),
       },
@@ -588,6 +743,7 @@ it.effect('rejects a Core reservation that returns a non-current existing bindin
         operation: 'reserve',
         payload: {
           authenticationRef: 'commerce-enrollment-not-current',
+          compositionRevision,
           reservation: {
             authenticationNamespaceId: Schema.decodeSync(AuthenticationNamespaceIdSchema)(
               'ontos.commerce.portal.better-auth.v1',
@@ -606,5 +762,94 @@ it.effect('rejects a Core reservation that returns a non-current existing bindin
     expect(Schema.is(CommerceEnrollmentOwnerEffectRejected)(error) ? error.code : undefined).toBe(
       'core_binding_not_current',
     );
+  }),
+);
+
+it.effect('binds Core reserve and activate payloads to the original revision and invocation', () =>
+  Effect.gen(function* forwardsOriginalCoreMutationIdentity() {
+    const authBindingId = Schema.decodeSync(AuthBindingIdSchema)('80000000-0000-4000-8000-000000000003');
+    const reserved = Schema.decodeSync(ReservePrincipalBindingResultSchema)({
+      authBindingId,
+      bindingRevision: 1,
+      bindingStatus: 'pending',
+      outcome: 'RESERVED',
+      principalId: '90000000-0000-4000-8000-000000000003',
+    });
+    const activated = Schema.decodeSync(ActivatePrincipalBindingResultSchema)({
+      authBindingId,
+      bindingRevision: 2,
+      bindingStatus: 'active',
+      outcome: 'ACTIVATED',
+      principalId: '90000000-0000-4000-8000-000000000003',
+    });
+    const payloads: (ActivatePrincipalBindingRequest | ReservePrincipalBindingRequest)[] = [];
+    const mutationOptions: ExternalIdentityMutationClientOptions[] = [];
+    const client: ExternalIdentityClientPort = {
+      activatePrincipalBinding: (payload, options) =>
+        Effect.sync(() => {
+          payloads.push(payload);
+          mutationOptions.push(options);
+          return activated;
+        }),
+      changePrincipalBindingStatus: () => Effect.die('unused'),
+      issueExternalGatewayContext: () => Effect.die('unused'),
+      readPrincipalBinding: () => Effect.die('unused'),
+      reservePrincipalBinding: (payload, options) =>
+        Effect.sync(() => {
+          payloads.push(payload);
+          mutationOptions.push(options);
+          return reserved;
+        }),
+      resolveExternalSubject: () => Effect.die('unused'),
+    };
+    const operations: readonly ('reserve' | 'activate')[] = ['reserve', 'activate'];
+    for (const operationKind of operations) {
+      const options: CommerceEnrollmentCoreIdentityOwnerEffectOptions = {
+        client,
+        clientOptions: () => ({
+          apiKey: Redacted.make('test'),
+          baseUrl: 'https://core.invalid',
+          requestCorrelation: 'core-driver-unit',
+        }),
+        makeDispatchRequest: () =>
+          operationKind === 'reserve'
+            ? {
+                operation: 'reserve',
+                payload: {
+                  authenticationRef: 'original-reservation',
+                  compositionRevision: laterCompositionRevision,
+                  reservation: {
+                    authenticationNamespaceId: Schema.decodeSync(AuthenticationNamespaceIdSchema)(
+                      'ontos.commerce.portal.better-auth.v1',
+                    ),
+                    providerSubjectId: Schema.decodeSync(ProviderSubjectIdSchema)('original-provider-subject'),
+                    subjectType: 'user',
+                  },
+                },
+              }
+            : {
+                operation: 'activate',
+                payload: {
+                  activation: { authBindingId, expectedRevision: 1 },
+                  authenticationRef: 'original-activation',
+                  compositionRevision: laterCompositionRevision,
+                },
+              },
+        makeReconciliationRequest: () => {
+          throw new Error('The dispatch-only test must not reconcile');
+        },
+      };
+      const result = yield* commerceEnrollmentCoreIdentityOwnerEffectFor(options).dispatch(transition);
+      expect(result.status).toBe('SUCCEEDED');
+    }
+    expect(payloads).toHaveLength(2);
+    expect(payloads.map((payload) => payload.compositionRevision)).toStrictEqual([
+      compositionRevision,
+      compositionRevision,
+    ]);
+    expect(mutationOptions.map((options) => options.idempotencyKey)).toStrictEqual([
+      ownerInvocationId,
+      ownerInvocationId,
+    ]);
   }),
 );

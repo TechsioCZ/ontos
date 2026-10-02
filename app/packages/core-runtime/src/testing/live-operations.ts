@@ -61,6 +61,7 @@ const ActionKeySchema = Schema.String.pipe(Schema.brand('ActionKey'));
 const LiveOperationFixtureConfigurationSchema = Schema.Struct({
   actionKeys: Schema.optional(Schema.Array(ActionKeySchema)),
   authenticationNamespaceId: AuthenticationNamespaceIdSchema,
+  compositionRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
   runtimeConnectionString: Schema.Redacted(Schema.String),
 });
 
@@ -363,7 +364,7 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
     const configuration = yield* Schema.decodeEffect(LiveOperationFixtureConfigurationSchema)(input).pipe(
       Effect.mapError((cause) => fixtureFailure('Invalid live operation fixture configuration', cause)),
     );
-    const spiceDb = yield* loadSpiceDbConfig().pipe(
+    const spiceDb = yield* loadSpiceDbConfig({ envPath: '/dev/null' }).pipe(
       Effect.mapError((cause) => fixtureFailure('Unable to load the SpiceDB configuration', cause)),
     );
     const runtimeConnectionString = Redacted.value(configuration.runtimeConnectionString);
@@ -460,8 +461,12 @@ const makeLiveOperationFixtureEffect = Effect.fn('LiveOperations.makeLiveOperati
           actionScopeResolver,
           {
             contextAccess,
+            // This fixture owns authorization and commit-fault acceptance. Release publication
+            // is exercised separately against its own disposable composition authority.
+            lockCompositionAuthority: () => Effect.succeed([]),
             moduleEntrypointGateway: actionModuleEntrypointGateway,
             moduleStateGate: actionModuleStateGate,
+            resolveCompositionRevision: () => Effect.succeed(configuration.compositionRevision),
           },
         );
         const runAction: (typeof ActionRuntime)['Service']['runAction'] = Effect.fn('LiveOperations.runAction')(

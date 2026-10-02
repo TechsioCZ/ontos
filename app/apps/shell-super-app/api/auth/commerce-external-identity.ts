@@ -230,7 +230,11 @@ const makeWorkloadAssertion = (configuration: CommerceExternalIdentityConfigurat
         ),
       );
       const response = yield* issuer
-        .issue({ audience: configuration.providerEndpointAudience, principal: context.principal })
+        .issue({
+          audience: configuration.providerEndpointAudience,
+          compositionRevision: context.compositionRevision,
+          principal: context.principal,
+        })
         .pipe(Effect.mapError(mapWorkloadAssertionFailure));
       return Redacted.make(`Bearer ${response.token}`);
     }),

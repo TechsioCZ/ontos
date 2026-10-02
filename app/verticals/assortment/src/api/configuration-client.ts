@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ConfigurationClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ConfigurationAuthorizedInvocation = readonly [
@@ -44,6 +45,10 @@ export const executeConfiguration = (
   payload: ConfigurationRequest,
   ...[requestCorrelation, options = {}]: ConfigurationOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeConfigurationWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeConfigurationWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

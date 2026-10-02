@@ -28,7 +28,7 @@ import {
   PricingOwnerMaterialEvidenceFenceGatewayUnavailable,
   PricingPricingMaterialEvidenceFenceGateway,
   PricingPromotionMaterialEvidenceFenceGateway,
-  pricingMaterialEvidenceOwnerFinalFenceLive,
+  makePricingMaterialEvidenceOwnerFinalFence,
   makePricingMaterialEvidenceOwnerFinalFenceFromGateways,
 } from '../../src/integrations/material-evidence-owner-final-fence.ts';
 import type {
@@ -60,11 +60,16 @@ const assertUnavailable = (
 ) =>
   Effect.gen(function* rejectsWithoutFabrication() {
     const verificationFailure = yield* gateway
-      .verifyOpaqueProofsAgainstCurrentState({ candidateRef: 'candidate:790', sources: [] })
+      .verifyOpaqueProofsAgainstCurrentState({
+        candidateRef: 'candidate:790',
+        compositionRevision: 'revision:790',
+        sources: [],
+      })
       .pipe(Effect.flip);
     const generationFailure = yield* gateway
       .confirmObservedGenerationsThrough({
         candidateRef: 'candidate:790',
+        compositionRevision: 'revision:790',
         observations: [],
         through: '2026-09-28T12:00:00.000Z',
       })
@@ -380,6 +385,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
     return Effect.gen(function* verifiesTierGeneration() {
       const first = yield* gateway.verifyOpaqueProofsAgainstCurrentState({
         candidateRef: 'candidate:790',
+        compositionRevision: 'revision:790',
         sources: [expectation],
         typedSources: [source],
         verificationContext,
@@ -391,6 +397,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
       });
       const second = yield* gateway.confirmObservedGenerationsThrough({
         candidateRef: 'candidate:790',
+        compositionRevision: 'revision:790',
         observations: first.observations,
         through,
         typedSources: [source],
@@ -556,6 +563,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
     return Effect.gen(function* verifiesDiscountAbsenceFromOwnerProof() {
       const first = yield* gateway.verifyOpaqueProofsAgainstCurrentState({
         candidateRef: 'candidate:790',
+        compositionRevision: 'revision:790',
         sources: [expectation],
         typedSources: [source],
         verificationContext,
@@ -568,6 +576,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
       });
       const second = yield* gateway.confirmObservedGenerationsThrough({
         candidateRef: 'candidate:790',
+        compositionRevision: 'revision:790',
         observations: first.observations,
         through,
         typedSources: [source],
@@ -757,6 +766,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
       return Effect.gen(function* verifiesStoredOriginalAndCurrentCurrencyGeneration() {
         const first = yield* gateway.verifyOpaqueProofsAgainstCurrentState({
           candidateRef: 'candidate:790',
+          compositionRevision: 'revision:790',
           sources: [expectation],
           typedSources: [source],
           verificationContext,
@@ -768,6 +778,7 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
         });
         const second = yield* gateway.confirmObservedGenerationsThrough({
           candidateRef: 'candidate:790',
+          compositionRevision: 'revision:790',
           observations: first.observations,
           through,
           typedSources: [source],
@@ -806,11 +817,16 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
     });
     return Effect.gen(function* refusesUntypedOwnerRead() {
       const sourceFailure = yield* gateway
-        .verifyOpaqueProofsAgainstCurrentState({ candidateRef: 'candidate:790', sources: [] })
+        .verifyOpaqueProofsAgainstCurrentState({
+          candidateRef: 'candidate:790',
+          compositionRevision: 'revision:790',
+          sources: [],
+        })
         .pipe(Effect.flip);
       const generationFailure = yield* gateway
         .confirmObservedGenerationsThrough({
           candidateRef: 'candidate:790',
+          compositionRevision: 'revision:790',
           observations: [],
           through: '2026-09-28T12:00:00.000Z',
         })
@@ -848,7 +864,11 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
         }
         const promotion = Context.get(context, PricingPromotionMaterialEvidenceFenceGateway);
         const failure = yield* promotion
-          .verifyOpaqueProofsAgainstCurrentState({ candidateRef: 'candidate:790', sources: [] })
+          .verifyOpaqueProofsAgainstCurrentState({
+            candidateRef: 'candidate:790',
+            compositionRevision: 'revision:790',
+            sources: [],
+          })
           .pipe(Effect.flip);
         expect(failure).toBeInstanceOf(PricingOwnerMaterialEvidenceFenceGatewayUnavailable);
         expect(failure).toMatchObject({ ownerModuleId: 'commerce.promotion', retryable: true });
@@ -864,7 +884,10 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
       pricing: successfulGateway('2026-09-28T12:00:10.100Z'),
       promotion: successfulGateway('2026-09-28T12:00:10.500Z'),
     });
-    const live = pricingMaterialEvidenceOwnerFinalFenceLive.pipe(Layer.provide(realGateways));
+    const live = Layer.effect(
+      PricingMaterialEvidenceOwnerFinalFence,
+      makePricingMaterialEvidenceOwnerFinalFence('revision:790'),
+    ).pipe(Layer.provide(realGateways));
 
     return Effect.scoped(
       Effect.gen(function* acceptsRealOwnerAuthorities() {
@@ -902,7 +925,10 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
       pricing: successfulGateway('2026-09-28T12:00:10.100Z'),
       promotion: successfulGateway('2026-09-28T12:00:10.500Z'),
     });
-    const live = pricingMaterialEvidenceOwnerFinalFenceLive.pipe(Layer.provide(realGateways));
+    const live = Layer.effect(
+      PricingMaterialEvidenceOwnerFinalFence,
+      makePricingMaterialEvidenceOwnerFinalFence('revision:790'),
+    ).pipe(Layer.provide(realGateways));
     const ordinarySources = expectations.filter(({ ownerModuleId }) => ownerModuleId !== 'commerce.promotion');
 
     return Effect.scoped(
@@ -1052,13 +1078,16 @@ describe('Current Pricing Decision production owner final-fence adapters #790', 
       },
     };
     const success = successfulGateway('2026-09-28T12:00:10.000Z');
-    const fence = makePricingMaterialEvidenceOwnerFinalFenceFromGateways({
-      'commerce.catalog': success,
-      'commerce.customer-context': purchaseUnavailable,
-      'commerce.market-catalog': success,
-      'commerce.pricing': success,
-      'commerce.promotion': success,
-    });
+    const fence = makePricingMaterialEvidenceOwnerFinalFenceFromGateways(
+      {
+        'commerce.catalog': success,
+        'commerce.customer-context': purchaseUnavailable,
+        'commerce.market-catalog': success,
+        'commerce.pricing': success,
+        'commerce.promotion': success,
+      },
+      'revision:790',
+    );
     const verificationRequest: PricingOwnerMaterialEvidenceFenceGatewayRequest = {
       candidateRef: snapshot.candidateRef,
       decision: snapshot.decision,

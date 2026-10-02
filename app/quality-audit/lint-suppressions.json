@@ -1,6 +1,6 @@
 {
   "rules": {
-    "anti-slop-effect/no-service-constructor-imports": 71,
+    "anti-slop-effect/no-service-constructor-imports": 45,
     "anti-slop/no-chained-type-assertions": 13,
     "anti-slop/no-conditional-empty-object-spread": 13,
     "anti-slop/no-known-value-widening": 6,
@@ -91,7 +91,7 @@
     "typescript/no-unsafe-call": 1,
     "typescript/no-unsafe-return": 1,
     "typescript/no-unsafe-type-assertion": 25,
-    "typescript/promise-function-async": 10,
+    "typescript/promise-function-async": 9,
     "typescript/switch-exhaustiveness-check": 7,
     "unicorn/consistent-function-scoping": 3,
     "unicorn/no-array-method-this-argument": 8,

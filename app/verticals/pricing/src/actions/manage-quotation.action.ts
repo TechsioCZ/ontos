@@ -86,6 +86,7 @@ export interface ManageQuotationFreshCurrentAuthorityService {
   readonly forScope: (
     transaction: ScopedTransactionExecutor,
     scope: OperationalScope,
+    compositionRevision: string,
   ) => Effect.Effect<
     ManageQuotationFreshCurrentResolver,
     OperationContextUnavailable,
@@ -191,6 +192,7 @@ type CurrentPricingDecisionWholeSource =
     : never;
 
 interface FreshCurrentResolverDependencies {
+  readonly compositionRevision: string;
   readonly evaluationFactory: CurrentPricingDecisionEvaluationFactoryService;
   readonly pricingOwnerFinalFence: PricingOwnerMaterialEvidenceFenceGateway;
   readonly scope: OperationalScope & { readonly legalEntityId: string };
@@ -214,7 +216,7 @@ const makeFreshCurrentResolver = (
   dependencies: FreshCurrentResolverDependencies,
 ): ManageQuotationFreshCurrentResolver => {
   const { evaluationFactory, pricingOwnerFinalFence, scope, source, subjectAuthority } = dependencies;
-  const evaluation = evaluationFactory.make(source, pricingOwnerFinalFence);
+  const evaluation = evaluationFactory.make(source, pricingOwnerFinalFence, dependencies.compositionRevision);
   return Effect.fn('ManageQuotationFreshCurrentAuthority.resolveFresh')(function* resolveFresh(input) {
     const operationTime = DateTime.formatIso(DateTime.makeUnsafe(input.trusted.trustedOperationAt));
     if (!freshRequestMatchesTrustedScope(input, scope, operationTime)) {
@@ -333,7 +335,7 @@ export const manageQuotationFreshCurrentAuthorityLive = Layer.effect(
     const installedSubjectAuthority = yield* Effect.serviceOption(CurrentPricingDecisionSubjectAuthority);
     const gatewayIssuer = yield* Effect.serviceOption(CurrentPricingDecisionCustomerContextGatewayIssuer);
     return {
-      forScope: (transaction, scope) => {
+      forScope: (transaction, scope, compositionRevision) => {
         if (scope.legalEntityId === undefined) {
           return Effect.fail(
             new OperationContextUnavailable({
@@ -347,6 +349,7 @@ export const manageQuotationFreshCurrentAuthorityLive = Layer.effect(
           onNone: () => {
             const fromEnvironment = currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment(
               scope.correlationId,
+              compositionRevision,
             );
             return Option.match(gatewayIssuer, {
               onNone: () => fromEnvironment,
@@ -362,13 +365,15 @@ export const manageQuotationFreshCurrentAuthorityLive = Layer.effect(
             pricingOwnerFinalFence: pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope(
               transaction,
               verifiedScope,
+              compositionRevision,
             ),
-            source: currentPricingDecisionWholeEvaluationForScope(transaction, verifiedScope),
+            source: currentPricingDecisionWholeEvaluationForScope(transaction, verifiedScope, compositionRevision),
           },
           { concurrency: 3 },
         ).pipe(
           Effect.map(({ authority: subjectAuthority, pricingOwnerFinalFence, source }) =>
             makeFreshCurrentResolver({
+              compositionRevision,
               evaluationFactory,
               pricingOwnerFinalFence,
               scope: verifiedScope,
@@ -576,7 +581,7 @@ export const manageQuotationAction = defineAction(
     schemaVersion: '1',
   },
   handleManageQuotation,
-  (transaction, scope) => {
+  (transaction, scope, compositionRevision) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(
         new OperationContextUnavailable({
@@ -594,7 +599,7 @@ export const manageQuotationAction = defineAction(
                 Effect.succeed<ManageQuotationFreshCurrentResolver>(() =>
                   Effect.fail(currentAuthorityUnavailable('Fresh Current Pricing authority is not installed')),
                 ),
-              onSome: (service) => service.forScope(transaction, scope),
+              onSome: (service) => service.forScope(transaction, scope, compositionRevision),
             }),
           ),
         ),

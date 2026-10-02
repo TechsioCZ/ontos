@@ -189,7 +189,9 @@ import {
   ModuleStateGateLive as GovernedModuleStateGateLive,
   OperationalScopeResolverLive as GovernedOperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import { ActiveApplicationCompositionSourceLive as GovernedApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { Layer as GovernedReadLayer } from 'effect';
+import { FetchHttpClient as GovernedFetchHttpClient } from 'effect/unstable/http';
 ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_START}
 ${GOVERNED_HTTP_HANDLER_SUPPORT_IMPORT_SLOT_END}
 
@@ -215,6 +217,15 @@ const governedReadRuntimeDependenciesLive = GovernedReadLayer.mergeAll(
 const governedReadRuntimeLive = GovernedReadRuntimeLive.pipe(
   GovernedReadLayer.provide(governedReadRuntimeDependenciesLive),
 );
+const governedApplicationCompositionSourceLive = GovernedApplicationCompositionSourceLive.pipe(
+  GovernedReadLayer.provide(
+    GovernedFetchHttpClient.layer.pipe(
+      GovernedReadLayer.provide(
+        GovernedReadLayer.succeed(GovernedFetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' }),
+      ),
+    ),
+  ),
+);
 
 export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   GovernedReadLayer.empty,
@@ -230,6 +241,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
     runtimeLayerStart,
     runtimeLayerEnd,
   )}  GovernedReadLayer.provide(governedReadApiHandlersLive),
+  GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
   GovernedReadLayer.provide(GovernedDatabaseConfigLive),
   GovernedReadLayer.orDie,
 ${source.slice(runtimeLayerEnd)}`;

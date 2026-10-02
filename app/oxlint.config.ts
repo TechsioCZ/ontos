@@ -819,6 +819,17 @@ export default defineConfig({
       },
     },
     {
+      // Modern.js defines '$.tsx' and paired '$.data(.client).ts' / 'page.data.client.ts' route files.
+      // Keep the naming rule enabled while admitting those exact framework spellings.
+      files: ['apps/shell-super-app/src/routes/**/*.ts', 'apps/shell-super-app/src/routes/**/*.tsx'],
+      rules: {
+        'github/filenames-match-regex': [
+          'error',
+          String.raw`^(?:\$(?:\.data(?:\.client)?)?|page\.data\.client|[a-z0-9-]+(?:\.[a-z0-9-]+)?)$`,
+        ],
+      },
+    },
+    {
       // UltraModern, Drizzle, generated federation declarations, and service tests mandate dotted filenames.
       files: [
         'apps/shell-super-app/drizzle.auth.config.ts',

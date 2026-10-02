@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CatalogMediaCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CatalogMediaCurrentAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCatalogMediaCurrent = (
   payload: CatalogMediaCurrentRequest,
   ...[requestCorrelation, options = {}]: CatalogMediaCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCatalogMediaCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCatalogMediaCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

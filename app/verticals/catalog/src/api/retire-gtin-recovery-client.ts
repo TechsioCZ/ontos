@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RetireGtinRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RetireGtinRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRetireGtinRecovery = (
   payload: RetireGtinRecoveryRequest,
   ...[requestCorrelation, options = {}]: RetireGtinRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRetireGtinRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRetireGtinRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

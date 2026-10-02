@@ -124,15 +124,8 @@ const runEnvironment = (service) => {
 };
 
 /**
- * @param {string} service Generated worker service section.
- * @returns {string} Start preflight that must still guard the hosted worker.
- */
-const startPreflight = (service) =>
-  /^ {6}start: sh -c '(?<preflight>.*?)cd app\//mu.exec(service)?.groups?.preflight ?? '';
-
-/**
- * One service runs every owner's entry: the build of the first dedicated worker, the union of their
- * start preflights, and their shared run environment, which must agree on every shared key.
+ * One service runs every owner's entry: the build of the first dedicated worker and their shared
+ * run environment, which must agree on every shared key.
  * @param {readonly string[]} services Generated dedicated worker services, in topology order.
  * @param {readonly string[]} serviceIds Their setups.
  * @param {string} rootPackageName Workspace root package name.
@@ -145,8 +138,6 @@ const renderHostService = (services, serviceIds, rootPackageName) =>
       ['PORT', `'${OUTBOX_WORKER_HOST_HEALTH_PORT}'`],
       ['ULTRAMODERN_ZEROPS_SERVICE', OUTBOX_WORKER_HOST.id],
     ]);
-    /** @type {Set<string>} */
-    const preflights = new Set();
     for (const [index, service] of services.entries()) {
       for (const [key, value] of runEnvironment(service)) {
         if (OWNER_SPECIFIC_ENVIRONMENT.has(key)) {
@@ -160,7 +151,6 @@ const renderHostService = (services, serviceIds, rootPackageName) =>
         }
         environment.set(key, value);
       }
-      preflights.add(startPreflight(service));
     }
     const [template] = services;
     const [templateId] = serviceIds;
@@ -196,7 +186,7 @@ const renderHostService = (services, serviceIds, rootPackageName) =>
       '        httpGet:',
       `          port: ${OUTBOX_WORKER_HOST_HEALTH_PORT}`,
       "          path: '/ready'",
-      `      start: sh -c '${[...preflights].join('')}cd ${runtimeDir} && PATH="$PWD/node/bin:$PATH" exec node ${OUTBOX_WORKER_BUNDLE}'`,
+      `      start: sh -c 'cd ${runtimeDir} && PATH="$PWD/node/bin:$PATH" exec node ${OUTBOX_WORKER_BUNDLE}'`,
     ].join('\n');
   });
 

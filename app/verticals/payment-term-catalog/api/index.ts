@@ -1,6 +1,6 @@
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import {
-  ActionRuntimeLive,
+  makeActionRuntimeLive,
   ContextAccessLive,
   CorePersistenceLive,
   DatabaseConfigLive,
@@ -15,10 +15,13 @@ import {
   ModuleStateGateLive,
   OperationalScopeResolverLive,
 } from '@app/core-runtime/actions/runtime-wiring';
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
 import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
 import { Effect, HttpApiBuilder, HttpRouter, Layer } from '@modern-js/bff-effect/effect-edge';
 import type { EffectBffDefinition, EffectBffRuntime } from '@modern-js/bff-effect/effect-edge';
 import { Layer as GovernedReadLayer, Logger, References, Schema, Tracer } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
@@ -42,7 +45,7 @@ import { retirePaymentTermActionApiLive } from './retire-payment-term-action-ser
 
 import { microVerticalOperationAttributes } from '@app/shared-contracts';
 import { paymentTermCatalogApi, paymentTermCatalogOperationContexts } from '../shared/api.ts';
-import { ultramodernApiMarker } from '../shared/ultramodern-build.ts';
+import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
 
 const paymentTermCatalogReadinessLayer = HttpApiBuilder.group(paymentTermCatalogApi, 'foundation', (handlers) =>
   handlers.handle('readiness', () =>
@@ -83,6 +86,10 @@ const runtimeObservabilityLayers = [
   Layer.succeed(References.MinimumLogLevel, 'Info'),
 ] as const;
 const runtimeObservabilityLive = Layer.mergeAll(...runtimeObservabilityLayers);
+const compositionHttpClientLive = FetchHttpClient.layer.pipe(
+  Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+);
+const compositionSourceLive = ActiveApplicationCompositionSourceLive.pipe(Layer.provide(compositionHttpClientLive));
 const tenantModuleStateServiceLive = TenantModuleStateServiceLive.pipe(Layer.provide(CorePersistenceLive));
 const moduleStateGateLive = ModuleStateGateLive.pipe(Layer.provide(tenantModuleStateServiceLive));
 const operationalScopeResolverLive = Layer.provide(
@@ -91,9 +98,10 @@ const operationalScopeResolverLive = Layer.provide(
 );
 const moduleEntrypointGatewayLive = ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive));
 /** Deployment composition seam. Trusted Customer Context issuance remains a requirement. */
-const paymentTermCatalogActionRuntime = ActionRuntimeLive.pipe(
+const paymentTermCatalogActionRuntime = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
   Layer.provide(
     Layer.mergeAll(
+      ActiveApplicationCompositionConfigLive.pipe(Layer.provide(compositionSourceLive)),
       CorePersistenceLive,
       ActionRepositoryLive,
       ActionPermissionLive,
@@ -140,7 +148,7 @@ export const makePaymentTermCatalogApiRuntime = (
     // </generated-governed-http-handler-layers>
   ).pipe(Layer.provide(Layer.mergeAll(actionPrincipalVerifierLive, gatewayAssertionRedemption)));
   const resolvedApiHandlersLive = apiHandlersLive.pipe(
-    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive)),
+    Layer.provide(Layer.mergeAll(runtimeObservabilityLive, RequestSchemaProblemLive, compositionSourceLive)),
     Layer.orDie,
   );
   const transportLive = HttpRouter.cors({

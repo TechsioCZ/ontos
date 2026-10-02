@@ -186,10 +186,14 @@ export const outboxWorkerLayer = Layer.merge(
 const renderWorkerHostEntry = (consumer: OntosVerticalMetadata): string => `${OUTBOX_WORKER_HOST_HEADER}
 // @ontos-outbox-worker-host-owner ${consumer.moduleId}
 import { Layer } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
 import {
+  ActiveApplicationCompositionConfigLive,
   defineOutboxWorkerEntry,
   extractOutboxWorkerSubscriptions,
 } from '@app/core-runtime/outbox/worker';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { outboxWorkers } from '../workers/index.ts';
 import {
   outboxWorkerCorePersistenceLive,
@@ -201,7 +205,21 @@ import {
 /** The combined Outbox Worker host polls this entry in its own runtime under its own claim owner. */
 export const outboxWorkerEntry = defineOutboxWorkerEntry({
   claimOwnerPrefix: '${consumer.moduleId}-outbox-worker',
-  layer: outboxWorkerDefinitionLayer.pipe(
+  expectedDeployment: ultramodernApiMarker,
+  layer: Layer.merge(
+    ActiveApplicationCompositionConfigLive.pipe(
+      Layer.provide(
+        ActiveApplicationCompositionSourceLive.pipe(
+          Layer.provide(
+            FetchHttpClient.layer.pipe(
+              Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+            ),
+          ),
+        ),
+      ),
+    ),
+    outboxWorkerDefinitionLayer,
+  ).pipe(
     Layer.provide(outboxWorkerRepositoryLive),
     Layer.provide(outboxWorkerCorePersistenceLive),
     Layer.provide(outboxWorkerDatabaseConfigLive),

@@ -1,9 +1,19 @@
+import { createHash } from 'node:crypto';
+
 import {
   ActiveApplicationCompositionSnapshotSchema,
   ActiveApplicationCompositionUnavailableError,
+  ONTOS_SHELL_CONTRIBUTION_ABI,
+  OntosModuleDeploymentContractSchema,
   ReadHandlerUnavailable,
+  buildApplicationCompositionCatalog,
+  canonicalizeApplicationComposition,
 } from '@app/core-runtime';
-import type { ActiveApplicationCompositionSnapshot } from '@app/core-runtime';
+import type { ApplicationCompositionModule } from '@app/core-runtime';
+import {
+  makeApplicationCompositionSnapshotFixture,
+  makeModuleContractFixture,
+} from '@app/core-runtime/testing/module-contract';
 import type {
   MarketAffectedUseAssessmentRequest,
   MarketAffectedUseAssessmentResponse,
@@ -16,7 +26,6 @@ import { makeMarketAffectedUseAssessmentServices } from '../../src/api/market-af
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const evaluatedAt = '2026-09-22T10:00:00.000Z';
-const revision = 'a'.repeat(64);
 const digest = 'b'.repeat(64);
 const marketRef = {
   moduleId: 'commerce.market-catalog',
@@ -43,36 +52,33 @@ const localAssessment: MarketAffectedUseAssessmentResponse = {
   tenantId,
 };
 
-const module = (moduleId: 'commerce.cart' | 'commerce.order') => ({
-  allowedContributions: [],
-  contract: { sha256: 'c'.repeat(64), url: `https://${moduleId}.example.test/contract.json` },
-  dependencies: [],
-  deployment: { appId: moduleId.replace('.', '-'), buildMarker: `${moduleId}-build-1` },
-  federation: {
-    execution: 'browser' as const,
-    exposes: [],
-    manifest: { sha256: 'd'.repeat(64), url: `https://${moduleId}.example.test/mf-manifest.json` },
-    remoteName: moduleId === 'commerce.cart' ? 'commerceCart' : 'commerceOrder',
-  },
-  moduleId,
-  publicContract: { id: moduleId, sha256: 'e'.repeat(64), version: '1' },
-  requiredCoreCapabilities: [],
-  requiredShellAbi: { id: 'ontos.shell-contributions', version: '1' },
-  sharedSingletons: [],
-});
+const sha256 = (document: string): string => createHash('sha256').update(document, 'utf-8').digest('hex');
+const contractJsonSchema = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 
-const serverOnlyModule = (moduleId: string, appId: string) => ({
-  allowedContributions: [],
-  contract: { sha256: 'c'.repeat(64), url: `https://${appId}.example.test/.well-known/ontos-module-manifest.json` },
-  dependencies: [],
-  deployment: { appId, buildMarker: `${appId}-build-1` },
-  federation: { execution: 'server' as const },
-  moduleId,
-  publicContract: { id: moduleId, sha256: 'c'.repeat(64), version: '2' },
-  requiredCoreCapabilities: [],
-  requiredShellAbi: { id: 'ontos.shell-contributions', version: '1' },
-  sharedSingletons: [],
-});
+const serverOnlyModule = (moduleId: string, appId: string): ApplicationCompositionModule => {
+  const deployment = { appId, buildMarker: `${appId}-build-1` };
+  const contractDocument = Schema.encodeSync(contractJsonSchema)(
+    makeModuleContractFixture({ ...deployment, moduleId }),
+  );
+  const contractDigest = sha256(contractDocument);
+  return {
+    allowedContributions: [],
+    backend: { baseUrl: `https://${deployment.buildMarker}.example.test/`, transport: 'node-http' },
+    contract: {
+      sha256: contractDigest,
+      url: `https://${appId}.example.test/.well-known/ontos-module-manifest.json`,
+    },
+    contractDocument,
+    dependencies: [],
+    deployment,
+    federation: { execution: 'server' },
+    moduleId,
+    publicContract: { id: moduleId, sha256: contractDigest, version: '2' },
+    requiredCoreCapabilities: [],
+    requiredShellAbi: ONTOS_SHELL_CONTRIBUTION_ABI,
+    sharedSingletons: [],
+  };
+};
 
 const browserModule = (moduleId: string, appId: string, remoteName: string) => ({
   ...serverOnlyModule(moduleId, appId),
@@ -83,6 +89,9 @@ const browserModule = (moduleId: string, appId: string, remoteName: string) => (
     remoteName,
   },
 });
+
+const module = (moduleId: 'commerce.cart' | 'commerce.order') =>
+  browserModule(moduleId, moduleId.replace('.', '-'), moduleId === 'commerce.cart' ? 'commerceCart' : 'commerceOrder');
 
 /** Every module the stage topology deploys today, browser remotes and server-only modules alike. */
 const currentInventory = [
@@ -96,36 +105,28 @@ const currentInventory = [
   serverOnlyModule('pricing.price-group-catalog', 'price-group-catalog'),
 ];
 
-type CompositionModule =
-  | ReturnType<typeof module>
-  | ReturnType<typeof serverOnlyModule>
-  | ReturnType<typeof browserModule>;
-
 const snapshot = (
-  modules: readonly CompositionModule[] = [],
+  modules: readonly ApplicationCompositionModule[] = [],
   observedAt = '2026-09-22T09:59:00.000Z',
   validUntil = '2026-09-22T10:01:00.000Z',
-): ActiveApplicationCompositionSnapshot =>
-  Schema.decodeUnknownSync(ActiveApplicationCompositionSnapshotSchema)({
-    composition: {
-      modules,
-      revision,
-      schemaVersion: '1',
-      shell: {
-        contributionAbi: { id: 'ontos.shell-contributions', version: '1' },
-        coreCapabilities: [],
-        sharedSingletons: [],
-      },
-    },
-    observedAt,
-    validUntil,
+) =>
+  Effect.gen(function* compositionSnapshotFixture() {
+    const fixture = yield* makeApplicationCompositionSnapshotFixture();
+    const input = { ...fixture.composition, modules, revision: '0'.repeat(64) };
+    const composition = { ...input, revision: sha256(canonicalizeApplicationComposition(input)) };
+    yield* buildApplicationCompositionCatalog(composition);
+    return yield* Schema.decodeEffect(ActiveApplicationCompositionSnapshotSchema)({
+      composition,
+      observedAt,
+      validUntil,
+    });
   });
 
 it.effect('proves absent Cart and Order as UNIMPLEMENTED against the active composition revision', () =>
   Effect.gen(function* absentOwners() {
-    const authority = makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(
-      Effect.succeed(snapshot()),
-    );
+    const active = yield* snapshot();
+    const { revision } = active.composition;
+    const authority = makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(Effect.succeed(active));
     const result = yield* authority.proveReferenceOwnerStates(request);
 
     expect(result.sourceEvidence.map(({ sourceId }) => sourceId)).toEqual([
@@ -146,9 +147,8 @@ it.effect('proves absent Cart and Order as UNIMPLEMENTED against the active comp
 
 it.effect('fails closed when a Market-reference owner is installed without its affected-use provider', () =>
   Effect.gen(function* installedOwner() {
-    const authority = makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(
-      Effect.succeed(snapshot([module('commerce.cart')])),
-    );
+    const active = yield* snapshot([module('commerce.cart')]);
+    const authority = makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(Effect.succeed(active));
     const failure = yield* authority.proveReferenceOwnerStates(request).pipe(Effect.flip);
 
     expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);
@@ -174,18 +174,19 @@ it.effect('fails closed when active Application Composition authority is unavail
 for (const testCase of [
   {
     label: 'future-observed',
-    snapshot: snapshot([], '2026-09-22T10:00:01.000Z', '2026-09-22T10:01:00.000Z'),
+    observedAt: '2026-09-22T10:00:01.000Z',
+    validUntil: '2026-09-22T10:01:00.000Z',
   },
   {
     label: 'expired',
-    snapshot: snapshot([], '2026-09-22T09:58:00.000Z', '2026-09-22T10:00:00.000Z'),
+    observedAt: '2026-09-22T09:58:00.000Z',
+    validUntil: '2026-09-22T10:00:00.000Z',
   },
 ] as const) {
   it.effect(`maps ${testCase.label} composition evidence to STALE instead of safe retirement`, () =>
     Effect.gen(function* staleCompositionEvidence() {
-      const authority = makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(
-        Effect.succeed(testCase.snapshot),
-      );
+      const active = yield* snapshot([], testCase.observedAt, testCase.validUntil);
+      const authority = makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(Effect.succeed(active));
       const services = makeMarketAffectedUseAssessmentServices(
         () => Effect.succeed(localAssessment),
         authority.proveReferenceOwnerStates,
@@ -206,9 +207,8 @@ for (const testCase of [
 
 it.effect('proves Cart and Order absent over the complete installed inventory', () =>
   Effect.gen(function* absentOverCompleteInventory() {
-    const authority = makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(
-      Effect.succeed(snapshot(currentInventory)),
-    );
+    const active = yield* snapshot(currentInventory);
+    const authority = makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(Effect.succeed(active));
     const result = yield* authority.proveReferenceOwnerStates(request);
 
     expect(result.sourceEvidence.map(({ sourceId }) => sourceId)).toEqual([
@@ -220,9 +220,8 @@ it.effect('proves Cart and Order absent over the complete installed inventory', 
 
 it.effect('fails closed when a server-only Market-reference owner joins the inventory', () =>
   Effect.gen(function* installedServerOnlyOwner() {
-    const authority = makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(
-      Effect.succeed(snapshot([...currentInventory, serverOnlyModule('commerce.order', 'commerce-order')])),
-    );
+    const active = yield* snapshot([...currentInventory, serverOnlyModule('commerce.order', 'commerce-order')]);
+    const authority = makeApplicationCompositionMarketReferenceOwnerDeploymentStateAuthority(Effect.succeed(active));
     const failure = yield* authority.proveReferenceOwnerStates(request).pipe(Effect.flip);
 
     expect(Schema.is(ReadHandlerUnavailable)(failure)).toBe(true);

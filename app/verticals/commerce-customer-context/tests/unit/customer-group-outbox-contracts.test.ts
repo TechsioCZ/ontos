@@ -262,6 +262,7 @@ it.effect('records bounded audit evidence for a maximum-size valid group definit
       actionInvocationId: '60000000-0000-4000-8000-000000000002',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: 'a'.repeat(64),
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope: {
@@ -305,6 +306,7 @@ const collectRemoval = (membership: typeof CommerceCustomerGroupMembershipSchema
         actionInvocationId: '60000000-0000-4000-8000-000000000001',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision: 'a'.repeat(64),
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope: {

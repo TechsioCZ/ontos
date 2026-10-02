@@ -1,13 +1,14 @@
+import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { useModernI18n } from '@modern-js/plugin-i18n/runtime';
 import { useNavigate } from '@modern-js/plugin-tanstack/runtime';
-import { Effect, Match, Schema } from 'effect';
+import { Effect, Exit, Match, Schema } from 'effect';
 import { useState } from 'react';
 
 import { SwitchLegalEntityPayloadSchema, SwitchTenantPayloadSchema } from '../../shared/api.ts';
 import { signOut, switchLegalEntity, switchTenant } from '../api/auth-client.ts';
 import type { SwitchLegalEntityClientError, SwitchTenantClientError } from '../api/auth-client.ts';
 import { browserRuntime } from '../runtime/browser-effect-runtime.ts';
-import type { AuthenticatedHomePageModel } from './[lang]/page.data.ts';
+import type { AuthenticatedHomePageModel } from './[lang]/home-page-model.ts';
 
 const SwitchFailureStateSchema = Schema.Literals(['authentication-required', 'failed']);
 type SwitchFailureState = typeof SwitchFailureStateSchema.Type;
@@ -43,6 +44,12 @@ const legalEntitySwitchFailureState = (error: SwitchLegalEntityClientError): Swi
 export const useShellControls = (model: AuthenticatedHomePageModel | undefined) => {
   const { language } = useModernI18n();
   const navigate = useNavigate();
+  const compositionRevision = model?.compositionRevision;
+  const browserDocument = 'document' in globalThis ? globalThis.document : undefined;
+  const reloadRequired =
+    compositionRevision !== undefined &&
+    browserDocument !== undefined &&
+    Exit.isFailure(browserRuntime.runSyncExit(pinDocumentCompositionRevision(compositionRevision, browserDocument)));
   const [logoutPending, setLogoutPending] = useState(false);
   const [logoutFailed, setLogoutFailed] = useState(false);
   const [tenantSwitchPending, setTenantSwitchPending] = useState(false);
@@ -152,6 +159,7 @@ export const useShellControls = (model: AuthenticatedHomePageModel | undefined) 
     legalEntitySwitchPending,
     logoutFailed,
     logoutPending,
+    reloadRequired,
     tenantSwitchFailed,
     tenantSwitchPending,
   };

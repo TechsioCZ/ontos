@@ -49,6 +49,9 @@ const PRIVATE_JWK = JSON.stringify({
   x: 'public-x',
 });
 const SPICEDB_KEY = 'spicedb-key-secret';
+const CUSTOMER_CONTEXT_GATEWAY_API_KEY = 'customer-context-gateway-key-secret';
+const MARKET_GATEWAY_API_KEY = 'market-gateway-key-secret';
+const PRICING_GATEWAY_API_KEY = 'pricing-gateway-key-secret';
 // The public half of PRIVATE_JWK, which every vertical verifies Shell gateway tokens with.
 const PUBLIC_JWKS = JSON.stringify({
   keys: [
@@ -58,6 +61,8 @@ const PUBLIC_JWKS = JSON.stringify({
 const COMPOSITION_KV = 'ontos-stage-active-application-composition';
 const COMPOSITION_KV_ID = 'kv-1';
 const CUSTOMER_CONTEXT_WORKER = 'app-commerce-customer-context';
+const MARKET_WORKER = 'app-commerce-market-catalog';
+const PRICING_WORKER = 'app-pricing';
 const DEPLOYMENT_ENVIRONMENT = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 const PLACEMENT_FILE = 'topology/cloudflare-placement.json';
 const TOPOLOGY_FILE = 'topology/reference-topology.json';
@@ -103,6 +108,9 @@ const SENSITIVE_KEYS = ['db18_password', 'spicedb_SPICEDB_GRPC_PRESHARED_KEY'];
 
 /** The Shell's secrets, which the settings file holds since the Zerops Shell retired. */
 const SHELL_SETTINGS = {
+  ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: CUSTOMER_CONTEXT_GATEWAY_API_KEY,
+  ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: MARKET_GATEWAY_API_KEY,
+  ONTOS_PRICING_GATEWAY_API_KEY: PRICING_GATEWAY_API_KEY,
   shellsuperapp_BETTER_AUTH_SECRET: AUTH_SECRET,
   shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK: PRIVATE_JWK,
 };
@@ -114,6 +122,9 @@ const SECRETS = [
   AUTH_SECRET,
   'private-jwk-secret',
   SPICEDB_KEY,
+  CUSTOMER_CONTEXT_GATEWAY_API_KEY,
+  MARKET_GATEWAY_API_KEY,
+  PRICING_GATEWAY_API_KEY,
   'tunnel-connector-token',
   'service-token-secret',
 ];
@@ -528,6 +539,26 @@ it.effect('fails before setting any Worker secret when the settings file lacks a
   }),
 );
 
+it.effect('requires every caller key before writing any Worker secret', () =>
+  Effect.gen(function* requiresCallerGatewayKeys() {
+    for (const missingKey of [
+      'ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY',
+      'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY',
+      'ONTOS_PRICING_GATEWAY_API_KEY',
+    ]) {
+      const account = fakeCloudflareAccount({});
+      const stage = newStage();
+      const settingsFile = Object.fromEntries(Object.entries(SHELL_SETTINGS).filter(([key]) => key !== missingKey));
+      const error = yield* run(provision, { account, files: fakeFiles(), settingsFile, stage }).pipe(Effect.flip);
+      expect(error.message).toBe(
+        'the workload gateway API keys are missing; provide all three caller keys in the settings',
+      );
+      expect(stage.commands.filter(({ args }) => args.includes('wrangler'))).toStrictEqual([]);
+      expectNoSecretInArguments(stage, account);
+    }
+  }),
+);
+
 it.effect('fails before importing when zerops-import.yaml does not declare cloudflared', () =>
   Effect.gen(function* requiresDataLayerSetups() {
     const account = fakeCloudflareAccount({});
@@ -553,8 +584,11 @@ const plannedSecretNames = Effect.gen(function* plannedSecretNamesEffect() {
   const secret = Redacted.make('value');
   const plan = workerSecretPlan(units, settings, {
     betterAuthSecret: secret,
+    commerceCustomerContextGatewayApiKey: secret,
+    commerceMarketCatalogGatewayApiKey: secret,
     gatewayPrivateJwk: secret,
     gatewayPublicJwks: secret,
+    pricingGatewayApiKey: secret,
     spicedbPresharedKey: secret,
   });
   return Object.fromEntries([...plan].map(([worker, secrets]) => [worker, Object.keys(secrets)]));
@@ -609,9 +643,9 @@ const provisionedAccount = (
         'app-party-registry',
         CUSTOMER_CONTEXT_WORKER,
         'app-payment-term-catalog',
-        'app-commerce-market-catalog',
+        MARKET_WORKER,
         'app-catalog',
-        'app-pricing',
+        PRICING_WORKER,
         'app-storefront-registry',
         'app-price-group-catalog',
         'app-inventory',
@@ -871,14 +905,17 @@ it.effect('names the unplaced units and unset build variables of an incomplete p
   }),
 );
 
-it.effect('gives every vertical the Shell key and the callers their stage dependencies', () =>
+it.effect('gives each caller its own redacted gateway key and the native Shell URL', () =>
   Effect.gen(function* plansWorkerSecrets() {
     const units = yield* edgeUnits(readRepositoryFile(TOPOLOGY_FILE), readRepositoryFile(PLACEMENT_FILE));
     const secret = Redacted.make('value');
     const plan = workerSecretPlan(units, settings, {
       betterAuthSecret: secret,
+      commerceCustomerContextGatewayApiKey: Redacted.make(CUSTOMER_CONTEXT_GATEWAY_API_KEY),
+      commerceMarketCatalogGatewayApiKey: Redacted.make(MARKET_GATEWAY_API_KEY),
       gatewayPrivateJwk: secret,
       gatewayPublicJwks: secret,
+      pricingGatewayApiKey: Redacted.make(PRICING_GATEWAY_API_KEY),
       spicedbPresharedKey: secret,
     });
     const reveal = (worker: string) =>
@@ -886,25 +923,40 @@ it.effect('gives every vertical the Shell key and the callers their stage depend
 
     expect([...plan.keys()]).toHaveLength(11);
     expect(reveal(CUSTOMER_CONTEXT_WORKER)).toMatchObject({
-      ONTOS_CATALOG_BASE_URL: 'https://ontos-stage-catalog.stage.example.com/catalog-api',
-      ONTOS_PRICE_GROUP_CATALOG_BASE_URL:
-        'https://ontos-stage-price-group-catalog.stage.example.com/price-group-catalog-api',
-      ONTOS_PRICING_BASE_URL: 'https://ontos-stage-pricing.stage.example.com/pricing-api',
+      ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: CUSTOMER_CONTEXT_GATEWAY_API_KEY,
       ONTOS_SHELL_GATEWAY_BASE_URL: 'https://app.stage.example.com/shell-super-app-api',
     });
-    expect(reveal('app-commerce-market-catalog')).toMatchObject({
-      ONTOS_COMMERCE_CUSTOMER_CONTEXT_BASE_URL:
-        'https://ontos-stage-commerce-customer-context.stage.example.com/commerce-customer-context-api',
+    expect(reveal(MARKET_WORKER)).toMatchObject({
+      ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: MARKET_GATEWAY_API_KEY,
+      ONTOS_SHELL_GATEWAY_BASE_URL: 'https://app.stage.example.com/shell-super-app-api',
     });
-    expect(Arr.sort(Object.keys(reveal('app-pricing')), Order.String)).toStrictEqual([
+    expect(Arr.sort(Object.keys(reveal(PRICING_WORKER)), Order.String)).toStrictEqual([
       'ONTOS_GATEWAY_ISSUER',
       'ONTOS_GATEWAY_PUBLIC_JWKS',
+      'ONTOS_PRICING_GATEWAY_API_KEY',
+      'ONTOS_SHELL_GATEWAY_BASE_URL',
       'SPICEDB_ENDPOINT',
       'SPICEDB_PRESHARED_KEY',
       DEPLOYMENT_ENVIRONMENT,
     ]);
     for (const secrets of plan.values()) {
       expect(Object.keys(secrets)).not.toContain('DATABASE_URL');
+      expect(Object.keys(secrets)).not.toContain('ONTOS_CATALOG_BASE_URL');
+      expect(Object.keys(secrets)).not.toContain('ONTOS_PRICE_GROUP_CATALOG_BASE_URL');
+      expect(Object.keys(secrets)).not.toContain('ONTOS_PRICING_BASE_URL');
+      expect(Object.keys(secrets)).not.toContain('ONTOS_COMMERCE_CUSTOMER_CONTEXT_BASE_URL');
+    }
+    for (const [worker, variable] of [
+      [CUSTOMER_CONTEXT_WORKER, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'],
+      [MARKET_WORKER, 'ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'],
+      [PRICING_WORKER, 'ONTOS_PRICING_GATEWAY_API_KEY'],
+    ] as const) {
+      expect(Object.entries(reveal(worker))).toContainEqual([variable, SHELL_SETTINGS[variable]]);
+      for (const otherWorker of plan.keys()) {
+        if (otherWorker !== worker) {
+          expect(Object.keys(reveal(otherWorker))).not.toContain(variable);
+        }
+      }
     }
   }),
 );

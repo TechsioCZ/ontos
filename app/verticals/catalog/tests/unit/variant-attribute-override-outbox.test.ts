@@ -1,7 +1,10 @@
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import {
   RemoveVariantAttributeOverridePayloadSchema,
@@ -84,29 +87,32 @@ const services = (partial: Partial<AttributeValuesPersistence>): VariantAttribut
 const context = <DomainEvents extends DomainEventContractMap>(
   domainEvents: DomainEvents,
   persistence: VariantAttributeServices,
-) => {
-  const events: { eventType: string; payloadJson: unknown; reference: object }[] = [];
-  const outbox: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] = [];
-  const value: ActionHandlerContext<DomainEvents, VariantAttributeServices> = {
-    actionInvocationId,
-    addDomainEvent: (event) =>
-      Effect.sync(() => {
-        expect(Object.keys(domainEvents)).toContain(event.eventType);
-        const reference = Object.create(null);
-        events.push({ eventType: event.eventType, payloadJson: event.payloadJson, reference });
-        return reference;
-      }),
-    addOutboxMessage: (event, message) =>
-      Effect.sync(() => {
-        outbox.push({ event, message });
-      }),
-    recordAuditEvidence: () => Effect.void,
-    recordDataAccess: () => Effect.void,
-    scope,
-    services: persistence,
-  };
-  return { events, outbox, value };
-};
+) =>
+  Effect.gen(function* makeContext() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const events: { eventType: string; payloadJson: unknown; reference: object }[] = [];
+    const outbox: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] = [];
+    const value: ActionHandlerContext<DomainEvents, VariantAttributeServices> = {
+      actionInvocationId,
+      addDomainEvent: (event) =>
+        Effect.sync(() => {
+          expect(Object.keys(domainEvents)).toContain(event.eventType);
+          const reference = Object.create(null);
+          events.push({ eventType: event.eventType, payloadJson: event.payloadJson, reference });
+          return reference;
+        }),
+      addOutboxMessage: (event, message) =>
+        Effect.sync(() => {
+          outbox.push({ event, message });
+        }),
+      compositionRevision: snapshot.composition.revision,
+      recordAuditEvidence: () => Effect.void,
+      recordDataAccess: () => Effect.void,
+      scope,
+      services: persistence,
+    };
+    return { events, outbox, value };
+  });
 
 const staleConflict = new AttributeValuesConflict({
   code: 'attribute_values_conflict',
@@ -117,7 +123,7 @@ const staleConflict = new AttributeValuesConflict({
 describe('Variant attribute override committed selection source event', () => {
   it.effect('links one inherited-value event to the committed override set', () =>
     Effect.gen(function* setOverride() {
-      const state = context(
+      const state = yield* context(
         setVariantAttributeOverrideAction.descriptor.domainEvents,
         services({
           setVariantOverride: () =>
@@ -163,7 +169,7 @@ describe('Variant attribute override committed selection source event', () => {
 
   it.effect('links one inherited-value event to the committed override release', () =>
     Effect.gen(function* removeOverride() {
-      const state = context(
+      const state = yield* context(
         removeVariantAttributeOverrideAction.descriptor.domainEvents,
         services({
           removeVariantOverride: () =>
@@ -192,7 +198,7 @@ describe('Variant attribute override committed selection source event', () => {
 
   it.effect('emits neither event nor outbox when the override write is rejected or stale', () =>
     Effect.gen(function* rejected() {
-      const rejectedSet = context(
+      const rejectedSet = yield* context(
         setVariantAttributeOverrideAction.descriptor.domainEvents,
         services({
           setVariantOverride: () => Effect.fail(staleConflict),
@@ -202,7 +208,7 @@ describe('Variant attribute override committed selection source event', () => {
       expect(rejectedSet.events).toHaveLength(0);
       expect(rejectedSet.outbox).toHaveLength(0);
 
-      const rejectedRelease = context(
+      const rejectedRelease = yield* context(
         removeVariantAttributeOverrideAction.descriptor.domainEvents,
         services({
           removeVariantOverride: () => Effect.fail(staleConflict),
@@ -216,7 +222,7 @@ describe('Variant attribute override committed selection source event', () => {
 
   it.effect('emits nothing for a NEW_REALIZATION classification that cannot be an in-place override', () =>
     Effect.gen(function* newRealization() {
-      const state = context(
+      const state = yield* context(
         setVariantAttributeOverrideAction.descriptor.domainEvents,
         services({
           setVariantOverride: unexpected,

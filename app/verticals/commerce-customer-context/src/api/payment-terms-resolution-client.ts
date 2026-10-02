@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PaymentTermsResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PaymentTermsResolutionAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executePaymentTermsResolution = (
   payload: PaymentTermsResolutionRequest,
   ...[requestCorrelation, options = {}]: PaymentTermsResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePaymentTermsResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePaymentTermsResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -17,6 +17,7 @@ import {
   makePostgresCoreSearchSnapshotBackend,
 } from '../../src/search/worker-snapshot.ts';
 import { makeTestDatabaseFromClient, makeTestPgClient, makeTestPgSession } from '../support/database.ts';
+import { installSearchTestAuthority } from '../support/search-authority.ts';
 
 const readLegalEntitySettings = (executor: CoreSearchSnapshotReadExecutor, eventId: string) =>
   executor
@@ -59,6 +60,7 @@ const insertPendingEvent = (
 const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
   const crypto = yield* Crypto.Crypto;
   const connections = yield* loadDatabaseConnectionPair();
+  yield* installSearchTestAuthority();
   const [tenantId, legalEntityId, eventId] = yield* Effect.all(
     [crypto.randomUUIDv4, crypto.randomUUIDv4, crypto.randomUUIDv4],
     { concurrency: 'unbounded' },
@@ -107,6 +109,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
     const context = attestOutboxWorkerHandlerContext({
       attemptNumber: 1,
       claimId,
+      compositionRevision: 'a'.repeat(64),
       deliveryId,
       domainEventId: eventId,
       messageId,
@@ -134,7 +137,7 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
       {
         isolation: 'repeatable read',
         legalEntity: legalEntityId,
-        readOnly: 'off',
+        readOnly: 'on',
         tenant: tenantId,
       },
     ]);
@@ -146,58 +149,31 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
       generation: '3',
     });
 
-    // A second snapshot starts while the first owns the generation row. It must
-    // retry its old RR snapshot after the first commits, never publish stale data
-    // with a greater generation. No Party business transaction shares this lock.
+    // A paused coherent read loses its generation CAS if a later snapshot commits first.
+    // It must reread, so a higher generation can never publish the earlier stale snapshot.
     const [started, release] = yield* Effect.all([Deferred.make<null>(), Deferred.make<null>()], {
       concurrency: 'unbounded',
     });
+    let firstReads = 0;
     const first = yield* source
       .read(context, (snapshot) =>
         Effect.gen(function* firstSnapshot() {
+          firstReads += 1;
           yield* Deferred.succeed(started, null);
           yield* Deferred.await(release);
-          return {
-            eventWatermark: snapshot.eventWatermark,
-            generation: snapshot.projectionVersion,
-          };
+          return { eventWatermark: snapshot.eventWatermark, generation: snapshot.projectionVersion };
         }),
       )
       .pipe(Effect.forkChild);
     yield* Deferred.await(started);
-    const second = yield* readSnapshotPosition(source, context).pipe(Effect.forkChild);
-
-    const waiting = yield* Effect.reduce(
-      Array.from({ length: 100 }),
-      () => false,
-      (blocked) =>
-        blocked
-          ? Effect.succeed(true)
-          : admin.unsafe('select pg_sleep(0.01)').pipe(
-              Effect.andThen(
-                admin.unsafe<{ count: number }>(
-                  `select count(*)::int as count from pg_stat_activity where application_name = $1 and wait_event_type = 'Lock'`,
-                  [applicationName],
-                ),
-              ),
-              Effect.map((activity) => activity[0]?.count === 1),
-            ),
-    );
-    expect(waiting, 'second snapshot must wait on first generation before retrying').toBe(true);
     const latestEventId = yield* crypto.randomUUIDv4;
     const latestEvent = yield* insertEvent(latestEventId);
+    const secondResult = yield* readSnapshotPosition(source, context);
     yield* Deferred.succeed(release, null);
-    const [firstResult, secondResult] = yield* Effect.all([Fiber.join(first), Fiber.join(second)], {
-      concurrency: 'unbounded',
-    });
-    expect(firstResult).toEqual({
-      eventWatermark: newerVersion,
-      generation: '4',
-    });
-    expect(secondResult).toEqual({
-      eventWatermark: latestEvent,
-      generation: '5',
-    });
+    const firstResult = yield* Fiber.join(first);
+    expect(secondResult).toEqual({ eventWatermark: latestEvent, generation: '4' });
+    expect(firstResult).toEqual({ eventWatermark: latestEvent, generation: '5' });
+    expect(firstReads).toBe(2);
 
     // Business transactions may commit event allocation sequences out of order.
     // Both snapshots below have the same event max but must get new generations.
@@ -227,6 +203,24 @@ const workerSnapshotProgram = Effect.gen(function* workerSnapshotIntegration() {
         pending.unsafe('rollback').pipe(Effect.orDie),
       ),
     );
+    // Both readers observe an absent generation row. The claim lock must serialize creation,
+    // and the loser must retry rather than assign the same generation to a different snapshot.
+    yield* admin.unsafe('delete from core.search_projection_generations where tenant_id = $1', [tenantId]);
+    const initialReadsReady = yield* Deferred.make<null>();
+    let initialReads = 0;
+    const initialClaim = source.read(context, (snapshot) =>
+      Effect.gen(function* concurrentInitialGeneration() {
+        initialReads += 1;
+        if (initialReads === 2) {
+          yield* Deferred.succeed(initialReadsReady, null);
+        }
+        yield* Deferred.await(initialReadsReady);
+        return snapshot.projectionVersion;
+      }),
+    );
+    const initialVersions = yield* Effect.all([initialClaim, initialClaim], { concurrency: 2 });
+    expect(initialVersions.toSorted()).toEqual(['1', '2']);
+    expect(initialReads).toBe(3);
   });
   yield* exercise;
 });

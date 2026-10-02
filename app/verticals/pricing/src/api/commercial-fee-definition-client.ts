@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CommercialFeeDefinitionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CommercialFeeDefinitionAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCommercialFeeDefinition = (
   payload: CommercialFeeDefinitionRequest,
   ...[requestCorrelation, options = {}]: CommercialFeeDefinitionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCommercialFeeDefinitionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCommercialFeeDefinitionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

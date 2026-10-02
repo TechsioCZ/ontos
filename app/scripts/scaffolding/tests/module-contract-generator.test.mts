@@ -33,6 +33,7 @@ const expectFailure = <A, E, R>(self: Effect.Effect<A, E, R>, check: (cause: unk
 
 const APP_ID = 'property-registry';
 const AUTHORIZATION_FLAG = '--authorization';
+const CUSTOM_FEDERATION_EXPOSE = './cards/UnitCard.v2';
 const DOCUMENTS_APP_ID = 'documents-center';
 const DOCUMENTS_MODULE_ID = 'documents.center';
 const MODULE_CONTRACT_COMMAND = 'module-contract';
@@ -43,6 +44,7 @@ const VERTICAL_FLAG = '--vertical';
 
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
 const ModuleIdSchema = Schema.String.pipe(Schema.brand('ModuleId'));
+const MfBoundaryIdSchema = Schema.String.pipe(Schema.brand('MfBoundaryId'));
 const OperationKeySchema = Schema.String.pipe(Schema.brand('OperationKey'));
 const StringRecordSchema = Schema.Record(Schema.String, Schema.String);
 // The package document is rewritten by the tests, so undeclared owner fields must round-trip.
@@ -79,6 +81,9 @@ const ModuleContractDocumentSchema = Schema.Struct({
     module: Schema.Struct({ id: ModuleIdSchema }),
     publicSurface: Schema.Struct({
       api: Schema.Array(Schema.Struct({ operationKeys: Schema.Array(OperationKeySchema) })),
+      components: Schema.Array(
+        Schema.Struct({ expose: Schema.String, key: Schema.String, mfBoundaryId: MfBoundaryIdSchema }),
+      ),
     }),
   }),
   schemaVersion: Schema.String,
@@ -515,6 +520,78 @@ it.live(
           }).pipe(Effect.provide(NodeServices.layer)),
           (error) => expect(String(error)).toMatch(/exactly one.*slot/u),
         );
+      }),
+    );
+  }),
+);
+
+it.live(
+  'projects explicit Shell Federation selectors without deriving them from component keys',
+  Effect.fn(function* nativeFederationSelectors() {
+    yield* withFixture(
+      Effect.fn(function* nativeFederationSelectorsFixture(root) {
+        yield* scaffold(root);
+        const manifestPath = path.join(root, PROPERTY_MANIFEST_PATH);
+        const original = yield* Effect.promise(() => readFile(manifestPath, 'utf-8'));
+        const contribution = `publicComponentContribution({
+          componentKey: '${MODULE_ID}.unit-card',
+          contributionKey: '${MODULE_ID}.component.unit-card',
+          entrypoint: {
+            access: 'read',
+            authorization: { kind: 'authenticated_principal' },
+            entrypointKey: '${MODULE_ID}.component.unit-card',
+            moduleKey: '${MODULE_ID}',
+            role: 'public_component',
+            scope: 'tenant',
+          },
+          expose: '${CUSTOM_FEDERATION_EXPOSE}',
+        }),`;
+        const manifest = original
+          .replace(
+            '// <generated-module-manifest-imports>',
+            'const UnitCard = () => null;\nconst UnboundWidget = () => null;\n// <generated-module-manifest-imports>',
+          )
+          .replace(
+            '// <generated-module-manifest-components>',
+            "// <generated-module-manifest-components>\n'unit-card': UnitCard,\n'unbound-widget': UnboundWidget,",
+          )
+          .replace('// <generated-module-shell-components>', `// <generated-module-shell-components>\n${contribution}`);
+        yield* write(root, PROPERTY_MANIFEST_PATH, manifest);
+        yield* write(
+          root,
+          'verticals/property-registry/module-federation.config.ts',
+          `export default { exposes: { '${CUSTOM_FEDERATION_EXPOSE}': './unit-card.tsx', './UnboundWidget': './widget.tsx' } };\n`,
+        );
+        const emitted = yield* generateOntosModuleContract({
+          target: 'dist',
+          vertical: APP_ID,
+          workspaceRoot: root,
+        }).pipe(Effect.provide(NodeServices.layer));
+        const content = yield* Effect.promise(() => readFile(emitted.path, 'utf-8'));
+        const document = yield* decodeModuleContract(content);
+        expect(document.manifest.publicSurface.components).toEqual([
+          { expose: './UnboundWidget', key: `${MODULE_ID}.unbound-widget`, mfBoundaryId: 'verticalPropertyRegistry' },
+          { expose: CUSTOM_FEDERATION_EXPOSE, key: `${MODULE_ID}.unit-card`, mfBoundaryId: 'verticalPropertyRegistry' },
+        ]);
+        yield* write(root, PROPERTY_MANIFEST_PATH, manifest.replace(CUSTOM_FEDERATION_EXPOSE, './MissingCard'));
+        yield* expectFailure(
+          generateOntosModuleContract({ target: 'dist', vertical: APP_ID, workspaceRoot: root }).pipe(
+            Effect.provide(NodeServices.layer),
+          ),
+          (error) => expect(String(error)).toMatch(/no matching Module Federation exposure/u),
+        );
+        expect(yield* Effect.promise(() => readFile(emitted.path, 'utf-8'))).toBe(content);
+        const conflict = contribution
+          .replace(`${MODULE_ID}.component.unit-card`, `${MODULE_ID}.component.second-card`)
+          .replace(CUSTOM_FEDERATION_EXPOSE, './OtherCard');
+        yield* write(root, PROPERTY_MANIFEST_PATH, manifest.replace(contribution, `${contribution}\n${conflict}`));
+        yield* expectFailure(
+          generateOntosModuleContract({ target: 'dist', vertical: APP_ID, workspaceRoot: root }).pipe(
+            Effect.provide(NodeServices.layer),
+          ),
+          (error) => expect(String(error)).toMatch(/conflicting Shell Federation selectors/u),
+        );
+        expect(yield* Effect.promise(() => readFile(emitted.path, 'utf-8'))).toBe(content);
       }),
     );
   }),

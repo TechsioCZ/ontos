@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface GovernVariantAxesRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type GovernVariantAxesRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeGovernVariantAxesRecovery = (
   payload: GovernVariantAxesRecoveryRequest,
   ...[requestCorrelation, options = {}]: GovernVariantAxesRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeGovernVariantAxesRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeGovernVariantAxesRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

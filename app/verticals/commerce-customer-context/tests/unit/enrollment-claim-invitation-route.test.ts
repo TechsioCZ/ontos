@@ -47,6 +47,7 @@ const attemptOf = (overrides: AttemptOverrides): EnrollmentAttemptSnapshot =>
       providerSubjectId: `provider-${randomUUID()}`,
       subjectType: 'user',
     },
+    compositionRevision: 'c'.repeat(64),
     createdAt: CREATED_AT,
     createdByPrincipalId: randomUUID(),
     intentDigest: 'a'.repeat(64),

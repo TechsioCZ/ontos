@@ -1,4 +1,5 @@
 /** Focused server-only entrypoint used to bundle the combined Outbox Worker host and its MicroVertical entries. */
+export { ActiveApplicationCompositionConfigLive } from '../modules/active-application-composition.ts';
 export { defineTenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
 export { defineScopedRoutine } from '../db/scoped-routine.ts';
 export { findPostgresFailure } from '../database/postgres-failure.ts';

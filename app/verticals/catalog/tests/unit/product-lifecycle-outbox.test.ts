@@ -1,7 +1,10 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import { ProductSchema } from '../../shared/domain/product.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/commerce-catalog-product-lifecycle-changed-v1.ts';
@@ -56,47 +59,50 @@ const context = <
 >(
   domainEvents: Events,
   services: Partial<CatalogPersistence>,
-) => {
-  const events: { eventType: string; payloadJson: unknown; reference: object }[] = [];
-  const outbox: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] = [];
-  const persistence: CatalogPersistence = {
-    correct: unexpected,
-    create: unexpected,
-    getCreatedByInvocation: unexpected,
-    getCurrent: unexpected,
-    getHistory: unexpected,
-    reactivate: unexpected,
-    recoverCreateProduct: unexpected,
-    recoverUpdateProduct: unexpected,
-    retire: unexpected,
-    update: unexpected,
-    ...services,
-  };
-  const value: ActionHandlerContext<Events, CatalogPersistence> = {
-    actionInvocationId: '55555555-5555-4555-8555-555555555555',
-    addDomainEvent: (event) =>
-      Effect.sync(() => {
-        expect(Object.keys(domainEvents)).toContain(event.eventType);
-        const reference = Object.create(null);
-        events.push({ eventType: event.eventType, payloadJson: event.payloadJson, reference });
-        return reference;
-      }),
-    addOutboxMessage: (event, message) =>
-      Effect.sync(() => {
-        outbox.push({ event, message });
-      }),
-    recordAuditEvidence: () => Effect.void,
-    recordDataAccess: () => Effect.void,
-    scope,
-    services: persistence,
-  };
-  return { events, outbox, value };
-};
+) =>
+  Effect.gen(function* makeContext() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const events: { eventType: string; payloadJson: unknown; reference: object }[] = [];
+    const outbox: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] = [];
+    const persistence: CatalogPersistence = {
+      correct: unexpected,
+      create: unexpected,
+      getCreatedByInvocation: unexpected,
+      getCurrent: unexpected,
+      getHistory: unexpected,
+      reactivate: unexpected,
+      recoverCreateProduct: unexpected,
+      recoverUpdateProduct: unexpected,
+      retire: unexpected,
+      update: unexpected,
+      ...services,
+    };
+    const value: ActionHandlerContext<Events, CatalogPersistence> = {
+      actionInvocationId: '55555555-5555-4555-8555-555555555555',
+      addDomainEvent: (event) =>
+        Effect.sync(() => {
+          expect(Object.keys(domainEvents)).toContain(event.eventType);
+          const reference = Object.create(null);
+          events.push({ eventType: event.eventType, payloadJson: event.payloadJson, reference });
+          return reference;
+        }),
+      addOutboxMessage: (event, message) =>
+        Effect.sync(() => {
+          outbox.push({ event, message });
+        }),
+      compositionRevision: snapshot.composition.revision,
+      recordAuditEvidence: () => Effect.void,
+      recordDataAccess: () => Effect.void,
+      scope,
+      services: persistence,
+    };
+    return { events, outbox, value };
+  });
 
 describe('Product lifecycle committed event and outbox', () => {
   it.effect('links one activation message to the committed transition and exact Product revision', () =>
     Effect.gen(function* activation() {
-      const state = context(updateProductAction.descriptor.domainEvents, {
+      const state = yield* context(updateProductAction.descriptor.domainEvents, {
         update: () => Effect.succeed({ _tag: 'updated', changed: true, product: product('ACTIVE', 2) }),
       });
       yield* handleUpdateProduct(
@@ -117,7 +123,7 @@ describe('Product lifecycle committed event and outbox', () => {
 
   it.effect('publishes neither lifecycle event nor outbox on an unchanged update or rejection', () =>
     Effect.gen(function* unchanged() {
-      const noOp = context(updateProductAction.descriptor.domainEvents, {
+      const noOp = yield* context(updateProductAction.descriptor.domainEvents, {
         update: () => Effect.succeed({ _tag: 'updated', changed: false, product: product('ACTIVE', 2) }),
       });
       yield* handleUpdateProduct(
@@ -127,7 +133,7 @@ describe('Product lifecycle committed event and outbox', () => {
       expect(noOp.events).toHaveLength(0);
       expect(noOp.outbox).toHaveLength(0);
 
-      const rejected = context(updateProductAction.descriptor.domainEvents, {
+      const rejected = yield* context(updateProductAction.descriptor.domainEvents, {
         update: () => Effect.succeed({ _tag: 'revision_conflict', actualRevision: 3 }),
       });
       yield* handleUpdateProduct(
@@ -141,7 +147,7 @@ describe('Product lifecycle committed event and outbox', () => {
 
   it.effect('links retirement only after the successful owner transition', () =>
     Effect.gen(function* retirement() {
-      const state = context(retireProductAction.descriptor.domainEvents, {
+      const state = yield* context(retireProductAction.descriptor.domainEvents, {
         retire: () => Effect.succeed({ _tag: 'retired', product: product('RETIRED', 3) }),
       });
       yield* handleRetireProduct({ expectedRevision: 2, productRef, reason: 'Retired' }, state.value);

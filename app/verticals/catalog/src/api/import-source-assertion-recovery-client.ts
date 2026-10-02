@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ImportSourceAssertionRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ImportSourceAssertionRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeImportSourceAssertionRecovery = (
   payload: ImportSourceAssertionRecoveryRequest,
   ...[requestCorrelation, options = {}]: ImportSourceAssertionRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeImportSourceAssertionRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeImportSourceAssertionRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

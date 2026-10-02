@@ -1,5 +1,5 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { scopedRoutineInvokerFromTransaction, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { sql } from 'drizzle-orm';
 import { DateTime, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -10,10 +10,12 @@ import {
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
+import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { readVerifiedGatewayCompositionRevision } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 import { EligibleMarketTuplesRequestSchema } from '../../shared/apis/eligible-market-tuples.ts';
 import type { MarketSubjectRestrictionSnapshot } from '../../src/integrations/market-subject-restrictions.ts';
 import {
-  commerceMarketCatalogRelations,
   marketCatalogCompletenessGenerations,
   marketDefinitionRevisions,
   marketLifecyclePeriods,
@@ -58,6 +60,7 @@ const scope: OperationalScope = {
   }),
   correlationId: 'market-resolution-postgres',
 };
+const capturedCompositionRevision = readVerifiedGatewayCompositionRevision(scope);
 
 const requestAt = (effectiveAt: string) =>
   Schema.decodeUnknownSync(EligibleMarketTuplesRequestSchema)({
@@ -72,7 +75,7 @@ const requestAt = (effectiveAt: string) =>
     storefrontRef: { appId: storefrontAppId, tenantId },
   });
 
-type MarketCatalogTestDatabase = TestDatabaseFromClient<typeof commerceMarketCatalogRelations>;
+type MarketCatalogTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
 
 const readSnapshot = (
   runtime: MarketCatalogTestDatabase,
@@ -81,19 +84,11 @@ const readSnapshot = (
 ) =>
   runtime.transaction((transaction) =>
     Effect.gen(function* readEligibilitySnapshot() {
-      yield* transaction.execute(
-        sql`select set_config('ontos.tenant_id', ${tenantId}, true),
-                   set_config('ontos.legal_entity_id', '', true)`,
-        'objects',
-      );
-      const routineInvoker = scopedRoutineInvokerFromTransaction(
-        (statement) => transaction.execute<Record<string, never>>(statement, 'objects'),
-        scope,
-      );
+      const ownerTransaction = yield* installOperationalScope(transaction, scope);
       const persistence = yield* marketResolutionPersistenceForScope(
-        // @ts-expect-error The live fixture supplies the public routine invoker but cannot carry Core's private scope brand.
-        routineInvoker,
+        ownerTransaction,
         scope,
+        capturedCompositionRevision,
       );
       return yield* persistence.load(requestAt(effectiveAt), subjectRestrictions);
     }),
@@ -106,8 +101,8 @@ it.live('returns complete exact-predicate Market eligibility snapshots from Post
   Effect.scoped(
     Effect.gen(function* marketResolutionPostgres() {
       const { admin: adminClient, runtime: runtimeClient } = yield* testDatabaseClients;
-      const admin = yield* makeTestDatabaseFromClient(adminClient, commerceMarketCatalogRelations);
-      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, commerceMarketCatalogRelations);
+      const admin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+      const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
 
       const cleanup = () =>
         admin.transaction((transaction) =>

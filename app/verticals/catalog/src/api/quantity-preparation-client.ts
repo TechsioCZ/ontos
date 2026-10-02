@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface QuantityPreparationClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type QuantityPreparationAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeQuantityPreparation = (
   payload: QuantityPreparationRequest,
   ...[requestCorrelation, options = {}]: QuantityPreparationOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeQuantityPreparationWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeQuantityPreparationWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

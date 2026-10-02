@@ -1,7 +1,10 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import { GovernVariantAxesPayloadSchema } from '../../shared/actions/govern-variant-axes.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/commerce-catalog-variant-axes-changed-v1.ts';
@@ -39,50 +42,53 @@ const payload = {
 } as const;
 const unexpected = () => Effect.die('Unexpected persistence call');
 
-const context = (govern: VariantAxisPersistence['govern']) => {
-  const events: { eventType: string; payloadJson: unknown; reference: object; subjectResourceId: string }[] = [];
-  const outbox: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] = [];
-  const services: VariantAxisPersistence = {
-    govern,
-    governAllowedValues: unexpected,
-    readCurrent: unexpected,
-    readCurrentAllowedValues: unexpected,
-    readEffectiveValues: unexpected,
-    readRecordedCombinations: unexpected,
-    readRecordedVariants: unexpected,
-  };
-  const value: ActionHandlerContext<
-    typeof governVariantAxesAction.descriptor.domainEvents,
-    VariantAxisPersistence & { readonly assessOpenSelectionImpact: () => Effect.Effect<void> }
-  > = {
-    actionInvocationId: '44444444-4444-4444-8444-444444444444',
-    addDomainEvent: (event) =>
-      Effect.sync(() => {
-        const reference = Object.create(null);
-        events.push({
-          eventType: event.eventType,
-          payloadJson: event.payloadJson,
-          reference,
-          subjectResourceId: event.subjectResourceId,
-        });
-        return reference;
-      }),
-    addOutboxMessage: (event, message) =>
-      Effect.sync(() => {
-        outbox.push({ event, message });
-      }),
-    recordAuditEvidence: () => Effect.void,
-    recordDataAccess: () => Effect.void,
-    scope,
-    services: { ...services, assessOpenSelectionImpact: () => Effect.void },
-  };
-  return { events, outbox, value };
-};
+const context = (govern: VariantAxisPersistence['govern']) =>
+  Effect.gen(function* makeContext() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const events: { eventType: string; payloadJson: unknown; reference: object; subjectResourceId: string }[] = [];
+    const outbox: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] = [];
+    const services: VariantAxisPersistence = {
+      govern,
+      governAllowedValues: unexpected,
+      readCurrent: unexpected,
+      readCurrentAllowedValues: unexpected,
+      readEffectiveValues: unexpected,
+      readRecordedCombinations: unexpected,
+      readRecordedVariants: unexpected,
+    };
+    const value: ActionHandlerContext<
+      typeof governVariantAxesAction.descriptor.domainEvents,
+      VariantAxisPersistence & { readonly assessOpenSelectionImpact: () => Effect.Effect<void> }
+    > = {
+      actionInvocationId: '44444444-4444-4444-8444-444444444444',
+      addDomainEvent: (event) =>
+        Effect.sync(() => {
+          const reference = Object.create(null);
+          events.push({
+            eventType: event.eventType,
+            payloadJson: event.payloadJson,
+            reference,
+            subjectResourceId: event.subjectResourceId,
+          });
+          return reference;
+        }),
+      addOutboxMessage: (event, message) =>
+        Effect.sync(() => {
+          outbox.push({ event, message });
+        }),
+      compositionRevision: snapshot.composition.revision,
+      recordAuditEvidence: () => Effect.void,
+      recordDataAccess: () => Effect.void,
+      scope,
+      services: { ...services, assessOpenSelectionImpact: () => Effect.void },
+    };
+    return { events, outbox, value };
+  });
 
 describe('committed Variant-axis change event', () => {
   it.effect('links one Product-source event and outbox message to a changed axis revision', () =>
     Effect.gen(function* changed() {
-      const state = context(() => Effect.succeed({ axisRevision: 2, changed: true }));
+      const state = yield* context(() => Effect.succeed({ axisRevision: 2, changed: true }));
       yield* handleGovernVariantAxes(payload, state.value);
       expect(state.events).toHaveLength(1);
       expect(state.events[0]).toMatchObject({
@@ -102,12 +108,12 @@ describe('committed Variant-axis change event', () => {
 
   it.effect('publishes nothing when the governance call is unchanged or rejected', () =>
     Effect.gen(function* unchanged() {
-      const noOp = context(() => Effect.succeed({ axisRevision: 1, changed: false }));
+      const noOp = yield* context(() => Effect.succeed({ axisRevision: 1, changed: false }));
       yield* handleGovernVariantAxes(payload, noOp.value);
       expect(noOp.events).toHaveLength(0);
       expect(noOp.outbox).toHaveLength(0);
 
-      const rejected = context(() =>
+      const rejected = yield* context(() =>
         Effect.fail(
           new VariantAxisWriteConflict({
             code: 'variant_axis_write_conflict',
@@ -124,7 +130,7 @@ describe('committed Variant-axis change event', () => {
 
   it.effect('decodes legacy axes input but fails closed before persistence without change evidence', () =>
     Effect.gen(function* legacyAxesInput() {
-      const state = context(unexpected);
+      const state = yield* context(unexpected);
       const failure = yield* handleGovernVariantAxes(
         Schema.decodeUnknownSync(GovernVariantAxesPayloadSchema)({
           axes: [],
@@ -143,7 +149,7 @@ describe('committed Variant-axis change event', () => {
 
   it.effect('fails closed before persistence when an axis allowance revision is absent', () =>
     Effect.gen(function* missingAllowanceRevision() {
-      const state = context(unexpected);
+      const state = yield* context(unexpected);
       const failure = yield* handleGovernVariantAxes(
         Schema.decodeUnknownSync(GovernVariantAxesPayloadSchema)({
           axes: [

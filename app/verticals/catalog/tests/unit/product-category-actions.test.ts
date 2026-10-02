@@ -1,9 +1,11 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { ActionTransactionError, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
   AddProductCategoryAssignmentPayloadSchema,
   addProductCategoryAssignmentAction,
@@ -74,6 +76,7 @@ const defaultServices: CategoryPersistence = {
 };
 
 const context = <Events extends DomainEventContractMap>(
+  compositionRevision: string,
   overrides: Partial<CategoryPersistence>,
   domainEvents: Events,
 ) => {
@@ -91,6 +94,7 @@ const context = <Events extends DomainEventContractMap>(
         return Object.create(null);
       }),
     addOutboxMessage: () => Effect.void,
+    compositionRevision,
     recordAuditEvidence: () => Effect.void,
     recordDataAccess: (access) =>
       Effect.sync(() => {
@@ -102,18 +106,18 @@ const context = <Events extends DomainEventContractMap>(
   return { events, reads, value };
 };
 
-const createContext = (overrides: Partial<CategoryPersistence>) =>
-  context(overrides, createProductCategoryAction.descriptor.domainEvents);
-const renameContext = (overrides: Partial<CategoryPersistence>) =>
-  context(overrides, renameProductCategoryAction.descriptor.domainEvents);
-const moveContext = (overrides: Partial<CategoryPersistence>) =>
-  context(overrides, moveProductCategoryAction.descriptor.domainEvents);
-const retireContext = (overrides: Partial<CategoryPersistence>) =>
-  context(overrides, retireProductCategoryAction.descriptor.domainEvents);
-const addContext = (overrides: Partial<CategoryPersistence>) =>
-  context(overrides, addProductCategoryAssignmentAction.descriptor.domainEvents);
-const removeContext = (overrides: Partial<CategoryPersistence>) =>
-  context(overrides, removeProductCategoryAssignmentAction.descriptor.domainEvents);
+const createContext = (compositionRevision: string, overrides: Partial<CategoryPersistence>) =>
+  context(compositionRevision, overrides, createProductCategoryAction.descriptor.domainEvents);
+const renameContext = (compositionRevision: string, overrides: Partial<CategoryPersistence>) =>
+  context(compositionRevision, overrides, renameProductCategoryAction.descriptor.domainEvents);
+const moveContext = (compositionRevision: string, overrides: Partial<CategoryPersistence>) =>
+  context(compositionRevision, overrides, moveProductCategoryAction.descriptor.domainEvents);
+const retireContext = (compositionRevision: string, overrides: Partial<CategoryPersistence>) =>
+  context(compositionRevision, overrides, retireProductCategoryAction.descriptor.domainEvents);
+const addContext = (compositionRevision: string, overrides: Partial<CategoryPersistence>) =>
+  context(compositionRevision, overrides, addProductCategoryAssignmentAction.descriptor.domainEvents);
+const removeContext = (compositionRevision: string, overrides: Partial<CategoryPersistence>) =>
+  context(compositionRevision, overrides, removeProductCategoryAssignmentAction.descriptor.domainEvents);
 
 describe('Catalog Product Category Actions', () => {
   it.effect('captures the decoded category result before the Action commit and does not rerun it on replay', () =>
@@ -218,8 +222,12 @@ describe('Catalog Product Category Actions', () => {
 
   it.effect('creates in trusted Tenant and emits one fact', () =>
     Effect.gen(function* categoryActionTest() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       let recorded: CreateCategoryInput | undefined;
-      const run = createContext({
+      const run = createContext(compositionSnapshot.composition.revision, {
         createCategory: (input) =>
           Effect.sync(() => {
             recorded = input;
@@ -239,8 +247,12 @@ describe('Catalog Product Category Actions', () => {
 
   it.effect('rejects a cross-tenant move before persistence', () =>
     Effect.gen(function* categoryActionTest() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       let called = false;
-      const run = moveContext({
+      const run = moveContext(compositionSnapshot.composition.revision, {
         moveCategory: () =>
           Effect.sync(() => {
             called = true;
@@ -258,7 +270,11 @@ describe('Catalog Product Category Actions', () => {
 
   it.effect('treats a duplicate assignment as unchanged with no event', () =>
     Effect.gen(function* categoryActionTest() {
-      const run = addContext({
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const run = addContext(compositionSnapshot.composition.revision, {
         addAssignment: () => Effect.succeed({ _tag: 'unchanged', assignmentRevision: 1, categoryRef, productRef }),
       });
       const result = yield* handleAddProductCategoryAssignment(
@@ -273,9 +289,13 @@ describe('Catalog Product Category Actions', () => {
 
   it.effect('renames in place and emits only on change', () =>
     Effect.gen(function* categoryActionTest() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       let recorded: RenameCategoryInput | undefined;
       const renamed = { ...category, name: 'Shelves for walls', revision: 2 };
-      const run = renameContext({
+      const run = renameContext(compositionSnapshot.composition.revision, {
         renameCategory: (input) =>
           Effect.sync(() => {
             recorded = input;
@@ -289,7 +309,7 @@ describe('Catalog Product Category Actions', () => {
       expect(result.category.categoryRef).toEqual(categoryRef);
       expect(recorded).toMatchObject({ categoryId: categoryRef.resourceId, expectedRevision: 1, tenantId });
       expect(run.events).toHaveLength(1);
-      const noChange = renameContext({
+      const noChange = renameContext(compositionSnapshot.composition.revision, {
         renameCategory: () =>
           Effect.succeed({ _tag: 'renamed', category: renamed, changed: false, hierarchyRevision: 2 }),
       });
@@ -305,7 +325,11 @@ describe('Catalog Product Category Actions', () => {
 
   it.effect('preserves expected and actual revisions in a stale rename error', () =>
     Effect.gen(function* categoryActionTest() {
-      const run = renameContext({
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const run = renameContext(compositionSnapshot.composition.revision, {
         renameCategory: () => Effect.succeed({ _tag: 'revision_conflict', actualRevision: 3, reason: 'stale' }),
       });
       const error = yield* handleRenameProductCategory(
@@ -320,7 +344,11 @@ describe('Catalog Product Category Actions', () => {
 
   it.effect('rejects a cycle and dependency-blocked retirement without success events', () =>
     Effect.gen(function* categoryActionTest() {
-      const moved = moveContext({
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const moved = moveContext(compositionSnapshot.composition.revision, {
         moveCategory: () => Effect.succeed({ _tag: 'hierarchy_conflict', reason: 'Cycle' }),
       });
       const moveError = yield* handleMoveProductCategory(
@@ -335,7 +363,9 @@ describe('Catalog Product Category Actions', () => {
       expect(moveError.code).toBe('category_conflict');
       expect(moved.events).toHaveLength(0);
       for (const reason of ['DIRECT_CHILDREN_REMAIN', 'DIRECT_ASSIGNMENTS_REMAIN']) {
-        const blocked = retireContext({ retireCategory: () => Effect.succeed({ _tag: 'reference_conflict', reason }) });
+        const blocked = retireContext(compositionSnapshot.composition.revision, {
+          retireCategory: () => Effect.succeed({ _tag: 'reference_conflict', reason }),
+        });
         const error = yield* handleRetireProductCategory(
           { categoryRef, expectedRevision: 1, reason: 'Retire' },
           blocked.value,
@@ -348,7 +378,11 @@ describe('Catalog Product Category Actions', () => {
 
   it.effect('retires only after resolution, retaining category identity', () =>
     Effect.gen(function* categoryActionTest() {
-      const run = retireContext({
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const run = retireContext(compositionSnapshot.composition.revision, {
         retireCategory: () =>
           Effect.succeed({
             _tag: 'retired',
@@ -369,7 +403,11 @@ describe('Catalog Product Category Actions', () => {
 
   it.effect('removes the last assignment without replacement and emits only on change', () =>
     Effect.gen(function* categoryActionTest() {
-      const run = removeContext({
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const run = removeContext(compositionSnapshot.composition.revision, {
         removeAssignment: () => Effect.succeed({ _tag: 'removed', assignmentRevision: 2, categoryRef, productRef }),
       });
       const result = yield* handleRemoveProductCategoryAssignment(
@@ -379,7 +417,7 @@ describe('Catalog Product Category Actions', () => {
       expect(result.changed).toBe(true);
       expect(result).not.toHaveProperty('replacementCategoryRef');
       expect(run.events).toHaveLength(1);
-      const repeated = removeContext({
+      const repeated = removeContext(compositionSnapshot.composition.revision, {
         removeAssignment: () => Effect.succeed({ _tag: 'unchanged', assignmentRevision: 2, categoryRef, productRef }),
       });
       expect(

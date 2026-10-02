@@ -228,25 +228,30 @@ it.effect('publishes exact legal-entity endpoints with an ID-only switch payload
 
 it.effect('decodes an optional exact page entrypoint without accepting private routing fields', () =>
   Effect.gen(function* testProgram3() {
+    const compositionRevision = 'a'.repeat(64);
     expect(
       yield* Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+        compositionRevision,
         entrypointKey: 'contacts.core.page.customers',
         importPath: 'must-not-pass',
         moduleId: 'contacts.core',
         routePath: '/contacts/customers',
       }),
     ).toEqual({
+      compositionRevision,
       entrypointKey: 'contacts.core.page.customers',
       moduleId: 'contacts.core',
     });
     expect(
       yield* Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+        compositionRevision,
         moduleId: 'contacts.core',
       }),
-    ).toEqual({ moduleId: 'contacts.core' });
+    ).toEqual({ compositionRevision, moduleId: 'contacts.core' });
     expect(
       yield* Effect.flip(
         Schema.decodeUnknownEffect(ResolveModuleTargetPayloadSchema)({
+          compositionRevision,
           entrypointKey: '../private-page',
           moduleId: 'contacts.core',
         }),

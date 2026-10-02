@@ -1,8 +1,10 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { ActivatePackageOptionPayloadSchema } from '../../shared/actions/activate-package-option.ts';
 import { RetirePackageOptionPayloadSchema } from '../../shared/actions/retire-package-option.ts';
 import { mapActivatePackageOptionActionProblem } from '../../api/activate-package-option-action-problems.ts';
@@ -37,11 +39,13 @@ const scope = {
   correlationId: 'option-test',
 };
 const context = (
+  compositionRevision: string,
   services: PackageOptionPersistence,
 ): ActionHandlerContext<Readonly<Record<string, never>>, PackageOptionPersistence> => ({
   actionInvocationId: '44444444-4444-4444-8444-444444444444',
   addDomainEvent: () => Effect.succeed(Object.create(null)),
   addOutboxMessage: () => Effect.void,
+  compositionRevision,
   recordAuditEvidence: () => Effect.void,
   recordDataAccess: () => Effect.void,
   scope,
@@ -61,6 +65,10 @@ describe('Package Option public operations', () => {
 
   it.effect('uses trusted invocation and returns one stable definition identity', () =>
     Effect.gen(function* verifyTrustedIdentity() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const services: PackageOptionPersistence = {
         activate: (input) =>
           Effect.sync(() => {
@@ -71,7 +79,11 @@ describe('Package Option public operations', () => {
           }),
         retire: () => Effect.die('unexpected retire'),
       };
-      const result = yield* runPackageOptionTransition('ACTIVATE', payload, context(services));
+      const result = yield* runPackageOptionTransition(
+        'ACTIVATE',
+        payload,
+        context(compositionSnapshot.composition.revision, services),
+      );
       expect(result.definitionRef.resourceId).toBe(definitionId);
       expect(result.contentRevision.revision).toBe(3);
       expect(result.optionRevision).toBe(2);

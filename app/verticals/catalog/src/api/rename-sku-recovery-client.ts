@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RenameSkuRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RenameSkuRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRenameSkuRecovery = (
   payload: RenameSkuRecoveryRequest,
   ...[requestCorrelation, options = {}]: RenameSkuRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRenameSkuRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRenameSkuRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -43,6 +43,8 @@ import { resendCounterpartyAccessInvitationAction } from '../../src/actions/rese
 import { revokeCounterpartyAccessInvitationAction } from '../../src/actions/revoke-counterparty-access-invitation.action.ts';
 import { revokeCounterpartyCommerceAccessAction } from '../../src/actions/revoke-counterparty-commerce-access.action.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000002';
 const actor = {
@@ -170,17 +172,21 @@ const actionContext = <DomainEvents extends DomainEventContractMap, Services>(
   actionInvocationId,
   addDomainEvent: collector.addDomainEvent,
   addOutboxMessage: collector.addOutboxMessage,
+  compositionRevision,
   recordAuditEvidence: collector.recordAuditEvidence,
   recordDataAccess: collector.recordDataAccess,
-  scope: trustVerifiedGatewayPrincipalContext({
-    authBindingId: '80000000-0000-4000-8000-000000000008',
-    authContextRef: 'better-auth-api-key:access-outbox-contract',
-    authMethod: 'api_key' as const,
-    correlationId: 'access-outbox-contract',
-    legalEntityId,
-    principalId,
-    tenantId,
-  }),
+  scope: trustVerifiedGatewayPrincipalContext(
+    {
+      authBindingId: '80000000-0000-4000-8000-000000000008',
+      authContextRef: 'better-auth-api-key:access-outbox-contract',
+      authMethod: 'api_key' as const,
+      correlationId: 'access-outbox-contract',
+      legalEntityId,
+      principalId,
+      tenantId,
+    },
+    compositionRevision,
+  ),
   services,
 });
 

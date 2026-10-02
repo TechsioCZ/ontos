@@ -23,28 +23,30 @@ const httpUrl = Schema.URLFromString.check(
 
 const commerceConfiguration = Config.all({
   apiKey: Config.Redacted('ONTOS_PRICING_GATEWAY_API_KEY'),
-  commerceCustomerContextBaseUrl: Config.schema(httpUrl, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_BASE_URL'),
   shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 const compatibilityConfiguration = Config.all({
   apiKey: Config.Redacted('ONTOS_PRICING_GATEWAY_API_KEY'),
-  priceGroupCatalogBaseUrl: Config.schema(httpUrl, 'ONTOS_PRICE_GROUP_CATALOG_BASE_URL'),
   shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 
 type CommerceGatewayContextIssue = (
-  payload: { readonly audience: 'commerce-customer-context'; readonly legalEntityId: string },
+  payload: {
+    readonly audience: 'commerce-customer-context';
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+  },
   options: ApiKeyGatewayContextClientOptions,
 ) => Effect.Effect<GatewayContextResponse, GatewayContextClientError>;
 type CompatibilityGatewayContextIssue = (
-  payload: { readonly audience: 'price-group-catalog' },
+  payload: { readonly audience: 'price-group-catalog'; readonly compositionRevision: string },
   options: ApiKeyGatewayContextClientOptions,
 ) => Effect.Effect<GatewayContextResponse, GatewayContextClientError>;
 
 const unavailable = (
   owner: 'COMMERCE_ASSIGNMENT' | 'PRICE_GROUP_COMPATIBILITY',
   reason: string,
-  cause: unknown,
+  cause?: unknown,
 ): PriceGroupOwnerGatewayUnavailable => {
   const failure = new PriceGroupOwnerGatewayUnavailable({ owner, reason });
   Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
@@ -54,7 +56,6 @@ const unavailable = (
 export const makeCommercePriceGroupResolutionGatewayCredentialIssuer = (
   configured: {
     readonly apiKey: Redacted.Redacted;
-    readonly commerceCustomerContextBaseUrl: URL;
     readonly shellBaseUrl: URL;
   },
   issue: CommerceGatewayContextIssue = issueApiKeyGatewayContext,
@@ -63,11 +64,16 @@ export const makeCommercePriceGroupResolutionGatewayCredentialIssuer = (
     issue: Effect.fn('CommercePriceGroupResolutionGatewayCredentialIssuer.issue')(
       function* issueCommercePriceGroupResolutionCredential(input: {
         readonly audience: 'commerce-customer-context';
+        readonly compositionRevision: string;
         readonly legalEntityId: string;
         readonly requestCorrelation: string;
       }) {
         const response = yield* issue(
-          { audience: input.audience, legalEntityId: input.legalEntityId },
+          {
+            audience: input.audience,
+            compositionRevision: input.compositionRevision,
+            legalEntityId: input.legalEntityId,
+          },
           {
             apiKey: configured.apiKey,
             baseUrl: configured.shellBaseUrl,
@@ -82,8 +88,14 @@ export const makeCommercePriceGroupResolutionGatewayCredentialIssuer = (
             ),
           ),
         );
+        if (response.compositionRevision !== input.compositionRevision) {
+          return yield* unavailable(
+            'COMMERCE_ASSIGNMENT',
+            'Owner gateway returned a credential for a different composition revision',
+          );
+        }
         return {
-          baseUrl: configured.commerceCustomerContextBaseUrl,
+          baseUrl: new URL(response.apiBaseUrl, configured.shellBaseUrl),
           credential: Redacted.make(`Bearer ${response.token}`),
         };
       },
@@ -93,7 +105,6 @@ export const makeCommercePriceGroupResolutionGatewayCredentialIssuer = (
 export const makePriceGroupCompatibilityGatewayCredentialIssuer = (
   configured: {
     readonly apiKey: Redacted.Redacted;
-    readonly priceGroupCatalogBaseUrl: URL;
     readonly shellBaseUrl: URL;
   },
   issue: CompatibilityGatewayContextIssue = issueApiKeyGatewayContext,
@@ -102,10 +113,11 @@ export const makePriceGroupCompatibilityGatewayCredentialIssuer = (
     issue: Effect.fn('PriceGroupCompatibilityGatewayCredentialIssuer.issue')(
       function* issuePriceGroupCompatibilityCredential(input: {
         readonly audience: 'price-group-catalog';
+        readonly compositionRevision: string;
         readonly requestCorrelation: string;
       }) {
         const response = yield* issue(
-          { audience: input.audience },
+          { audience: input.audience, compositionRevision: input.compositionRevision },
           {
             apiKey: configured.apiKey,
             baseUrl: configured.shellBaseUrl,
@@ -120,22 +132,28 @@ export const makePriceGroupCompatibilityGatewayCredentialIssuer = (
             ),
           ),
         );
+        if (response.compositionRevision !== input.compositionRevision) {
+          return yield* unavailable(
+            'PRICE_GROUP_COMPATIBILITY',
+            'Owner gateway returned a credential for a different composition revision',
+          );
+        }
         return {
-          baseUrl: configured.priceGroupCatalogBaseUrl,
+          baseUrl: new URL(response.apiBaseUrl, configured.shellBaseUrl),
           credential: Redacted.make(`Bearer ${response.token}`),
         };
       },
     ),
   });
 
-const unavailableCommerceConfigurationIssuer = (cause: unknown): CommercePriceGroupResolutionGatewayCredentialIssuer =>
+const unavailableCommerceConfigurationIssuer = (cause?: unknown): CommercePriceGroupResolutionGatewayCredentialIssuer =>
   Object.freeze({
     issue: () =>
       Effect.fail(
         unavailable('COMMERCE_ASSIGNMENT', 'Commerce Customer Context gateway configuration is unavailable', cause),
       ),
   });
-const unavailableCompatibilityConfigurationIssuer = (cause: unknown): PriceGroupCompatibilityGatewayCredentialIssuer =>
+const unavailableCompatibilityConfigurationIssuer = (cause?: unknown): PriceGroupCompatibilityGatewayCredentialIssuer =>
   Object.freeze({
     issue: () =>
       Effect.fail(

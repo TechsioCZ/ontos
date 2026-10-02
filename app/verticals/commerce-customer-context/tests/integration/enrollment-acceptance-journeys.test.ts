@@ -53,6 +53,7 @@ import {
   makeEnrollmentContinuationHarness,
 } from '../support/enrollment-continuation-harness.ts';
 import type { EnrollmentContinuationScript } from '../support/enrollment-continuation-harness.ts';
+import { enrollmentApplicationCompositionRevision } from '../support/enrollment-application-composition.ts';
 
 /**
  * Retail self-enrollment through the server-side continuation, on real PostgreSQL.
@@ -80,7 +81,7 @@ const digest = (value: string) => Schema.decodeSync(EnrollmentDigestSchema)(valu
 
 interface ScenarioIdentities {
   readonly actorPrincipalId: typeof EnrollmentPrincipalIdSchema.Type;
-  readonly startInput: StartEnrollmentAttemptInput;
+  readonly startInput: Omit<StartEnrollmentAttemptInput, 'compositionRevision'>;
   readonly subject: RetailSelfEnrollmentPreparationSubject;
   readonly tenantId: typeof EnrollmentTenantIdSchema.Type;
 }
@@ -197,8 +198,9 @@ const seedPortalAccountTransition = Effect.fnUntraced(function* seedPortalAccoun
 });
 
 const scenario = Effect.fnUntraced(function* scenario(identities: ScenarioIdentities) {
-  const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId: identities.tenantId });
-  const attempt = yield* startEnrollmentAcceptanceAttempt(fixture, identities.startInput);
+  const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+  const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId: identities.tenantId }, compositionRevision);
+  const attempt = yield* startEnrollmentAcceptanceAttempt(fixture, { ...identities.startInput, compositionRevision });
   yield* seedPortalAccountTransition(fixture, identities, attempt.portalEnrollmentAttemptId, attempt.revision);
   return { fixture, portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId };
 });
@@ -762,6 +764,7 @@ it.live('the durable listing skips a settled Attempt and one a live lease still 
       // later listing against to tell "nothing moved" from "someone resumed this".
       const listed = yield* readEnrollmentAcceptanceAttempt(fixture, portalEnrollmentAttemptId);
       expect(due.map((attempt) => attempt.revision)).toStrictEqual([listed.revision]);
+      expect(due.map((attempt) => attempt.compositionRevision)).toStrictEqual([fixture.compositionRevision]);
 
       // A COMPLETE Attempt has no transition left to advance, so it drops out for good.
       expect((yield* harness.continuation.advance(identity)).outcome).toBe('COMPLETE');

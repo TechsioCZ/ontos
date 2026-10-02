@@ -342,7 +342,7 @@ export const manageQuantityTierAction = defineAction(
     schemaVersion: '1',
   },
   handleManageQuantityTier,
-  (transaction, scope) => {
+  (transaction, scope, compositionRevision) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(
         new OperationContextUnavailable({
@@ -355,7 +355,7 @@ export const manageQuantityTierAction = defineAction(
       const { administration, currencySupport } = yield* Effect.all(
         {
           administration: quantityTierAdministrationForScope(transaction, scope),
-          currencySupport: currencySupportPersistenceForScope(transaction, scope),
+          currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
         },
         { concurrency: 2 },
       );

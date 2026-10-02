@@ -27,6 +27,8 @@ import { endCatalogToStockBindingAction } from '../../src/actions/end-catalog-to
 import { establishCatalogToStockBindingAction } from '../../src/actions/establish-catalog-to-stock-binding.action.ts';
 import { buildInventoryOwnerAcceptanceBindingCorrectionLineage } from '../support/inventory-owner-acceptance-binding-correction.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const bindingRef = {
   moduleId: 'commerce.inventory',
@@ -90,14 +92,17 @@ const endPayload = Schema.decodeUnknownSync(EndCatalogToStockBindingPayloadSchem
   evidence,
   exactSelectionMeaning,
 });
-const scope = trustVerifiedGatewayPrincipalContext({
-  authBindingId: '77777777-7777-4777-8777-777777777777',
-  authContextRef: 'test:inventory-binding-actions',
-  authMethod: 'api_key',
-  correlationId: 'inventory-binding-actions',
-  principalId: '88888888-8888-4888-8888-888888888888',
-  tenantId,
-});
+const scope = trustVerifiedGatewayPrincipalContext(
+  {
+    authBindingId: '77777777-7777-4777-8777-777777777777',
+    authContextRef: 'test:inventory-binding-actions',
+    authMethod: 'api_key',
+    correlationId: 'inventory-binding-actions',
+    principalId: '88888888-8888-4888-8888-888888888888',
+    tenantId,
+  },
+  compositionRevision,
+);
 
 const actions = [
   [establishCatalogToStockBindingAction, establishPayload],
@@ -268,6 +273,7 @@ describe('Catalog-to-Stock Binding Actions', () => {
         actionInvocationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,

@@ -38,6 +38,7 @@ import {
   startEnrollmentAcceptanceAttempt,
 } from '../support/enrollment-acceptance-fixture.ts';
 import type { EnrollmentAcceptanceFixture } from '../support/enrollment-acceptance-fixture.ts';
+import { enrollmentApplicationCompositionRevision } from '../support/enrollment-application-composition.ts';
 import {
   enrollmentContinuationForTenants,
   makeEnrollmentContinuationHarness,
@@ -80,9 +81,11 @@ const startInputFor = (
   tenantId: typeof EnrollmentTenantIdSchema.Type,
   actorPrincipalId: typeof EnrollmentPrincipalIdSchema.Type,
   intent: string,
+  compositionRevision: string,
 ): StartEnrollmentAttemptInput => ({
   actionInvocationId: Schema.decodeSync(EnrollmentActionInvocationIdSchema)(randomUUID()),
   actorPrincipalId,
+  compositionRevision,
   intentDigest: digest('a'.repeat(64)),
   intentKey: enrollmentKey(intent),
   journey: 'RETAIL_SELF_ENROLLMENT',
@@ -92,6 +95,7 @@ const startInputFor = (
 /** One replica's bid for one Attempt's next sweep, at the claim length the scenario needs. */
 const sweepFor = (
   attempt: {
+    readonly compositionRevision: string;
     readonly portalEnrollmentAttemptId: typeof EnrollmentAttemptIdSchema.Type;
     readonly revision: number;
   },
@@ -99,6 +103,7 @@ const sweepFor = (
   claimTtlMillis: number,
 ) => ({
   claimTtlMillis,
+  compositionRevision: attempt.compositionRevision,
   maxSweeps: SWEEP_BUDGET,
   portalEnrollmentAttemptId: attempt.portalEnrollmentAttemptId,
   revision: attempt.revision,
@@ -136,6 +141,24 @@ const haltingContinuationFor = Effect.fnUntraced(function* haltingContinuationFo
   return enrollmentContinuationForTenants(harness.continuation, [tenantId]);
 });
 
+const observingContinuationFor = (
+  continuation: CommerceEnrollmentContinuationService,
+  advanced: Ref.Ref<readonly string[]>,
+): CommerceEnrollmentContinuationService => {
+  const observeAdvance =
+    (advance: CommerceEnrollmentContinuationService['advance']): CommerceEnrollmentContinuationService['advance'] =>
+    (input) =>
+      Ref.update(advanced, (ids) => [...ids, input.portalEnrollmentAttemptId]).pipe(
+        Effect.flatMap(() => advance(input)),
+      );
+  return {
+    advance: observeAdvance(continuation.advance),
+    openSweepPass: continuation.openSweepPass.pipe(
+      Effect.map((pass) => ({ ...pass, advance: observeAdvance(pass.advance) })),
+    ),
+  };
+};
+
 /** How many ticks a test may spend waiting for a sweep budget to run out before it gives up. */
 const MAX_SWEEP_TICKS = 64;
 
@@ -144,17 +167,11 @@ it.live('advances a newer Attempt in one tick even when a whole page of older on
     Effect.gen(function* pagesPastExhaustedAttempts() {
       const tenantId = tenant(randomUUID());
       const actorPrincipalId = principalId(randomUUID());
-      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
       const scoped = yield* haltingContinuationFor(fixture, tenantId, actorPrincipalId);
       const advanced = yield* Ref.make<readonly string[]>([]);
-      const continuation: CommerceEnrollmentContinuationService = {
-        advance: (input) =>
-          Ref.update(advanced, (ids) => [...ids, input.portalEnrollmentAttemptId]).pipe(
-            Effect.flatMap(() => scoped.advance(input)),
-          ),
-        claimSweep: scoped.claimSweep,
-        listDue: scoped.listDue,
-      };
+      const continuation = observingContinuationFor(scoped, advanced);
       // Two rows per page against three Attempts that cannot move: the page the listing starts with
       // is entirely theirs, which is the whole point of the scenario.
       const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
@@ -168,7 +185,7 @@ it.live('advances a newer Attempt in one tick even when a whole page of older on
         (activity, index) =>
           startEnrollmentAcceptanceAttempt(
             fixture,
-            startInputFor(tenantId, actorPrincipalId, `due-work-${index}`),
+            startInputFor(tenantId, actorPrincipalId, `due-work-${index}`, fixture.compositionRevision),
           ).pipe(
             Effect.flatMap((attempt) =>
               backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, activity),
@@ -192,7 +209,7 @@ it.live('advances a newer Attempt in one tick even when a whole page of older on
       // would never reach this one.
       const fresh = yield* startEnrollmentAcceptanceAttempt(
         fixture,
-        startInputFor(tenantId, actorPrincipalId, 'due-work-fresh'),
+        startInputFor(tenantId, actorPrincipalId, 'due-work-fresh', fixture.compositionRevision),
       );
       yield* backdateEnrollmentAcceptanceAttempt(fixture, fresh.portalEnrollmentAttemptId, NEWER_ACTIVITY);
 
@@ -215,24 +232,18 @@ it.live('re-advances a durably stale Attempt a waiting client keeps polling', ()
     Effect.gen(function* pollingDoesNotVetoTheDurableRow() {
       const tenantId = tenant(randomUUID());
       const actorPrincipalId = principalId(randomUUID());
-      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
       const scoped = yield* haltingContinuationFor(fixture, tenantId, actorPrincipalId);
       const advanced = yield* Ref.make<readonly string[]>([]);
-      const continuation: CommerceEnrollmentContinuationService = {
-        advance: (input) =>
-          Ref.update(advanced, (ids) => [...ids, input.portalEnrollmentAttemptId]).pipe(
-            Effect.flatMap(() => scoped.advance(input)),
-          ),
-        claimSweep: scoped.claimSweep,
-        listDue: scoped.listDue,
-      };
+      const continuation = observingContinuationFor(scoped, advanced);
       const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
         continuation,
         staleAfterMillis: POLL_STALE_WINDOW_MILLIS,
       });
       const attempt = yield* startEnrollmentAcceptanceAttempt(
         fixture,
-        startInputFor(tenantId, actorPrincipalId, 'due-work-polled'),
+        startInputFor(tenantId, actorPrincipalId, 'due-work-polled', fixture.compositionRevision),
       );
       yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
 
@@ -267,10 +278,11 @@ it.live('the due-work listing answers a worker tick and refuses a caller with a 
     Effect.gen(function* workerScopeIsRequired() {
       const tenantId = tenant(randomUUID());
       const actorPrincipalId = principalId(randomUUID());
-      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
       const attempt = yield* startEnrollmentAcceptanceAttempt(
         fixture,
-        startInputFor(tenantId, actorPrincipalId, 'due-work-scope'),
+        startInputFor(tenantId, actorPrincipalId, 'due-work-scope', fixture.compositionRevision),
       );
       yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
       const query = { after: Option.none(), limit: 500, maxSweeps: SWEEP_BUDGET, staleAfterMillis: 0 };
@@ -297,10 +309,11 @@ it.live('the sweep accounting answers a worker tick and refuses a caller with a 
     Effect.gen(function* sweepAccountingWorkerScopeIsRequired() {
       const tenantId = tenant(randomUUID());
       const actorPrincipalId = principalId(randomUUID());
-      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
       const attempt = yield* startEnrollmentAcceptanceAttempt(
         fixture,
-        startInputFor(tenantId, actorPrincipalId, 'due-work-sweep-scope'),
+        startInputFor(tenantId, actorPrincipalId, 'due-work-sweep-scope', fixture.compositionRevision),
       );
       const sweep = sweepFor(attempt, tenantId, 0);
 
@@ -325,10 +338,11 @@ it.live('stops listing an Attempt once its sweep budget is spent, and lists it a
     Effect.gen(function* durableSweepBudgetHoldsAndReleases() {
       const tenantId = tenant(randomUUID());
       const actorPrincipalId = principalId(randomUUID());
-      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
       const attempt = yield* startEnrollmentAcceptanceAttempt(
         fixture,
-        startInputFor(tenantId, actorPrincipalId, 'due-work-budget'),
+        startInputFor(tenantId, actorPrincipalId, 'due-work-budget', fixture.compositionRevision),
       );
       yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
       const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
@@ -369,10 +383,11 @@ it.live('charges exactly one of two replicas bidding for the same sweep', () =>
     Effect.gen(function* oneClaimPerPass() {
       const tenantId = tenant(randomUUID());
       const actorPrincipalId = principalId(randomUUID());
-      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
       const attempt = yield* startEnrollmentAcceptanceAttempt(
         fixture,
-        startInputFor(tenantId, actorPrincipalId, 'due-work-claim-race'),
+        startInputFor(tenantId, actorPrincipalId, 'due-work-claim-race', fixture.compositionRevision),
       );
       yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
       const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
@@ -396,10 +411,11 @@ it.live('withholds a claimed Attempt from every listing until the claim expires,
     Effect.gen(function* claimHoldsAndExpires() {
       const tenantId = tenant(randomUUID());
       const actorPrincipalId = principalId(randomUUID());
-      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
       const attempt = yield* startEnrollmentAcceptanceAttempt(
         fixture,
-        startInputFor(tenantId, actorPrincipalId, 'due-work-claim-window'),
+        startInputFor(tenantId, actorPrincipalId, 'due-work-claim-window', fixture.compositionRevision),
       );
       yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
       const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
@@ -431,10 +447,11 @@ it.live('refuses a claim against a listing snapshot the Attempt has since outgro
     Effect.gen(function* staleListingCannotClaim() {
       const tenantId = tenant(randomUUID());
       const actorPrincipalId = principalId(randomUUID());
-      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
       const attempt = yield* startEnrollmentAcceptanceAttempt(
         fixture,
-        startInputFor(tenantId, actorPrincipalId, 'due-work-stale-revision'),
+        startInputFor(tenantId, actorPrincipalId, 'due-work-stale-revision', fixture.compositionRevision),
       );
       yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
       const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
@@ -470,10 +487,11 @@ it.live(
       Effect.gen(function* pendingReconciliationStaysDueDespiteARef() {
         const tenantId = tenant(randomUUID());
         const actorPrincipalId = principalId(randomUUID());
-        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+        const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
         const attempt = yield* startEnrollmentAcceptanceAttempt(
           fixture,
-          startInputFor(tenantId, actorPrincipalId, 'due-work-pending-reconciliation'),
+          startInputFor(tenantId, actorPrincipalId, 'due-work-pending-reconciliation', fixture.compositionRevision),
         );
         yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
 
@@ -591,10 +609,11 @@ it.live('never permanently excludes an owner still deciding owner_reconciliation
     Effect.gen(function* ownerPendingSurvivesTheHardBudget() {
       const tenantId = tenant(randomUUID());
       const actorPrincipalId = principalId(randomUUID());
-      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
       const attempt = yield* startEnrollmentAcceptanceAttempt(
         fixture,
-        startInputFor(tenantId, actorPrincipalId, 'due-work-owner-pending-budget'),
+        startInputFor(tenantId, actorPrincipalId, 'due-work-owner-pending-budget', fixture.compositionRevision),
       );
       yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
       yield* markOwnerReconciliationPending(fixture, tenantId, actorPrincipalId, attempt.portalEnrollmentAttemptId);
@@ -631,10 +650,11 @@ it.live("grows an owner-pending Attempt's claim by a capped doubling instead of 
     Effect.gen(function* ownerPendingClaimBacksOff() {
       const tenantId = tenant(randomUUID());
       const actorPrincipalId = principalId(randomUUID());
-      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+      const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
       const attempt = yield* startEnrollmentAcceptanceAttempt(
         fixture,
-        startInputFor(tenantId, actorPrincipalId, 'due-work-owner-pending-backoff'),
+        startInputFor(tenantId, actorPrincipalId, 'due-work-owner-pending-backoff', fixture.compositionRevision),
       );
       yield* backdateEnrollmentAcceptanceAttempt(fixture, attempt.portalEnrollmentAttemptId, ANCIENT_ACTIVITY[0]);
       yield* markOwnerReconciliationPending(fixture, tenantId, actorPrincipalId, attempt.portalEnrollmentAttemptId);

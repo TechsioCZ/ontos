@@ -13,6 +13,7 @@ export const priceGroupCatalogCorsAllowedHeaders = [
   'Traceparent',
   'X-Correlation-Id',
   'X-Modernjs-Bff-Operation-Context',
+  'X-Ontos-Composition-Revision',
   'X-Operation-Id',
   'X-Trace-Id',
 ] as const;

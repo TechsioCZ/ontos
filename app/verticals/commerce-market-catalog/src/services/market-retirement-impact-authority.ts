@@ -18,24 +18,32 @@ type MarketRetirementImpactFailure =
 export interface MarketRetirementImpactAuthority<Requirements = never> {
   readonly assessRetirementImpact: (input: {
     readonly actionInvocationId: string;
+    readonly compositionRevision: string;
     readonly effectiveAt: string;
     readonly expectedMarketRevision: number;
+    readonly legalEntityId: string;
     readonly marketRef: MarketRef;
   }) => Effect.Effect<MarketRetirementImpactAssessment, MarketRetirementImpactFailure, Requirements>;
   readonly commitRetirementImpact: (input: {
     readonly actionInvocationId: string;
     readonly assessment: ReservedMarketRetirementImpactAssessment;
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
     readonly reason: string;
   }) => Effect.Effect<void, MarketRetirementImpactFailure, Requirements>;
   readonly releaseRetirementImpact: (input: {
     readonly actionInvocationId: string;
     readonly assessment: ReservedMarketRetirementImpactAssessment;
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
     readonly reason: string;
   }) => Effect.Effect<void, MarketRetirementImpactFailure, Requirements>;
   readonly reserveRetirementImpact: (input: {
     readonly actionInvocationId: string;
+    readonly compositionRevision: string;
     readonly effectiveAt: string;
     readonly expectedMarketRevision: number;
+    readonly legalEntityId: string;
     readonly marketRef: MarketRef;
     readonly reason: string;
   }) => Effect.Effect<ReservedMarketRetirementImpactAssessment, MarketRetirementImpactFailure, Requirements>;

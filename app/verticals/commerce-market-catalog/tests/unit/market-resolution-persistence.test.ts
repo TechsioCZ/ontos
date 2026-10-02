@@ -1,7 +1,14 @@
 import type { OperationalScope } from '@app/core-runtime';
 import { scopedRoutineInvokerFromTransaction, TrustedPrincipalContextSchema } from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+
+import {
+  OperationalScopeTransaction,
+  installOperationalScopeFromTransactionService,
+} from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
+import type { OperationalScopeTransactionService } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
+import { readVerifiedGatewayCompositionRevision } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 
 import { EligibleMarketTuplesRequestSchema } from '../../shared/apis/eligible-market-tuples.ts';
 import { marketResolutionPersistenceForScope } from '../../src/persistence/market-resolution-persistence.ts';
@@ -16,15 +23,20 @@ const scope: OperationalScope = {
   }),
   correlationId: 'market-resolution-persistence',
 };
+const capturedCompositionRevision = readVerifiedGatewayCompositionRevision(scope);
 const request = Schema.decodeUnknownSync(EligibleMarketTuplesRequestSchema)({
   channel: 'B2C',
   effectiveAt: '2035-01-01T00:00:00.000Z',
   storefrontRef: { appId: 'storefront-web', tenantId },
 });
 
+const unusedDatabaseOperation = (): never => {
+  throw new Error('This owner routine fixture does not use CRUD operations');
+};
+
 const loadSnapshot = (nextApplicabilityBoundary: null | string) =>
   Effect.gen(function* loadMarketSnapshot() {
-    const transaction = scopedRoutineInvokerFromTransaction(
+    const routineInvoker = scopedRoutineInvokerFromTransaction(
       () =>
         Effect.succeed([
           {
@@ -39,11 +51,19 @@ const loadSnapshot = (nextApplicabilityBoundary: null | string) =>
         ]),
       scope,
     );
-    const persistence = yield* marketResolutionPersistenceForScope(
-      // @ts-expect-error The focused fixture supplies the public routine invoker without Core's private scope brand.
-      transaction,
-      scope,
+    const transactionService: OperationalScopeTransactionService = {
+      delete: unusedDatabaseOperation,
+      insert: unusedDatabaseOperation,
+      install: () => Effect.void,
+      scopedRoutineInvoker: () => routineInvoker,
+      select: unusedDatabaseOperation,
+      update: unusedDatabaseOperation,
+      verify: Effect.succeed(Option.some({ legal_entity_id: '', tenant_id: tenantId })),
+    };
+    const transaction = yield* installOperationalScopeFromTransactionService(scope).pipe(
+      Effect.provideService(OperationalScopeTransaction, transactionService),
     );
+    const persistence = yield* marketResolutionPersistenceForScope(transaction, scope, capturedCompositionRevision);
     return yield* persistence.load(request);
   });
 

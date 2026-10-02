@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RemoveCatalogMediaRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RemoveCatalogMediaRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRemoveCatalogMediaRecovery = (
   payload: RemoveCatalogMediaRecoveryRequest,
   ...[requestCorrelation, options = {}]: RemoveCatalogMediaRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRemoveCatalogMediaRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRemoveCatalogMediaRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

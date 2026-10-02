@@ -1,8 +1,13 @@
+// @rstest-environment happy-dom
+// @rstest-environment-options {"url":"https://party.ontos.test"}
 import { randomUUID } from 'node:crypto';
 
 import { DatabaseConfig, loadDatabaseConnectionPair } from '@app/core-runtime';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
 import { ConfigProvider, Context, DateTime, Effect, Layer, Match, Option, Redacted, Schema, Predicate } from 'effect';
@@ -10,7 +15,7 @@ import { assert, expect, it } from 'effect-rstest';
 import { FetchHttpClient, HttpClient, HttpClientResponse } from 'effect/unstable/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
-import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
+import { EXTERNAL_GATEWAY_ASSERTION_VERSION, pinDocumentCompositionRevision } from '@app/shared-contracts';
 import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
@@ -26,6 +31,7 @@ import { partyContactPointsReadApiLive } from '../../api/party-contact-points-re
 import { partyDetailReadApiLive } from '../../api/party-detail-read-server.ts';
 import { partyOfficialIdentifierHistoryReadApiLive } from '../../api/party-official-identifier-history-read-server.ts';
 import { partyRegistryApi } from '../../shared/api.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { deriveAresEvidenceApplication, makeAresAppliedEvidence } from '../../shared/domain/ares-application.ts';
 import { AresSubjectEvidenceSchema, AresSubjectLookupIcoSchema } from '../../shared/domain/ares-evidence.ts';
 import { IdentityCorrectionCommandSchema } from '../../shared/domain/correction-contracts.ts';
@@ -90,7 +96,11 @@ it.live(
   'exported ARES coordinator uses real authorized HTTP commands, canonical persistence and reviewed correction',
   () =>
     Effect.gen(function* aresGovernedTestEffect() {
-      const connections = yield* loadDatabaseConnectionPair();
+      const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        [ultramodernApiMarker.appId],
+        ultramodernApiMarker.buildMarker,
+      );
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
           actionKeys: [
@@ -103,6 +113,7 @@ it.live(
           ].map(({ descriptor }) => descriptor.actionKey),
           // The runtime's action boundary registers the staff namespace Shell-issued assertions name.
           authenticationNamespaceId: STAFF_AUTHENTICATION_NAMESPACE_ID,
+          compositionRevision: compositionSnapshot.composition.revision,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         }).pipe(Effect.orDie),
         (resource) => resource.close().pipe(Effect.orDie),
@@ -110,6 +121,9 @@ it.live(
       const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
       const admin = yield* makeTestDatabaseFromClient(adminClient, partyRelations);
       const managerWithLegalEntity = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
+      const compositionRevision = compositionSnapshot.composition.revision;
+      const apiBaseUrl = '/party-registry-api';
+      yield* pinDocumentCompositionRevision(compositionRevision);
       const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
       const kid = `ares-live-${randomUUID()}`;
       const issuer = 'https://disposable-shell.ontos.test';
@@ -120,7 +134,12 @@ it.live(
       });
       const sign = (principal: typeof fixture.manager) =>
         Effect.promise(() =>
-          new SignJWT({ principal, ver: EXTERNAL_GATEWAY_ASSERTION_VERSION })
+          new SignJWT({
+            compositionRevision: compositionSnapshot.composition.revision,
+            principal,
+            targetBuildMarker: ultramodernApiMarker.buildMarker,
+            ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
+          })
             .setProtectedHeader({ alg: 'EdDSA', kid, typ: 'JWT' })
             .setIssuer(issuer)
             .setAudience('party-registry')
@@ -131,9 +150,12 @@ it.live(
             .sign(privateKey),
         );
       const authorization = () => sign(managerWithLegalEntity).pipe(Effect.map((token) => `Bearer ${token}`));
-      const gateway = makeOperationGateway(() =>
-        sign(managerWithLegalEntity).pipe(Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken }))),
-      );
+      const gateway = makeOperationGateway(({ compositionRevision: requestedRevision }) => {
+        expect(requestedRevision).toBe(compositionRevision);
+        return sign(managerWithLegalEntity).pipe(
+          Effect.map((signedToken) => ({ apiBaseUrl, compositionRevision, expiresAt: 0, token: signedToken })),
+        );
+      });
       let providerRequests = 0;
       const provider = HttpClient.make((request, url) => {
         expect(url.href).toBe('https://ares.gov.cz/ekonomicke-subjekty-v-be/rest/ekonomicke-subjekty/27074358');
@@ -158,7 +180,12 @@ it.live(
         partyContactPointsReadApiLive,
         aresLookupReadApiLive.pipe(Layer.provide(upstream)),
       ).pipe(
-        Layer.provide(ActionPrincipalVerifierLive),
+        Layer.provide(
+          Layer.mergeAll(
+            ActionPrincipalVerifierLive,
+            makeActiveApplicationCompositionLayer(Effect.succeed(compositionSnapshot)),
+          ).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer)),
+        ),
         Layer.provide(redemption),
         Layer.provide(fixture.layer),
         Layer.provide(
@@ -178,18 +205,30 @@ it.live(
               Layer.provideMerge(fixture.layer),
               Layer.provideMerge(upstream),
               Layer.provide(HttpServer.layerServices),
+              Layer.provide(
+                Layer.effect(
+                  HttpRouter.HttpRouter,
+                  HttpRouter.HttpRouter.pipe(Effect.map((router) => router.prefixed(apiBaseUrl))),
+                ),
+              ),
             ),
             { disableLogger: true },
           ),
         ),
         (resource) => Effect.promise(resource.dispose.bind(resource)).pipe(Effect.orDie),
       );
-      const inMemoryFetch: typeof fetch = (input, init) => app.handler(new Request(input, init), emptyRequestContext);
+      const inMemoryFetch: typeof fetch = (input, init) => {
+        const request = new Request(input, init);
+        expect(new URL(request.url).pathname.startsWith(`${apiBaseUrl}/`)).toBe(true);
+        expect(request.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
+        return app.handler(request, emptyRequestContext);
+      };
       const runHttpEffect = <Success, Failure>(effect: Effect.Effect<Success, Failure>) =>
         effect.pipe(Effect.provideService(FetchHttpClient.Fetch, inMemoryFetch));
-      const baseUrl = 'https://party.ontos.test';
+      const baseUrl = `https://party.ontos.test${apiBaseUrl}`;
       const options = () => ({
         baseUrl,
+        compositionRevision,
         correlationId: randomUUID(),
         idempotencyKey: randomUUID(),
       });
@@ -233,7 +272,10 @@ it.live(
       });
       const lookup = Effect.fn('AresGovernedTest.lookup')(function* lookupEffect() {
         return yield* runHttpEffect(
-          executeAresLookupWithAuthorization({ ico: lookupIco }, yield* authorization(), randomUUID(), { baseUrl }),
+          executeAresLookupWithAuthorization({ ico: lookupIco }, yield* authorization(), randomUUID(), {
+            baseUrl,
+            compositionRevision,
+          }),
         );
       });
       const detail = Effect.fn('AresGovernedTest.detail')(function* detailEffect(partyRef: PartyRef) {
@@ -242,7 +284,7 @@ it.live(
             { partyRef, includeFactHistory: true },
             yield* authorization(),
             randomUUID(),
-            { baseUrl },
+            { baseUrl, compositionRevision },
           ),
         );
       });
@@ -271,7 +313,10 @@ it.live(
       const replayAuthorization = yield* authorization();
       const replayLookup = () =>
         runHttpEffect(
-          executeAresLookupWithAuthorization({ ico: lookupIco }, replayAuthorization, randomUUID(), { baseUrl }),
+          executeAresLookupWithAuthorization({ ico: lookupIco }, replayAuthorization, randomUUID(), {
+            baseUrl,
+            compositionRevision,
+          }),
         );
       yield* replayLookup();
       const providerRequestsBeforeReplay = providerRequests;
@@ -399,9 +444,12 @@ it.live(
       expect(replay.skipped.length).toBe(3);
       const afterReplay = yield* state();
       expect(afterReplay.core.events.length).toBe(persisted.core.events.length);
-      const deniedGateway = makeOperationGateway(() =>
-        sign(fixture.denied).pipe(Effect.map((signedToken) => ({ expiresAt: 0, token: signedToken }))),
-      );
+      const deniedGateway = makeOperationGateway(({ compositionRevision: requestedRevision }) => {
+        expect(requestedRevision).toBe(compositionRevision);
+        return sign(fixture.denied).pipe(
+          Effect.map((signedToken) => ({ apiBaseUrl, compositionRevision, expiresAt: 0, token: signedToken })),
+        );
+      });
       const denied = yield* runHttpEffect(
         applyAresObservation(request, { gateway: deniedGateway, baseUrl }).pipe(Effect.result),
       );

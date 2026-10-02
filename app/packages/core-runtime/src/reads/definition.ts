@@ -316,6 +316,7 @@ export interface ReadDescriptor<
 export type ReadServiceFactory<Services, Requirements = never> = (
   transaction: ScopedTransactionExecutor,
   scope: OperationalScope,
+  compositionRevision: string | undefined,
 ) => Effect.Effect<Services, OperationContextUnavailable, Requirements>;
 
 export type ReadHandler<

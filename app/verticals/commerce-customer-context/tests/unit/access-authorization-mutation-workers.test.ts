@@ -62,6 +62,7 @@ const context: OutboxWorkerHandlerContext = {
   actorPrincipalId: actor.principalId,
   attemptNumber: 1,
   claimId: 'claim-1',
+  compositionRevision: 'a'.repeat(64),
   consumerModuleKey: 'commerce.customer-context',
   deliveryId: 'delivery-1',
   domainEventId: 'event-1',

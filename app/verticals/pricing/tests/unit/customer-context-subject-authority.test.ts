@@ -15,6 +15,8 @@ import {
   unitPriceFixtureTenantId,
 } from './support/unit-price-calculation.fixture.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const principalId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -168,6 +170,7 @@ describe('Pricing Customer Context subject authority #790', () => {
         } satisfies CurrentPricingDecisionCustomerContextGatewayIssuerService;
         const authority = yield* currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment(
           requestCorrelation,
+          compositionRevision,
           (payload) => {
             payloads.push(payload);
             return Effect.succeed(verifiedOwnerResponse(payload));
@@ -179,8 +182,8 @@ describe('Pricing Customer Context subject authority #790', () => {
         const profileVerified = yield* authority.verify({ request: profileRequest(guest), scope });
 
         expect(issued).toEqual([
-          { audience: 'commerce-customer-context', principal, requestCorrelation },
-          { audience: 'commerce-customer-context', principal, requestCorrelation },
+          { audience: 'commerce-customer-context', compositionRevision, principal, requestCorrelation },
+          { audience: 'commerce-customer-context', compositionRevision, principal, requestCorrelation },
         ]);
         expect(payloads.map(({ actor }) => actor)).toEqual([
           { kind: 'GUEST' },
@@ -238,6 +241,7 @@ describe('Pricing Customer Context subject authority #790', () => {
       } satisfies CurrentPricingDecisionCustomerContextGatewayIssuerService;
       const authority = yield* currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment(
         requestCorrelation,
+        compositionRevision,
         (payload) => {
           executed = true;
           return Effect.succeed(verifiedOwnerResponse(payload));
@@ -275,6 +279,7 @@ describe('Pricing Customer Context subject authority #790', () => {
       } satisfies CurrentPricingDecisionCustomerContextGatewayIssuerService;
       const authority = yield* currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment(
         requestCorrelation,
+        compositionRevision,
         (payload) => {
           const response = verifiedOwnerResponse(payload);
           return Match.value(response).pipe(

@@ -170,6 +170,7 @@ const context = <Services>(
       outbox.push(message);
       return Effect.void;
     },
+    compositionRevision: 'a'.repeat(64),
     recordAuditEvidence: (evidence: Readonly<Record<string, Schema.Json>>) => {
       audit.push(evidence);
       return Effect.void;

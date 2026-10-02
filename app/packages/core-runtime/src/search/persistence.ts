@@ -5,6 +5,8 @@ import { isSqlError } from 'effect/unstable/sql/SqlError';
 import { CoreDatabase } from '../db/client.ts';
 import { searchIndexEntries, searchProjectionRebuilds } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
+import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import type {
   CoreSearchProjectionDocument,
   CoreSearchProjectionMutation,
@@ -29,6 +31,7 @@ import {
   createCoreSearchQueryRuntime,
   decodeCoreSearchProjectionMutation,
   decodeCoreSearchProjectionReplacement,
+  validateCoreSearchProjectionWorkerContext,
 } from './projection.ts';
 
 const PersistedDocumentPayloadSchema = Schema.Struct({
@@ -589,11 +592,19 @@ export const makePostgresCoreSearchProjectionStore = (
       Effect.catchTag('SqlError', (failure) => Effect.fail(unavailable(failure))),
     );
   const apply: CoreSearchProjectionStoreService['apply'] = Effect.fn('CoreSearchProjectionStore.applyPostgres')(
-    function* applyCoreSearchProjection(input: CoreSearchProjectionInput) {
+    function* applyCoreSearchProjection(input: CoreSearchProjectionInput, context: OutboxWorkerHandlerContext) {
       const mutation = yield* transactionOperations.decodeMutation(input);
+      const ref = mutation.kind === 'upsert' ? mutation.document.ref : mutation.ref;
+      yield* validateCoreSearchProjectionWorkerContext(context, ref);
       const updatedAt = DateTime.toDateUtc(yield* DateTime.now);
-      const transactionBody = (transaction: CoreTransaction) =>
-        transactionOperations.applyMutationTransaction(transaction, mutation, updatedAt);
+      const transactionBody = Effect.fn('CoreSearchProjectionStore.applyFencedTransaction')(
+        function* applyFencedProjectionTransaction(transaction: CoreTransaction) {
+          yield* lockApplicationCompositionAuthority(transaction, context.compositionRevision, 'worker').pipe(
+            Effect.mapError(unavailable),
+          );
+          return yield* transactionOperations.applyMutationTransaction(transaction, mutation, updatedAt);
+        },
+      );
       yield* runTransaction(transactionBody);
     },
   );
@@ -608,11 +619,18 @@ export const makePostgresCoreSearchProjectionStore = (
     );
   });
   const replace: CoreSearchProjectionStoreService['replace'] = Effect.fn('CoreSearchProjectionStore.replacePostgres')(
-    function* replaceCoreSearchProjection(input: CoreSearchProjectionInput) {
+    function* replaceCoreSearchProjection(input: CoreSearchProjectionInput, context: OutboxWorkerHandlerContext) {
       const replacement = yield* transactionOperations.decodeReplacement(input);
+      yield* validateCoreSearchProjectionWorkerContext(context, replacement);
       const updatedAt = DateTime.toDateUtc(yield* DateTime.now);
-      const transactionBody = (transaction: CoreTransaction) =>
-        transactionOperations.replaceProjectionTransaction(transaction, replacement, updatedAt);
+      const transactionBody = Effect.fn('CoreSearchProjectionStore.replaceFencedTransaction')(
+        function* replaceFencedProjectionTransaction(transaction: CoreTransaction) {
+          yield* lockApplicationCompositionAuthority(transaction, context.compositionRevision, 'worker').pipe(
+            Effect.mapError(unavailable),
+          );
+          return yield* transactionOperations.replaceProjectionTransaction(transaction, replacement, updatedAt);
+        },
+      );
       yield* runTransaction(transactionBody);
     },
   );

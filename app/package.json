@@ -23,7 +23,7 @@
     "dev:assortment": "pnpm --filter @app/assortment dev",
     "build": "ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json && ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json && pnpm -r --no-sort --filter \"./verticals/*\" run build && pnpm --filter \"./apps/shell-super-app\" run build && pnpm mf:types && pnpm performance:readiness",
     "cloudflare:build": "ultramodern-create ultramodern typecheck --build packages/shared-contracts/tsconfig.json && ultramodern-create ultramodern typecheck --build packages/shared-design-tokens/tsconfig.json && pnpm -r --no-sort --filter \"./verticals/*\" run cloudflare:build && pnpm --filter \"./apps/shell-super-app\" run cloudflare:build && pnpm mf:types --target cloudflare && pnpm cloudflare-output:verify && pnpm cloudflare:ssr-proof",
-    "cloudflare:deploy": "pnpm -r --filter \"./verticals/*\" run cloudflare:deploy && pnpm --filter \"./apps/shell-super-app\" run cloudflare:deploy",
+    "cloudflare:deploy": "node ./scripts/immutable-application-release.mts deploy",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --out .codex/reports/cloudflare-version-proof/public-url-proof.json",
     "cloudflare:ssr-proof": "for output in apps/*/.output verticals/*/.output; do printf 'CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE=postgresql://workerd-proof:workerd-proof@127.0.0.1:5432/workerd-proof\\nSPICEDB_ENDPOINT=localhost:8443\\nSPICEDB_PRESHARED_KEY=workerd-proof\\n' > \"$output/.dev.vars\"; done && ultramodern-create ultramodern cloudflare-ssr-proof",
     "cloudflare-output:verify": "ultramodern-create ultramodern cloudflare-output-verify",
@@ -113,7 +113,8 @@
     "build:analyze": "RSDOCTOR=true pnpm build",
     "api:check:ontos": "node ./scripts/check-ultramodern-api-boundaries.mts",
     "zerops:providers": "node ./scripts/generate-zerops-provider-deployment.mts",
-    "dev:price-group-catalog": "pnpm --filter @app/price-group-catalog dev"
+    "dev:price-group-catalog": "pnpm --filter @app/price-group-catalog dev",
+    "application-release": "node ./scripts/immutable-application-release.mts"
   },
   "dependencies": {
     "@app/commerce-customer-context": "workspace:*",

@@ -41,6 +41,7 @@ const evidenceRef = Schema.decodeSync(EnrollmentEvidenceReferenceSchema)('500000
 
 const transition: CommerceEnrollmentOwnerTransition = Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
   actorPrincipalId,
+  compositionRevision: 'c'.repeat(64),
   correlationId: 'provider-owner-unit',
   expectedRevision: 1,
   ownerInvocationId,

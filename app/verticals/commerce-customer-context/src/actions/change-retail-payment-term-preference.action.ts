@@ -283,7 +283,7 @@ export const changeRetailPaymentTermPreferenceAction = defineAction(
     schemaVersion: '1',
   },
   handleChangeRetailPaymentTermPreference,
-  (transaction, scope) => {
+  (transaction, scope, compositionRevision) => {
     const { legalEntityId } = scope;
     if (legalEntityId === undefined) {
       return Effect.fail(
@@ -295,6 +295,7 @@ export const changeRetailPaymentTermPreferenceAction = defineAction(
     }
     return Effect.gen(function* makeRetailPaymentTermPreferenceServices() {
       const catalog = yield* paymentTermCatalogPortFromEnvironment({
+        compositionRevision,
         legalEntityId,
         requestCorrelation: scope.correlationId,
       });

@@ -222,6 +222,7 @@ const toCoreAuthBindingId = (
 export const existingAccountCoreIdentityReserveRequest = (input: {
   readonly accountSubject: CommercePortalAccountSubject;
   readonly authenticationRef: string;
+  readonly compositionRevision: ReservePrincipalBindingRequest['compositionRevision'];
 }): Effect.Effect<ReservePrincipalBindingRequest, ExistingAccountEnrollmentRejected> =>
   decodeOrReject(
     AuthenticationNamespaceIdSchema,
@@ -230,6 +231,7 @@ export const existingAccountCoreIdentityReserveRequest = (input: {
   ).pipe(
     Effect.map((authenticationNamespaceId) => ({
       authenticationRef: input.authenticationRef,
+      compositionRevision: input.compositionRevision,
       reservation: {
         authenticationNamespaceId,
         providerSubjectId: input.accountSubject.providerSubjectId,
@@ -243,6 +245,7 @@ export const existingAccountCoreIdentityActivateRequest = (input: {
   /** The `resultReference` recorded by the prior successful reserve transition. */
   readonly authBindingId: EnrollmentResourceId;
   readonly authenticationRef: string;
+  readonly compositionRevision: ActivatePrincipalBindingRequest['compositionRevision'];
   readonly expectedRevision: number;
 }): Effect.Effect<ActivatePrincipalBindingRequest, ExistingAccountEnrollmentRejected> =>
   Effect.all(
@@ -259,6 +262,7 @@ export const existingAccountCoreIdentityActivateRequest = (input: {
     Effect.map(({ authBindingId, expectedRevision }) => ({
       activation: { authBindingId, expectedRevision },
       authenticationRef: input.authenticationRef,
+      compositionRevision: input.compositionRevision,
     })),
   );
 

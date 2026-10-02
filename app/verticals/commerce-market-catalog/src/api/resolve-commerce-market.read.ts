@@ -20,7 +20,7 @@ import type {
   MarketSubjectRestrictionSnapshot,
   MarketSubjectRestrictionsReader,
 } from '../integrations/market-subject-restrictions.ts';
-import { marketSubjectRestrictionsReaderFromPublishedClient } from '../integrations/market-subject-restrictions.ts';
+import { makeServerMarketSubjectRestrictionsReader } from '../integrations/market-subject-restrictions.ts';
 
 type ResolveCommerceMarketServices = MarketResolutionPersistence & MarketSubjectRestrictionsReader;
 
@@ -150,9 +150,12 @@ export const resolveCommerceMarketRead = defineRead(
     schemaVersion: '1',
   },
   handleResolveCommerceMarket,
-  (transaction, scope) =>
-    marketResolutionPersistenceForScope(transaction, scope).pipe(
-      Effect.map((persistence) => ({ ...persistence, ...marketSubjectRestrictionsReaderFromPublishedClient })),
+  (transaction, scope, compositionRevision) =>
+    marketResolutionPersistenceForScope(transaction, scope, compositionRevision).pipe(
+      Effect.map((persistence) => ({
+        ...persistence,
+        ...makeServerMarketSubjectRestrictionsReader({ compositionRevision, legalEntityId: scope.legalEntityId }),
+      })),
     ),
   () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),
 );

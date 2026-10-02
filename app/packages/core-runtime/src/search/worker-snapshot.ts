@@ -8,6 +8,7 @@ import { DatabaseTransactionFailure, decodeDatabaseDriverFailure } from '../data
 import { CoreDatabase } from '../db/client.ts';
 import { domainEvents, legalEntities, searchProjectionGenerations } from '../db/schema.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
 import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
 import { CORE_SEARCH_INGESTION_REGISTRATIONS } from './ingestion.ts';
@@ -139,6 +140,7 @@ export const makeCoreSearchWorkerSnapshot = (backend: CoreSearchSnapshotBackend)
   ) => {
     if (
       !isVerifiedOutboxWorkerHandlerContext(context) ||
+      !/^[a-f0-9]{64}$/u.test(context.compositionRevision) ||
       !CORE_SEARCH_INGESTION_REGISTRATIONS.some(
         (registration) =>
           registration.producerModuleKey === context.producerModuleKey &&
@@ -162,14 +164,22 @@ type CoreSearchSnapshotDriverError = DatabaseDriverFailure | CoreSearchProjectio
 const snapshotDriverError = (cause: unknown): CoreSearchSnapshotDriverError =>
   Option.getOrElse(decodeDatabaseDriverFailure(cause), () => unavailable(cause));
 
+const CoreSearchSnapshotGenerationConflictSchema = Schema.TaggedStruct('CoreSearchSnapshotGenerationConflict', {});
+type CoreSearchGenerationClaimConflict = typeof CoreSearchSnapshotGenerationConflictSchema.Type;
+export const CoreSearchSnapshotGenerationConflict = Schema.TaggedError<CoreSearchGenerationClaimConflict>()(
+  'CoreSearchSnapshotGenerationConflict',
+  {},
+);
+
 const serializationFailure = (cause: unknown): boolean =>
+  Schema.is(CoreSearchSnapshotGenerationConflict)(cause) ||
   Option.exists(
     decodeDatabaseDriverFailure(cause),
     (failure) =>
       Schema.is(DatabaseTransactionFailure)(failure) && failure.kind === 'sqlstate' && failure.code.slice(2) === '001',
   );
 
-/** Bounded retry is restricted to PostgreSQL snapshot serialization failures. */
+/** Retry the complete coherent read only when PostgreSQL or the generation CAS reports contention. */
 export const retryCoreSearchSnapshot = <Value, Error, Requirements>(
   run: Effect.Effect<Value, Error, Requirements>,
 ): Effect.Effect<Value, Error, Requirements> =>
@@ -221,28 +231,19 @@ export const makePostgresCoreSearchSnapshotBackend = (
           const install = (legalEntityId?: string) => installScope(legalEntityId).pipe(Effect.mapError(unavailable));
 
           yield* installScope();
-          // RR rejects a waiter whose snapshot predates the preceding generation commit.
-          // Retrying the whole transaction makes increasing generations imply fresh snapshots,
-          // even when business event sequences commit out of their allocation order.
+          // This transaction only reads one coherent owner snapshot. Its proposed generation is
+          // claimed afterwards under READ COMMITTED, where the release fence sees current authority.
           const [generation] = yield* transaction
-            .insert(searchProjectionGenerations)
-            .values({
-              generation: 1n,
-              sourceModuleKey: context.producerModuleKey,
-              tenantId: context.tenantId,
-            })
-            .onConflictDoUpdate({
-              set: {
-                generation: sql`${searchProjectionGenerations.generation} + 1`,
-                updatedAt: sql`now()`,
-              },
-              target: [searchProjectionGenerations.tenantId, searchProjectionGenerations.sourceModuleKey],
-            })
-            .returning({ version: searchProjectionGenerations.generation })
+            .select({ version: searchProjectionGenerations.generation })
+            .from(searchProjectionGenerations)
+            .where(
+              and(
+                eq(searchProjectionGenerations.tenantId, context.tenantId),
+                eq(searchProjectionGenerations.sourceModuleKey, context.producerModuleKey),
+              ),
+            )
             .pipe(Effect.mapError(snapshotDriverError));
-          if (generation === undefined) {
-            return yield* unavailable();
-          }
+          const observedGeneration = generation?.version ?? 0n;
           const [watermark] = yield* transaction
             .select({
               version: sql<string>`max(${domainEvents.tenantSequenceNo})::text`,
@@ -257,52 +258,90 @@ export const makePostgresCoreSearchSnapshotBackend = (
           ) {
             return yield* unavailable();
           }
-          yield* transaction
-            .update(searchProjectionGenerations)
-            .set({
-              eventWatermark: BigInt(watermark.version),
-            })
-            .where(
-              and(
-                eq(searchProjectionGenerations.tenantId, context.tenantId),
-                eq(searchProjectionGenerations.sourceModuleKey, context.producerModuleKey),
-              ),
-            )
-            .pipe(Effect.mapError(snapshotDriverError));
           const entities = yield* transaction
             .select({ legalEntityId: legalEntities.legalEntityId })
             .from(legalEntities)
             .where(eq(legalEntities.tenantId, context.tenantId))
             .pipe(Effect.mapError(snapshotDriverError));
-          return yield* Effect.exit(
+          const exit = yield* Effect.exit(
             readSnapshot(
               {
                 eventWatermark: watermark.version,
                 legalEntityIds: Object.freeze(entities.map(({ legalEntityId }) => legalEntityId)),
-                projectionVersion: generation.version.toString(),
+                projectionVersion: (observedGeneration + 1n).toString(),
                 tenantId: context.tenantId,
               },
               Object.freeze({ select: transaction.select.bind(transaction) }),
               install,
             ),
           );
+          return { exit, observedGeneration, watermark: BigInt(watermark.version) };
         },
       );
-      const snapshotExit = yield* retryCoreSearchSnapshot(
-        database.executor
-          .transaction(
-            Effect.fn('snapshotTransactionEffect')(function* snapshotTransactionEffect(transaction: CoreTransaction) {
-              yield* transaction.setTransaction({
-                isolationLevel: 'repeatable read',
+      const attempt = Effect.gen(function* readAndClaimSnapshot() {
+        const observed = yield* database.executor.transaction(
+          Effect.fn('CoreSearchSnapshotBackend.readOnlyTransaction')(function* readOnlySnapshotTransaction(
+            transaction: CoreTransaction,
+          ) {
+            yield* transaction.setTransaction({
+              accessMode: 'read only',
+              isolationLevel: 'repeatable read',
+            });
+            return yield* transactionProgram(transaction);
+          }),
+        );
+        if (Exit.isFailure(observed.exit)) {
+          return observed.exit;
+        }
+        yield* database.executor.transaction(
+          Effect.fn('CoreSearchSnapshotBackend.claimGeneration')(function* claimSnapshotGenerationTransaction(
+            transaction: CoreTransaction,
+          ) {
+            yield* lockApplicationCompositionAuthority(transaction, context.compositionRevision, 'worker').pipe(
+              Effect.mapError(snapshotDriverError),
+            );
+            yield* transaction.execute(sql`select set_config('ontos.tenant_id', ${context.tenantId}, true)`, 'objects');
+            // The advisory lock also serializes the first generation, before a row exists.
+            const key = `ontos.search-generation:${context.tenantId}:${context.producerModuleKey}`;
+            yield* transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`, 'objects');
+            const [current] = yield* transaction
+              .select({ version: searchProjectionGenerations.generation })
+              .from(searchProjectionGenerations)
+              .where(
+                and(
+                  eq(searchProjectionGenerations.tenantId, context.tenantId),
+                  eq(searchProjectionGenerations.sourceModuleKey, context.producerModuleKey),
+                ),
+              )
+              .for('update');
+            if ((current?.version ?? 0n) !== observed.observedGeneration) {
+              return yield* new CoreSearchSnapshotGenerationConflict();
+            }
+            yield* transaction
+              .insert(searchProjectionGenerations)
+              .values({
+                eventWatermark: observed.watermark,
+                generation: observed.observedGeneration + 1n,
+                sourceModuleKey: context.producerModuleKey,
+                tenantId: context.tenantId,
+              })
+              .onConflictDoUpdate({
+                set: {
+                  eventWatermark: observed.watermark,
+                  generation: observed.observedGeneration + 1n,
+                  updatedAt: sql`now()`,
+                },
+                target: [searchProjectionGenerations.tenantId, searchProjectionGenerations.sourceModuleKey],
               });
-              return yield* transactionProgram(transaction);
-            }),
-          )
-          .pipe(
-            Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
-            Effect.mapError((failure) => (Schema.is(SqlError)(failure) ? snapshotDriverError(failure) : failure)),
-          ),
-      ).pipe(Effect.mapError(unavailable));
+            return yield* Effect.void;
+          }),
+        );
+        return observed.exit;
+      }).pipe(
+        Effect.catchDefect((defect) => (isSqlError(defect) ? Effect.fail(defect) : Effect.die(defect))),
+        Effect.mapError((failure) => (Schema.is(SqlError)(failure) ? snapshotDriverError(failure) : failure)),
+      );
+      const snapshotExit = yield* retryCoreSearchSnapshot(attempt).pipe(Effect.mapError(unavailable));
       return yield* Exit.isSuccess(snapshotExit)
         ? Effect.succeed(snapshotExit.value)
         : Effect.failCause(snapshotExit.cause);

@@ -84,7 +84,9 @@ import type { ServiceImport, ZeropsService } from './stage-operations.mts';
  * admits anyone who signs in) and, optionally, CLOUDFLARE_STAGE_EDGE_API_TOKEN (the narrower CI token;
  * without it CI receives CLOUDFLARE_API_TOKEN) and STAGE_ACCESS_ENFORCE (default false),
  * plus ZEROPS_TOKEN for the SpiceDB TLS secrets and the Shell's secrets shellsuperapp_BETTER_AUTH_SECRET
- * and shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK. Other secret values are read from Zerops with the
+ * and shellsuperapp_ONTOS_GATEWAY_PRIVATE_JWK, plus the caller credentials
+ * ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY, ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY,
+ * and ONTOS_PRICING_GATEWAY_API_KEY. Other secret values are read from Zerops with the
  * locally authenticated `zcli`. No secret value is ever printed.
  */
 export const STAGE_TUNNEL_NAME = 'ontos-stage';
@@ -207,26 +209,13 @@ const DEPLOYMENT_ENVIRONMENT_BINDING = 'ULTRAMODERN_DEPLOYMENT_ENVIRONMENT';
 
 export interface WorkerSecretSources {
   readonly betterAuthSecret: Redacted.Redacted;
+  readonly commerceCustomerContextGatewayApiKey: Redacted.Redacted;
+  readonly commerceMarketCatalogGatewayApiKey: Redacted.Redacted;
   readonly gatewayPrivateJwk: Redacted.Redacted;
   readonly gatewayPublicJwks: Redacted.Redacted;
+  readonly pricingGatewayApiKey: Redacted.Redacted;
   readonly spicedbPresharedKey: Redacted.Redacted;
 }
-
-/**
- * The URL-addressed dependencies of the verticals that call others (runbook A7). Calls a service
- * binding carries (Commerce → Price Group Catalog) still keep their URL for Node.
- */
-const VERTICAL_DEPENDENCIES = new Map([
-  [
-    'commerce-customer-context',
-    new Map([
-      ['ONTOS_CATALOG_BASE_URL', 'catalog'],
-      ['ONTOS_PRICE_GROUP_CATALOG_BASE_URL', 'price-group-catalog'],
-      ['ONTOS_PRICING_BASE_URL', 'pricing'],
-    ]),
-  ],
-  ['commerce-market-catalog', new Map([['ONTOS_COMMERCE_CUSTOMER_CONTEXT_BASE_URL', 'commerce-customer-context']])],
-]);
 
 const shellSecrets = (origins: StageOrigins, sources: WorkerSecretSources) =>
   new Map([
@@ -238,12 +227,20 @@ const shellSecrets = (origins: StageOrigins, sources: WorkerSecretSources) =>
 
 const verticalSecrets = (unit: EdgeUnit, origins: StageOrigins, sources: WorkerSecretSources) => {
   const secrets = new Map([['ONTOS_GATEWAY_PUBLIC_JWKS', sources.gatewayPublicJwks]]);
-  const dependencies = VERTICAL_DEPENDENCIES.get(unit.id);
-  for (const [variable, target] of dependencies ?? []) {
-    secrets.set(variable, Redacted.make(`${verticalOrigin(target, origins)}/${target}-api`));
-  }
-  // A vertical that calls another asks the Shell for the gateway credential first.
-  if (dependencies !== undefined) {
+  const gatewayApiKeys = new Map<string, readonly [string, Redacted.Redacted]>([
+    [
+      'commerce-customer-context',
+      ['ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY', sources.commerceCustomerContextGatewayApiKey] as const,
+    ],
+    [
+      'commerce-market-catalog',
+      ['ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY', sources.commerceMarketCatalogGatewayApiKey] as const,
+    ],
+    ['pricing', ['ONTOS_PRICING_GATEWAY_API_KEY', sources.pricingGatewayApiKey] as const],
+  ]);
+  const gatewayApiKey = gatewayApiKeys.get(unit.id);
+  if (gatewayApiKey !== undefined) {
+    secrets.set(gatewayApiKey[0], gatewayApiKey[1]);
     secrets.set('ONTOS_SHELL_GATEWAY_BASE_URL', Redacted.make(`${shellOrigin(origins)}/shell-super-app-api`));
   }
   return secrets;
@@ -351,6 +348,19 @@ const readWorkerSecretSources = Effect.gen(function* readWorkerSecretSourcesEffe
   const gatewayPrivateJwk = yield* shellSecretSetting(SHELL_GATEWAY_PRIVATE_JWK_SETTING);
   return {
     betterAuthSecret: yield* shellSecretSetting(SHELL_AUTH_SECRET_SETTING),
+    ...(yield* Config.all({
+      commerceCustomerContextGatewayApiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
+      commerceMarketCatalogGatewayApiKey: Config.Redacted('ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
+      pricingGatewayApiKey: Config.Redacted('ONTOS_PRICING_GATEWAY_API_KEY'),
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StageOperationError({
+            cause,
+            message: 'the workload gateway API keys are missing; provide all three caller keys in the settings',
+          }),
+      ),
+    )),
     gatewayPrivateJwk,
     gatewayPublicJwks: yield* gatewayPublicJwksFor(gatewayPrivateJwk),
     spicedbPresharedKey: yield* readZeropsValue(projectId, 'spicedb_SPICEDB_GRPC_PRESHARED_KEY'),

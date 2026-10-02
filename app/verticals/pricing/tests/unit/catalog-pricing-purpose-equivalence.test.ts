@@ -8,6 +8,8 @@ import { describe, expect, it } from 'effect-rstest';
 import { CatalogSelectionGatewayCredentialService } from '../../shared/domain/catalog-selection-gateway-credential.ts';
 import { catalogPricingPurposeEquivalencePortFromEnvironment } from '../../src/integrations/catalog-pricing-purpose-equivalence.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const evaluatedAt = '2026-09-27T10:00:00.000Z';
@@ -252,7 +254,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
     Effect.gen(function* ownerConfirmed() {
       const calls: unknown[] = [];
       const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         (payload, credential, requestCorrelation, options) =>
           Effect.sync(() => {
             calls.push({ credential: Redacted.value(credential), options, payload, requestCorrelation });
@@ -269,7 +271,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
       expect(calls).toEqual([
         {
           credential: 'Bearer catalog-owner-assertion',
-          options: { baseUrl: new URL('https://catalog.example.test') },
+          options: { baseUrl: new URL('https://catalog.example.test'), compositionRevision },
           payload: {
             anchorSelection: selection,
             effectiveAt: evaluatedAt,
@@ -293,7 +295,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
       ] as const;
       for (const [outcome, status] of outcomes) {
         const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
-          { legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
+          { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
           () =>
             Effect.succeed({
               assessments: confirmedResponse.assessments,
@@ -314,7 +316,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
   it.effect('preserves Catalog unavailable without fabricating equivalence evidence', () =>
     Effect.gen(function* typedUnavailable() {
       const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         () =>
           Effect.succeed({
             currentness: { effectiveAt: evaluatedAt, status: 'UNAVAILABLE' as const },
@@ -335,7 +337,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         quantityBasis: { ...currentHandoff.quantityBasis, unitRuleRevision: 8 },
       };
       const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         () =>
           Effect.succeed({
             ...confirmedResponse,
@@ -355,7 +357,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         unitRef: catalogRef('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'commerce.catalog.product-unit'),
       };
       const unitIdentityPort = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         () =>
           Effect.succeed({
             ...confirmedResponse,
@@ -380,7 +382,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         evidence: boundarylessEvidence,
       };
       const mixedValidityPort = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         () =>
           Effect.succeed({
             ...confirmedResponse,
@@ -405,7 +407,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
         ownerRevision: 'catalog-quantity:18',
       };
       const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         () =>
           Effect.succeed({
             ...confirmedResponse,
@@ -444,7 +446,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
       });
       let transported = false;
       const port = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         () =>
           Effect.sync(() => {
             transported = true;
@@ -463,6 +465,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
   it.effect('fails typed unavailable for missing credentials and generated-client transport failure', () =>
     Effect.gen(function* unavailableBoundaries() {
       const missingCredentialPort = yield* catalogPricingPurposeEquivalencePortFromEnvironment({
+        compositionRevision,
         legalEntityId,
         requestCorrelation: 'pricing-purpose-equivalence',
         tenantId,
@@ -484,7 +487,7 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
           }),
         );
       const transportPort = yield* catalogPricingPurposeEquivalencePortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-purpose-equivalence', tenantId },
         execute,
       );
       expect(yield* transportPort.resolve(attempt).pipe(Effect.flip)).toMatchObject({
@@ -498,11 +501,13 @@ describe('Pricing Catalog Pricing-purpose equivalence adapter', () => {
     Effect.gen(function* trustedScopeOnly() {
       for (const context of [
         {
+          compositionRevision,
           legalEntityId,
           requestCorrelation: 'pricing-purpose-equivalence',
           tenantId: '11111111-1111-4111-8111-111111111199',
         },
         {
+          compositionRevision,
           legalEntityId: '22222222-2222-4222-8222-222222222299',
           requestCorrelation: 'pricing-purpose-equivalence',
           tenantId,

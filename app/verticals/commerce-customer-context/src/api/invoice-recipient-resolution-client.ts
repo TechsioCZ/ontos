@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface InvoiceRecipientResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type InvoiceRecipientResolutionAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeInvoiceRecipientResolution = (
   payload: InvoiceRecipientResolutionRequest,
   ...[requestCorrelation, options = {}]: InvoiceRecipientResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeInvoiceRecipientResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeInvoiceRecipientResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface EffectiveCustomerGroupMembershipSetV1ClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type EffectiveCustomerGroupMembershipSetV1AuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeEffectiveCustomerGroupMembershipSetV1 = (
   payload: EffectiveCustomerGroupMembershipSetV1Request,
   ...[requestCorrelation, options = {}]: EffectiveCustomerGroupMembershipSetV1OperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeEffectiveCustomerGroupMembershipSetV1WithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeEffectiveCustomerGroupMembershipSetV1WithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

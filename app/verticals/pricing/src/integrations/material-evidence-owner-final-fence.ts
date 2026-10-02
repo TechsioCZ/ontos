@@ -48,6 +48,7 @@ export class PricingOwnerMaterialEvidenceFenceGatewayUnavailable extends Schema.
 
 export interface PricingOwnerMaterialEvidenceFenceGatewayRequest {
   readonly candidateRef: string;
+  readonly compositionRevision: string;
   /**
    * The owner verifies every opaque reference and reads every corresponding Current predicate in
    * one owner-private coherent snapshot. Pricing never receives or imports owner persistence.
@@ -75,6 +76,7 @@ export interface PricingOwnerMaterialEvidenceGenerationConfirmation {
 
 export interface PricingOwnerMaterialEvidenceGenerationFenceRequest {
   readonly candidateRef: string;
+  readonly compositionRevision: string;
   /** Phase-one observations, with their actual owner timestamps unchanged. */
   readonly observations: readonly PricingMaterialEvidenceFenceSourceObservation[];
   /**
@@ -351,6 +353,7 @@ interface PricingOwnerFencePhaseOneResult {
 
 export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
   gateways: Readonly<Record<PricingMaterialEvidenceOwnerModule, PricingOwnerMaterialEvidenceFenceGateway>>,
+  compositionRevision: string,
 ): PricingMaterialEvidenceOwnerFencePort => ({
   verifyImmediatelyBeforePublication: Effect.fn('PricingMaterialEvidenceOwnerFinalFence.verify')(
     function* verifyImmediatelyBeforePublication({
@@ -410,9 +413,10 @@ export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
           }
           const gatewayRequest: PricingOwnerMaterialEvidenceFenceGatewayRequest =
             verificationRequest === undefined
-              ? { candidateRef, sources: ownerSources }
+              ? { candidateRef, compositionRevision, sources: ownerSources }
               : {
                   candidateRef,
+                  compositionRevision,
                   sources: ownerSources,
                   typedSources,
                   verificationContext: {
@@ -463,9 +467,10 @@ export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
           const [ownerExpectation] = ownerSources;
           const generationRequest: PricingOwnerMaterialEvidenceGenerationFenceRequest =
             verificationRequest === undefined
-              ? { candidateRef, observations: result.observations, through: completedAt }
+              ? { candidateRef, compositionRevision, observations: result.observations, through: completedAt }
               : {
                   candidateRef,
+                  compositionRevision,
                   observations: result.observations,
                   through: completedAt,
                   typedSources,
@@ -519,27 +524,29 @@ export const makePricingMaterialEvidenceOwnerFinalFenceFromGateways = (
   ),
 });
 
-export const makePricingMaterialEvidenceOwnerFinalFence = Effect.gen(function* makeProductionOwnerFinalFence() {
-  const gateways = {
-    'commerce.catalog': yield* PricingCatalogMaterialEvidenceFenceGateway,
-    'commerce.market-catalog': yield* PricingMarketMaterialEvidenceFenceGateway,
-    'commerce.pricing': yield* PricingPricingMaterialEvidenceFenceGateway,
-    [CUSTOMER_CONTEXT_OWNER_MODULE_ID]: yield* PricingCustomerContextMaterialEvidenceFenceGateway,
-    [PROMOTION_OWNER_MODULE_ID]: yield* PricingPromotionMaterialEvidenceFenceGateway,
-  } satisfies Readonly<Record<PricingMaterialEvidenceOwnerModule, PricingOwnerMaterialEvidenceFenceGateway>>;
-  return makePricingMaterialEvidenceOwnerFinalFenceFromGateways(gateways);
-});
-
-/**
- * Executable production provider. It has no success fallback: every material source is routed to
- * its approved owner. The source-free Promotion predicate is also routed to its authoritative
- * Application Composition gateway; a selected Promotion remains an ordinary fail-closed owner
- * source until Promotion publishes its replay contract.
- */
-export const pricingMaterialEvidenceOwnerFinalFenceLive = Layer.effect(
-  PricingMaterialEvidenceOwnerFinalFence,
-  makePricingMaterialEvidenceOwnerFinalFence,
+export const makePricingMaterialEvidenceOwnerFinalFence = Effect.fn('PricingMaterialEvidenceOwnerFinalFence.make')(
+  function* makeProductionOwnerFinalFence(compositionRevision: string) {
+    const gateways = {
+      'commerce.catalog': yield* PricingCatalogMaterialEvidenceFenceGateway,
+      'commerce.market-catalog': yield* PricingMarketMaterialEvidenceFenceGateway,
+      'commerce.pricing': yield* PricingPricingMaterialEvidenceFenceGateway,
+      [CUSTOMER_CONTEXT_OWNER_MODULE_ID]: yield* PricingCustomerContextMaterialEvidenceFenceGateway,
+      [PROMOTION_OWNER_MODULE_ID]: yield* PricingPromotionMaterialEvidenceFenceGateway,
+    } satisfies Readonly<Record<PricingMaterialEvidenceOwnerModule, PricingOwnerMaterialEvidenceFenceGateway>>;
+    return makePricingMaterialEvidenceOwnerFinalFenceFromGateways(gateways, compositionRevision);
+  },
 );
+
+export const pricingMaterialEvidenceOwnerFinalFenceLive = Layer.succeed(PricingMaterialEvidenceOwnerFinalFence, {
+  verifyImmediatelyBeforePublication: ({ candidateRef }) =>
+    Effect.fail(
+      new PricingMaterialEvidenceUnverifiableFailure({
+        candidateRef,
+        reason: 'Material owner final fence requires a captured operation composition revision',
+        retryable: true,
+      }),
+    ),
+});
 
 /** Canonical Live composition for the ordinary Current publication functions. */
 export const pricingOrdinaryCurrentPublicationLive = Layer.merge(

@@ -26,6 +26,7 @@ import type {
 } from '../../src/persistence/price-group-catalog-persistence.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
+const compositionRevision = 'b'.repeat(64);
 const principalId = '22222222-2222-4222-8222-222222222222';
 const actionInvocationId = '33333333-3333-4333-8333-333333333333';
 const definitionRevisionId = '44444444-4444-4444-8444-444444444444';
@@ -122,6 +123,7 @@ it.effect('persists a scheduled terminal transition and records separate trusted
       actionInvocationId,
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision,
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope,
@@ -208,6 +210,7 @@ it.effect('returns equivalent evidence for an owner-confirmed equivalent retry',
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,
@@ -252,6 +255,7 @@ it.effect('preserves stale, lifecycle, and currentness failures without success 
           actionInvocationId,
           addDomainEvent: collector.addDomainEvent,
           addOutboxMessage: collector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: collector.recordAuditEvidence,
           recordDataAccess: collector.recordDataAccess,
           scope,
@@ -280,6 +284,7 @@ it.effect('rejects a backdated retirement instant before persistence with a type
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RemoveVariantAttributeOverrideRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RemoveVariantAttributeOverrideRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRemoveVariantAttributeOverrideRecovery = (
   payload: RemoveVariantAttributeOverrideRecoveryRequest,
   ...[requestCorrelation, options = {}]: RemoveVariantAttributeOverrideRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRemoveVariantAttributeOverrideRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRemoveVariantAttributeOverrideRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

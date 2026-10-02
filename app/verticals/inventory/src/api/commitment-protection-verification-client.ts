@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CommitmentProtectionVerificationClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CommitmentProtectionVerificationAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCommitmentProtectionVerification = (
   payload: CommitmentProtectionVerificationRequest,
   ...[requestCorrelation, options = {}]: CommitmentProtectionVerificationOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCommitmentProtectionVerificationWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCommitmentProtectionVerificationWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

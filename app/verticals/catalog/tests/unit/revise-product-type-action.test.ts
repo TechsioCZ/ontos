@@ -1,7 +1,10 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import {
   handleReviseProductType,
@@ -59,26 +62,35 @@ const contextWith = (
     readonly event: object;
     readonly message: { readonly payloadJson: unknown; readonly producerModuleKey: string; readonly topic: string };
   }[] = [],
-): ActionHandlerContext<typeof reviseProductTypeAction.descriptor.domainEvents, ProductTypeRevisePersistence> => ({
-  actionInvocationId: '66666666-6666-4666-8666-666666666666',
-  addDomainEvent: (event) =>
-    Effect.sync(() => {
-      const reference = Object.create(null);
-      events.push({ eventType: event.eventType, payloadJson: event.payloadJson, reference });
-      return reference;
-    }),
-  addOutboxMessage: (event, message) =>
-    Effect.sync(() => {
-      outbox.push({ event, message });
-    }),
-  recordAuditEvidence: () => Effect.void,
-  recordDataAccess: (evidence) =>
-    Effect.sync(() => {
-      accessed.push({ targetResourceId: evidence.targetResourceId ?? '' });
-    }),
-  scope,
-  services: { revise },
-});
+) =>
+  Effect.gen(function* makeContextWith() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const context: ActionHandlerContext<
+      typeof reviseProductTypeAction.descriptor.domainEvents,
+      ProductTypeRevisePersistence
+    > = {
+      actionInvocationId: '66666666-6666-4666-8666-666666666666',
+      addDomainEvent: (event) =>
+        Effect.sync(() => {
+          const reference = Object.create(null);
+          events.push({ eventType: event.eventType, payloadJson: event.payloadJson, reference });
+          return reference;
+        }),
+      addOutboxMessage: (event, message) =>
+        Effect.sync(() => {
+          outbox.push({ event, message });
+        }),
+      compositionRevision: snapshot.composition.revision,
+      recordAuditEvidence: () => Effect.void,
+      recordDataAccess: (evidence) =>
+        Effect.sync(() => {
+          accessed.push({ targetResourceId: evidence.targetResourceId ?? '' });
+        }),
+      scope,
+      services: { revise },
+    };
+    return context;
+  });
 
 describe('Revise Product Type Action contract', () => {
   it('requires an exact revision and owner-issued preview basis', () => {
@@ -112,7 +124,7 @@ describe('Revise Product Type Action contract', () => {
         readonly event: object;
         readonly message: { readonly payloadJson: unknown; readonly producerModuleKey: string; readonly topic: string };
       }[] = [];
-      const context = contextWith(
+      const context = yield* contextWith(
         (input) =>
           Effect.sync(() => {
             expect(input).toMatchObject({
@@ -177,7 +189,7 @@ describe('Revise Product Type Action contract', () => {
       const failure = yield* Effect.flip(
         handleReviseProductType(
           payload,
-          contextWith(
+          yield* contextWith(
             () => Effect.succeed({ _tag: 'stale_basis', reason: 'Cart population changed' }),
             [],
             events,
@@ -208,7 +220,7 @@ describe('Revise Product Type Action contract', () => {
       const failure = yield* Effect.flip(
         handleReviseProductType(
           payload,
-          contextWith(() => Effect.succeed({ _tag: 'revised', result }), [], events, outbox),
+          yield* contextWith(() => Effect.succeed({ _tag: 'revised', result }), [], events, outbox),
         ),
       );
       expect(failure).toBeInstanceOf(CatalogPersistenceUnavailable);
@@ -224,10 +236,7 @@ describe('Revise Product Type Action contract', () => {
         reason: 'Cart open-selection population is unavailable',
       });
       const actual = yield* Effect.flip(
-        handleReviseProductType(
-          payload,
-          contextWith(() => Effect.fail(failure)),
-        ),
+        handleReviseProductType(payload, yield* contextWith(() => Effect.fail(failure))),
       );
       expect(actual).toBe(failure);
       expect(Schema.is(reviseProductTypeAction.descriptor.domainErrorSchema)(actual)).toBe(true);

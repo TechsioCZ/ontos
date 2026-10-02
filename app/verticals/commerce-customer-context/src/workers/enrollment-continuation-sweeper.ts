@@ -2,7 +2,10 @@ import { Clock, DateTime, Duration, Effect, Layer, Option, Ref, Schedule } from 
 
 import type { DueEnrollmentAttempt, DueEnrollmentAttemptCursor } from '../enrollment/attempts/attempt-persistence.ts';
 import { CommerceEnrollmentContinuation } from '../enrollment/continuation/enrollment-continuation.ts';
-import type { CommerceEnrollmentContinuationResult } from '../enrollment/continuation/enrollment-continuation.ts';
+import type {
+  CommerceEnrollmentContinuationResult,
+  CommerceEnrollmentContinuationSweepPass,
+} from '../enrollment/continuation/enrollment-continuation.ts';
 import type { ReadEnrollmentAttemptInput } from '../../shared/enrollment-contracts.ts';
 
 /**
@@ -94,7 +97,7 @@ interface TrackedAttempt extends AdvanceEntry {
 interface DueSweep {
   readonly entry: TrackedAttempt;
   /** The revision the journal named for it on this tick; `none` when this tick's listing had none. */
-  readonly revision: Option.Option<number>;
+  readonly revision: Option.Option<Pick<DueEnrollmentAttempt, 'compositionRevision' | 'revision'>>;
 }
 
 export interface CommerceEnrollmentContinuationSweepResult {
@@ -178,7 +181,7 @@ const observe = (
     Effect.asVoid,
   );
 
-const trackedAdvance = (state: SweeperState, inner: Continuation, entry: AdvanceEntry) =>
+const trackedAdvance = (state: SweeperState, inner: Pick<Continuation, 'advance'>, entry: AdvanceEntry) =>
   inner.advance(entry.attempt).pipe(
     Effect.tap((result) => observe(state, entry, result)),
     // A failed advance is still activity: the Attempt stays tracked so the next sweep retries it.
@@ -189,7 +192,11 @@ const trackedAdvance = (state: SweeperState, inner: Continuation, entry: Advance
 const release = (state: SweeperState, entry: TrackedAttempt): Effect.Effect<void> =>
   Ref.update(state.registry, (registry) => withoutKey(registry, registryKey(entry.attempt)));
 
-const advanceEntry = (state: SweeperState, inner: Continuation, entry: TrackedAttempt): Effect.Effect<boolean> =>
+const advanceEntry = (
+  state: SweeperState,
+  inner: CommerceEnrollmentContinuationSweepPass,
+  entry: TrackedAttempt,
+): Effect.Effect<boolean> =>
   trackedAdvance(state, inner, entry).pipe(
     Effect.matchCauseEffect({
       onFailure: (cause) =>
@@ -210,12 +217,12 @@ const advanceEntry = (state: SweeperState, inner: Continuation, entry: TrackedAt
  */
 const claimedAdvance = (
   state: SweeperState,
-  inner: Continuation,
+  inner: CommerceEnrollmentContinuationSweepPass,
   entry: TrackedAttempt,
-  revision: number,
+  revision: Pick<DueEnrollmentAttempt, 'compositionRevision' | 'revision'>,
   claimTtlMillis: number,
 ): Effect.Effect<boolean> =>
-  inner.claimSweep({ ...entry.attempt, claimTtlMillis, maxSweeps: SWEEP_BUDGET, revision }).pipe(
+  inner.claimSweep({ ...entry.attempt, ...revision, claimTtlMillis, maxSweeps: SWEEP_BUDGET }).pipe(
     Effect.matchCauseEffect({
       onFailure: (cause) =>
         Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper could not claim this sweep'), {
@@ -233,7 +240,7 @@ const claimedAdvance = (
 /** One due Attempt: advanced under whichever budget this tick's listing left it under. */
 const sweepEntry = (
   state: SweeperState,
-  inner: Continuation,
+  inner: CommerceEnrollmentContinuationSweepPass,
   due: DueSweep,
   claimTtlMillis: number,
 ): Effect.Effect<boolean> =>
@@ -261,7 +268,7 @@ const cursorAfter = (attempts: readonly DueEnrollmentAttempt[]): Option.Option<D
  * a database that answered three pages and then refused must not cost the tick those three.
  */
 const listDuePage = (
-  inner: Continuation,
+  inner: CommerceEnrollmentContinuationSweepPass,
   after: Option.Option<DueEnrollmentAttemptCursor>,
   pageLimit: number,
   staleAfterMillis: number,
@@ -275,7 +282,7 @@ const listDuePage = (
 
 /** Everything one tick's paging is decided from, apart from where it has got to. */
 interface DuePaging {
-  readonly inner: Continuation;
+  readonly inner: CommerceEnrollmentContinuationSweepPass;
   readonly pageLimit: number;
   readonly staleAfterMillis: number;
 }
@@ -351,7 +358,7 @@ const dueEntries = (
         lastActivityMillis: tracked?.lastActivityMillis ?? DateTime.toEpochMillis(listed.updatedAt),
         sweeps: tracked?.sweeps ?? 0,
       },
-      revision: Option.some(listed.revision),
+      revision: Option.some({ compositionRevision: listed.compositionRevision, revision: listed.revision }),
     });
   }
   for (const entry of registry.values()) {
@@ -374,7 +381,20 @@ const sweepOnce = Effect.fn('CommerceEnrollmentContinuationSweeper.sweep')(funct
   staleAfterMillis: number,
 ): Effect.fn.Return<CommerceEnrollmentContinuationSweepResult> {
   const [now, registry] = yield* Effect.all([Clock.currentTimeMillis, Ref.get(state.registry)], { concurrency: 2 });
-  const durable = yield* durableDue({ inner, pageLimit, staleAfterMillis });
+  const admitted = yield* inner.openSweepPass.pipe(
+    Effect.matchEffect({
+      onFailure: (failure) =>
+        Effect.annotateLogs(Effect.logWarning('The Commerce enrollment sweeper awaits an approved continuation pass'), {
+          reason: failure.reason,
+        }).pipe(Effect.as(Option.none<CommerceEnrollmentContinuationSweepPass>())),
+      onSuccess: Effect.succeedSome,
+    }),
+  );
+  if (Option.isNone(admitted)) {
+    return { released: 0, swept: 0, tracked: registry.size };
+  }
+  const pass = admitted.value;
+  const durable = yield* durableDue({ inner: pass, pageLimit, staleAfterMillis });
   if (Option.isSome(durable.unreadable)) {
     yield* Effect.annotateLogs(
       Effect.logWarning('The Commerce enrollment sweeper could not read the durable Attempt journal'),
@@ -384,7 +404,7 @@ const sweepOnce = Effect.fn('CommerceEnrollmentContinuationSweeper.sweep')(funct
   const due = dueEntries(registry, durable.attempts, now, staleAfterMillis);
   // The claim lives exactly as long as the window that made the row due, so the replica that took
   // it is the only one working it right up to the moment the row would be offered again anyway.
-  const advanced = yield* Effect.forEach(due, (entry) => sweepEntry(state, inner, entry, staleAfterMillis), {
+  const advanced = yield* Effect.forEach(due, (entry) => sweepEntry(state, pass, entry, staleAfterMillis), {
     concurrency: SWEEP_CONCURRENCY,
   });
   const swept = advanced.filter(Boolean).length;
@@ -402,8 +422,7 @@ export const commerceEnrollmentContinuationSweeperFor = Effect.fnUntraced(
     const sweeper: CommerceEnrollmentContinuationSweeper = {
       continuation: {
         advance: (attempt) => trackedAdvance(state, inner, { attempt, journalled: false, sweeps: 0 }),
-        claimSweep: (input) => inner.claimSweep(input),
-        listDue: (input) => inner.listDue(input),
+        openSweepPass: inner.openSweepPass,
       },
       sweep: sweepOnce(state, inner, pageLimit, staleAfterMillis),
     };

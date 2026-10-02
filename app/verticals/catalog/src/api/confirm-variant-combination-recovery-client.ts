@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ConfirmVariantCombinationRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ConfirmVariantCombinationRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeConfirmVariantCombinationRecovery = (
   payload: ConfirmVariantCombinationRecoveryRequest,
   ...[requestCorrelation, options = {}]: ConfirmVariantCombinationRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeConfirmVariantCombinationRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeConfirmVariantCombinationRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

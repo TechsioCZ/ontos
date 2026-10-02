@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RenameControlledAttributeValueRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RenameControlledAttributeValueRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRenameControlledAttributeValueRecovery = (
   payload: RenameControlledAttributeValueRecoveryRequest,
   ...[requestCorrelation, options = {}]: RenameControlledAttributeValueRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRenameControlledAttributeValueRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRenameControlledAttributeValueRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

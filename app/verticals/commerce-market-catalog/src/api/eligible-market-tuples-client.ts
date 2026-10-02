@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface EligibleMarketTuplesClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type EligibleMarketTuplesAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeEligibleMarketTuples = (
   payload: EligibleMarketTuplesRequest,
   ...[requestCorrelation, options = {}]: EligibleMarketTuplesOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeEligibleMarketTuplesWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeEligibleMarketTuplesWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

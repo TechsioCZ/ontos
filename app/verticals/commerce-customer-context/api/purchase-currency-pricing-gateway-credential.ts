@@ -22,12 +22,11 @@ const httpUrl = Schema.URLFromString.check(
 
 const configuration = Config.all({
   apiKey: Config.Redacted('ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY'),
-  pricingBaseUrl: Config.schema(httpUrl, 'ONTOS_PRICING_BASE_URL'),
   shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 
 type GatewayContextIssue = (
-  payload: { readonly audience: 'pricing'; readonly legalEntityId: string },
+  payload: { readonly audience: 'pricing'; readonly compositionRevision: string; readonly legalEntityId: string },
   options: ApiKeyGatewayContextClientOptions,
 ) => Effect.Effect<GatewayContextResponse, GatewayContextClientError>;
 
@@ -41,19 +40,28 @@ const unavailableConfigurationIssuer = (cause: unknown): PurchaseCurrencyPricing
 });
 
 export const makePurchaseCurrencyPricingGatewayCredentialIssuer = (
-  configured: { readonly apiKey: Redacted.Redacted; readonly pricingBaseUrl: URL; readonly shellBaseUrl: URL },
+  configured: { readonly apiKey: Redacted.Redacted; readonly shellBaseUrl: URL },
   issue: GatewayContextIssue = issueApiKeyGatewayContext,
 ): PurchaseCurrencyPricingGatewayCredentialIssuer => ({
   issue: Effect.fn('PurchaseCurrencyPricingGatewayCredentialIssuer.issue')(function* issueCredential(input) {
     const response = yield* issue(
-      { audience: input.audience, legalEntityId: input.legalEntityId },
+      { audience: input.audience, compositionRevision: input.compositionRevision, legalEntityId: input.legalEntityId },
       {
         apiKey: configured.apiKey,
         baseUrl: configured.shellBaseUrl,
         requestCorrelation: input.requestCorrelation,
       },
     ).pipe(Effect.mapError((cause) => unavailable('The Pricing gateway credential could not be issued', cause)));
-    return { baseUrl: configured.pricingBaseUrl, credential: Redacted.make(`Bearer ${response.token}`) };
+    if (response.compositionRevision !== input.compositionRevision) {
+      return yield* unavailable(
+        'The issued credential does not match the captured composition revision',
+        response.compositionRevision,
+      );
+    }
+    return {
+      baseUrl: new URL(response.apiBaseUrl, configured.shellBaseUrl),
+      credential: Redacted.make(`Bearer ${response.token}`),
+    };
   }),
 });
 

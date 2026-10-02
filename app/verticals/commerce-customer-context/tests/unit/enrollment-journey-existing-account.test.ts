@@ -57,6 +57,8 @@ const attemptId = Schema.decodeSync(EnrollmentAttemptIdSchema)('20000000-0000-40
 const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)('40000000-0000-4000-8000-000000000009');
 const ownerInvocationId = Schema.decodeSync(EnrollmentActionInvocationIdSchema)('30000000-0000-4000-8000-000000000009');
 
+const ORIGINAL_COMPOSITION_REVISION = 'c'.repeat(64);
+
 const accountSubject = Schema.decodeSync(CommercePortalAccountSubjectSchema)({
   authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
   providerSubjectId: 'existing-account-subject-1',
@@ -77,6 +79,7 @@ const transitionFor = (transitionKey: string): Effect.Effect<CommerceEnrollmentO
     Effect.map((requestDigest) =>
       Schema.decodeSync(CommerceEnrollmentOwnerTransitionSchema)({
         actorPrincipalId,
+        compositionRevision: ORIGINAL_COMPOSITION_REVISION,
         correlationId: 'existing-account-unit',
         expectedRevision: 1,
         ownerInvocationId,
@@ -153,7 +156,9 @@ it.effect('builds the Core reserve request from the exact current subject', () =
     const request = yield* existingAccountCoreIdentityReserveRequest({
       accountSubject,
       authenticationRef: 'existing-account-authentication-ref',
+      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
     });
+    expect(request.compositionRevision).toBe(ORIGINAL_COMPOSITION_REVISION);
     expect(request.reservation.providerSubjectId).toBe(accountSubject.providerSubjectId);
     expect(request.reservation.authenticationNamespaceId).toBe(COMMERCE_AUTHENTICATION_NAMESPACE_ID);
   }),
@@ -165,8 +170,10 @@ it.effect('builds the Core activate request from the reserved binding reference'
     const request = yield* existingAccountCoreIdentityActivateRequest({
       authBindingId,
       authenticationRef: 'existing-account-authentication-ref',
+      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
       expectedRevision: 1,
     });
+    expect(request.compositionRevision).toBe(ORIGINAL_COMPOSITION_REVISION);
     expect(request.activation.authBindingId).toBe('80000000-0000-4000-8000-000000000009');
     expect(request.activation.expectedRevision).toBe(1);
   }),
@@ -201,6 +208,7 @@ it.effect('dispatches reserve then activate through the Core identity owner effe
     const reserveRequest = yield* existingAccountCoreIdentityReserveRequest({
       accountSubject,
       authenticationRef: 'existing-account-second-tenant',
+      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
     });
     const reserveOptions: CommerceEnrollmentCoreIdentityOwnerEffectOptions = {
       client,
@@ -221,6 +229,7 @@ it.effect('dispatches reserve then activate through the Core identity owner effe
     const activateRequest = yield* existingAccountCoreIdentityActivateRequest({
       authBindingId: reserveOutcome.resultReference,
       authenticationRef: 'existing-account-second-tenant',
+      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
       expectedRevision: 1,
     });
     const activateOptions: CommerceEnrollmentCoreIdentityOwnerEffectOptions = {
@@ -260,6 +269,7 @@ it.effect('rejects a second-Tenant reserve when Core reports the existing target
     const reserveRequest = yield* existingAccountCoreIdentityReserveRequest({
       accountSubject,
       authenticationRef: 'existing-account-revoked-target',
+      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
     });
     const options: CommerceEnrollmentCoreIdentityOwnerEffectOptions = {
       client,

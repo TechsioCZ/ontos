@@ -16,6 +16,7 @@ export interface ExternalIdentityHttpWorkloadContextValue {
     readonly bindingRevision: number;
     readonly principalId: string;
   };
+  readonly compositionRevision: string;
   readonly operation: ExternalIdentityWorkloadOperation;
   readonly principal: TrustedPrincipalContext;
   readonly providerSubjectId: string;

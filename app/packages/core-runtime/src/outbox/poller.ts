@@ -2,12 +2,20 @@ import { Config, ConfigProvider, Duration, Effect, Schedule, Schema } from 'effe
 
 import type { AnyOutboxWorkerRegistration, OutboxWorkerRequirements, OutboxWorkerSubscription } from './definition.ts';
 import { OutboxPollerConfigError } from './errors.ts';
+import type { OutboxWorkerDescriptorError } from './errors.ts';
+import type { ActiveApplicationCompositionUnavailableError } from '../modules/active-application-composition-errors.ts';
 import type { OutboxWorkerHealth } from './health.ts';
 import { runOutboxCycle } from './runtime.ts';
 import type { OutboxCycleError, OutboxCycleResult, OutboxRuntime, RunOutboxCycleInput } from './runtime.ts';
 
 const DEFAULT_MAX_DELIVERIES = 100;
 const DEFAULT_POLL_INTERVAL_MS = 1000;
+type OutboxAdmissionError = ActiveApplicationCompositionUnavailableError | OutboxWorkerDescriptorError;
+type OutboxAdmittedCycleError = OutboxCycleError | OutboxAdmissionError;
+type OutboxPollingRequirements<Registration extends AnyOutboxWorkerRegistration, RunnerRequirements> =
+  | OutboxRuntime
+  | RunnerRequirements
+  | OutboxWorkerRequirements<Registration>;
 
 interface OutboxPollingEnvironment {
   readonly OUTBOX_WORKER_MAX_DELIVERIES?: string;
@@ -31,6 +39,7 @@ export interface ParseOutboxPollingConfigInput {
 export interface RunOutboxPollingLoopInput<
   Registration extends AnyOutboxWorkerRegistration = AnyOutboxWorkerRegistration,
 > {
+  readonly admitComposition: Effect.Effect<string, OutboxAdmissionError>;
   readonly config: OutboxPollingConfig;
   readonly health?: Pick<OutboxWorkerHealth, 'cycleFailed' | 'cycleSucceeded'>;
   readonly registrations: readonly Registration[];
@@ -133,18 +142,31 @@ export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistr
 export function runOutboxPollingLoop<Registration extends AnyOutboxWorkerRegistration, RunnerRequirements>(
   input: RunOutboxPollingLoopInput<Registration>,
   runCycle?: OutboxCycleRunner<Registration, RunnerRequirements>,
-): Effect.Effect<void, never, OutboxRuntime | RunnerRequirements | OutboxWorkerRequirements<Registration>> {
-  const cycleInput = {
-    claimOwner: input.config.claimOwner,
-    maxDeliveries: input.config.maxDeliveries,
-    registrations: input.registrations,
-    subscriptions: input.subscriptions,
-  };
+): Effect.Effect<void, never, OutboxPollingRequirements<Registration, RunnerRequirements>> {
   const cycle: Effect.Effect<
     OutboxCycleResult,
-    OutboxCycleError,
-    OutboxRuntime | RunnerRequirements | OutboxWorkerRequirements<Registration>
-  > = runCycle === undefined ? runOutboxCycle(cycleInput) : runCycle(cycleInput);
+    OutboxAdmittedCycleError,
+    OutboxPollingRequirements<Registration, RunnerRequirements>
+  > = input.admitComposition.pipe(
+    Effect.flatMap(
+      (
+        compositionRevision,
+      ): Effect.Effect<
+        OutboxCycleResult,
+        OutboxCycleError,
+        OutboxPollingRequirements<Registration, RunnerRequirements>
+      > => {
+        const cycleInput = {
+          claimOwner: input.config.claimOwner,
+          compositionRevision,
+          maxDeliveries: input.config.maxDeliveries,
+          registrations: input.registrations,
+          subscriptions: input.subscriptions,
+        };
+        return runCycle === undefined ? runOutboxCycle(cycleInput) : runCycle(cycleInput);
+      },
+    ),
+  );
   const tick = cycle.pipe(
     Effect.tap(() => input.health?.cycleSucceeded ?? Effect.void),
     Effect.tap((result) =>

@@ -1,7 +1,10 @@
 import type { ActionHandlerContext, DomainEventReference, OutboxMessage } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import { OutboxPayloadSchema } from '../../shared/outbox/commerce-catalog-product-description-changed-v1.ts';
 import type { setProductLocalizedFactsAction } from '../../src/actions/set-product-localized-facts.action.ts';
@@ -39,51 +42,54 @@ type ChangeProduct = Services['changeProduct'];
 
 const unexpected = () => Effect.die('Unexpected Localized Product facts operation');
 
-const context = (changeProduct: ChangeProduct) => {
-  const events: {
-    eventType: string;
-    payloadJson: unknown;
-    reference: DomainEventReference;
-    subjectResourceId: string;
-  }[] = [];
-  const outbox: { event: DomainEventReference; message: OutboxMessage }[] = [];
-  // SAFETY: Test double for the opaque, identity-only Domain Event reference; the fake collector never
-  // exposes it outside this context, so a fresh null-prototype token preserves the linked-message invariant.
-  const services: Services = {
-    changeProduct,
-    changeVariant: unexpected,
-    readProduct: unexpected,
-    readVariant: unexpected,
-  };
-  const value: ActionHandlerContext<typeof setProductLocalizedFactsAction.descriptor.domainEvents, Services> = {
-    actionInvocationId: '44444444-4444-4444-8444-444444444444',
-    addDomainEvent: (event) =>
-      Effect.sync(() => {
-        const reference: DomainEventReference = Object.create(null);
-        events.push({
-          eventType: event.eventType,
-          payloadJson: event.payloadJson,
-          reference,
-          subjectResourceId: event.subjectResourceId,
-        });
-        return reference;
-      }),
-    addOutboxMessage: (event, message) =>
-      Effect.sync(() => {
-        outbox.push({ event, message });
-      }),
-    recordAuditEvidence: () => Effect.void,
-    recordDataAccess: () => Effect.void,
-    scope,
-    services,
-  };
-  return { events, outbox, value };
-};
+const context = (changeProduct: ChangeProduct) =>
+  Effect.gen(function* makeContext() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const events: {
+      eventType: string;
+      payloadJson: unknown;
+      reference: DomainEventReference;
+      subjectResourceId: string;
+    }[] = [];
+    const outbox: { event: DomainEventReference; message: OutboxMessage }[] = [];
+    // SAFETY: Test double for the opaque, identity-only Domain Event reference; the fake collector never
+    // exposes it outside this context, so a fresh null-prototype token preserves the linked-message invariant.
+    const services: Services = {
+      changeProduct,
+      changeVariant: unexpected,
+      readProduct: unexpected,
+      readVariant: unexpected,
+    };
+    const value: ActionHandlerContext<typeof setProductLocalizedFactsAction.descriptor.domainEvents, Services> = {
+      actionInvocationId: '44444444-4444-4444-8444-444444444444',
+      addDomainEvent: (event) =>
+        Effect.sync(() => {
+          const reference: DomainEventReference = Object.create(null);
+          events.push({
+            eventType: event.eventType,
+            payloadJson: event.payloadJson,
+            reference,
+            subjectResourceId: event.subjectResourceId,
+          });
+          return reference;
+        }),
+      addOutboxMessage: (event, message) =>
+        Effect.sync(() => {
+          outbox.push({ event, message });
+        }),
+      compositionRevision: snapshot.composition.revision,
+      recordAuditEvidence: () => Effect.void,
+      recordDataAccess: () => Effect.void,
+      scope,
+      services,
+    };
+    return { events, outbox, value };
+  });
 
 describe('committed localized Product description event', () => {
   it.effect('links one narrow Product-source event and outbox message to a committed locale revision', () =>
     Effect.gen(function* changed() {
-      const state = context(() => Effect.succeed({ kind: 'CHANGED', revision: 2 }));
+      const state = yield* context(() => Effect.succeed({ kind: 'CHANGED', revision: 2 }));
       yield* handleSetProductLocalizedFacts(payload, state.value);
       expect(state.events).toHaveLength(1);
       expect(state.events[0]).toMatchObject({
@@ -103,12 +109,12 @@ describe('committed localized Product description event', () => {
 
   it.effect('emits nothing for replay or rejected persistence', () =>
     Effect.gen(function* unchanged() {
-      const replay = context(() => Effect.succeed({ kind: 'REPLAYED', revision: 2 }));
+      const replay = yield* context(() => Effect.succeed({ kind: 'REPLAYED', revision: 2 }));
       yield* handleSetProductLocalizedFacts(payload, replay.value);
       expect(replay.events).toHaveLength(0);
       expect(replay.outbox).toHaveLength(0);
 
-      const rejected = context(() =>
+      const rejected = yield* context(() =>
         Effect.fail(
           new LocalizedFactsPersistenceUnavailable({
             code: 'localized_facts_persistence_unavailable',

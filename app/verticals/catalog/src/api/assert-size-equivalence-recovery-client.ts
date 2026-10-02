@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface AssertSizeEquivalenceRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type AssertSizeEquivalenceRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeAssertSizeEquivalenceRecovery = (
   payload: AssertSizeEquivalenceRecoveryRequest,
   ...[requestCorrelation, options = {}]: AssertSizeEquivalenceRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeAssertSizeEquivalenceRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeAssertSizeEquivalenceRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

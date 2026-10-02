@@ -23,9 +23,7 @@ import { inventoryEffectLedgerPersistenceForScope } from '../persistence/invento
 import { physicalStockEffectPersistenceForScope } from '../persistence/physical-stock-effect-repository.ts';
 import { stockPositionPersistenceForScope } from '../persistence/stock-position-repository.ts';
 import type { PhysicalStockEffectRequestService } from '../services/physical-stock-effects.service.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- The generated owner Action factory constructs the transaction-scoped ledger service; expires: 2027-03-31.
 import { makeInventoryEffectLedgerService } from '../services/inventory-effect-ledger.service.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core invokes this owner-local constructor only inside the generated transaction-scoped Action factory; expires: 2027-03-31.
 import { makePhysicalStockEffectRequestService } from '../services/physical-stock-effects.service.ts';
 import { createStockReceiptCommerceInventoryStockReceiptRequestedV1OutboxMessage as createOutboxMessage } from './stock-receipt-commerce-inventory-stock-receipt-requested-v1.outbox-message.ts';
 

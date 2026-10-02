@@ -25,8 +25,10 @@ const assessmentDigest = 'a'.repeat(64);
 const reservationToken = '99999999-9999-4999-8999-999999999999';
 const input = {
   actionInvocationId: '33333333-3333-4333-8333-333333333333',
+  compositionRevision: 'a'.repeat(64),
   effectiveAt,
   expectedMarketRevision: 3,
+  legalEntityId: '44444444-4444-4444-8444-444444444444',
   marketRef,
 } as const;
 const request: MarketAffectedUseAssessmentRequest = {
@@ -87,14 +89,23 @@ describe('Market retirement production authority', () => {
     () =>
       Effect.gen(function* completeEvidence() {
         const calls: unknown[] = [];
-        const authority = makeMarketRetirementImpactAuthority((payload, requestCorrelation) => {
-          calls.push({ payload, requestCorrelation });
+        const authority = makeMarketRetirementImpactAuthority((payload, context) => {
+          calls.push({ context, payload });
           return Effect.succeed(verified);
         });
 
         const result = yield* authority.assessRetirementImpact(input);
 
-        expect(calls).toEqual([{ payload: request, requestCorrelation: input.actionInvocationId }]);
+        expect(calls).toEqual([
+          {
+            context: {
+              compositionRevision: input.compositionRevision,
+              legalEntityId: input.legalEntityId,
+              requestCorrelation: input.actionInvocationId,
+            },
+            payload: request,
+          },
+        ]);
         expect(result).toEqual({
           assessedMarketRef: marketRef,
           assessedMarketRevision: 3,
@@ -128,14 +139,16 @@ describe('Market retirement production authority', () => {
   it.effect('reserves exact fresh evidence and commits or releases with server-issued token and version', () =>
     Effect.gen(function* reservationLifecycle() {
       const calls: {
+        readonly compositionRevision: string;
         readonly idempotencyKey: string;
+        readonly legalEntityId: string;
         readonly payload: unknown;
         readonly requestCorrelation: string;
       }[] = [];
       const authority = makeMarketRetirementImpactAuthority(
         () => Effect.succeed(verified),
-        (payload, requestCorrelation, idempotencyKey) => {
-          calls.push({ idempotencyKey, payload, requestCorrelation });
+        (payload, context) => {
+          calls.push({ ...context, payload });
           let lifecycle: 'COMMITTED' | 'RELEASED' | 'RESERVED';
           if (payload.operation === 'RESERVE') {
             lifecycle = 'RESERVED';
@@ -162,7 +175,9 @@ describe('Market retirement production authority', () => {
         reservation: { token: reservationToken, version: 7 },
       });
       expect(calls[0]).toEqual({
+        compositionRevision: input.compositionRevision,
         idempotencyKey: `${input.actionInvocationId}:reserve`,
+        legalEntityId: input.legalEntityId,
         payload: {
           assessmentDigest,
           evaluatedAt: effectiveAt,
@@ -179,13 +194,23 @@ describe('Market retirement production authority', () => {
       yield* authority.commitRetirementImpact({
         actionInvocationId: input.actionInvocationId,
         assessment: reserved,
+        compositionRevision: input.compositionRevision,
+        legalEntityId: input.legalEntityId,
         reason: 'Retire replaced Market.',
       });
       yield* authority.releaseRetirementImpact({
         actionInvocationId: input.actionInvocationId,
         assessment: reserved,
+        compositionRevision: input.compositionRevision,
+        legalEntityId: input.legalEntityId,
         reason: 'Retire replaced Market.',
       });
+      expect(calls.map(({ compositionRevision, legalEntityId }) => ({ compositionRevision, legalEntityId }))).toEqual(
+        Array.from({ length: 3 }, () => ({
+          compositionRevision: input.compositionRevision,
+          legalEntityId: input.legalEntityId,
+        })),
+      );
       expect(calls.slice(1).map(({ idempotencyKey, payload }) => ({ idempotencyKey, payload }))).toEqual([
         {
           idempotencyKey: `${input.actionInvocationId}:commit`,

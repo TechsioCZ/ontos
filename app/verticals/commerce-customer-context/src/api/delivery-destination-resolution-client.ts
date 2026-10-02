@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface DeliveryDestinationResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type DeliveryDestinationResolutionAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeDeliveryDestinationResolution = (
   payload: DeliveryDestinationResolutionRequest,
   ...[requestCorrelation, options = {}]: DeliveryDestinationResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeDeliveryDestinationResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeDeliveryDestinationResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

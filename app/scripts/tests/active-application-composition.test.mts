@@ -1,12 +1,10 @@
 import { readFileSync } from 'node:fs';
 
-import { ConfigProvider, DateTime, Duration, Effect, Layer, Option, Schema } from 'effect';
+import { DateTime, Duration, Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { parse } from 'yaml';
 
 import {
-  ActiveApplicationCompositionConfigLive,
-  ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
   ONTOS_SHELL_CONTRIBUTION_ABI,
 } from '../../packages/core-runtime/src/index.ts';
@@ -25,14 +23,11 @@ import type {
 import {
   cloudflareOrigin,
   cloudflarePublicUrlVariable,
-  compositionConsumerSetups,
-  edgeCompositionConsumers,
   modeWorkerSetups,
   otherModeWorkerSetups,
   serviceIdVariable,
-  targetConsumerSetups,
 } from '../publish-active-application-composition.mts';
-import { shellRuntimeContract } from '../generate-ontos-shell-runtime-contract.mts';
+import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-contract.mts';
 import { parseZeropsEnvFile } from '../zerops-public-api.mts';
 
 const encoder = new TextEncoder();
@@ -138,6 +133,7 @@ const SHELL_APP = 'shell-super-app';
 
 const partyRegistry: ObservedModuleDeployment = {
   appId: PARTY_REGISTRY,
+  backend: { baseUrl: 'https://party-registry.example/', transport: 'node-http' },
   contract: artifact(
     'https://party-registry.example/.well-known/ontos-module-manifest.json',
     moduleContract({
@@ -156,6 +152,7 @@ const partyRegistry: ObservedModuleDeployment = {
 
 const customerContext: ObservedModuleDeployment = {
   appId: CUSTOMER_CONTEXT,
+  backend: { baseUrl: 'https://commerce-customer-context.example/', transport: 'node-http' },
   contract: artifact(
     'https://commerce-customer-context.example/.well-known/ontos-module-manifest.json',
     moduleContract({
@@ -179,23 +176,13 @@ const observation = (modules: readonly ObservedModuleDeployment[]): ActiveApplic
       name: SHELL_REMOTE,
       shared: governedShared,
     }),
-    runtimeContract: artifact('https://shell.example/.well-known/ontos-shell-runtime.json', shellRuntimeContract),
+    runtimeContract: artifact(
+      'https://shell.example/.well-known/ontos-shell-runtime.json',
+      createShellRuntimeContract('shell-immutable-build'),
+    ),
   },
   validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
 });
-
-const loadAsConsumer = (encoded: string) =>
-  ActiveApplicationCompositionService.pipe(
-    Effect.flatMap(({ load }) => load),
-    Effect.provide(
-      Layer.mergeAll(
-        ActiveApplicationCompositionConfigLive,
-        ConfigProvider.layer(
-          ConfigProvider.fromUnknown({ [ACTIVE_APPLICATION_COMPOSITION_POLICY.projectVariable]: encoded }),
-        ),
-      ),
-    ),
-  );
 
 it.effect('derives a schema-valid snapshot of the complete browser and server-only inventory', () =>
   Effect.gen(function* derivesCompleteInventory() {
@@ -223,7 +210,9 @@ it.effect('derives a schema-valid snapshot of the complete browser and server-on
       onExcessProperty: 'error',
     })(encoded);
     expect(decoded.composition).toEqual(composition);
-    expect((yield* loadAsConsumer(encoded)).composition.revision).toBe(composition.revision);
+    expect(decoded.composition.modules.find(({ moduleId }) => moduleId === PARTY_MODULE)?.contractDocument).toBe(
+      new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(partyRegistry.contract.bytes),
+    );
   }),
 );
 
@@ -237,6 +226,62 @@ it.effect('derives the same bytes regardless of observation order', () =>
 
     const withoutCustomerContext = yield* deriveActiveApplicationCompositionSnapshot(observation([partyRegistry]));
     expect(withoutCustomerContext.composition.revision).not.toBe(forward.composition.revision);
+  }),
+);
+
+it.effect('binds exact non-ASCII contract bytes and renews freshness without changing release identity', () =>
+  Effect.gen(function* exactContractAndFreshness() {
+    const raw = `${new TextDecoder().decode(customerContext.contract.bytes).replace('commerce.customer-context module', 'Žluťoučký module')}\n `;
+    const original = { ...customerContext, contract: { ...customerContext.contract, bytes: encoder.encode(raw) } };
+    const snapshot = yield* deriveActiveApplicationCompositionSnapshot(observation([original]));
+    const later = yield* deriveActiveApplicationCompositionSnapshot({
+      ...observation([original]),
+      observedAt: DateTime.addDuration(observedAt, Duration.hours(6)),
+    });
+    expect(snapshot.composition.modules[0]?.contractDocument).toBe(raw);
+    expect(later.composition).toEqual(snapshot.composition);
+    expect(DateTime.formatIso(later.validUntil)).toBe('2026-09-30T12:00:00.000Z');
+    const normalized = yield* deriveActiveApplicationCompositionSnapshot(observation([customerContext]));
+    expect(normalized.composition.revision).not.toBe(snapshot.composition.revision);
+    const malformed = { ...customerContext, contract: { ...customerContext.contract, bytes: new Uint8Array([0xff]) } };
+    expect((yield* Effect.flip(deriveActiveApplicationCompositionSnapshot(observation([malformed])))).reason).toBe(
+      'invalid_observation',
+    );
+  }),
+);
+
+it.effect('binds the exact Shell artifact bytes and URLs into the approved revision', () =>
+  Effect.gen(function* pinsShellArtifactEvidence() {
+    const original = observation([customerContext]);
+    const first = yield* deriveActiveApplicationCompositionSnapshot(original);
+    expect(first.composition.shell.runtimeContract.url).toBe(original.shell.runtimeContract.url);
+    expect(first.composition.shell.federationManifest.url).toBe(original.shell.federationManifest.url);
+    const changedBytes = yield* deriveActiveApplicationCompositionSnapshot({
+      ...original,
+      shell: {
+        ...original.shell,
+        runtimeContract: {
+          ...original.shell.runtimeContract,
+          bytes: encoder.encode(`${new TextDecoder().decode(original.shell.runtimeContract.bytes)}\n`),
+        },
+      },
+    });
+    expect(changedBytes.composition.shell.deployment).toEqual(first.composition.shell.deployment);
+    expect(changedBytes.composition.shell.runtimeContract.sha256).not.toBe(
+      first.composition.shell.runtimeContract.sha256,
+    );
+    expect(changedBytes.composition.revision).not.toBe(first.composition.revision);
+    const changedUrl = yield* deriveActiveApplicationCompositionSnapshot({
+      ...original,
+      shell: {
+        ...original.shell,
+        federationManifest: {
+          ...original.shell.federationManifest,
+          url: 'https://retained-shell.example/mf-manifest.json',
+        },
+      },
+    });
+    expect(changedUrl.composition.revision).not.toBe(first.composition.revision);
   }),
 );
 
@@ -336,6 +381,25 @@ it.effect('rejects conflicting writes under one revision and forged revisions', 
   }),
 );
 
+it.effect('rejects older publications and ambiguous equal-time promotions before storage writes', () =>
+  Effect.gen(function* orderedPublications() {
+    const current = yield* deriveActiveApplicationCompositionSnapshot(observation([partyRegistry, customerContext]));
+    const encoded = yield* encodeActiveApplicationCompositionSnapshot(current);
+    const older = { ...current, observedAt: DateTime.addDuration(observedAt, Duration.hours(-1)) };
+    expect((yield* Effect.flip(assertNoConflictingPublication(Option.some(encoded), older))).reason).toBe(
+      'stale_observation',
+    );
+    const different = yield* deriveActiveApplicationCompositionSnapshot(observation([partyRegistry]));
+    expect((yield* Effect.flip(assertNoConflictingPublication(Option.some(encoded), different))).reason).toBe(
+      'stale_observation',
+    );
+    const shorterLease = { ...current, validUntil: DateTime.addDuration(current.validUntil, Duration.hours(-1)) };
+    expect((yield* Effect.flip(assertNoConflictingPublication(Option.some(encoded), shorterLease))).reason).toBe(
+      'stale_observation',
+    );
+  }),
+);
+
 const readReferenceTopology = () =>
   Schema.decodeUnknownSync(
     Schema.fromJsonString(
@@ -351,20 +415,10 @@ const readReferenceTopology = () =>
     ),
   )(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'));
 
-it.effect('restarts exactly the Outbox Worker mode services whose start preflight requires the snapshot', () =>
-  Effect.gen(function* consumers() {
+it.effect('resolves exactly the Outbox Worker mode setup definitions', () =>
+  Effect.gen(function* workerModeSetups() {
     const zeropsYaml = readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8');
     const topology = readReferenceTopology();
-    expect(yield* compositionConsumerSetups(zeropsYaml, topology, 'dedicated')).toEqual([
-      CUSTOMER_CONTEXT,
-      CUSTOMER_CONTEXT_WORKER,
-    ]);
-    // The host mode runs the Commerce worker in the Outbox Worker host in place of its dedicated service.
-    expect(yield* compositionConsumerSetups(zeropsYaml, topology, 'host')).toEqual([
-      CUSTOMER_CONTEXT,
-      OUTBOX_WORKER_HOST_SETUP,
-    ]);
-    // A mode switch leaves these running; the deploy detects them to reconcile the workers of both modes.
     expect(yield* otherModeWorkerSetups(zeropsYaml, topology, 'dedicated')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
     expect(yield* otherModeWorkerSetups(zeropsYaml, topology, 'host')).toEqual([
       'party-registry-worker',
@@ -372,7 +426,6 @@ it.effect('restarts exactly the Outbox Worker mode services whose start prefligh
       'price-group-catalog-worker',
       'inventory-worker',
     ]);
-    // A switch also shows as this mode's workers not running yet.
     expect(yield* modeWorkerSetups(zeropsYaml, topology, 'host')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
     expect(yield* modeWorkerSetups(zeropsYaml, topology, 'dedicated')).toEqual(
       yield* otherModeWorkerSetups(zeropsYaml, topology, 'host'),
@@ -382,35 +435,6 @@ it.effect('restarts exactly the Outbox Worker mode services whose start prefligh
     expect(serviceIdVariable('shellsuperapp')).toBe('ZEROPS_SHELL_SERVICE_ID');
   }),
 );
-
-it.effect('restarts only the Zerops-hosted consumers of each deploy target in either Outbox Worker mode', () =>
-  Effect.gen(function* consumersPerTarget() {
-    const zeropsYaml = readFileSync(new URL('../../zerops.yaml', import.meta.url), 'utf-8');
-    const topology = readReferenceTopology();
-    const deliveryUnits = new Set([CUSTOMER_CONTEXT, 'shellsuperapp']);
-    const consumersOf = (target: 'cloudflare' | 'zerops', mode: 'dedicated' | 'host') =>
-      compositionConsumerSetups(zeropsYaml, topology, mode).pipe(
-        Effect.map((consumers) => targetConsumerSetups(consumers, target, deliveryUnits)),
-      );
-    // On Zerops every consumer is a Zerops service; on Cloudflare the vertical runs as a Worker, and
-    // only the mode's Outbox Workers stay on Zerops to be restarted. The mode is independent of the target.
-    expect(yield* consumersOf('zerops', 'dedicated')).toEqual([CUSTOMER_CONTEXT, CUSTOMER_CONTEXT_WORKER]);
-    expect(yield* consumersOf('zerops', 'host')).toEqual([CUSTOMER_CONTEXT, OUTBOX_WORKER_HOST_SETUP]);
-    expect(yield* consumersOf('cloudflare', 'host')).toEqual([OUTBOX_WORKER_HOST_SETUP]);
-    expect(yield* consumersOf('cloudflare', 'dedicated')).toEqual([CUSTOMER_CONTEXT_WORKER]);
-  }),
-);
-
-it('hands each publication to the placed Worker consumers, which have no Zerops project variable', () => {
-  const topology = readReferenceTopology();
-  const placement = { buildEnvironment: {}, units: [CUSTOMER_CONTEXT, PRICE_GROUP_CATALOG] };
-
-  expect(edgeCompositionConsumers([CUSTOMER_CONTEXT, OUTBOX_WORKER_HOST_SETUP], topology, placement)).toEqual([
-    { packageName: '@app/commerce-customer-context', workerName: 'app-commerce-customer-context' },
-  ]);
-  // A consumer that is not placed stays a Zerops service and reads the project variable.
-  expect(edgeCompositionConsumers([CUSTOMER_CONTEXT], topology, { buildEnvironment: {}, units: [] })).toEqual([]);
-});
 
 it.effect('observes a placed unit on Cloudflare at the Worker URL its edge build is given', () =>
   Effect.gen(function* cloudflareOrigins() {
@@ -469,7 +493,6 @@ it('leaves the refresh to the deploy while the Outbox Workers drift from the Out
     refreshes,
     refreshes,
     refreshes,
-    `env.DEPLOY_TARGET == 'cloudflare' && ${refreshes}`,
     // Production waits for its own deploy the same way.
     "steps.worker-drift.outputs.drift == 'true'",
     `steps.base.outputs.base != '' && ${refreshes}`,
@@ -509,7 +532,7 @@ it('refreshes the production composition on Zerops, in its own environment and c
     ({ run }) => run?.includes('active-composition:publish worker-mode-drift') === true,
   );
   expect(drift?.if).toBe("steps.base.outputs.base != ''");
-  const publish = production.steps.find(({ run }) => run?.includes('active-composition:publish publish') === true);
+  const publish = production.steps.find(({ run }) => run?.includes('active-composition:publish refresh') === true);
   expect(publish?.if).toBe("steps.base.outputs.base != '' && steps.worker-drift.outputs.drift != 'true'");
 });
 
@@ -548,7 +571,7 @@ it('bounds each refresh and yields it to a main deploy in flight', () => {
     for (const step of job?.steps ?? []) {
       if (
         step.uses === './.github/actions/install-app' ||
-        step.run?.includes('active-composition:publish publish') === true
+        step.run?.includes('active-composition:publish refresh') === true
       ) {
         expect(step['timeout-minutes']).toBeLessThanOrEqual(5);
       }
@@ -557,7 +580,7 @@ it('bounds each refresh and yields it to a main deploy in flight', () => {
     const checkout = job?.steps.find(({ run }) => run?.includes('git checkout --detach') === true);
     expect(checkout?.run).toMatch(/git checkout --detach "\$DEPLOYED_SHA"\ngit clean -ffdx/u);
   }
-  expect(jobs['refresh-stage-edge']?.['timeout-minutes']).toBeLessThanOrEqual(5);
+  expect(jobs['refresh-stage-edge']).toBeUndefined();
 });
 
 it('reads quoted Zerops env-file values', () => {

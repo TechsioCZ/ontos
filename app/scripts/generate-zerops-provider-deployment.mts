@@ -60,10 +60,6 @@ const renderProvider = (
     const readiness = `/${id}-api/${id}/readiness`;
     const runtime = `app/.zerops/runtime/${id}`;
     const portKey = `VERTICAL_${id.replaceAll('-', '_').toUpperCase()}_PORT`;
-    const runtimeConfigurationPreflight =
-      id === 'commerce-customer-context'
-        ? 'test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON" || { echo "ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON is required" >&2; exit 1; }; '
-        : '';
     const dependencyEnvironment =
       id === 'commerce-customer-context' && priceGroupCatalogBaseUrl !== undefined
         ? `\n        ONTOS_PRICE_GROUP_CATALOG_BASE_URL: '${priceGroupCatalogBaseUrl}'`
@@ -116,7 +112,7 @@ const renderProvider = (
         httpGet:
           port: ${port}
           path: '${readiness}'
-      start: sh -c '${runtimeConfigurationPreflight}cd ${runtime} && PATH="$PWD/node/bin:$PATH" exec npm run serve'`;
+      start: sh -c 'cd ${runtime} && PATH="$PWD/node/bin:$PATH" exec npm run serve'`;
   });
 
 export const generateZeropsProviderDeployment = (

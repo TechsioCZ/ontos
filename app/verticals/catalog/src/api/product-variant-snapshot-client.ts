@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ProductVariantSnapshotClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ProductVariantSnapshotAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeProductVariantSnapshot = (
   payload: ProductVariantSnapshotRequest,
   ...[requestCorrelation, options = {}]: ProductVariantSnapshotOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeProductVariantSnapshotWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeProductVariantSnapshotWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

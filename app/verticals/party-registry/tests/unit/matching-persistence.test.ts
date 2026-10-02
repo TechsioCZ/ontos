@@ -377,6 +377,7 @@ it.layer(
           {
             ...collector,
             actionInvocationId,
+            compositionRevision: 'a'.repeat(64),
             scope: actionScope,
             services: {
               createOrMatch: (value, invocationId) =>
@@ -432,6 +433,7 @@ it.layer(
         {
           ...collector,
           actionInvocationId,
+          compositionRevision: 'a'.repeat(64),
           scope: actionScope,
           services: {
             resolve: () => resolveDuplicateCandidateMatch(subject.transaction, resolutionInput),
@@ -516,6 +518,7 @@ it.layer(
         {
           ...collector,
           actionInvocationId,
+          compositionRevision: 'a'.repeat(64),
           scope: actionScope,
           services: {
             createOrMatch: (value, invocationId) =>
@@ -586,6 +589,7 @@ it.layer(
         {
           ...collector,
           actionInvocationId,
+          compositionRevision: 'a'.repeat(64),
           scope: actionScope,
           services: {
             createOrMatch: (value, invocationId) =>

@@ -25,7 +25,7 @@ type QuantityBasisCompatibilityExecutor = (
   payload: QuantityBasisCompatibilityRequest,
   credential: Redacted.Redacted,
   requestCorrelation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<unknown, QuantityBasisCompatibilityClientFailure>;
 
 export interface CatalogQuantityBasisCompatibilityPort {
@@ -116,6 +116,7 @@ const successBindsRequest = (
 
 const makeCatalogQuantityBasisCompatibilityPort = (dependencies: {
   readonly context: {
+    readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
     readonly tenantId: string;
@@ -134,12 +135,16 @@ const makeCatalogQuantityBasisCompatibilityPort = (dependencies: {
       const { baseUrl, credential } = yield* dependencies.issuer
         .issue({
           audience: 'catalog',
+          compositionRevision: dependencies.context.compositionRevision,
           legalEntityId: dependencies.context.legalEntityId,
           requestCorrelation: dependencies.context.requestCorrelation,
         })
         .pipe(Effect.mapError((cause) => unavailable('Catalog Quantity-basis compatibility is unavailable', cause)));
       const ownerResponse = yield* dependencies
-        .execute(payload, credential, dependencies.context.requestCorrelation, { baseUrl })
+        .execute(payload, credential, dependencies.context.requestCorrelation, {
+          baseUrl,
+          compositionRevision: dependencies.context.compositionRevision,
+        })
         .pipe(Effect.mapError((cause) => unavailable('Catalog Quantity-basis compatibility is unavailable', cause)));
       const decodedOwner = yield* Schema.decodeUnknownEffect(QuantityBasisCompatibilityResponseSchema, {
         onExcessProperty: 'error',
@@ -185,7 +190,12 @@ const makeCatalogQuantityBasisCompatibilityPort = (dependencies: {
   });
 
 export const catalogQuantityBasisCompatibilityPortFromEnvironment = (
-  context: { readonly legalEntityId: string; readonly requestCorrelation: string; readonly tenantId: string },
+  context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+    readonly tenantId: string;
+  },
   execute: QuantityBasisCompatibilityExecutor = executeAuthorizedCompatibility,
 ): Effect.Effect<CatalogQuantityBasisCompatibilityPort> =>
   Effect.serviceOption(CatalogSelectionGatewayCredentialService).pipe(

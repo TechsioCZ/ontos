@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface SetProductLocalizedFactsRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type SetProductLocalizedFactsRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeSetProductLocalizedFactsRecovery = (
   payload: SetProductLocalizedFactsRecoveryRequest,
   ...[requestCorrelation, options = {}]: SetProductLocalizedFactsRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeSetProductLocalizedFactsRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeSetProductLocalizedFactsRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

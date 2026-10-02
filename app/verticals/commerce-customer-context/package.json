@@ -148,7 +148,7 @@
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical commerce-customer-context --target dist && ultramodern-create ultramodern public-surface --app commerce-customer-context --target dist && modern deploy --skip-build --deploy-target node",
     "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical commerce-customer-context --target cloudflare-dist && ultramodern-create ultramodern public-surface --app commerce-customer-context --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
     "cloudflare:build:full-catalog-client-guard": "modern build --deploy-target cloudflare --config full-catalog-client-guard.config.ts",
-    "cloudflare:deploy": "pnpm run cloudflare:build && ultramodern-create ultramodern cloudflare-output-verify --app commerce-customer-context --require-public-urls && wrangler deploy --config .output/wrangler.json",
+    "cloudflare:deploy": "node ../../scripts/immutable-application-release.mts deploy --app-directory .",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app commerce-customer-context",
     "db:check": "drizzle-kit check --config drizzle.config.ts",

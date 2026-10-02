@@ -202,6 +202,7 @@ it.effect('collects audit/read evidence and publishes the owner-returned approva
             data: { outcome: 'SUBMITTED', requestRef: 'approval:1' },
           });
         }),
+      compositionRevision: 'a'.repeat(64),
       recordAuditEvidence: () =>
         Effect.sync(() => {
           auditRecords += 1;
@@ -260,6 +261,7 @@ it.effect('fails closed when a source changes between evaluation and final evide
       actionInvocationId: 'purchase-approval-trigger:race',
       addDomainEvent: () => Effect.die('No event should be emitted after a failed currentness check'),
       addOutboxMessage: () => Effect.die('No outbox message should be emitted after a failed currentness check'),
+      compositionRevision: 'a'.repeat(64),
       recordAuditEvidence: () => Effect.void,
       recordDataAccess: () => Effect.void,
       scope,

@@ -2,11 +2,15 @@
 // @ontos-action-boundary-owner assortment
 // @ontos-action-boundary-audience assortment
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
+import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
-import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { GatewayPrincipalVerifierLive, bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import type { GatewayPrincipalVerificationWithRedemptionOptions } from '@app/gateway-principal-verifier/server';
-import { Effect } from 'effect';
+import { Effect, Layer } from 'effect';
 import type { Redacted } from 'effect';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 export {
   ACTION_PRINCIPAL_BEARER_CHALLENGE,
@@ -28,13 +32,23 @@ export type {
 } from '@app/gateway-principal-verifier/server';
 
 export const ACTION_GATEWAY_AUDIENCE = 'assortment' as const;
-export {
-  GatewayPrincipalVerifierConfiguration as ActionPrincipalVerifier,
-  GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive,
-} from '@app/gateway-principal-verifier/server';
+export { GatewayPrincipalVerifierConfiguration as ActionPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+type ActionPrincipalVerifierLayers =
+  | typeof GatewayPrincipalVerifierLive
+  | typeof ActiveApplicationCompositionConfigLive
+  | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>;
+export const ActionPrincipalVerifierLive: Layer.Layer<
+  Layer.Success<ActionPrincipalVerifierLayers>,
+  Layer.Error<ActionPrincipalVerifierLayers>,
+  Layer.Services<ActionPrincipalVerifierLayers>
+> = Layer.mergeAll(
+  GatewayPrincipalVerifierLive,
+  ActiveApplicationCompositionConfigLive,
+  staffAuthenticationNamespaceRegistryLayer([ACTION_GATEWAY_AUDIENCE]),
+);
 export type ActionPrincipalVerificationOptions = GatewayPrincipalVerificationWithRedemptionOptions;
 
-const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE);
+const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE, ultramodernApiMarker);
 
 export const verifyActionPrincipal = (
   authorization: Redacted.Redacted<string | undefined>,

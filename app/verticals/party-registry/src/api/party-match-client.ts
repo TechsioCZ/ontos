@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PartyMatchClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PartyMatchAuthorizedInvocation = readonly [
@@ -45,6 +46,10 @@ export const executePartyMatch = (
   payload: PartyMatchRequest,
   ...[requestCorrelation, options = {}]: PartyMatchOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePartyMatchWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePartyMatchWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

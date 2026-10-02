@@ -165,7 +165,15 @@ export const OntosSerializedModuleManifestSchema = Schema.Struct({
 
 export const OntosDeploymentIdentitySchema = Schema.Struct({
   appId: OntosDeploymentAppIdSchema,
-  buildMarker: nonEmptyString,
+  buildMarker: nonEmptyString.check(
+    Schema.isMaxLength(200),
+    Schema.isTrimmed(),
+    Schema.makeFilter((value) =>
+      value.isWellFormed() && value !== '.' && value !== '..'
+        ? undefined
+        : 'build marker must be well-formed text and must not be a URL dot segment',
+    ),
+  ),
 });
 
 export const OntosModuleDeploymentContractSchema = Schema.Struct({

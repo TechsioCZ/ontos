@@ -8,15 +8,27 @@ import {
 
 describe('Shell governed module-target schemas', () => {
   test('decode the production Contacts target and preserve its wire format', () => {
+    const compositionRevision = 'a'.repeat(64);
     const input = {
+      compositionRevision,
       entrypointKey: 'contacts.core.page.contacts',
       moduleId: 'contacts.core',
     };
     const result = {
       appId: 'contacts',
       componentKey: 'contacts.core.page-contacts',
+      compositionRevision,
       entrypointKey: 'contacts.core.page.contacts',
+      federation: {
+        expose: './PageContacts',
+        manifest: {
+          sha256: 'b'.repeat(64),
+          url: 'https://contacts.example.test/releases/contacts-v1/mf-manifest.json',
+        },
+        remoteName: 'verticalContacts',
+      },
       moduleId: 'contacts.core',
+      routeParameters: {},
       writable: true,
     };
 

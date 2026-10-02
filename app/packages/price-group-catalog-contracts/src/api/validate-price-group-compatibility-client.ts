@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ValidatePriceGroupCompatibilityClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ValidatePriceGroupCompatibilityAuthorizedInvocation = readonly [
@@ -48,6 +49,10 @@ export const executeValidatePriceGroupCompatibility = (
   payload: ValidatePriceGroupCompatibilityRequest,
   ...[requestCorrelation, options = {}]: ValidatePriceGroupCompatibilityOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeValidatePriceGroupCompatibilityWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeValidatePriceGroupCompatibilityWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

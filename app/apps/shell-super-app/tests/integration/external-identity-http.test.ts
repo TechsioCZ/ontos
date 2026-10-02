@@ -26,6 +26,7 @@ import { Clock, Context, Crypto, DateTime, Effect, Layer, Predicate, Schema } fr
 import { expect, it } from 'effect-rstest';
 
 import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
+import { makeInstalledModuleCatalogLayer } from '../../api/modules/installed-module-catalog.ts';
 import { ApiKeyService } from '../../api/auth/api-key-service.ts';
 import { ExternalIdentityApi } from '@app/shared-contracts';
 import { ExternalIdentityUnavailableProblemSchema } from '@app/shared-contracts/external-identity';
@@ -37,6 +38,7 @@ import {
 } from '../../api/auth/external-identity/index.ts';
 import { makeApiKeyServiceDouble, makePrincipalResolverDouble } from '../support/identity-service-doubles.ts';
 import { actionCoreFailure, actionSuccess, makeActionRuntimeDouble } from '../support/action-runtime-double.ts';
+import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 
 const tenantId = '30000000-0000-4000-8000-000000000001';
 const workloadPrincipalId = '40000000-0000-4000-8000-000000000001';
@@ -220,61 +222,86 @@ const makeServer = (
   outcomes: Parameters<typeof makeActionRuntimeDouble>[0],
   readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[],
   resolvedSubjects: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>[] = [],
-) => {
-  const actionRuntime = makeActionRuntimeDouble(outcomes);
-  const apiKeyService = makeApiKeyServiceDouble({
-    verify: (rawKey) =>
-      rawKey === 'workload-api-key'
-        ? Effect.succeed({ providerKeyId: 'better-auth-workload-key' })
-        : Effect.die('Unexpected API key in the HTTP fixture'),
-  });
-  const principalResolver = makePrincipalResolverDouble({
-    authenticationNamespaceId: staffNamespace,
-    resolveBetterAuthApiKey: (providerKeyId) =>
-      providerKeyId === 'better-auth-workload-key'
-        ? Effect.succeed({
-            authBindingId: workloadBindingId,
-            displayName: 'Fixture workload',
-            principalId: workloadPrincipalId,
-            principalKind: 'service',
-            tenantId,
-          })
-        : Effect.die('Unexpected provider key in the HTTP fixture'),
-  });
-  const readRuntime = makeReadRuntime(readPayloads, resolvedSubjects);
-  const admissionService = {
-    admit: () => Effect.die('The revoke/read fixture must not call external subject admission'),
-  };
-  const authenticationAdmissionService = makeAuthenticationAdmissionService();
-  const gatewayIssuer = {
-    issue: () => Effect.succeed({ expiresAt: 1_700_000_300, token: 'fixture-gateway-token' }),
-  };
-  const dependencies = Layer.mergeAll(
-    Layer.succeed(ActionRuntime, actionRuntime.runtime),
-    Layer.succeed(ApiKeyService, apiKeyService),
-    Layer.succeed(ExternalIdentityHttpConfigurationService, configuration),
-    Layer.succeed(GatewayIssuer, gatewayIssuer),
-    Layer.succeed(PrincipalResolver, principalResolver),
-    Layer.succeed(ReadRuntime, readRuntime),
-    Layer.succeed(Crypto.Crypto, testCrypto),
-    Layer.succeed(TrustedAuthenticationAdmissionService, authenticationAdmissionService),
-    Layer.succeed(TrustedExternalSubjectAdmissionService, admissionService),
-  );
-  return {
-    actionRuntime,
-    server: HttpRouter.toWebHandler(
-      HttpApiBuilder.layer(ExternalIdentityApi).pipe(
-        Layer.provide(externalIdentityStandaloneGroupLive),
-        Layer.provide(externalIdentityWorkloadAuthorizationLive),
-        Layer.provide(dependencies),
-        Layer.provide(HttpServer.layerServices),
+) =>
+  Effect.gen(function* makeHttpServer() {
+    const snapshot = yield* makeCompositionSnapshot([]);
+    const compositionRevision = snapshot.composition.revision;
+    let verificationCalls = 0;
+    let authorityCalls = 0;
+    const actionRuntime = makeActionRuntimeDouble(outcomes);
+    const apiKeyService = makeApiKeyServiceDouble({
+      verify: (rawKey) => {
+        verificationCalls += 1;
+        return rawKey === 'workload-api-key'
+          ? Effect.succeed({ providerKeyId: 'better-auth-workload-key' })
+          : Effect.die('Unexpected API key in the HTTP fixture');
+      },
+    });
+    const principalResolver = makePrincipalResolverDouble({
+      authenticationNamespaceId: staffNamespace,
+      resolveBetterAuthApiKey: (providerKeyId) =>
+        providerKeyId === 'better-auth-workload-key'
+          ? Effect.succeed({
+              authBindingId: workloadBindingId,
+              displayName: 'Fixture workload',
+              principalId: workloadPrincipalId,
+              principalKind: 'service',
+              tenantId,
+            })
+          : Effect.die('Unexpected provider key in the HTTP fixture'),
+    });
+    const readRuntime = makeReadRuntime(readPayloads, resolvedSubjects);
+    const admissionService = {
+      admit: () => Effect.die('The revoke/read fixture must not call external subject admission'),
+    };
+    const authenticationAdmissionService = makeAuthenticationAdmissionService();
+    const gatewayIssuer: GatewayIssuer['Service'] = {
+      issue: (input) => {
+        expect(input.compositionRevision).toBe(compositionRevision);
+        return Effect.succeed({
+          apiBaseUrl:
+            '/shell-super-app-api/module-api/commerce-customer-context/test-build/commerce-customer-context-api',
+          compositionRevision,
+          expiresAt: 1_700_000_300,
+          token: 'fixture-gateway-token',
+        });
+      },
+    };
+    const dependencies = Layer.mergeAll(
+      Layer.succeed(ActionRuntime, actionRuntime.runtime),
+      Layer.succeed(ApiKeyService, apiKeyService),
+      Layer.succeed(ExternalIdentityHttpConfigurationService, configuration),
+      Layer.succeed(GatewayIssuer, gatewayIssuer),
+      Layer.succeed(PrincipalResolver, principalResolver),
+      Layer.succeed(ReadRuntime, readRuntime),
+      Layer.succeed(Crypto.Crypto, testCrypto),
+      Layer.succeed(TrustedAuthenticationAdmissionService, authenticationAdmissionService),
+      Layer.succeed(TrustedExternalSubjectAdmissionService, admissionService),
+      makeInstalledModuleCatalogLayer(
+        Effect.sync(() => {
+          authorityCalls += 1;
+          return snapshot;
+        }),
       ),
-      { disableLogger: true },
-    ),
-  };
-};
+    );
+    return {
+      actionRuntime,
+      authorityCalls: () => authorityCalls,
+      compositionRevision,
+      server: HttpRouter.toWebHandler(
+        HttpApiBuilder.layer(ExternalIdentityApi).pipe(
+          Layer.provide(externalIdentityStandaloneGroupLive),
+          Layer.provide(externalIdentityWorkloadAuthorizationLive),
+          Layer.provide(dependencies),
+          Layer.provide(HttpServer.layerServices),
+        ),
+        { disableLogger: true },
+      ),
+      verificationCalls: () => verificationCalls,
+    };
+  });
 
-const statusRequest = () =>
+const statusRequest = (compositionRevision: string) =>
   new Request('https://fixture.ontos.test/auth/identity/external/binding/status', {
     body: JSON.stringify({
       change: {
@@ -283,6 +310,7 @@ const statusRequest = () =>
         reason: 'Remove fixture binding',
         requestedStatus: 'revoked',
       },
+      compositionRevision,
     }),
     headers: {
       'content-type': 'application/json',
@@ -304,11 +332,12 @@ const readRequest = () =>
     method: 'POST',
   });
 
-const resolveRequest = () =>
+const resolveRequest = (compositionRevision: string) =>
   new Request('https://fixture.ontos.test/auth/identity/external/resolve', {
     body: JSON.stringify({
       authenticationNamespaceId: customerNamespace,
       authenticationRef: 'fixture-customer-authentication',
+      compositionRevision,
       providerSubjectId: customerProviderSubjectId,
       subjectType: 'user',
     }),
@@ -320,17 +349,18 @@ const resolveRequest = () =>
     method: 'POST',
   });
 
-const acquireServer = (fixture: ReturnType<typeof makeServer>) =>
+const acquireServer = (fixture: Effect.Success<ReturnType<typeof makeServer>>) =>
   Effect.acquireRelease(Effect.succeed(fixture.server), (runtimeServer) =>
     Effect.promise(() => runtimeServer.dispose()),
   );
 
-const gatewayRequest = () =>
+const gatewayRequest = (compositionRevision: string) =>
   new Request('https://fixture.ontos.test/auth/identity/external/gateway-context', {
     body: JSON.stringify({
       audience: gatewayAudience,
       authenticationNamespaceId: customerNamespace,
       authenticationRef: 'fixture-customer-authentication',
+      compositionRevision,
       providerSubjectId: customerProviderSubjectId,
       subjectType: 'user',
     }),
@@ -345,7 +375,7 @@ const gatewayRequest = () =>
 it.live('runs binding-id HTTP reads and provider-independent revoke through the governed seams', () =>
   Effect.gen(function* externalIdentityHttpScenario() {
     const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
-    const fixture = makeServer([actionSuccess(revokedResult)], readPayloads);
+    const fixture = yield* makeServer([actionSuccess(revokedResult)], readPayloads);
     const server = yield* acquireServer(fixture);
 
     const readResponse = yield* Effect.promise(() => server.handler(readRequest(), emptyRequestContext));
@@ -357,7 +387,9 @@ it.live('runs binding-id HTTP reads and provider-independent revoke through the 
     });
     expect(readPayloads[0]).toEqual({ authBindingId: customerBindingId, lookup: 'binding' });
 
-    const statusResponse = yield* Effect.promise(() => server.handler(statusRequest(), emptyRequestContext));
+    const statusResponse = yield* Effect.promise(() =>
+      server.handler(statusRequest(fixture.compositionRevision), emptyRequestContext),
+    );
     const statusBody = yield* Effect.promise(() => statusResponse.json());
     expect({
       body: statusBody,
@@ -376,20 +408,30 @@ it.live('projects resolve and gateway subjects before the Core read decoder', ()
   Effect.gen(function* externalIdentitySubjectProjectionScenario() {
     const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
     const resolvedSubjects: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>[] = [];
-    const fixture = makeServer([], readPayloads, resolvedSubjects);
+    const fixture = yield* makeServer([], readPayloads, resolvedSubjects);
     const server = yield* acquireServer(fixture);
 
-    const resolveResponse = yield* Effect.promise(() => server.handler(resolveRequest(), emptyRequestContext));
+    const resolveResponse = yield* Effect.promise(() =>
+      server.handler(resolveRequest(fixture.compositionRevision), emptyRequestContext),
+    );
     const resolveBody = yield* Effect.promise(() => resolveResponse.json());
     expect({ body: resolveBody, status: resolveResponse.status }).toEqual({
       body: resolveResult,
       status: 200,
     });
 
-    const gatewayResponse = yield* Effect.promise(() => server.handler(gatewayRequest(), emptyRequestContext));
+    const gatewayResponse = yield* Effect.promise(() =>
+      server.handler(gatewayRequest(fixture.compositionRevision), emptyRequestContext),
+    );
     const gatewayBody = yield* Effect.promise(() => gatewayResponse.json());
     expect({ body: gatewayBody, status: gatewayResponse.status }).toEqual({
-      body: { expiresAt: 1_700_000_300, token: 'fixture-gateway-token' },
+      body: {
+        apiBaseUrl:
+          '/shell-super-app-api/module-api/commerce-customer-context/test-build/commerce-customer-context-api',
+        compositionRevision: fixture.compositionRevision,
+        expiresAt: 1_700_000_300,
+        token: 'fixture-gateway-token',
+      },
       status: 200,
     });
     expect(resolvedSubjects).toEqual([
@@ -418,19 +460,86 @@ it.live('projects resolve and gateway subjects before the Core read decoder', ()
         subjectType: 'user',
       },
     ]);
+    expect(fixture.authorityCalls()).toBe(2);
   }),
+);
+
+it.live(
+  'rejects stale revisions on all five owner-provider endpoints before workload verification or owner reads',
+  () =>
+    Effect.gen(function* staleExternalIdentityRelease() {
+      const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
+      const resolvedSubjects: Schema.Schema.Type<typeof ExternalAuthenticationSubjectSchema>[] = [];
+      const fixture = yield* makeServer([], readPayloads, resolvedSubjects);
+      const server = yield* acquireServer(fixture);
+      const staleRevision = 'f'.repeat(64);
+      expect(staleRevision).not.toBe(fixture.compositionRevision);
+      const requests = [
+        statusRequest(staleRevision),
+        resolveRequest(staleRevision),
+        gatewayRequest(staleRevision),
+        new Request('https://fixture.ontos.test/auth/identity/external/bindings/reserve', {
+          body: JSON.stringify({
+            authenticationRef: 'fixture-customer-authentication',
+            compositionRevision: staleRevision,
+            reservation: {
+              authenticationNamespaceId: customerNamespace,
+              providerSubjectId: customerProviderSubjectId,
+              subjectType: 'user',
+            },
+          }),
+          headers: {
+            'content-type': 'application/json',
+            'idempotency-key': 'fixture-reserve-idempotency',
+            'x-api-key': 'workload-api-key',
+            'x-correlation-id': 'fixture-reserve-correlation',
+          },
+          method: 'POST',
+        }),
+        new Request('https://fixture.ontos.test/auth/identity/external/bindings/activate', {
+          body: JSON.stringify({
+            activation: { authBindingId: customerBindingId, expectedRevision: customerBindingRevision },
+            authenticationRef: 'fixture-customer-authentication',
+            compositionRevision: staleRevision,
+          }),
+          headers: {
+            'content-type': 'application/json',
+            'idempotency-key': 'fixture-activate-idempotency',
+            'x-api-key': 'workload-api-key',
+            'x-correlation-id': 'fixture-activate-correlation',
+          },
+          method: 'POST',
+        }),
+      ];
+      for (const request of requests) {
+        const response = yield* Effect.promise(() => server.handler(request, emptyRequestContext));
+        const body = yield* Effect.promise(() => response.json());
+        expect({ body, status: response.status }).toEqual({
+          body: expect.objectContaining({ _tag: 'GatewayReloadRequiredProblem', reloadRequired: true }),
+          status: 409,
+        });
+      }
+      expect(fixture.authorityCalls()).toBe(requests.length);
+      expect(fixture.verificationCalls()).toBe(0);
+      expect(fixture.actionRuntime.invocationCount()).toBe(0);
+      expect(readPayloads).toEqual([]);
+      expect(resolvedSubjects).toEqual([]);
+    }),
 );
 
 it.live('rejects browser/session credentials and malformed input before a Core action', () =>
   Effect.gen(function* externalIdentityBoundaryScenario() {
     const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
-    const fixture = makeServer([actionSuccess(revokedResult)], readPayloads);
+    const fixture = yield* makeServer([actionSuccess(revokedResult)], readPayloads);
     const server = yield* acquireServer(fixture);
 
     const browserResponse = yield* Effect.promise(() =>
       server.handler(
         new Request('https://fixture.ontos.test/auth/identity/external/bindings/read', {
-          body: JSON.stringify({ authBindingId: customerBindingId, lookup: 'binding' }),
+          body: JSON.stringify({
+            authBindingId: customerBindingId,
+            lookup: 'binding',
+          }),
           headers: {
             authorization: 'Bearer browser-session-token',
             'content-type': 'application/json',
@@ -447,7 +556,10 @@ it.live('rejects browser/session credentials and malformed input before a Core a
     const malformedResponse = yield* Effect.promise(() =>
       server.handler(
         new Request('https://fixture.ontos.test/auth/identity/external/bindings/read', {
-          body: JSON.stringify({ authBindingId: 'malformed', lookup: 'binding' }),
+          body: JSON.stringify({
+            authBindingId: 'malformed',
+            lookup: 'binding',
+          }),
           headers: {
             'content-type': 'application/json',
             'x-api-key': 'workload-api-key',
@@ -467,7 +579,7 @@ it.live('rejects browser/session credentials and malformed input before a Core a
 it.live('returns a typed unavailable result and permits retry after an indeterminate action commit', () =>
   Effect.gen(function* externalIdentityRecoveryScenario() {
     const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
-    const fixture = makeServer(
+    const fixture = yield* makeServer(
       [
         actionCoreFailure(
           new ActionCommitIndeterminate({
@@ -482,7 +594,9 @@ it.live('returns a typed unavailable result and permits retry after an indetermi
     );
     const server = yield* acquireServer(fixture);
 
-    const first = yield* Effect.promise(() => server.handler(statusRequest(), emptyRequestContext));
+    const first = yield* Effect.promise(() =>
+      server.handler(statusRequest(fixture.compositionRevision), emptyRequestContext),
+    );
     const firstBody = yield* Effect.promise(() => first.json());
     expect({ body: firstBody, invocations: fixture.actionRuntime.invocationCount(), status: first.status }).toEqual({
       body: expect.toSatisfy((value) => Schema.is(ExternalIdentityUnavailableProblemSchema)(value)),
@@ -490,7 +604,9 @@ it.live('returns a typed unavailable result and permits retry after an indetermi
       status: 503,
     });
 
-    const second = yield* Effect.promise(() => server.handler(statusRequest(), emptyRequestContext));
+    const second = yield* Effect.promise(() =>
+      server.handler(statusRequest(fixture.compositionRevision), emptyRequestContext),
+    );
     const secondBody = yield* Effect.promise(() => second.json());
     expect({ body: secondBody, status: second.status }).toEqual({ body: revokedResult, status: 200 });
     expect(fixture.actionRuntime.invocationCount()).toBe(2);
@@ -500,10 +616,12 @@ it.live('returns a typed unavailable result and permits retry after an indetermi
 it.live('attributes the governed action invocation to the api_key workload Principal, never the customer subject', () =>
   Effect.gen(function* externalIdentityWorkloadAttributionScenario() {
     const readPayloads: Schema.Schema.Type<typeof ReadPrincipalBindingPayloadSchema>[] = [];
-    const fixture = makeServer([actionSuccess(revokedResult)], readPayloads);
+    const fixture = yield* makeServer([actionSuccess(revokedResult)], readPayloads);
     const server = yield* acquireServer(fixture);
 
-    const statusResponse = yield* Effect.promise(() => server.handler(statusRequest(), emptyRequestContext));
+    const statusResponse = yield* Effect.promise(() =>
+      server.handler(statusRequest(fixture.compositionRevision), emptyRequestContext),
+    );
     expect(statusResponse.status).toBe(200);
     expect(fixture.actionRuntime.principals).toHaveLength(1);
     const [recordedPrincipal] = fixture.actionRuntime.principals;

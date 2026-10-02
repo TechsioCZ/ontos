@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ExactPriceResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ExactPriceResolutionAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeExactPriceResolution = (
   payload: ExactPriceResolutionRequest,
   ...[requestCorrelation, options = {}]: ExactPriceResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeExactPriceResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeExactPriceResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

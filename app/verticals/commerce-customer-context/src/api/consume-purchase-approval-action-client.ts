@@ -12,6 +12,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ConsumePurchaseApprovalActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
   // eslint-disable-next-line effect-native/no-threaded-correlation-parameter -- Generated action-client compatibility option; this field is not threaded into the request and remains part of the published client signature. expires: 2027-03-31.
@@ -60,6 +61,11 @@ export const executeConsumePurchaseApproval = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) => executeConsumePurchaseApprovalWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      executeConsumePurchaseApprovalWithAuthorization(payload, credential, requestCorrelation, {
+        ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
     options.gateway,
   );

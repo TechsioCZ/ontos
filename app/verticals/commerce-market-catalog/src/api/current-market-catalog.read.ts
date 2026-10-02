@@ -56,6 +56,7 @@ export const currentMarketCatalogRead = defineRead(
     schemaVersion: '1',
   },
   handleCurrentMarketCatalog,
-  (transaction, scope) => marketCatalogReadPersistenceForScope(transaction, scope),
+  (transaction, scope, compositionRevision) =>
+    marketCatalogReadPersistenceForScope(transaction, scope, compositionRevision),
   () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),
 );

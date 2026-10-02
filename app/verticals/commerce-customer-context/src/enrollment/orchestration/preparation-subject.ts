@@ -201,6 +201,7 @@ const activateBinding = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.
         {
           activation: { authBindingId: binding.authBindingId, expectedRevision: binding.bindingRevision },
           authenticationRef: call.authenticationRef,
+          compositionRevision: call.attempt.compositionRevision,
         },
         {
           ...call.options,
@@ -255,6 +256,7 @@ const reserveBinding = Effect.fn('CommerceEnrollmentPreparationSubjectResolver.r
           // The reservation names only the exact provider subject; no credential, display name or
           // provider payload of any kind reaches Core from this path.
           authenticationRef: call.authenticationRef,
+          compositionRevision: call.attempt.compositionRevision,
           reservation: {
             authenticationNamespaceId,
             providerSubjectId: accountSubject.providerSubjectId,

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CounterpartyAllOrderHistoryDetailClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CounterpartyAllOrderHistoryDetailAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCounterpartyAllOrderHistoryDetail = (
   payload: CounterpartyAllOrderHistoryDetailRequest,
   ...[requestCorrelation, options = {}]: CounterpartyAllOrderHistoryDetailOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCounterpartyAllOrderHistoryDetailWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCounterpartyAllOrderHistoryDetailWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

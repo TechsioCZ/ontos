@@ -454,11 +454,14 @@ const actionTestHarness = Effect.fn('ActionTestHarness.make')(function* actionTe
     scopeResolver,
     {
       contextAccess,
+      // This scripted harness rejects owner SQL and tests the Action lifecycle only.
+      lockCompositionAuthority: () => Effect.succeed([]),
       moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
       moduleStateGate,
       onStage: (stage) => {
         stages.push(stage);
       },
+      resolveCompositionRevision: () => Effect.succeed('a'.repeat(64)),
       resolveServiceFactory,
     },
   );

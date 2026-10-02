@@ -85,6 +85,7 @@ it.effect('correction publishes the corrected stable ref while returning the val
       },
       {
         actionInvocationId: '40000000-0000-4000-8000-000000000001',
+        compositionRevision: 'a'.repeat(64),
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
         recordAuditEvidence: collector.recordAuditEvidence,

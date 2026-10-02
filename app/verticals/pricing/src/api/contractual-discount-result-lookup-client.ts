@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ContractualDiscountResultLookupClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ContractualDiscountResultLookupAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeContractualDiscountResultLookup = (
   payload: ContractualDiscountResultLookupRequest,
   ...[requestCorrelation, options = {}]: ContractualDiscountResultLookupOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeContractualDiscountResultLookupWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeContractualDiscountResultLookupWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -8,7 +8,6 @@ import {
 } from '../../shared/apis/inventory-source-conflict-detail.ts';
 import type { InventorySourceConflictDetailRequest } from '../../shared/apis/inventory-source-conflict-detail.ts';
 import { InventorySourceConflictUnavailable } from '../../shared/domain/inventory-source-conflict.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core composes the owner-local resolver inside this governed transaction-scoped Read factory; expires: 2027-03-31.
 import { makeExternalStockCorrelationResolver } from '../../shared/domain/external-stock-correlation.ts';
 import { inventoryBackendConfigurationPersistenceForScope } from '../persistence/inventory-backend-configuration-repository.ts';
 import { externalStockCorrelationPersistenceForScope } from '../persistence/external-stock-correlation-repository.ts';
@@ -16,7 +15,6 @@ import { inventorySourceAssertionPersistenceForScope } from '../persistence/inve
 import { inventorySourceConflictPersistenceForScope } from '../persistence/inventory-source-conflict-repository.ts';
 import { stockPositionPersistenceForScope } from '../persistence/stock-position-repository.ts';
 import type { InventorySourceConflictService } from '../services/inventory-source-conflict.service.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core invokes this generated transaction-scoped owner factory only after the governed Read scope gate; expires: 2027-03-31.
 import { makeInventorySourceConflictService } from '../services/inventory-source-conflict.service.ts';
 
 export type InventorySourceConflictDetailDomainError = InventorySourceConflictUnavailable;

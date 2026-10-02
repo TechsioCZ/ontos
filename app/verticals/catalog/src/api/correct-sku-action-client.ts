@@ -11,6 +11,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface CorrectSkuActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
   readonly [traceIdOption]?: string;
@@ -55,6 +56,11 @@ export const executeCorrectSkuWithAuthorization = (
 
 export const executeCorrectSku = (payload: CorrectSkuPayload, ...[requestCorrelation, options]: OperationInvocation) =>
   operationGateway.invoke(
-    (credential) => executeCorrectSkuWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      executeCorrectSkuWithAuthorization(payload, credential, requestCorrelation, {
+        ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
     options.gateway,
   );

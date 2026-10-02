@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface SavedAddressListClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type SavedAddressListAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeSavedAddressList = (
   payload: SavedAddressListRequest,
   ...[requestCorrelation, options = {}]: SavedAddressListOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeSavedAddressListWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeSavedAddressListWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

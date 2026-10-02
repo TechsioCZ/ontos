@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CreateControlledAttributeValueRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CreateControlledAttributeValueRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCreateControlledAttributeValueRecovery = (
   payload: CreateControlledAttributeValueRecoveryRequest,
   ...[requestCorrelation, options = {}]: CreateControlledAttributeValueRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCreateControlledAttributeValueRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCreateControlledAttributeValueRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

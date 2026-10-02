@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PurchaseLimitPolicyReadClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PurchaseLimitPolicyReadAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executePurchaseLimitPolicyRead = (
   payload: PurchaseLimitPolicyReadRequest,
   ...[requestCorrelation, options = {}]: PurchaseLimitPolicyReadOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePurchaseLimitPolicyReadWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePurchaseLimitPolicyReadWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

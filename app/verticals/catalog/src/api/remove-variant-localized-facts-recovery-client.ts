@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RemoveVariantLocalizedFactsRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RemoveVariantLocalizedFactsRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRemoveVariantLocalizedFactsRecovery = (
   payload: RemoveVariantLocalizedFactsRecoveryRequest,
   ...[requestCorrelation, options = {}]: RemoveVariantLocalizedFactsRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRemoveVariantLocalizedFactsRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRemoveVariantLocalizedFactsRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

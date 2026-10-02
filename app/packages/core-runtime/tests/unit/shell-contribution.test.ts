@@ -58,6 +58,7 @@ const full = () => ({
       componentKey: `${moduleId}.dashboard`,
       contributionKey: `${moduleId}.page.dashboard`,
       entrypoint: entrypoint('page'),
+      expose: './Dashboard',
       routePath: '/property-dashboard',
     },
   ],
@@ -66,6 +67,7 @@ const full = () => ({
       componentKey: `${moduleId}.dashboard`,
       contributionKey: `${moduleId}.component.dashboard`,
       entrypoint: entrypoint('public_component'),
+      expose: './Dashboard',
     },
   ],
   reports: [
@@ -128,6 +130,53 @@ it('accepts safe dynamic page templates as plain serialized data', () => {
   expect(structuredClone(decoded)).toEqual(decoded);
   expect(encodeJson(decoded)).not.toMatch(/handler|loader|sourcePath|remote|import/iu);
 });
+
+it('requires explicit native Federation selectors for pages and public components', () => {
+  const baseline = full();
+  const { expose: pageExpose, ...pageWithoutExpose } = first(baseline.pages);
+  const { expose: componentExpose, ...componentWithoutExpose } = first(baseline.publicComponents);
+  expect(() => validateShellContributions({ ...baseline, pages: [pageWithoutExpose] }, references)).toThrow();
+  expect(() =>
+    validateShellContributions({ ...baseline, publicComponents: [componentWithoutExpose] }, references),
+  ).toThrow();
+  const decoded = validateShellContributions(baseline, references);
+  expect(decoded.pages[0]?.expose).toBe(pageExpose);
+  expect(decoded.publicComponents[0]?.expose).toBe(componentExpose);
+  const nested = validateShellContributions(
+    { ...baseline, pages: [{ ...first(baseline.pages), expose: './pages/PartyDashboard.v2' }] },
+    references,
+  );
+  expect(nested.pages[0]?.expose).toBe('./pages/PartyDashboard.v2');
+});
+
+for (const expose of [
+  '',
+  'Dashboard',
+  './',
+  '../Dashboard',
+  './pages/../Dashboard',
+  './pages//Dashboard',
+  './Dashboard/',
+  './Dashboard?mode=edit',
+  './Dashboard#edit',
+  './%2e%2e/Dashboard',
+  String.raw`./pages\Dashboard`,
+  './https://private.example/Dashboard',
+  `./${'D'.repeat(199)}`,
+] as const) {
+  it(`rejects unsafe native Federation selector ${expose}`, () => {
+    const baseline = full();
+    expect(() =>
+      validateShellContributions({ ...baseline, pages: [{ ...first(baseline.pages), expose }] }, references),
+    ).toThrow();
+    expect(() =>
+      validateShellContributions(
+        { ...baseline, publicComponents: [{ ...first(baseline.publicComponents), expose }] },
+        references,
+      ),
+    ).toThrow();
+  });
+}
 
 it('rejects extra keys, duplicates, cross-owner entrypoints, and missing references', () => {
   expect(() => validateShellContributions({ ...full(), route: '/private' }, references)).toThrow();
@@ -232,6 +281,8 @@ for (const routePath of [
   '/contacts/customers/:id+',
   '/contacts/customers/:customer-id',
   '/contacts/customers/:1id',
+  '/contacts/customers/:constructor',
+  '/contacts/customers/:prototype',
   '/contacts/customers/:id/edit/:id',
 ] as const) {
   it(`rejects unsafe or ambiguous page route template ${routePath}`, () => {

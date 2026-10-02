@@ -25,6 +25,8 @@ import { PhysicalStockEffects } from '../../src/services/physical-stock-effects.
 import { handleExecuteStockIssue } from '../../src/workers/execute-stock-issue.worker.ts';
 import { handleExecuteStockReceipt } from '../../src/workers/execute-stock-receipt.worker.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const actionInvocationId = '99999999-9999-4999-8999-999999999999';
@@ -119,17 +121,21 @@ const actionContext = <DomainEvents extends DomainEventContractMap>(
   actionInvocationId,
   addDomainEvent: collector.addDomainEvent,
   addOutboxMessage: collector.addOutboxMessage,
+  compositionRevision,
   recordAuditEvidence: collector.recordAuditEvidence,
   recordDataAccess: collector.recordDataAccess,
-  scope: trustVerifiedGatewayPrincipalContext({
-    authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-    authContextRef: 'test:physical-stock-effect',
-    authMethod: 'api_key' as const,
-    correlationId: 'physical-stock-effect-test',
-    legalEntityId,
-    principalId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-    tenantId,
-  }),
+  scope: trustVerifiedGatewayPrincipalContext(
+    {
+      authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      authContextRef: 'test:physical-stock-effect',
+      authMethod: 'api_key' as const,
+      correlationId: 'physical-stock-effect-test',
+      legalEntityId,
+      principalId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      tenantId,
+    },
+    compositionRevision,
+  ),
   services,
 });
 
@@ -171,6 +177,7 @@ const workerScope: OutboxWorkerLegalEntityScope = {
 const workerContext = (kind: PhysicalStockEffectKind): OutboxWorkerHandlerContext => ({
   attemptNumber: 1,
   claimId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+  compositionRevision,
   consumerModuleKey: 'commerce.inventory',
   deliveryId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
   domainEventId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',

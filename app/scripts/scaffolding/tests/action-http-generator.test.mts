@@ -126,6 +126,10 @@ it('renders required idempotency and governed assertion acquisition in the Actio
   const client = renderActionHttpClient(vertical, 'change-rate', true);
   expect(client).toContain('readonly idempotencyKey: string;');
   expect(client).toContain('operationGateway.invoke(');
+  expect(client).toContain('(credential, { apiBaseUrl, compositionRevision }) =>');
+  expect(client).toContain('readonly compositionRevision?: string;');
+  expect(client).toContain('baseUrl: apiBaseUrl,');
+  expect(client).toContain('...options,\n    baseUrl: apiBaseUrl,\n    compositionRevision,');
   expect(client).toContain('idempotencyKey: options.idempotencyKey,');
   expect(client).toContain('client.changeRateAction.execute({ payload: encoded })');
   expect(client).not.toContain('headers:');

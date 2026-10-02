@@ -5,9 +5,11 @@ import { Effect, Schema, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { coreRelations } from '../../src/db/schema.ts';
+import { attestOutboxWorkerHandlerContext } from '../../src/outbox/definition.ts';
 import { makePostgresCoreSearchProjectionStore } from '../../src/search/persistence.ts';
 import { CoreSearchProjectionStore, createCoreSearchQueryRuntime } from '../../src/search/projection.ts';
 import { makeTestDatabaseFromClient, testDatabaseClients } from '../support/database.ts';
+import { installSearchTestAuthority } from '../support/search-authority.ts';
 
 const queryEffect = <Row extends object>(
   client: PgClient.PgClient,
@@ -19,8 +21,24 @@ const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 it.live('durably rebuilds tenant projections with tombstones and selected-Legal-Entity filtering', () =>
   Effect.gen(function* searchPersistenceIntegration() {
     const { admin, runtime } = yield* testDatabaseClients;
+    yield* installSearchTestAuthority();
     const tenantId = randomUUID();
     const otherTenantId = randomUUID();
+    const context = attestOutboxWorkerHandlerContext({
+      attemptNumber: 1,
+      claimId: 'claim-1',
+      compositionRevision: 'a'.repeat(64),
+      consumerModuleKey: 'party.registry',
+      deliveryId: 'delivery-1',
+      domainEventId: 'event-1',
+      legalEntityScope: 'forbidden',
+      messageId: 'message-1',
+      producerModuleKey: 'party.registry',
+      tenantId,
+      tenantSequenceNo: 1n,
+      topic: 'party.registry.party-updated.v1',
+      workerKey: 'party.registry.project-party-updated-to-search',
+    });
     const legalEntityId = randomUUID();
     const otherLegalEntityId = randomUUID();
     const partyId = randomUUID();
@@ -106,32 +124,47 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
       [legalEntityId, tenantId, otherLegalEntityId],
     );
 
-    yield* store.replace({
-      documents: [partyDocument(partyId, '1', 'Acme'), partyDocument(removedPartyId, '1', 'Remove me')],
-      moduleId: 'party.registry',
-      rebuildVersion: '1',
-      resourceType: 'party.registry.party',
-      tenantId,
-    });
-    yield* store.replace({
-      documents: [partyDocument(partyId, '2', 'Acme current')],
-      moduleId: 'party.registry',
-      rebuildVersion: '2',
-      resourceType: 'party.registry.party',
-      tenantId,
-    });
-    yield* store.apply({
-      document: partyDocument(partyId, '1', 'Acme stale'),
-      kind: 'upsert',
-    });
-    yield* store.apply({
-      document: counterpartyDocument(counterpartyId, legalEntityId),
-      kind: 'upsert',
-    });
-    yield* store.apply({
-      document: counterpartyDocument(otherCounterpartyId, otherLegalEntityId),
-      kind: 'upsert',
-    });
+    yield* store.replace(
+      {
+        documents: [partyDocument(partyId, '1', 'Acme'), partyDocument(removedPartyId, '1', 'Remove me')],
+        moduleId: 'party.registry',
+        rebuildVersion: '1',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+      context,
+    );
+    yield* store.replace(
+      {
+        documents: [partyDocument(partyId, '2', 'Acme current')],
+        moduleId: 'party.registry',
+        rebuildVersion: '2',
+        resourceType: 'party.registry.party',
+        tenantId,
+      },
+      context,
+    );
+    yield* store.apply(
+      {
+        document: partyDocument(partyId, '1', 'Acme stale'),
+        kind: 'upsert',
+      },
+      context,
+    );
+    yield* store.apply(
+      {
+        document: counterpartyDocument(counterpartyId, legalEntityId),
+        kind: 'upsert',
+      },
+      context,
+    );
+    yield* store.apply(
+      {
+        document: counterpartyDocument(otherCounterpartyId, otherLegalEntityId),
+        kind: 'upsert',
+      },
+      context,
+    );
 
     const partyHits = yield* search.search({
       includeArchived: false,
@@ -179,7 +212,7 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
       ...partyDocument(floorRef.resourceId, '1', 'Unseen resource'),
       ref: floorRef,
     };
-    yield* store.replace(emptyRebuild);
+    yield* store.replace(emptyRebuild, context);
     // A fresh service instance must observe the durable floor, not process-local state.
     const restarted = makePostgresCoreSearchProjectionStore({
       executor: yield* makeTestDatabaseFromClient(runtime, coreRelations),
@@ -195,21 +228,27 @@ it.live('durably rebuilds tenant projections with tombstones and selected-Legal-
         resourceType: floorRef.resourceType,
         tenantId,
       });
-    yield* restarted.apply({ document: staleDocument, kind: 'upsert' });
-    yield* restarted.replace({
-      ...emptyRebuild,
-      documents: [staleDocument],
-      rebuildVersion: '1',
-    });
+    yield* restarted.apply({ document: staleDocument, kind: 'upsert' }, context);
+    yield* restarted.replace(
+      {
+        ...emptyRebuild,
+        documents: [staleDocument],
+        rebuildVersion: '1',
+      },
+      context,
+    );
     expect(yield* floorSearch()).toEqual([]);
-    yield* restarted.replace(emptyRebuild);
-    const divergence = yield* Effect.flip(restarted.replace({ ...emptyRebuild, documents: [staleDocument] }));
+    yield* restarted.replace(emptyRebuild, context);
+    const divergence = yield* Effect.flip(restarted.replace({ ...emptyRebuild, documents: [staleDocument] }, context));
     expect(Predicate.isTagged(divergence, 'CoreSearchProjectionInvalid')).toBe(true);
-    yield* restarted.apply({
-      document: { ...staleDocument, projectionVersion: '3' },
-      kind: 'upsert',
-    });
-    yield* restarted.replace(emptyRebuild);
+    yield* restarted.apply(
+      {
+        document: { ...staleDocument, projectionVersion: '3' },
+        kind: 'upsert',
+      },
+      context,
+    );
+    yield* restarted.replace(emptyRebuild, context);
     const rebuiltFloorHits = yield* floorSearch();
     expect(rebuiltFloorHits.length).toBe(1);
     const rebuildRows = yield* queryEffect(

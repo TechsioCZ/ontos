@@ -495,7 +495,7 @@ describe('Current Pricing Decision governed read', () => {
       });
       const subjectAuthority = { verify: verifyExactSubjectAuthority };
 
-      const services = yield* serviceFactory(transaction, scope).pipe(
+      const services = yield* serviceFactory(transaction, scope, 'a'.repeat(64)).pipe(
         Effect.provideService(CurrentPricingDecisionSubjectAuthority, subjectAuthority),
         Effect.provideService(CurrentPricingDecisionEvaluationFactory, {
           make: (candidateSource) => {
@@ -514,7 +514,7 @@ describe('Current Pricing Decision governed read', () => {
         principal: yield* Schema.decodeEffect(TrustedPrincipalContextSchema)(scope),
       });
 
-      const productionServices = yield* serviceFactory(transaction, scope).pipe(
+      const productionServices = yield* serviceFactory(transaction, scope, 'a'.repeat(64)).pipe(
         Effect.provideService(CurrentPricingDecisionEvaluationFactory, {
           make: () => ({ evaluate: () => Effect.succeed(nonResolvedEvaluationFor(input)) }),
         }),

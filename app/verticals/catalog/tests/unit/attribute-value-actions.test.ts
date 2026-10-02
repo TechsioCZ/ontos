@@ -1,6 +1,8 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { describe, expect, it } from 'effect-rstest';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -85,6 +87,7 @@ const selectionSourceChangedDomainEvents = {
   'commerce.catalog.selection-source-changed.v1': SelectionSourceChangedEventSchema,
 } as const;
 const makeContext = <DomainEvents extends DomainEventContractMap = typeof selectionSourceChangedDomainEvents>(
+  compositionRevision: string,
   services: AttributeValuesPersistence,
   assessOpenSelectionImpact: (
     productRef: typeof base.productRef,
@@ -96,6 +99,7 @@ const makeContext = <DomainEvents extends DomainEventContractMap = typeof select
   actionInvocationId: '66666666-6666-4666-8666-666666666666',
   addDomainEvent: () => Effect.succeed(Object.create(null)),
   addOutboxMessage: () => Effect.void,
+  compositionRevision,
   recordAuditEvidence: () => Effect.void,
   recordDataAccess: () => Effect.void,
   scope,
@@ -143,6 +147,10 @@ describe('Catalog attribute value Actions', () => {
 
   it.effect('passes trusted execution identity and a typed value to scoped persistence', () =>
     Effect.gen(function* handoff() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const payload = Schema.decodeUnknownSync(SetProductAttributeValuesPayloadSchema)({
         ...base,
         classification,
@@ -165,20 +173,27 @@ describe('Catalog attribute value Actions', () => {
           }),
         setVariantOverride: unexpected,
       };
-      const result = yield* handleSetProductAttributeValues(payload, makeContext(services));
+      const result = yield* handleSetProductAttributeValues(
+        payload,
+        makeContext(compositionSnapshot.composition.revision, services),
+      );
       expect(result.state).toBe('SET');
     }),
   );
 
   it.effect('does not write either Product attribute mutation when open-selection impact is unavailable', () =>
     Effect.gen(function* rejectedForUnavailableImpact() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const services: AttributeValuesPersistence = {
         removeProductValues: unexpected,
         removeVariantOverride: unexpected,
         setProductValues: unexpected,
         setVariantOverride: unexpected,
       };
-      const context = makeContext(services, unavailableImpact);
+      const context = makeContext(compositionSnapshot.composition.revision, services, unavailableImpact);
       const set = Schema.decodeUnknownSync(SetProductAttributeValuesPayloadSchema)({
         ...base,
         classification,
@@ -195,6 +210,10 @@ describe('Catalog attribute value Actions', () => {
 
   it.effect('removes a Variant override only with the caller-observed inherited source revision', () =>
     Effect.gen(function* removeOverrideHandoff() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const payload = Schema.decodeUnknownSync(RemoveVariantAttributeOverridePayloadSchema)({
         ...base,
         classification: variantClassification,
@@ -219,13 +238,20 @@ describe('Catalog attribute value Actions', () => {
         setProductValues: unexpected,
         setVariantOverride: unexpected,
       };
-      const result = yield* handleRemoveVariantAttributeOverride(payload, makeContext(services));
+      const result = yield* handleRemoveVariantAttributeOverride(
+        payload,
+        makeContext(compositionSnapshot.composition.revision, services),
+      );
       expect(result.state).toBe('REMOVED');
     }),
   );
 
   it.effect('rejects a new Variant realization and fails closed on correction without Current revalidation', () =>
     Effect.gen(function* classifyVariantChange() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const services: AttributeValuesPersistence = {
         removeProductValues: unexpected,
         removeVariantOverride: unexpected,
@@ -255,12 +281,16 @@ describe('Catalog attribute value Actions', () => {
         variantRef,
       });
       expect(
-        yield* handleSetVariantAttributeOverride(newRealization, makeContext(services)).pipe(Effect.flip),
+        yield* handleSetVariantAttributeOverride(
+          newRealization,
+          makeContext(compositionSnapshot.composition.revision, services),
+        ).pipe(Effect.flip),
       ).toBeInstanceOf(VariantAttributeChangeConflict);
       expect(
-        yield* handleRemoveVariantAttributeOverride(correction, makeContext(services, unavailableImpact)).pipe(
-          Effect.flip,
-        ),
+        yield* handleRemoveVariantAttributeOverride(
+          correction,
+          makeContext(compositionSnapshot.composition.revision, services, unavailableImpact),
+        ).pipe(Effect.flip),
       ).toBeInstanceOf(CatalogOpenSelectionImpactUnavailable);
     }),
   );
@@ -277,14 +307,18 @@ describe('Catalog attribute value Actions', () => {
 
   it.effect('preserves typed fail-closed conflicts from all four persistence operations', () =>
     Effect.gen(function* rejectedChanges() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const services: AttributeValuesPersistence = {
         removeProductValues: () => Effect.fail(failure('REQUIRED')),
         removeVariantOverride: () => Effect.fail(failure('BASIS_CHANGED')),
         setProductValues: () => Effect.fail(failure('CONTROLLED_RETIRED')),
         setVariantOverride: () => Effect.fail(failure('IDENTITY_IMPACT')),
       };
-      const context = makeContext(services);
-      const variantContext = makeContext(services);
+      const context = makeContext(compositionSnapshot.composition.revision, services);
+      const variantContext = makeContext(compositionSnapshot.composition.revision, services);
       const productSet = Schema.decodeUnknownSync(SetProductAttributeValuesPayloadSchema)({
         ...base,
         classification,

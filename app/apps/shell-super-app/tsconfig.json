@@ -2,6 +2,9 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "composite": true,
+    "customConditions": [
+      "node"
+    ],
     "declaration": true,
     "declarationMap": false,
     "emitDeclarationOnly": true,
@@ -35,12 +38,6 @@
     },
     {
       "path": "../../packages/better-auth-effect-drizzle"
-    },
-    {
-      "path": "../../verticals/party-registry"
-    },
-    {
-      "path": "../../verticals/assortment"
     }
   ]
 }

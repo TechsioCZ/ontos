@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RemoveProductAttributeValuesRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RemoveProductAttributeValuesRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRemoveProductAttributeValuesRecovery = (
   payload: RemoveProductAttributeValuesRecoveryRequest,
   ...[requestCorrelation, options = {}]: RemoveProductAttributeValuesRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRemoveProductAttributeValuesRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRemoveProductAttributeValuesRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

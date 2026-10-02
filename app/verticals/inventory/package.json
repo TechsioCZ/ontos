@@ -52,7 +52,7 @@
   "scripts": {
     "build": "modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical inventory --target dist && ultramodern-create ultramodern public-surface --app inventory --target dist && cross-env MODERNJS_DEPLOY=node modern deploy --skip-build",
     "cloudflare:build": "cross-env MODERNJS_DEPLOY=cloudflare modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical inventory --target cloudflare-dist && ultramodern-create ultramodern public-surface --app inventory --target cloudflare-dist && cross-env MODERNJS_DEPLOY=cloudflare modern deploy --skip-build && ultramodern-create ultramodern cloudflare-output-verify --app inventory",
-    "cloudflare:deploy": "cross-env ULTRAMODERN_CLOUDFLARE_REQUIRE_PUBLIC_URLS=true pnpm run cloudflare:build && wrangler deploy --config .output/wrangler.json",
+    "cloudflare:deploy": "node ../../scripts/immutable-application-release.mts deploy --app-directory .",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app inventory",
     "db:check": "drizzle-kit check --config drizzle.config.ts",

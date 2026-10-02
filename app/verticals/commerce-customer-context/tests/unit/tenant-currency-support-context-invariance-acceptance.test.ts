@@ -86,7 +86,7 @@ describe('Tenant Currency Support purchase-context invariance', () => {
       issue: (request) => {
         issued.push(request);
         return Effect.succeed({
-          baseUrl: new URL('https://pricing.example.test'),
+          baseUrl: new URL('https://shell.example.test/owner-api'),
           credential: Redacted.make(`Bearer ${request.legalEntityId}`),
         });
       },
@@ -97,6 +97,7 @@ describe('Tenant Currency Support purchase-context invariance', () => {
       for (const purchase of purchaseContexts) {
         const port = yield* purchaseCurrencyPricingPortFromEnvironment(
           {
+            compositionRevision: 'a'.repeat(64),
             legalEntityId: purchase.legalEntityId,
             requestCorrelation: purchase.correlation,
           },
@@ -111,6 +112,7 @@ describe('Tenant Currency Support purchase-context invariance', () => {
       expect(issued).toEqual(
         purchaseContexts.map((purchase) => ({
           audience: 'pricing',
+          compositionRevision: 'a'.repeat(64),
           legalEntityId: purchase.legalEntityId,
           requestCorrelation: purchase.correlation,
         })),

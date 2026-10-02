@@ -60,6 +60,7 @@ const startInput = Schema.decodeUnknownSync(CommercePortalAuthEnrollmentStartInp
 const claimFor = () => commercePortalAuthEnrollmentAccountCreationClaim(startInput, attemptId);
 
 const attempt = (overrides: Partial<EnrollmentAttemptSnapshot> = {}): EnrollmentAttemptSnapshot => ({
+  compositionRevision: 'c'.repeat(64),
   createdAt: at,
   createdByPrincipalId: actorPrincipalId,
   intentDigest: 'b'.repeat(64),

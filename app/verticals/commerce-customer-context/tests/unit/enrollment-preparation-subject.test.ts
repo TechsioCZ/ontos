@@ -48,6 +48,7 @@ const BINDING_ID = '80000000-0000-4000-8000-000000000001';
 const PARTY_RESOURCE_ID = 'party-registry-party-1';
 const INTENT_DIGEST = 'a'.repeat(64);
 const OTHER_INTENT_DIGEST = 'b'.repeat(64);
+const ORIGINAL_COMPOSITION_REVISION = 'c'.repeat(64);
 
 const clientOptions = (): ExternalIdentityClientOptions => ({
   apiKey: Redacted.make('preparation-subject-unit'),
@@ -61,6 +62,7 @@ const attemptFor = (overrides: {
   readonly withAccountSubject: boolean;
 }): EnrollmentAttemptSnapshot => {
   const base = {
+    compositionRevision: ORIGINAL_COMPOSITION_REVISION,
     createdAt: '2026-09-19T00:00:00.000Z',
     createdByPrincipalId: PRINCIPAL_ID,
     intentDigest: overrides.intentDigest ?? INTENT_DIGEST,
@@ -288,6 +290,16 @@ it.effect('reserves and activates under keys derived from the Attempt, so a re-r
     // Activation always names the exact binding the reserve answered with.
     expect(recorded.activatePayloads[0]?.activation.authBindingId).toBe(BINDING_ID);
     expect(recorded.activatePayloads[0]?.activation.expectedRevision).toBe(1);
+    expect(recorded.reservePayloads.map((payload) => payload.compositionRevision)).toEqual([
+      ORIGINAL_COMPOSITION_REVISION,
+      ORIGINAL_COMPOSITION_REVISION,
+      ORIGINAL_COMPOSITION_REVISION,
+    ]);
+    expect(recorded.activatePayloads.map((payload) => payload.compositionRevision)).toEqual([
+      ORIGINAL_COMPOSITION_REVISION,
+      ORIGINAL_COMPOSITION_REVISION,
+      ORIGINAL_COMPOSITION_REVISION,
+    ]);
   }),
 );
 

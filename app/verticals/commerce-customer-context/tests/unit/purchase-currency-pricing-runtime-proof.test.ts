@@ -60,7 +60,7 @@ const policy = {
 const credentialLayer = Layer.succeed(PurchaseCurrencyPricingGatewayCredentialService, {
   issue: () =>
     Effect.succeed({
-      baseUrl: new URL('https://pricing.example.test'),
+      baseUrl: new URL('https://shell.example.test/owner-api'),
       credential: Redacted.make('Bearer pricing-owner-issued'),
     }),
 });
@@ -161,7 +161,11 @@ describe('Purchase Currency Pricing runtime proof', () => {
     Effect.gen(function* validCzk() {
       const pricingCalls: unknown[] = [];
       const pricingPort = yield* purchaseCurrencyPricingPortFromEnvironment(
-        { legalEntityId: sellingLegalEntityId, requestCorrelation: handlerScope.correlationId },
+        {
+          compositionRevision: 'a'.repeat(64),
+          legalEntityId: sellingLegalEntityId,
+          requestCorrelation: handlerScope.correlationId,
+        },
         (payload, credential, correlation, options) => {
           pricingCalls.push({ correlation, credential: Redacted.value(credential), options, payload });
           return Effect.succeed(currentPricingResponse(payload.effectiveAt));
@@ -183,7 +187,7 @@ describe('Purchase Currency Pricing runtime proof', () => {
         {
           correlation: handlerScope.correlationId,
           credential: 'Bearer pricing-owner-issued',
-          options: { baseUrl: new URL('https://pricing.example.test') },
+          options: { baseUrl: new URL('https://shell.example.test/owner-api'), compositionRevision: 'a'.repeat(64) },
           payload: {
             effectiveAt: response.result.evidence.requestedAt,
             tenantId,
@@ -213,7 +217,11 @@ describe('Purchase Currency Pricing runtime proof', () => {
   it.effect('rejects explicit EUR when Pricing supports only CZK without falling back to the CZK default', () =>
     Effect.gen(function* unsupportedExplicitCurrency() {
       const pricingPort = yield* purchaseCurrencyPricingPortFromEnvironment(
-        { legalEntityId: sellingLegalEntityId, requestCorrelation: handlerScope.correlationId },
+        {
+          compositionRevision: 'a'.repeat(64),
+          legalEntityId: sellingLegalEntityId,
+          requestCorrelation: handlerScope.correlationId,
+        },
         (payload) => Effect.succeed(currentPricingResponse(payload.effectiveAt)),
       ).pipe(Effect.provide(credentialLayer));
       const services = yield* runtimeServices(pricingPort);
@@ -246,7 +254,11 @@ describe('Purchase Currency Pricing runtime proof', () => {
         ['SUPPORTED_CURRENCIES_UNAVAILABLE', 'pricing_currency_support_unavailable'],
       ] as const) {
         const pricingPort = yield* purchaseCurrencyPricingPortFromEnvironment(
-          { legalEntityId: sellingLegalEntityId, requestCorrelation: handlerScope.correlationId },
+          {
+            compositionRevision: 'a'.repeat(64),
+            legalEntityId: sellingLegalEntityId,
+            requestCorrelation: handlerScope.correlationId,
+          },
           (payload) =>
             Effect.succeed(
               Schema.decodeUnknownSync(CurrentSupportedCurrenciesResponseSchema)(

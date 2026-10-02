@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface SkuLookupClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type SkuLookupAuthorizedInvocation = readonly [
@@ -40,6 +41,10 @@ export const executeSkuLookup = (
   payload: SkuLookupRequest,
   ...[requestCorrelation, options = {}]: SkuLookupOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeSkuLookupWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeSkuLookupWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

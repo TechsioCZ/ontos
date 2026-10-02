@@ -7,6 +7,9 @@ import {
   ReadRuntime,
 } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
+import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { ConfigProvider, Effect, Layer, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
@@ -14,6 +17,7 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import { makeCatalogApiRuntime } from '../../api/index.ts';
 import { decideProductTypeUnnecessaryAction } from '../../src/actions/decide-product-type-unnecessary.action.ts';
 import { DecideProductTypeUnnecessaryPayloadSchema } from '../../shared/actions/decide-product-type-unnecessary.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const principalId = '33333333-3333-4333-8333-333333333333';
@@ -43,6 +47,13 @@ describe('Decide Product Type unnecessary HTTP Action', () => {
   it.live('routes authenticated tenant-scoped execution and maps permission denial', () =>
     Effect.gen(function* actionHttp() {
       expect(Schema.is(DecideProductTypeUnnecessaryPayloadSchema)(payload)).toBe(true);
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const compositionDocument = yield* Schema.encodeEffect(
+        Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+      )(compositionSnapshot);
       const issuer = 'https://shell.catalog-untyped-action.test';
       const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
       const publicJwk = {
@@ -53,6 +64,7 @@ describe('Decide Product Type unnecessary HTTP Action', () => {
       };
       const token = yield* Effect.promise(() =>
         new SignJWT({
+          compositionRevision: compositionSnapshot.composition.revision,
           principal: {
             authBindingId: '66666666-6666-4666-8666-666666666666',
             authContextRef: 'better-auth-session:catalog-untyped-action-test',
@@ -60,6 +72,7 @@ describe('Decide Product Type unnecessary HTTP Action', () => {
             principalId,
             tenantId,
           },
+          targetBuildMarker: ultramodernApiMarker.buildMarker,
           ver: 1,
         })
           .setProtectedHeader({ alg: 'EdDSA', kid: publicJwk.kid, typ: 'JWT' })
@@ -96,6 +109,7 @@ describe('Decide Product Type unnecessary HTTP Action', () => {
         Layer.succeed(ReadRuntime, readRuntime),
         Layer.mergeAll(
           Layer.succeed(ActionRuntime, actionRuntime),
+          Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(compositionDocument) }),
           ConfigProvider.layer(
             ConfigProvider.fromUnknown({
               ONTOS_GATEWAY_ISSUER: issuer,

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface StockSharingEligibilityResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type StockSharingEligibilityResolutionAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeStockSharingEligibilityResolution = (
   payload: StockSharingEligibilityResolutionRequest,
   ...[requestCorrelation, options = {}]: StockSharingEligibilityResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeStockSharingEligibilityResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeStockSharingEligibilityResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

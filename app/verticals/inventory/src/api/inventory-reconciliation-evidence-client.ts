@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface InventoryReconciliationEvidenceClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type InventoryReconciliationEvidenceAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeInventoryReconciliationEvidence = (
   payload: InventoryReconciliationEvidenceRequest,
   ...[requestCorrelation, options = {}]: InventoryReconciliationEvidenceOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeInventoryReconciliationEvidenceWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeInventoryReconciliationEvidenceWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

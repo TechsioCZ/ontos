@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PartyCorrectionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PartyCorrectionAuthorizedInvocation = readonly [
@@ -45,6 +46,10 @@ export const executePartyCorrection = (
   payload: PartyCorrectionRequest,
   ...[requestCorrelation, options = {}]: PartyCorrectionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePartyCorrectionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePartyCorrectionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

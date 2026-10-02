@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CustomerProfileTradingGateClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CustomerProfileTradingGateAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCustomerProfileTradingGate = (
   payload: CustomerProfileTradingGateRequest,
   ...[requestCorrelation, options = {}]: CustomerProfileTradingGateOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCustomerProfileTradingGateWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCustomerProfileTradingGateWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

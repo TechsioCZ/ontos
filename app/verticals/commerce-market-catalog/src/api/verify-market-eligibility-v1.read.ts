@@ -10,7 +10,7 @@ import type { VerifyMarketEligibilityV1Request } from '../../shared/apis/verify-
 import type { MarketResolutionPersistence } from '../persistence/market-resolution-persistence.ts';
 import { marketResolutionPersistenceForScope } from '../persistence/market-resolution-persistence.ts';
 import type { MarketSubjectRestrictionsReader } from '../integrations/market-subject-restrictions.ts';
-import { marketSubjectRestrictionsReaderFromPublishedClient } from '../integrations/market-subject-restrictions.ts';
+import { makeServerMarketSubjectRestrictionsReader } from '../integrations/market-subject-restrictions.ts';
 
 type VerifyServices = MarketResolutionPersistence & MarketSubjectRestrictionsReader;
 type VerifyResponse = typeof VerifyMarketEligibilityV1ResponseSchema.Type;
@@ -138,9 +138,12 @@ export const verifyMarketEligibilityV1Read = defineRead(
     schemaVersion: '1',
   },
   handleVerifyMarketEligibilityV1,
-  (transaction, scope) =>
-    marketResolutionPersistenceForScope(transaction, scope).pipe(
-      Effect.map((persistence) => ({ ...persistence, ...marketSubjectRestrictionsReaderFromPublishedClient })),
+  (transaction, scope, compositionRevision) =>
+    marketResolutionPersistenceForScope(transaction, scope, compositionRevision).pipe(
+      Effect.map((persistence) => ({
+        ...persistence,
+        ...makeServerMarketSubjectRestrictionsReader({ compositionRevision, legalEntityId: scope.legalEntityId }),
+      })),
     ),
   () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),
 );

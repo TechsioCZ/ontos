@@ -13,8 +13,8 @@ import {
 
 import { loader as loader_0 } from "../../routes/[lang]/page.data";
 import component_0 from "../../routes/[lang]/page";
-import { loader as loader_1 } from "../../routes/[lang]/contacts/page.data";
-import component_1 from "../../routes/[lang]/contacts/page";
+import { loader as loader_1 } from "../../routes/[lang]/$.data";
+import component_1 from "../../routes/[lang]/$";
 import component_2 from "../../routes/[lang]/login/page";
 import { loader as loader_2 } from "../../routes/[lang]/modules/[moduleId]/page.data";
 import component_3 from "../../routes/[lang]/modules/[moduleId]/page";
@@ -43,13 +43,13 @@ const route__lang__page = createRoute({
   }),
 });
 
-const route__lang__contacts_page = createRoute({
+const route__lang__$ = createRoute({
   getParentRoute: () => rootRoute,
-  path: "$lang/contacts",
+  path: "$lang/$",
   component: component_1,
-  loader: modernLoaderToTanstack({ hasSplat: false }, loader_1),
+  loader: modernLoaderToTanstack({ hasSplat: true }, loader_1),
   staticData: createRouteStaticData({
-    modernRouteId: "(lang)/contacts/page",
+    modernRouteId: "(lang)/$",
     modernRouteLoader: loader_1,
   }),
 });
@@ -96,7 +96,7 @@ const route__lang__search_page = createRoute({
   }),
 });
 
-export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__contacts_page, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__search_page]);
+export const routeTree = rootRoute.addChildren([route__lang__page, route__lang__$, route__lang__login_page, route__lang__modules__moduleId__page, route__lang__resources__moduleId___resourceType___resourceId__page, route__lang__search_page]);
 
 export const router = createRouter({
   ...modernTanstackRouterFastDefaults,

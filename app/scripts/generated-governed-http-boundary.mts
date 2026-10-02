@@ -1,8 +1,14 @@
 import path from 'node:path';
 
+import { SyntaxKind } from '@typescript/native/unstable/ast';
 import { Option, Schema } from 'effect';
 
-import { matchingDelimiter, separatedSource, topLevelSeparators } from './boundary-source-structure.mts';
+import {
+  DelimiterDepth,
+  matchingDelimiter,
+  separatedSource,
+  topLevelSeparators,
+} from './boundary-source-structure.mts';
 import {
   hasGeneratedGovernedClientContract,
   hasGeneratedSourceHeader,
@@ -10,6 +16,7 @@ import {
   hasGeneratedModuleApiReadContract,
   hasGeneratedOperationGatewayContract,
   hasGeneratedOperationPrincipalContract,
+  tokenizeGovernedClient,
 } from './generated-module-api-boundary.mts';
 import {
   GOVERNED_HTTP_API_CLOSING_ANNOTATION,
@@ -1005,7 +1012,736 @@ const hasReadDescriptorPolicy = (read: string, allowedAccessKinds: ReadonlySet<s
   );
 };
 
-const hasReadCallbacks = (source: string, readExpression: string, kind: GovernedReadKind): boolean => {
+interface NamedSourceImport {
+  readonly imported: string;
+  readonly modulePath: string;
+  readonly typeOnly: boolean;
+}
+
+const topLevelBindingDeclarations = (source: string, binding: string): readonly RegExpMatchArray[] =>
+  [
+    ...maskNonCode(source).matchAll(
+      new RegExp(
+        `\\b(?:class|const|enum|function|interface|let|namespace|type|var)\\s+${escapeRegExp(binding)}\\b`,
+        'gu',
+      ),
+    ),
+  ].filter((match) => match.index !== undefined && isTopLevelCodePosition(source, match.index));
+
+const namedSourceImport = (source: string, binding: string, allowTypeOnly = false): NamedSourceImport | undefined => {
+  const imports = [
+    ...maskComments(source).matchAll(
+      /^\s*import\s+(?:(?<typeOnly>type)\s+)?(?:[A-Za-z_$][A-Za-z0-9_$]*\s*,\s*)?\{(?<values>[^}]*)\}\s*from\s*(?<quote>['"])(?<modulePath>[^'"]+)\k<quote>;?/gmu,
+    ),
+  ].filter((match) => match.index !== undefined && isTopLevelCodePosition(source, match.index));
+  const candidates = imports.flatMap((match) =>
+    (match.groups?.values ?? '').split(',').flatMap((entry) => {
+      const imported =
+        /^(?:(?<typeOnly>type)\s+)?(?<imported>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s+as\s+(?<local>[A-Za-z_$][A-Za-z0-9_$]*))?$/u.exec(
+          entry.trim(),
+        );
+      const name = imported?.groups?.imported;
+      const local = imported?.groups?.local ?? name;
+      const modulePath = match.groups?.modulePath;
+      return name === undefined || local !== binding || modulePath === undefined
+        ? []
+        : [
+            {
+              imported: name,
+              modulePath,
+              typeOnly: match.groups?.typeOnly !== undefined || imported?.groups?.typeOnly !== undefined,
+            },
+          ];
+    }),
+  );
+  const candidate = candidates.length === 1 ? candidates[0] : undefined;
+  return candidate === undefined ||
+    (!allowTypeOnly && candidate.typeOnly) ||
+    topLevelBindingDeclarations(source, binding).length > 0
+    ? undefined
+    : candidate;
+};
+
+const hasNativeReadServiceFactoryExport = (source: string, binding: string): boolean => {
+  const code = maskComments(source);
+  const declarations = [
+    ...code.matchAll(new RegExp(`\\bexport\\s+const\\s+${escapeRegExp(binding)}\\s*:\\s*`, 'gu')),
+  ].filter((match) => match.index !== undefined && isTopLevelCodePosition(source, match.index));
+  const declaration = declarations.length === 1 ? declarations[0] : undefined;
+  if (declaration?.index === undefined || topLevelBindingDeclarations(source, binding).length !== 1) {
+    return false;
+  }
+  const annotationStart = declaration.index + declaration[0].length;
+  const [separator] = topLevelSeparators(maskNonCode(source), '=;', annotationStart, source.length, true);
+  if (separator === undefined || source.charAt(separator) !== '=') {
+    return false;
+  }
+  const annotation = code.slice(annotationStart, separator).trim();
+  const nativeType = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?<arguments><[\s\S]+>)$/u.exec(annotation);
+  const typeBinding = nativeType?.groups?.binding;
+  const argumentsSource = nativeType?.groups?.arguments;
+  const nativeImport = typeBinding === undefined ? undefined : namedSourceImport(source, typeBinding, true);
+  return (
+    argumentsSource !== undefined &&
+    topLevelSeparators(maskNonCode(argumentsSource), '>', 0, argumentsSource.length, true)[0] ===
+      argumentsSource.length - 1 &&
+    nativeImport?.imported === 'ReadServiceFactory' &&
+    nativeImport.modulePath === CORE_RUNTIME_MODULE &&
+    isExecutableCallback(constInitializer(source, binding))
+  );
+};
+
+/** Resolve the original owner callable; native import renames preserve that callable's identity. */
+export const hasOwnerLocalReadServiceFactory = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  candidate?: string,
+): boolean => {
+  if (
+    candidate === undefined ||
+    !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ||
+    path.posix.normalize(ownerPath) !== ownerPath ||
+    path.posix.normalize(readFile) !== readFile ||
+    !readFile.startsWith(`${ownerPath}/`)
+  ) {
+    return false;
+  }
+  const readSource = sources.get(readFile);
+  const imported = readSource === undefined ? undefined : namedSourceImport(readSource, candidate);
+  if (imported === undefined || !/^\.\.?\//u.test(imported.modulePath) || !imported.modulePath.endsWith('.ts')) {
+    return false;
+  }
+  const factoryFile = path.posix.normalize(path.posix.join(path.posix.dirname(readFile), imported.modulePath));
+  const factorySource = factoryFile.startsWith(`${ownerPath}/`) ? sources.get(factoryFile) : undefined;
+  return factorySource !== undefined && hasNativeReadServiceFactoryExport(factorySource, imported.imported);
+};
+
+const nativeReadFactoryAnnotationBinding = (source: string, annotation: string): string | undefined => {
+  const nativeType = /^(?<binding>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?<arguments><[\s\S]+>)$/u.exec(annotation);
+  const binding = nativeType?.groups?.binding;
+  const argumentsSource = nativeType?.groups?.arguments;
+  const imported = binding === undefined ? undefined : namedSourceImport(source, binding, true);
+  return argumentsSource !== undefined &&
+    topLevelSeparators(maskNonCode(argumentsSource), '>', 0, argumentsSource.length, true)[0] ===
+      argumentsSource.length - 1 &&
+    imported?.imported === 'ReadServiceFactory' &&
+    imported.modulePath === CORE_RUNTIME_MODULE
+    ? binding
+    : undefined;
+};
+
+type ReadFactoryToken = ReturnType<typeof tokenizeGovernedClient>[number];
+const READ_FACTORY_DECLARATIONS = new Set([
+  SyntaxKind.ClassKeyword,
+  SyntaxKind.ConstKeyword,
+  SyntaxKind.EnumKeyword,
+  SyntaxKind.FunctionKeyword,
+  SyntaxKind.InterfaceKeyword,
+  SyntaxKind.LetKeyword,
+  SyntaxKind.ModuleKeyword,
+  SyntaxKind.NamespaceKeyword,
+  SyntaxKind.TypeKeyword,
+  SyntaxKind.VarKeyword,
+]);
+const READ_FACTORY_ASSIGNMENTS = new Set([
+  SyntaxKind.EqualsToken,
+  SyntaxKind.PlusEqualsToken,
+  SyntaxKind.MinusEqualsToken,
+  SyntaxKind.AsteriskEqualsToken,
+  SyntaxKind.SlashEqualsToken,
+  SyntaxKind.PercentEqualsToken,
+  SyntaxKind.AsteriskAsteriskEqualsToken,
+  SyntaxKind.AmpersandEqualsToken,
+  SyntaxKind.BarEqualsToken,
+  SyntaxKind.CaretEqualsToken,
+  SyntaxKind.LessThanLessThanEqualsToken,
+  SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+  SyntaxKind.AmpersandAmpersandEqualsToken,
+  SyntaxKind.BarBarEqualsToken,
+  SyntaxKind.QuestionQuestionEqualsToken,
+  SyntaxKind.PlusPlusToken,
+  SyntaxKind.MinusMinusToken,
+]);
+const READ_FACTORY_PARAMETER_OPENINGS = new Set([
+  SyntaxKind.OpenParenToken,
+  SyntaxKind.OpenBraceToken,
+  SyntaxKind.OpenBracketToken,
+  SyntaxKind.LessThanToken,
+]);
+const READ_FACTORY_PARAMETER_CLOSINGS = new Set([
+  SyntaxKind.CloseParenToken,
+  SyntaxKind.CloseBraceToken,
+  SyntaxKind.CloseBracketToken,
+  SyntaxKind.GreaterThanToken,
+]);
+
+const READ_FACTORY_MUTATORS = new Map([
+  ['Object', new Set(['assign', 'defineProperties', 'defineProperty', 'setPrototypeOf'])],
+  ['Reflect', new Set(['defineProperty', 'deleteProperty', 'set', 'setPrototypeOf'])],
+]);
+const READ_FACTORY_PREFIX_MUTATIONS = new Set([
+  SyntaxKind.PlusPlusToken,
+  SyntaxKind.MinusMinusToken,
+  SyntaxKind.DeleteKeyword,
+]);
+const READ_FACTORY_MEMBER_SELECTORS = new Set([SyntaxKind.DotToken, SyntaxKind.QuestionDotToken]);
+const READ_FACTORY_ALIAS_ENDINGS = new Set([
+  SyntaxKind.SemicolonToken,
+  SyntaxKind.CommaToken,
+  SyntaxKind.CloseParenToken,
+  SyntaxKind.CloseBraceToken,
+  SyntaxKind.CloseBracketToken,
+  SyntaxKind.AsKeyword,
+  SyntaxKind.SatisfiesKeyword,
+]);
+const READ_FACTORY_TYPE_DELIMITERS = new Map([
+  [SyntaxKind.OpenParenToken, '('],
+  [SyntaxKind.CloseParenToken, ')'],
+  [SyntaxKind.OpenBraceToken, '{'],
+  [SyntaxKind.CloseBraceToken, '}'],
+  [SyntaxKind.OpenBracketToken, '['],
+  [SyntaxKind.CloseBracketToken, ']'],
+  [SyntaxKind.LessThanToken, '<'],
+  [SyntaxKind.GreaterThanToken, '>'],
+  [SyntaxKind.GreaterThanGreaterThanToken, '>>'],
+  [SyntaxKind.GreaterThanGreaterThanGreaterThanToken, '>>>'],
+]);
+
+const readFactoryTokenClose = (
+  tokens: readonly ReadFactoryToken[],
+  opening: number,
+  openKind: SyntaxKind,
+  closeKind: SyntaxKind,
+): number | undefined => {
+  let depth = 0;
+  for (let index = opening; index < tokens.length; index += 1) {
+    if (tokens[index]?.kind === openKind) {
+      depth += 1;
+    }
+    if (tokens[index]?.kind === closeKind) {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return undefined;
+};
+
+const readFactoryDestructuredBinding = (
+  tokens: readonly ReadFactoryToken[],
+  opening: number,
+  bindings: ReadonlyMap<string, number>,
+): boolean => {
+  const closeKind =
+    tokens[opening]?.kind === SyntaxKind.OpenBraceToken ? SyntaxKind.CloseBraceToken : SyntaxKind.CloseBracketToken;
+  const closing = readFactoryTokenClose(tokens, opening, tokens[opening]?.kind ?? SyntaxKind.Unknown, closeKind);
+  return (
+    closing === undefined ||
+    tokens
+      .slice(opening + 1, closing)
+      .some(
+        (token, offset) =>
+          token.kind === SyntaxKind.Identifier &&
+          bindings.has(token.value) &&
+          tokens[opening + offset + 2]?.kind !== SyntaxKind.ColonToken,
+      )
+  );
+};
+
+const readFactoryParametersShadow = (
+  tokens: readonly ReadFactoryToken[],
+  opening: number,
+  closing: number,
+  bindings: ReadonlyMap<string, number>,
+): boolean => {
+  let parameterStart = true;
+  let depth = 0;
+  for (let index = opening + 1; index < closing; index += 1) {
+    const token = tokens[index];
+    if (token === undefined) {
+      return true;
+    }
+    if (parameterStart && token.kind !== SyntaxKind.DotDotDotToken) {
+      if (token.kind === SyntaxKind.Identifier && bindings.has(token.value)) {
+        return true;
+      }
+      if (
+        (token.kind === SyntaxKind.OpenBraceToken || token.kind === SyntaxKind.OpenBracketToken) &&
+        readFactoryDestructuredBinding(tokens, index, bindings)
+      ) {
+        return true;
+      }
+      parameterStart = false;
+    }
+    if (READ_FACTORY_PARAMETER_OPENINGS.has(token.kind)) {
+      depth += 1;
+    }
+    if (READ_FACTORY_PARAMETER_CLOSINGS.has(token.kind)) {
+      depth -= 1;
+    }
+    if (depth === 0 && token.kind === SyntaxKind.CommaToken) {
+      parameterStart = true;
+    }
+  }
+  return false;
+};
+
+const hasReadFactoryReturnArrow = (tokens: readonly ReadFactoryToken[], annotation: number): boolean => {
+  const depth = new DelimiterDepth();
+  for (const token of tokens.slice(annotation + 1)) {
+    if (depth.isTopLevel() && token.kind === SyntaxKind.EqualsGreaterThanToken) {
+      return true;
+    }
+    if (depth.isTopLevel() && token.kind === SyntaxKind.SemicolonToken) {
+      return false;
+    }
+    for (const delimiter of READ_FACTORY_TYPE_DELIMITERS.get(token.kind) ?? '') {
+      depth.update(delimiter, undefined, true);
+    }
+    if (depth.hasUnmatchedClose()) {
+      return false;
+    }
+  }
+  return false;
+};
+
+const isReadFactoryFunctionParameters = (
+  tokens: readonly ReadFactoryToken[],
+  opening: number,
+  closing: number,
+): boolean => {
+  const previous = tokens[opening - 1]?.kind;
+  const beforePrevious = tokens[opening - 2]?.kind;
+  const functionPrefix =
+    previous === SyntaxKind.FunctionKeyword ||
+    (previous === SyntaxKind.AsteriskToken && beforePrevious === SyntaxKind.FunctionKeyword) ||
+    (previous === SyntaxKind.Identifier &&
+      (beforePrevious === SyntaxKind.FunctionKeyword ||
+        (beforePrevious === SyntaxKind.AsteriskToken && tokens[opening - 3]?.kind === SyntaxKind.FunctionKeyword)));
+  if (functionPrefix) {
+    return true;
+  }
+  const after = tokens[closing + 1]?.kind;
+  return (
+    after === SyntaxKind.EqualsGreaterThanToken ||
+    (after === SyntaxKind.ColonToken && hasReadFactoryReturnArrow(tokens, closing + 1))
+  );
+};
+
+const readFactoryReflectiveMutation = (tokens: readonly ReadFactoryToken[], index: number): boolean => {
+  const call = tokens[index - 1];
+  const method = tokens[index - 2];
+  const selector = tokens[index - 3];
+  const owner = tokens[index - 4];
+  if (
+    call === undefined ||
+    method === undefined ||
+    selector === undefined ||
+    owner === undefined ||
+    call.kind !== SyntaxKind.OpenParenToken
+  ) {
+    return false;
+  }
+  if (READ_FACTORY_MEMBER_SELECTORS.has(selector.kind)) {
+    return READ_FACTORY_MUTATORS.get(owner.value)?.has(method.value) === true;
+  }
+  return (
+    method.kind === SyntaxKind.CloseBracketToken &&
+    selector.kind === SyntaxKind.StringLiteral &&
+    owner.kind === SyntaxKind.OpenBracketToken &&
+    READ_FACTORY_MUTATORS.get(tokens[index - 5]?.value ?? '')?.has(selector.value) === true
+  );
+};
+
+const readFactoryDeclarationAssignment = (tokens: readonly ReadFactoryToken[], start: number): number | undefined => {
+  const depth = new DelimiterDepth();
+  for (let assignment = start; assignment < tokens.length; assignment += 1) {
+    const token = tokens[assignment];
+    if (depth.isTopLevel() && token?.kind === SyntaxKind.EqualsToken) {
+      return assignment;
+    }
+    if (depth.isTopLevel() && token?.kind === SyntaxKind.SemicolonToken) {
+      return undefined;
+    }
+    for (const delimiter of READ_FACTORY_TYPE_DELIMITERS.get(token?.kind ?? SyntaxKind.Unknown) ?? '') {
+      depth.update(delimiter, undefined, true);
+    }
+  }
+  return undefined;
+};
+
+interface ReadFactoryParameterRange {
+  readonly closing: number;
+  readonly opening: number;
+}
+
+const readFactoryMakerParameterRange = (
+  tokens: readonly ReadFactoryToken[],
+  maker: string,
+): ReadFactoryParameterRange | undefined => {
+  const declaration = tokens.findIndex(
+    (token, index) =>
+      token.kind === SyntaxKind.Identifier &&
+      token.value === maker &&
+      tokens[index - 1]?.kind === SyntaxKind.ConstKeyword,
+  );
+  const assignment = declaration === -1 ? undefined : readFactoryDeclarationAssignment(tokens, declaration + 1);
+  const opening = assignment === undefined ? undefined : assignment + 1;
+  if (opening === undefined || tokens[opening]?.kind !== SyntaxKind.OpenParenToken) {
+    return undefined;
+  }
+  const closing = readFactoryTokenClose(tokens, opening, SyntaxKind.OpenParenToken, SyntaxKind.CloseParenToken);
+  return closing === undefined ? undefined : { closing, opening };
+};
+
+const isReadFactoryVerifiedDefaultAlias = (
+  tokens: readonly ReadFactoryToken[],
+  index: number,
+  parameters: ReadFactoryParameterRange | undefined,
+): boolean =>
+  parameters !== undefined &&
+  index > parameters.opening &&
+  index < parameters.closing &&
+  tokens[index - 1]?.kind === SyntaxKind.EqualsToken &&
+  tokens[index - 3]?.kind === SyntaxKind.TypeOfKeyword &&
+  tokens[index - 2]?.value === tokens[index]?.value;
+
+const readFactoryDirectAliasReference = (
+  tokens: readonly ReadFactoryToken[],
+  index: number,
+  parameters: ReadFactoryParameterRange | undefined,
+): boolean => {
+  let before = index - 1;
+  while (tokens[before]?.kind === SyntaxKind.OpenParenToken) {
+    before -= 1;
+  }
+  const ending = tokens[index + 1]?.kind;
+  return (
+    tokens[before]?.kind === SyntaxKind.EqualsToken &&
+    (ending === undefined || READ_FACTORY_ALIAS_ENDINGS.has(ending)) &&
+    !isReadFactoryVerifiedDefaultAlias(tokens, index, parameters)
+  );
+};
+
+const readFactoryProtectedValueAlias = (
+  tokens: readonly ReadFactoryToken[],
+  index: number,
+  bindings: ReadonlyMap<string, number>,
+): boolean => {
+  const declaration = tokens[index]?.kind;
+  if (
+    declaration !== SyntaxKind.ConstKeyword &&
+    declaration !== SyntaxKind.LetKeyword &&
+    declaration !== SyntaxKind.VarKeyword
+  ) {
+    return false;
+  }
+  const bound = tokens[index + 1];
+  if (bound?.kind !== SyntaxKind.Identifier || bindings.has(bound.value)) {
+    return false;
+  }
+  const assignment = readFactoryDeclarationAssignment(tokens, index + 2);
+  if (assignment === undefined) {
+    return false;
+  }
+  let value = assignment + 1;
+  while (tokens[value]?.kind === SyntaxKind.OpenParenToken) {
+    value += 1;
+  }
+  const reference = tokens[value];
+  const next = tokens[value + 1]?.kind;
+  return (
+    reference?.kind === SyntaxKind.Identifier &&
+    bindings.has(reference.value) &&
+    !READ_FACTORY_MEMBER_SELECTORS.has(next ?? SyntaxKind.Unknown) &&
+    next !== SyntaxKind.OpenBracketToken &&
+    next !== SyntaxKind.OpenParenToken
+  );
+};
+
+const readFactoryBindingMutated = (tokens: readonly ReadFactoryToken[], index: number): boolean => {
+  if (tokens[index - 1]?.kind === SyntaxKind.TypeOfKeyword) {
+    return false;
+  }
+  let next = index + 1;
+  while (tokens[next]?.kind === SyntaxKind.DotToken || tokens[next]?.kind === SyntaxKind.OpenBracketToken) {
+    if (tokens[next]?.kind === SyntaxKind.DotToken && tokens[next + 1]?.kind === SyntaxKind.Identifier) {
+      next += 2;
+    } else if (tokens[next]?.kind === SyntaxKind.OpenBracketToken) {
+      const closing = readFactoryTokenClose(tokens, next, SyntaxKind.OpenBracketToken, SyntaxKind.CloseBracketToken);
+      if (closing === undefined) {
+        return true;
+      }
+      next = closing + 1;
+    } else {
+      break;
+    }
+  }
+  const previous = tokens[index - 1]?.kind;
+  return (
+    READ_FACTORY_ASSIGNMENTS.has(tokens[next]?.kind ?? SyntaxKind.Unknown) ||
+    READ_FACTORY_PREFIX_MUTATIONS.has(previous ?? SyntaxKind.Unknown) ||
+    readFactoryReflectiveMutation(tokens, index)
+  );
+};
+
+const readFactoryDeclaredBinding = (tokens: readonly ReadFactoryToken[], index: number): boolean => {
+  const previous = tokens[index - 1]?.kind;
+  const specifierType =
+    previous === SyntaxKind.TypeKeyword &&
+    (tokens[index - 2]?.kind === SyntaxKind.OpenBraceToken || tokens[index - 2]?.kind === SyntaxKind.CommaToken);
+  return !specifierType && READ_FACTORY_DECLARATIONS.has(previous ?? SyntaxKind.Unknown);
+};
+
+const readFactoryDestructuredDeclaration = (
+  tokens: readonly ReadFactoryToken[],
+  index: number,
+  bindings: ReadonlyMap<string, number>,
+): boolean => {
+  const declaration = tokens[index]?.kind;
+  const opening = tokens[index + 1]?.kind;
+  return (
+    (declaration === SyntaxKind.ConstKeyword ||
+      declaration === SyntaxKind.LetKeyword ||
+      declaration === SyntaxKind.VarKeyword) &&
+    (opening === SyntaxKind.OpenBraceToken || opening === SyntaxKind.OpenBracketToken) &&
+    readFactoryDestructuredBinding(tokens, index + 1, bindings)
+  );
+};
+
+/** Protected imports and declarations must retain their original callable identity. */
+const hasStableReadFactoryBindings = (
+  source: string,
+  expectedDeclarations: ReadonlyMap<string, number>,
+  maker: string,
+): boolean => {
+  const tokens = tokenizeGovernedClient(source);
+  const declarations = new Map<string, number>();
+  const parameters = readFactoryMakerParameterRange(tokens, maker);
+  for (const [index, token] of tokens.entries()) {
+    if (
+      readFactoryDestructuredDeclaration(tokens, index, expectedDeclarations) ||
+      readFactoryProtectedValueAlias(tokens, index, expectedDeclarations)
+    ) {
+      return false;
+    }
+    if (
+      token.kind === SyntaxKind.Identifier &&
+      expectedDeclarations.has(token.value) &&
+      !READ_FACTORY_MEMBER_SELECTORS.has(tokens[index - 1]?.kind ?? SyntaxKind.Unknown)
+    ) {
+      if (readFactoryDeclaredBinding(tokens, index)) {
+        declarations.set(token.value, (declarations.get(token.value) ?? 0) + 1);
+      } else if (
+        readFactoryBindingMutated(tokens, index) ||
+        readFactoryDirectAliasReference(tokens, index, parameters) ||
+        tokens[index + 1]?.kind === SyntaxKind.EqualsGreaterThanToken
+      ) {
+        return false;
+      }
+    }
+    if (token.kind === SyntaxKind.OpenParenToken) {
+      const closing = readFactoryTokenClose(tokens, index, SyntaxKind.OpenParenToken, SyntaxKind.CloseParenToken);
+      if (
+        closing === undefined ||
+        (isReadFactoryFunctionParameters(tokens, index, closing) &&
+          readFactoryParametersShadow(tokens, index, closing, expectedDeclarations))
+      ) {
+        return false;
+      }
+    }
+  }
+  return [...expectedDeclarations].every(([binding, count]) => (declarations.get(binding) ?? 0) === count);
+};
+
+interface LocalReadFactoryMaker {
+  readonly argumentsList: readonly string[];
+  readonly maker: string;
+  readonly nativeType: string;
+  readonly parameters: readonly string[];
+}
+
+const localReadFactoryMaker = (source: string, candidate: string): LocalReadFactoryMaker | undefined => {
+  const initializer = constInitializer(source, candidate);
+  const maker = /^(?<name>make[A-Z][A-Za-z0-9_$]*)\(/u.exec(initializer ?? '')?.groups?.name;
+  const makerSource = maker === undefined ? undefined : constInitializer(source, maker);
+  if (initializer === undefined || maker === undefined || makerSource === undefined || !makerSource.startsWith('(')) {
+    return undefined;
+  }
+  const invocation = new RegExp(
+    `^${escapeRegExp(maker)}\\(\\s*(?:[A-Za-z_$][A-Za-z0-9_$]*(?:\\s*,\\s*[A-Za-z_$][A-Za-z0-9_$]*)*\\s*,?)?\\s*\\)$`,
+    'u',
+  );
+  const argumentsList = invocation.test(maskComments(initializer))
+    ? wholeCallArguments(initializer, new RegExp(`^${escapeRegExp(maker)}\\(`, 'u'))
+    : undefined;
+  const closing = matchingDelimiterEnd(makerSource, 0, '(', ')');
+  if (
+    argumentsList === undefined ||
+    closing === undefined ||
+    !makerSource
+      .slice(closing + 1)
+      .trimStart()
+      .startsWith(':')
+  ) {
+    return undefined;
+  }
+  const [arrow] = topLevelSeparators(maskNonCode(makerSource), '=', closing + 1, makerSource.length, true);
+  if (arrow === undefined || makerSource.slice(arrow, arrow + 2) !== '=>') {
+    return undefined;
+  }
+  const annotation = maskComments(makerSource.slice(closing + 1, arrow))
+    .trim()
+    .slice(1)
+    .trim();
+  const nativeType = nativeReadFactoryAnnotationBinding(source, annotation);
+  const effectImport = namedSourceImport(source, 'Effect');
+  if (
+    nativeType === undefined ||
+    !isEffectFnCallback(makerSource.slice(arrow + 2).trim()) ||
+    effectImport?.imported !== 'Effect' ||
+    effectImport.modulePath !== 'effect'
+  ) {
+    return undefined;
+  }
+  const parameters = separatedSource(
+    maskComments(makerSource),
+    topLevelSeparators(maskNonCode(makerSource), ',', 1, closing, true),
+    1,
+    closing,
+  ).filter((parameter) => parameter !== '');
+  return { argumentsList, maker, nativeType, parameters };
+};
+
+const hasReadFactoryDependencyExport = (source: string, binding: string): boolean => {
+  const exported = new RegExp(`\\bexport\\s+const\\s+${escapeRegExp(binding)}\\b`, 'gu');
+  const declarations = [...maskNonCode(source).matchAll(exported)].filter(
+    (declaration) => declaration.index !== undefined && isTopLevelCodePosition(source, declaration.index),
+  );
+  return (
+    declarations.length === 1 &&
+    topLevelBindingDeclarations(source, binding).length === 1 &&
+    isExecutableCallback(constInitializer(source, binding))
+  );
+};
+
+const readFactoryDependencyDeclarationCount = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  source: string,
+  dependency: string,
+): number | undefined => {
+  const imported = namedSourceImport(source, dependency);
+  if (imported !== undefined && /^\.\.?\//u.test(imported.modulePath) && imported.modulePath.endsWith('.ts')) {
+    const filename = path.posix.normalize(path.posix.join(path.posix.dirname(readFile), imported.modulePath));
+    const dependencySource = filename.startsWith(`${ownerPath}/`) ? sources.get(filename) : undefined;
+    return dependencySource !== undefined && hasReadFactoryDependencyExport(dependencySource, imported.imported)
+      ? 0
+      : undefined;
+  }
+  const local = constInitializer(source, dependency);
+  return local !== undefined && isExecutableCallback(local) ? 1 : undefined;
+};
+
+interface LocalReadFactoryDependencies {
+  readonly bindings: ReadonlyMap<string, number>;
+  readonly minimumArguments: number;
+}
+
+const localReadFactoryDependencies = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  source: string,
+  candidate: string,
+  factory: LocalReadFactoryMaker,
+): LocalReadFactoryDependencies | undefined => {
+  const bindings = new Map([
+    [candidate, 1],
+    [factory.maker, 1],
+    ['Effect', 0],
+    [factory.nativeType, 0],
+  ]);
+  const parameterNames: string[] = [];
+  let minimumArguments = 0;
+  for (const [index, parameter] of factory.parameters.entries()) {
+    const parsed =
+      /^(?<name>[A-Za-z_$][A-Za-z0-9_$]*):\s*typeof\s+(?<dependency>[A-Za-z_$][A-Za-z0-9_$]*)(?:\s*=\s*(?<default>[A-Za-z_$][A-Za-z0-9_$]*))?$/u.exec(
+        parameter,
+      );
+    const dependency = parsed?.groups?.dependency;
+    const defaultValue = parsed?.groups?.default;
+    const parameterName = parsed?.groups?.name;
+    if (
+      dependency === undefined ||
+      parameterName === undefined ||
+      parameterName === dependency ||
+      (defaultValue !== undefined && defaultValue !== dependency)
+    ) {
+      return undefined;
+    }
+    parameterNames.push(parameterName);
+    if (defaultValue === undefined) {
+      minimumArguments = index + 1;
+    }
+    if (index < factory.argumentsList.length && factory.argumentsList[index] !== dependency) {
+      return undefined;
+    }
+    const declarationCount = readFactoryDependencyDeclarationCount(sources, readFile, ownerPath, source, dependency);
+    if (declarationCount === undefined) {
+      return undefined;
+    }
+    bindings.set(dependency, declarationCount);
+  }
+  return parameterNames.some((name) => bindings.has(name)) ? undefined : { bindings, minimumArguments };
+};
+
+/** Prove a local native factory result without accepting a forwarding callback or alias. */
+export const hasOwnerLocalReadServiceFactoryResult = (
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+  candidate?: string,
+): boolean => {
+  if (
+    candidate === undefined ||
+    !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate) ||
+    path.posix.normalize(ownerPath) !== ownerPath ||
+    path.posix.normalize(readFile) !== readFile ||
+    !readFile.startsWith(`${ownerPath}/`)
+  ) {
+    return false;
+  }
+  const source = sources.get(readFile);
+  if (source === undefined) {
+    return false;
+  }
+  const factory = localReadFactoryMaker(source, candidate);
+  const dependencies =
+    factory === undefined
+      ? undefined
+      : localReadFactoryDependencies(sources, readFile, ownerPath, source, candidate, factory);
+  return (
+    factory !== undefined &&
+    dependencies !== undefined &&
+    factory.argumentsList.length >= dependencies.minimumArguments &&
+    factory.argumentsList.length <= factory.parameters.length &&
+    hasStableReadFactoryBindings(source, dependencies.bindings, factory.maker)
+  );
+};
+
+const hasReadCallbacks = (
+  source: string,
+  readExpression: string,
+  kind: GovernedReadKind,
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+): boolean => {
   const handler = callArgument(readExpression, /^defineRead\(/u, 1);
   const callbacks = [2, 3];
   if (kind === SEARCH_PROVIDER_KIND) {
@@ -1015,13 +1751,8 @@ const hasReadCallbacks = (source: string, readExpression: string, kind: Governed
     if (candidate === undefined || !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate)) {
       return false;
     }
-    return [...source.matchAll(/^\s*import\s*\{(?<values>[^}]*)\}\s*from\s*['"]\.\/[a-z][a-z0-9-]*\.ts['"];?/gmu)].some(
-      (match) =>
-        (match.groups?.values ?? '')
-          .split(',')
-          .map((entry) => entry.trim())
-          .includes(candidate),
-    );
+    const imported = namedSourceImport(source, candidate);
+    return imported !== undefined && /^\.\/[a-z][a-z0-9-]*\.ts$/u.test(imported.modulePath);
   };
   const isOwnerLocalImportedFactoryResult = (candidate: string | undefined): boolean => {
     if (candidate === undefined || !/^[A-Za-z_$][A-Za-z0-9_$]*$/u.test(candidate)) {
@@ -1058,6 +1789,8 @@ const hasReadCallbacks = (source: string, readExpression: string, kind: Governed
         isExecutableCallback(callback, source) ||
         isOwnerLocalImportedCallback(callback) ||
         isOwnerLocalImportedFactoryResult(callback) ||
+        (index === 2 && hasOwnerLocalReadServiceFactory(sources, readFile, ownerPath, callback)) ||
+        (index === 2 && hasOwnerLocalReadServiceFactoryResult(sources, readFile, ownerPath, callback)) ||
         (index === 3 && isConditionalPermissionDescriptor(callback))
       );
     })
@@ -1093,7 +1826,14 @@ const hasReadEntrypoint = (source: string, entrypoint: string, identity: Readonl
   return result;
 };
 
-const hasReadContract = (source: string, contribution: GovernedReadContribution, moduleId: string): boolean => {
+const hasReadContract = (
+  source: string,
+  contribution: GovernedReadContribution,
+  moduleId: string,
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
+): boolean => {
   const camel = toCamelCase(contribution.name);
   const schemaStem = contributionSchemaStem(contribution.kind, contribution.name);
   const escapedCamel = escapeRegExp(camel);
@@ -1113,7 +1853,7 @@ const hasReadContract = (source: string, contribution: GovernedReadContribution,
     return false;
   }
   const checks = {
-    callbacks: hasReadCallbacks(source, readExpression, contribution.kind),
+    callbacks: hasReadCallbacks(source, readExpression, contribution.kind, sources, readFile, ownerPath),
     descriptorReferences: hasObjectProperties(read, {
       entrypoint: `${camel}Entrypoint`,
       inputSchema,
@@ -1916,7 +2656,10 @@ const hasCompleteGeneratedActionHttpSeam = (input: {
       server.includes(`export const ${layerValue} = HttpApiBuilder.group(`),
       client.includes(`from '../../shared/apis/${slug}-action.ts'`),
       client.includes("from './action-gateway.ts'"),
-      client.includes('operationGateway.invoke('),
+      new RegExp(
+        `operationGateway\\.invoke\\(\\s*\\(credential,\\s*\\{\\s*apiBaseUrl,\\s*compositionRevision\\s*\\}\\)\\s*=>\\s*execute${escapeRegExp(type)}WithAuthorization\\(\\s*payload,\\s*credential,\\s*requestCorrelation,\\s*\\{\\s*\\.\\.\\.options,\\s*baseUrl:\\s*apiBaseUrl,\\s*compositionRevision,?\\s*\\}\\s*,?\\s*\\)`,
+        'u',
+      ).test(client),
       publishesSharedApiContribution(input.sharedApi, escapedApiValue, escapeRegExp(stem)),
       slotHasExactlyOneCodeMatch(
         input.handlerRoot,
@@ -2354,8 +3097,11 @@ const hasCompleteContributionRead = (
   readSource: string,
   contribution: GovernedReadContribution,
   moduleId: string,
+  sources: ReadonlyMap<string, string>,
+  readFile: string,
+  ownerPath: string,
 ): boolean =>
-  hasReadContract(readSource, contribution, moduleId) &&
+  hasReadContract(readSource, contribution, moduleId, sources, readFile, ownerPath) &&
   (contribution.kind !== MODULE_API_KIND || hasGeneratedModuleApiReadContract(readSource, moduleId, contribution.name));
 
 const hasCompleteGeneratedContribution = (
@@ -2405,7 +3151,14 @@ const hasCompleteGeneratedContribution = (
       context.moduleId,
       context.diagnostics,
     ),
-    read: hasCompleteContributionRead(readSource, contribution, context.moduleId),
+    read: hasCompleteContributionRead(
+      readSource,
+      contribution,
+      context.moduleId,
+      sources,
+      path.posix.normalize(path.posix.join(verticalPath, 'api', readImport)),
+      verticalPath,
+    ),
     server: hasServerContract(
       serverSource,
       escapeRegExp(camel),

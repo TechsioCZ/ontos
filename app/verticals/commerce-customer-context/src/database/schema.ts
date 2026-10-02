@@ -237,6 +237,7 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
   'portal_enrollment_attempts',
   {
     authenticationNamespaceId: text('authentication_namespace_id'),
+    compositionRevision: text('composition_revision').notNull(),
     createdAt: createdAt(),
     createdByPrincipalId: uuid('created_by_principal_id').notNull(),
     intentDigest: text('intent_digest').notNull(),
@@ -278,6 +279,10 @@ export const portalEnrollmentAttempts = commerceCustomerContextSchema.table.with
       sql`${table.intentKey} = btrim(${table.intentKey}) and length(${table.intentKey}) between 1 and 300`,
     ),
     check('ccc_portal_enrollment_attempts_digest_ck', sql`${table.intentDigest} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'ccc_portal_enrollment_attempts_composition_revision_ck',
+      sql`${table.compositionRevision} ~ '^[0-9a-f]{64}$'`,
+    ),
     check(
       'ccc_portal_enrollment_attempts_state_ck',
       sql`${table.state} in ('IN_PROGRESS', 'VERIFICATION_REQUIRED', 'COMPLETE', 'RECONCILIATION_REQUIRED', 'TERMINATED')`,

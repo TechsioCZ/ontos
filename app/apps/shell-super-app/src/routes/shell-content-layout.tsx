@@ -21,6 +21,7 @@ export const ShellContentLayout = ({
   const { t } = useModernI18n();
   return (
     <AuthenticatedDashboardLayout
+      {...(shell.compositionRevision === undefined ? {} : { compositionRevision: shell.compositionRevision })}
       {...(shell.selectedLegalEntityId === undefined ? {} : { currentLegalEntityId: shell.selectedLegalEntityId })}
       {...pageProps}
       currentTenantId={shell.identity.tenantId}

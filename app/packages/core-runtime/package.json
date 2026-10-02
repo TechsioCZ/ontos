@@ -18,6 +18,11 @@
     "./install/stage-accounts-file": "./src/install/stage-accounts-file.ts",
     "./install/stage-context-bootstrap": "./src/install/stage-context-bootstrap.ts",
     "./module-entrypoint": "./src/modules/module-entrypoint.ts",
+    "./modules/active-application-composition": "./src/modules/active-application-composition.ts",
+    "./modules/active-application-composition-source": {
+      "workerd": "./src/modules/active-application-composition-source.workerd.ts",
+      "default": "./src/modules/active-application-composition-source.node.ts"
+    },
     "./operations/context": "./src/operations/context.ts",
     "./operations/external-authentication": "./src/operations/external-authentication.ts",
     "./outbox/core-identity-principal-binding-activated-v1": "./src/outbox/core-identity-principal-binding-activated-v1.ts",
@@ -27,21 +32,20 @@
     "./permissions/principal-ref": "./src/permissions/principal-ref.ts",
     "./resources/legal-entity": "./src/resources/legal-entity.ts",
     "./testing/actions": "./src/testing/actions.ts",
+    "./testing/application-composition-source": "./src/modules/active-application-composition-source-service.ts",
+    "./testing/outbox": "./src/outbox/verified-handler-context.ts",
+    "./testing/module-contract": "./src/testing/module-contract.ts",
     "./unit-service-fetch": "./src/http/unit-service-fetch.export.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts"
   },
   "imports": {
-    "#active-application-composition-source": {
-      "workerd": "./src/modules/active-application-composition-source.workerd.ts",
-      "default": "./src/modules/active-application-composition-source.node.ts"
-    },
     "#database-runtime": {
       "workerd": "./src/db/database-runtime.workerd.ts",
       "default": "./src/db/database-runtime.node.ts"
     },
     "#unit-service-fetch": {
       "workerd": "./src/http/unit-service-fetch.workerd.ts",
-      "default": "./src/http/unit-service-fetch.node.ts"
+      "node": "./src/http/unit-service-fetch.node.ts"
     },
     "#spicedb-transport": {
       "workerd": "./src/permissions/spicedb-transport.workerd.ts",

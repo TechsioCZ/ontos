@@ -155,6 +155,16 @@ const PARTY_DEPLOYMENT_ID = 'party-registry';
 const PARTY_MANIFEST_PATH = './vertical.manifest.ts';
 
 const PARTY_MODULE_ID = 'party.registry';
+const CANONICAL_MODULE_ROUTE = 'apps/shell-super-app/src/routes/[lang]/$/route.meta.ts';
+const CANONICAL_MODULE_LOADER = 'apps/shell-super-app/src/routes/[lang]/$.data.ts';
+const CANONICAL_MODULE_CLIENT_LOADER = 'apps/shell-super-app/src/routes/[lang]/$.data.client.ts';
+const CANONICAL_LOADER_FIXTURE = 'export const loader = true;';
+const PRIVATE_ROUTE_METADATA = 'public: false';
+const CANONICAL_ROUTE_SOURCE = `import { defineSystemModuleEntrypoint } from '@app/core-runtime';
+export const routeMeta = {
+  canonicalPath: '/*', public: false, indexable: false, ownerAppId: 'shell-super-app',
+  entrypoint: defineSystemModuleEntrypoint({ access: 'read', authorization: { kind: 'authenticated_principal' }, entrypointKey: 'shell-super-app.page.canonical-module-target', moduleKey: 'shell-super-app', role: 'page' }),
+};`;
 
 const PARTY_OUTBOX_SPECIFIER = '@app/party-registry/outbox/party-created';
 
@@ -209,6 +219,7 @@ import type { ${requestType} } from '${options.contractImport}';
 ${GATEWAY_IMPORT}
 export interface ${operationStem}ClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 type ${apiStem}AuthorizedInvocation = readonly [credential: string, requestCorrelation: string, options?: ${operationStem}ClientOptions];
 type ${apiStem}OperationInvocation = readonly [requestCorrelation: string, options?: ${operationStem}ClientOptions];
@@ -237,8 +248,12 @@ export const ${options.publicOperation} = (
   payload: ${requestType},
   ...[requestCorrelation, options = {}]: ${apiStem}OperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    ${options.authorizedOperation}(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    ${options.authorizedOperation}(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );`;
 };
 
@@ -263,6 +278,17 @@ it.effect('governed clients retain every boundary check across formatter trailin
     });
     const withoutCallTrailingCommas = source.replaceAll(/,\s*(?=\))/gu, '');
     expect(hasGeneratedGovernedClientContract(withoutCallTrailingCommas, expectation)).toBe(true);
+    for (const invalidTarget of [
+      source.replace('baseUrl: apiBaseUrl', "baseUrl: '/inventory-stock-api'"),
+      source.replace('baseUrl: apiBaseUrl,\n      compositionRevision,', 'baseUrl: apiBaseUrl,'),
+      source.replace(
+        '...options,\n      baseUrl: apiBaseUrl,\n      compositionRevision,',
+        'baseUrl: apiBaseUrl,\n      compositionRevision,\n      ...options,',
+      ),
+      source.replace('(credential, { apiBaseUrl, compositionRevision })', '(credential)'),
+    ]) {
+      expect(hasGeneratedGovernedClientContract(invalidTarget, expectation)).toBe(false);
+    }
     expect(
       hasGeneratedGovernedClientContract(
         withoutCallTrailingCommas.replace(AUTHORIZATION_VALUE, AUTHORIZATION_VALUE_TAIL),
@@ -492,8 +518,14 @@ export const routeMeta = { ownerAppId: 'shell-super-app', entrypoint: defineSyst
   yield* write(
     root,
     'apps/shell-super-app/src/routes/ultramodern-route-metadata.ts',
-    `import { routeMeta as route0 } from './home/route.meta';`,
+    `import { routeMeta as route0 } from './home/route.meta';
+import { routeMeta as route1 } from './[lang]/$/route.meta';`,
   );
+  yield* write(root, CANONICAL_MODULE_ROUTE, CANONICAL_ROUTE_SOURCE);
+  yield* write(root, 'apps/shell-super-app/modern.config.ts', 'export const app = true;');
+  yield* write(root, 'apps/shell-super-app/src/routes/[lang]/$.tsx', 'export const CanonicalModuleRoute = true;');
+  yield* write(root, CANONICAL_MODULE_LOADER, CANONICAL_LOADER_FIXTURE);
+  yield* write(root, CANONICAL_MODULE_CLIENT_LOADER, CANONICAL_LOADER_FIXTURE);
   yield* write(
     root,
     'apps/shell-super-app/shared/api.ts',
@@ -538,6 +570,62 @@ it.live('accepts governed generated Actions, pages, Workers, catalogs, and route
   Effect.gen(function* testEffect3() {
     const root = yield* makeFixture();
     yield* checkModuleEntrypointBoundaries(root);
+  }),
+);
+
+it.live('confines native Federation imports, including aliases and dynamic imports, to governed Shell edges', () =>
+  Effect.gen(function* nativeFederationBoundary() {
+    const root = yield* makeFixture();
+    const sources = [
+      "import { loadRemote as resolveRemote } from '@module-federation/enhanced/runtime'; resolveRemote('inventory/Widget');",
+      "import { getInstance } from '@module-federation/modern-js-v3/runtime'; getInstance()?.loadRemote('inventory/Widget');",
+      "import * as federation from '@module-federation/runtime'; federation.loadRemote('inventory/Widget');",
+      "const federation = import('@module-federation/runtime-tools');",
+      "const { loadRemote: resolveRemote } = require('@module-federation/runtime'); resolveRemote('inventory/Widget');",
+      "export { createInstance } from '@module-federation/runtime-core';",
+      "import { createLazyComponent } from '@module-federation/bridge-react';",
+      "federation.preloadRemote([{ nameOrAlias: 'inventory' }]);",
+      "federation.registerRemotes([{ name: 'inventory', entry: 'https://inventory.example/mf-manifest.json' }]);",
+    ];
+    yield* assertRejectedSources(
+      root,
+      'apps/shell-super-app/src/native-remote.ts',
+      sources,
+      /native Federation runtime imports.*approved Shell module-entrypoint loader/u,
+    );
+    yield* write(root, 'apps/shell-super-app/src/native-remote.ts', 'export const presentation = true;');
+    yield* write(root, 'apps/shell-super-app/src/routes/module-entrypoint-loader.ts', sources[0] ?? '');
+    yield* write(root, 'apps/shell-super-app/src/routes/[lang]/modules/[moduleId]/page.tsx', sources[1] ?? '');
+    yield* checkModuleEntrypointBoundaries(root);
+  }),
+);
+
+it.live('requires the generic canonical route to retain private metadata and the Shell authentication gate', () =>
+  Effect.gen(function* canonicalRouteBoundary() {
+    const root = yield* makeFixture();
+    yield* assertRejectedSources(
+      root,
+      CANONICAL_MODULE_ROUTE,
+      [
+        CANONICAL_ROUTE_SOURCE.replace(PRIVATE_ROUTE_METADATA, 'public: true'),
+        CANONICAL_ROUTE_SOURCE.replace('indexable: false', 'indexable: true'),
+        CANONICAL_ROUTE_SOURCE.replace("canonicalPath: '/*'", "canonicalPath: '/contacts'"),
+        CANONICAL_ROUTE_SOURCE.replace(PRIVATE_ROUTE_METADATA, 'public: false, public: true'),
+        CANONICAL_ROUTE_SOURCE.replace(PRIVATE_ROUTE_METADATA, '...overrides, public: false'),
+        CANONICAL_ROUTE_SOURCE.replace(PRIVATE_ROUTE_METADATA, "public: false, ['public']: true"),
+        CANONICAL_ROUTE_SOURCE.replace("kind: 'authenticated_principal'", "kind: 'public'"),
+      ],
+      /generic canonical module route must/u,
+    );
+    yield* write(root, CANONICAL_MODULE_ROUTE, CANONICAL_ROUTE_SOURCE);
+    yield* checkModuleEntrypointBoundaries(root);
+    yield* Effect.promise(() => rm(path.join(root, CANONICAL_MODULE_LOADER)));
+    expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(
+      /provide its generic canonical module route and loader/u,
+    );
+    yield* write(root, CANONICAL_MODULE_LOADER, CANONICAL_LOADER_FIXTURE);
+    yield* Effect.promise(() => rm(path.join(root, CANONICAL_MODULE_CLIENT_LOADER)));
+    expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toContain(CANONICAL_MODULE_CLIENT_LOADER);
   }),
 );
 
@@ -2621,7 +2709,7 @@ it.live('rejects route manifests that import missing or orphaned route metadata'
       `import { routeMeta as route0 } from './orders/route.meta';`,
     );
     expect(String(yield* Effect.flip(checkModuleEntrypointBoundaries(root)))).toMatch(
-      /manifest is stale \(missing: apps\/shell-super-app\/src\/routes\/home\/route\.meta\.ts; orphaned: apps\/shell-super-app\/src\/routes\/orders\/route\.meta\.ts\)/u,
+      /manifest is stale \(missing: .*home\/route\.meta\.ts; orphaned: apps\/shell-super-app\/src\/routes\/orders\/route\.meta\.ts\)/u,
     );
   }),
 );

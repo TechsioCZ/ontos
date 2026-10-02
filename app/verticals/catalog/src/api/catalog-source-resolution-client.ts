@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CatalogSourceResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CatalogSourceResolutionAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCatalogSourceResolution = (
   payload: CatalogSourceResolutionRequest,
   ...[requestCorrelation, options = {}]: CatalogSourceResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCatalogSourceResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCatalogSourceResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

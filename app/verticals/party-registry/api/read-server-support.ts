@@ -16,6 +16,7 @@ export const partyRegistryCorsAllowedHeaders = [
   'X-Correlation-Id',
   'X-Modernjs-Bff-Operation-Context',
   'X-Operation-Id',
+  'X-Ontos-Composition-Revision',
   'X-Trace-Id',
 ] as const;
 

@@ -376,6 +376,7 @@ export type {
   ActionResourcePermissionTarget,
   ActionResourcePermissionTargetResolver,
   ActionRequirements,
+  ActionServiceFactory,
   ActionTenantPermission,
   AnyActionRegistration,
 } from './actions/definition.ts';
@@ -391,7 +392,7 @@ export type {
   GlobalActionPolicy,
   MicroverticalActionPolicy,
 } from './actions/policy.ts';
-export { ActionRuntime, ActionRuntimeLive, resolveActionCommit, runAction } from './actions/runtime.ts';
+export { ActionRuntime, makeActionRuntimeLive, resolveActionCommit, runAction } from './actions/runtime.ts';
 export type {
   ActionCommitOpen,
   ActionRuntimeService,
@@ -413,6 +414,7 @@ export type {
 export {
   isTrustedSystemPrincipalContext,
   isVerifiedGatewayPrincipalContext,
+  readVerifiedGatewayCompositionRevision,
   trustResolvedSystemPrincipalContext,
   trustVerifiedGatewayPrincipalContext,
 } from './auth/system-principal-context-provenance.ts';
@@ -611,7 +613,9 @@ export {
   ONTOS_SHELL_CONTRIBUTION_ABI,
   ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
   ApplicationCompositionArtifactReferenceSchema,
+  ApplicationCompositionBackendSchema,
   ApplicationCompositionBrowserFederationSchema,
+  ApplicationCompositionCloudflareWorkerBackendSchema,
   ApplicationCompositionModuleSchema,
   ApplicationCompositionSchema,
   ApplicationCompositionServerOnlyFederationSchema,
@@ -624,6 +628,7 @@ export {
 } from './modules/application-composition.ts';
 export type {
   ApplicationComposition,
+  ApplicationCompositionBackend,
   ApplicationCompositionBrowserFederation,
   ApplicationCompositionCandidateEvidence,
   ApplicationCompositionModule,
@@ -637,8 +642,26 @@ export {
   ActiveApplicationCompositionService,
   ActiveApplicationCompositionSnapshotSchema,
   makeActiveApplicationCompositionLayer,
+  validateActiveApplicationCompositionSnapshot,
 } from './modules/active-application-composition.ts';
+export {
+  applicationCompositionContentRevision,
+  buildApplicationCompositionCatalog,
+} from './modules/application-composition-catalog.ts';
 export { ActiveApplicationCompositionUnavailableError } from './modules/active-application-composition-errors.ts';
+export {
+  ApplicationCompositionAuthorityError,
+  closeApplicationCompositionDurableAdmission,
+  drainApplicationCompositionAuthority,
+  isApplicationCompositionWorkDrained,
+  isApplicationCompositionDurableWorkDrained,
+  lockApplicationCompositionAuthority,
+  lockApplicationCompositionPublication,
+  markApplicationCompositionMigrationComplete,
+  publishApplicationCompositionAuthority,
+  resumeApplicationCompositionDurableAdmission,
+  sealApplicationCompositionAuthority,
+} from './modules/application-composition-authority.ts';
 export {
   ACTIVE_APPLICATION_COMPOSITION_EDGE_BINDING,
   ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY,
@@ -723,6 +746,7 @@ export {
   ShellResourceDetailContributionSchema,
   ShellSearchContributionSchema,
   ShellTimelineContributionSchema,
+  isReservedShellRouteRoot,
   validateShellContributions,
 } from './modules/shell-contribution.ts';
 export type { OntosShellContributions, ShellContributionReferenceSets } from './modules/shell-contribution.ts';

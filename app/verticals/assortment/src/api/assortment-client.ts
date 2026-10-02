@@ -50,16 +50,11 @@ export const createAssortmentClient = (
   options: AssortmentClientOptions = {},
 ): AssortmentClientEffect<AssortmentClient> =>
   Effect.gen(function* makeAssortmentClient() {
-    const requestContext = {};
-    if (options.locale !== undefined) {
-      Object.assign(requestContext, { locale: options.locale });
-    }
-    if (options.operationContext !== undefined) {
-      Object.assign(requestContext, { operationContext: options.operationContext });
-    }
-    if (options.traceparent !== undefined) {
-      Object.assign(requestContext, { traceparent: options.traceparent });
-    }
+    const requestContext = {
+      ...(options.locale === undefined ? undefined : { locale: options.locale }),
+      ...(options.operationContext === undefined ? undefined : { operationContext: options.operationContext }),
+      ...(options.traceparent === undefined ? undefined : { traceparent: options.traceparent }),
+    };
     return yield* makeEffectHttpApiClient(assortmentApi, {
       baseUrl: options.baseUrl ?? assortmentApiContract.apiPrefix,
       requestContext,

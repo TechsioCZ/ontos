@@ -20,7 +20,7 @@ type QuantityPreparationExecutor = (
   payload: { readonly amount: string; readonly purpose: 'PRICING'; readonly selection: CatalogSelection },
   credential: Redacted.Redacted,
   requestCorrelation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<unknown, QuantityPreparationClientFailure>;
 
 export interface CatalogQuantityEvidenceRequest {
@@ -169,6 +169,7 @@ const invalid = (reason: string): CatalogQuantityHandoff => ({ reason, status: '
 
 const makeCatalogQuantityEvidencePort = (dependencies: {
   readonly context: {
+    readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
     readonly tenantId: string;
@@ -188,6 +189,7 @@ const makeCatalogQuantityEvidencePort = (dependencies: {
       const { baseUrl, credential } = yield* dependencies.issuer
         .issue({
           audience: 'catalog',
+          compositionRevision: dependencies.context.compositionRevision,
           legalEntityId: dependencies.context.legalEntityId,
           requestCorrelation: dependencies.context.requestCorrelation,
         })
@@ -197,7 +199,7 @@ const makeCatalogQuantityEvidencePort = (dependencies: {
           { amount: request.amount, purpose: 'PRICING', selection: selection.value },
           credential,
           dependencies.context.requestCorrelation,
-          { baseUrl },
+          { baseUrl, compositionRevision: dependencies.context.compositionRevision },
         )
         .pipe(Effect.mapError((cause) => unavailable('Catalog Quantity evidence is unavailable', cause)));
       const response = yield* Schema.decodeUnknownEffect(CatalogQuantityHandoffSchema)(ownerResponse).pipe(
@@ -216,7 +218,12 @@ const makeCatalogQuantityEvidencePort = (dependencies: {
   });
 
 export const catalogQuantityEvidencePortFromEnvironment = (
-  context: { readonly legalEntityId: string; readonly requestCorrelation: string; readonly tenantId: string },
+  context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+    readonly tenantId: string;
+  },
   execute: QuantityPreparationExecutor = executeAuthorizedQuantityPreparation,
 ): Effect.Effect<CatalogQuantityEvidencePort> =>
   Effect.serviceOption(CatalogSelectionGatewayCredentialService).pipe(

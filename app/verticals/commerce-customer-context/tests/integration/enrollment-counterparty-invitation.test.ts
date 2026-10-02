@@ -58,6 +58,11 @@ import {
   EnrollmentTenantIdSchema,
 } from '../../shared/enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import {
+  enrollmentApplicationCompositionLayer,
+  enrollmentApplicationCompositionRevision,
+} from '../support/enrollment-application-composition.ts';
 import {
   expireEnrollmentAcceptanceLeases,
   makeEnrollmentAcceptanceFixture,
@@ -119,7 +124,11 @@ const providerDatabaseUrl = Config.Redacted('COMMERCE_PORTAL_AUTH_DATABASE_URL')
 );
 
 /** Resend is answered locally: creation now awaits delivery, so the transport must accept. */
-const acceptingResendFetch: typeof fetch = () => Promise.resolve(Response.json({ id: 'accepted' }));
+const acceptingResendFetch: typeof fetch = (input, init) => {
+  const request = new Request(input, init);
+  expect(request.url).toBe('https://api.resend.com/emails');
+  return Promise.resolve(Response.json({ id: 'accepted' }));
+};
 
 const emailDeliveryConfiguration = Layer.mergeAll(
   Layer.succeed(ResendEmailDeliveryConfig, {
@@ -144,9 +153,8 @@ const portalAuthConfiguration = Effect.fnUntraced(function* portalAuthConfigurat
 const configuredRealmLive = Effect.fnUntraced(function* configuredRealmLive() {
   const configuration = yield* portalAuthConfiguration();
   return commercePortalAuthRealmLive.pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(Layer.succeed(CommercePortalAuthConfig, configuration), emailDeliveryConfiguration),
-    ),
+    Layer.provide(emailDeliveryConfiguration),
+    Layer.provideMerge(Layer.succeed(CommercePortalAuthConfig, configuration)),
   );
 });
 
@@ -203,14 +211,24 @@ const singleUseRedemptionLive = Layer.sync(GatewayAssertionRedemptionService, ()
 });
 
 /** The deployed handler tree with both halves of the realm and the configured owner preparation. */
-const deployedRuntime = (gateway: AcceptanceGatewayIssuer) =>
+const deployedRuntime = (
+  gateway: AcceptanceGatewayIssuer,
+  loseFirstCommittedClaimAnswer: boolean,
+  droppedClaimAnswers: string[],
+) =>
   Effect.acquireRelease(
     Effect.gen(function* buildDeployedRuntime() {
       const realmLive = yield* configuredRealmLive();
       const preparationLive = yield* preparationAuthorityLive();
+      const preparedActionRuntimeLive = commerceCustomerContextActionRuntimeAwaitingOwnerPreparation.pipe(
+        Layer.provide(preparationLive),
+      );
+      const actionRuntimeLive = loseFirstCommittedClaimAnswer
+        ? loseCounterpartyInvitationClaimAnswer(droppedClaimAnswers).pipe(Layer.provideMerge(preparedActionRuntimeLive))
+        : preparedActionRuntimeLive;
       return makeCommerceCustomerContextApiRuntime(
         productionReadRuntimeLive,
-        commerceCustomerContextActionRuntimeAwaitingOwnerPreparation.pipe(Layer.provide(preparationLive)),
+        actionRuntimeLive,
         singleUseRedemptionLive,
         realmLive,
         gateway.verificationLive,
@@ -395,6 +413,7 @@ const preparationSubjectFor = (
 interface InvitationScenario {
   readonly attemptId: string;
   readonly claimProofReference: string;
+  readonly droppedClaimAnswers: readonly string[];
   readonly email: string;
   readonly fixture: EnrollmentAcceptanceFixture;
   readonly gateway: AcceptanceGatewayIssuer;
@@ -411,9 +430,11 @@ interface InvitationScenario {
  */
 const invitationScenario = Effect.fnUntraced(function* invitationScenario(options: {
   readonly advanceBinding: 'ACTIVATED' | 'RESERVED_ONLY';
+  readonly loseFirstCommittedClaimAnswer?: true;
 }) {
   const tenantId = randomUUID();
-  const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId });
+  const compositionRevision = yield* enrollmentApplicationCompositionRevision;
+  const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, compositionRevision);
   const realm = yield* makeCounterpartyInvitationRealm(fixture, {
     recipientActionKeys: [CLAIM_INVITATION_ACTION_KEY],
     storefrontActionKeys: [START_ACTION_KEY, CLAIM_TRANSITION_ACTION_KEY],
@@ -424,7 +445,8 @@ const invitationScenario = Effect.fnUntraced(function* invitationScenario(option
   yield* removePortalAccountsOnClose(email);
 
   const gateway = yield* makeAcceptanceGatewayIssuer(ISSUER, KEY_ID);
-  const runtime = yield* deployedRuntime(gateway);
+  const droppedClaimAnswers: string[] = [];
+  const runtime = yield* deployedRuntime(gateway, options.loseFirstCommittedClaimAnswer === true, droppedClaimAnswers);
   // The shared Storefront client starts the enrollment on the recipient's behalf, so its assertion
   // carries no Legal Entity: both governed Actions of a start forbid one in the caller's scope.
   const startAssertion = yield* issueAcceptanceGatewayAssertion(fixture.admin, gateway, AUDIENCE, {
@@ -481,6 +503,7 @@ const invitationScenario = Effect.fnUntraced(function* invitationScenario(option
   const scenario: InvitationScenario = {
     attemptId,
     claimProofReference: invitation.claimProofReference,
+    droppedClaimAnswers,
     email,
     fixture,
     gateway,
@@ -557,8 +580,10 @@ const sweepingContinuation = Effect.fnUntraced(function* sweepingContinuation(sc
   });
   return yield* CommerceEnrollmentContinuation.pipe(
     Effect.provide(
-      CommerceEnrollmentContinuationLive.pipe(
-        Layer.provide(Layer.mergeAll(transactionRunnerLive, registryLive, subjectLive)),
+      CommerceEnrollmentContinuationLive(ultramodernApiMarker).pipe(
+        Layer.provide(
+          Layer.mergeAll(transactionRunnerLive, registryLive, subjectLive, enrollmentApplicationCompositionLayer),
+        ),
       ),
     ),
   );
@@ -855,11 +880,14 @@ it.live(
 );
 
 it.live(
-  'converges a claim whose recorded answer was lost, from the invitation the claim committed against',
+  'converges a claim whose committed answer was lost, from the invitation the claim committed against',
   () =>
     Effect.scoped(
       Effect.gen(function* convergesALostClaimAnswer() {
-        const { scenario } = yield* invitationScenario({ advanceBinding: 'ACTIVATED' });
+        const { scenario } = yield* invitationScenario({
+          advanceBinding: 'ACTIVATED',
+          loseFirstCommittedClaimAnswer: true,
+        });
         const body = { claimProofReference: scenario.claimProofReference, invitationSecret: scenario.secret };
 
         const firstAssertion = yield* recipientAssertion(scenario);
@@ -872,7 +900,8 @@ it.live(
               }),
             ),
         );
-        expect(first.status).toBe(200);
+        expect(first.status).toBe(503);
+        expect(yield* responseBody(first)).toMatchObject({ code: 'enrollment_unavailable', retryable: true });
         const claims = yield* countCounterpartyInvitationClaims(
           scenario.fixture,
           scenario.realm,
@@ -884,15 +913,18 @@ it.live(
           scenario.invitationId,
         );
 
-        // The claim committed and its answer was lost on the way to the journal: the transition is
-        // back to dispatched-under-a-lease-that-has-since-lapsed, which the next claim fences.
-        yield* loseCounterpartyInvitationClaimAnswer(
-          scenario.fixture,
-          scenario.realm,
-          scenario.attemptId,
-          CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY,
+        expect(claims).toBe(1);
+        expect(claimedInvitation.lifecycle).toBe('RECONCILIATION_REQUIRED');
+        expect(scenario.droppedClaimAnswers).toStrictEqual([claimedInvitation.claim_proof_reference]);
+        expect(yield* claimTransitionFor(scenario)).toMatchObject({
+          result_reference: null,
+          status: 'IN_PROGRESS',
+        });
+        expect((yield* readEnrollmentAcceptanceAttempt(scenario.fixture, scenario.attemptId)).state).toBe(
+          'IN_PROGRESS',
         );
-        expect((yield* claimTransitionFor(scenario))?.status).toBe('IN_PROGRESS');
+        // The original lease lapses after the real claim committed without a journalled answer.
+        yield* expireEnrollmentAcceptanceLeases(scenario.fixture, scenario.attemptId);
 
         const retriedAssertion = yield* recipientAssertion(scenario);
         const retried = yield* Effect.promise(
@@ -931,7 +963,10 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* sweepSettlesALostClaimAnswer() {
-        const { scenario } = yield* invitationScenario({ advanceBinding: 'ACTIVATED' });
+        const { scenario } = yield* invitationScenario({
+          advanceBinding: 'ACTIVATED',
+          loseFirstCommittedClaimAnswer: true,
+        });
         const body = { claimProofReference: scenario.claimProofReference, invitationSecret: scenario.secret };
 
         const assertion = yield* recipientAssertion(scenario);
@@ -941,7 +976,8 @@ it.live(
               claimInvitationRequest(scenario.attemptId, body, { assertion, cookie: scenario.session.cookie }),
             ),
         );
-        expect(claimed.status).toBe(200);
+        expect(claimed.status).toBe(503);
+        expect(yield* responseBody(claimed)).toMatchObject({ code: 'enrollment_unavailable', retryable: true });
         const claims = yield* countCounterpartyInvitationClaims(
           scenario.fixture,
           scenario.realm,
@@ -953,12 +989,17 @@ it.live(
           scenario.invitationId,
         );
 
-        yield* loseCounterpartyInvitationClaimAnswer(
-          scenario.fixture,
-          scenario.realm,
-          scenario.attemptId,
-          CLAIM_COUNTERPARTY_ACCESS_INVITATION_TRANSITION_KEY,
+        expect(claims).toBe(1);
+        expect(claimedInvitation.lifecycle).toBe('RECONCILIATION_REQUIRED');
+        expect(scenario.droppedClaimAnswers).toStrictEqual([claimedInvitation.claim_proof_reference]);
+        expect(yield* claimTransitionFor(scenario)).toMatchObject({
+          result_reference: null,
+          status: 'IN_PROGRESS',
+        });
+        expect((yield* readEnrollmentAcceptanceAttempt(scenario.fixture, scenario.attemptId)).state).toBe(
+          'IN_PROGRESS',
         );
+        yield* expireEnrollmentAcceptanceLeases(scenario.fixture, scenario.attemptId);
         const continuation = yield* sweepingContinuation(scenario);
         const advanced = yield* continuation.advance({
           portalEnrollmentAttemptId: Schema.decodeSync(EnrollmentAttemptIdSchema)(scenario.attemptId),
@@ -971,9 +1012,13 @@ it.live(
           result_reference: claimedInvitation.claim_proof_reference,
           status: 'SUCCEEDED',
         });
+        expect((yield* claimTransitionFor(scenario))?.reconciliation_ref).not.toBeNull();
         expect(yield* countCounterpartyInvitationClaims(scenario.fixture, scenario.realm, scenario.invitationId)).toBe(
           claims,
         );
+        expect(
+          yield* readCounterpartyInvitationRow(scenario.fixture, scenario.realm, scenario.invitationId),
+        ).toStrictEqual(claimedInvitation);
       }),
     ),
   300_000,

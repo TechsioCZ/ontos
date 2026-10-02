@@ -23,21 +23,21 @@ const WORKER_NAME_DECLARATION = /^const cloudflareWorkerName = '(?<name>[^']+)';
 
 // CI deploys, snapshots and restores each placed unit under its topology `cloudflare.workerName`,
 // while Wrangler deploys the name its Modern config bakes into `.output/wrangler.json`. They must be
-// the same Worker, and the Shell must bind exactly the Workers the verticals deploy as.
+// the same Worker. Immutable module releases have separate native Worker identities.
 it('names every Worker in its Modern config exactly as the topology does', () => {
   for (const unit of [topology.shell, ...topology.verticals]) {
     expect(WORKER_NAME_DECLARATION.exec(readConfig(unit.path))?.groups?.name, unit.id).toBe(unit.cloudflare.workerName);
   }
 });
 
-it('binds the Shell to the Worker of every vertical under its topology identity, with no overrides', () => {
+it('uses native public Worker fetch without fixed Shell vertical bindings or an SSR module API entry', () => {
   const shellConfig = readConfig(topology.shell.path);
-  // The Shell derives one service per topology vertical: its Worker name, binding and BFF prefix.
-  expect(shellConfig).toContain('services: verticalServiceBindings,');
-  expect(shellConfig).toContain('service: cloudflare.workerName,');
-  expect(shellConfig).toContain(
-    'binding: backendFederation.executionSurfaces.cloudflare.workerDispatch.serviceBinding,',
-  );
+  expect(shellConfig).toContain('createCloudflareWorkerConfig(envValue');
+  expect(shellConfig).not.toContain('dispatch_namespaces');
+  expect(shellConfig).not.toContain('ONTOS_MODULES_NAMESPACE');
+  expect(shellConfig).not.toContain('ULTRAMODERN_CLOUDFLARE_MODULE_DISPATCH_NAMESPACE');
+  expect(shellConfig).not.toContain('ssrByEntries');
+  expect(shellConfig).not.toContain('verticalServiceBindings');
   // A build variable must not rename a bound Worker or binding away from the topology.
   expect(shellConfig).not.toMatch(/_WORKER_(?:NAME|BINDING)'/u);
 });

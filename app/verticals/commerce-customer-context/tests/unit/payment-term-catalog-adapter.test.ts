@@ -230,6 +230,8 @@ it.effect('preserves a broken catalog alias as an absent deterministic definitio
 it.effect('requires a server-owned gateway credential before a production catalog call', () =>
   Effect.gen(function* serverCredential() {
     let authorization = '';
+    let destination = '';
+    let selectedRevision = '';
     const issuanceRequests: {
       readonly audience: 'payment-term-catalog';
       readonly legalEntityId: string;
@@ -237,11 +239,14 @@ it.effect('requires a server-owned gateway credential before a production catalo
     }[] = [];
     const port = yield* paymentTermCatalogPortFromEnvironment(
       {
+        compositionRevision: 'a'.repeat(64),
         legalEntityId: '20000000-0000-4000-8000-000000000001',
         requestCorrelation: 'payment-correlation',
       },
-      (_payload, credential) => {
+      (_payload, credential, _correlation, options) => {
         authorization = Redacted.value(credential);
+        destination = String(options.baseUrl);
+        selectedRevision = options.compositionRevision;
         return Effect.succeed({
           current: [],
           effectiveAt: '2026-09-09T10:00:00.000Z',
@@ -256,7 +261,10 @@ it.effect('requires a server-owned gateway credential before a production catalo
           issue: (input) =>
             Effect.sync(() => {
               issuanceRequests.push(input);
-              return Redacted.make('Bearer server-issued');
+              return {
+                baseUrl: new URL('https://shell.example.test/owner-api'),
+                credential: Redacted.make('Bearer server-issued'),
+              };
             }),
         }),
       ),
@@ -269,9 +277,12 @@ it.effect('requires a server-owned gateway credential before a production catalo
     ]);
 
     expect(authorization).toBe('Bearer server-issued');
+    expect(destination).toBe('https://shell.example.test/owner-api');
+    expect(selectedRevision).toBe('a'.repeat(64));
     expect(issuanceRequests).toEqual([
       {
         audience: 'payment-term-catalog',
+        compositionRevision: 'a'.repeat(64),
         legalEntityId: '20000000-0000-4000-8000-000000000001',
         requestCorrelation: 'payment-correlation',
       },

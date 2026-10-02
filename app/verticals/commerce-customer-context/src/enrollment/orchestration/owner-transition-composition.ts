@@ -257,9 +257,11 @@ export const providerAccountCreationObservationFor = Effect.fn(
 const ownerTransitionFor = (
   binding: CommerceEnrollmentPreparedOwnerBinding,
   requestDigest: string,
+  compositionRevision: EnrollmentAttemptSnapshot['compositionRevision'],
 ): Effect.Effect<CommerceEnrollmentOwnerTransition, CommerceEnrollmentAttemptError> =>
   Schema.decodeEffect(CommerceEnrollmentOwnerTransitionSchema)({
     actorPrincipalId: binding.actorPrincipalId,
+    compositionRevision,
     correlationId: `commerce-enrollment-owner:${binding.actionInvocationId}`,
     expectedRevision: binding.expectedRevision,
     ownerInvocationId: binding.ownerInvocationId,
@@ -332,7 +334,7 @@ const prepareRecord = Effect.fn('CommerceEnrollmentPortalAuthOwnerPreparation.pr
       // reconcile; the Action must observe the durable state instead of recording a second one.
       return operation.status === 'IN_PROGRESS' ? unavailable : denied;
     }
-    const transition = yield* ownerTransitionFor(binding, operation.requestDigest);
+    const transition = yield* ownerTransitionFor(binding, operation.requestDigest, attempt.compositionRevision);
     const reconciliationInput: CommerceEnrollmentOwnerReconciliationInput =
       operation.resultReference === undefined
         ? { ...transition, observedRevision: attempt.revision, ownerOperationRevision: operation.revision }

@@ -22,7 +22,7 @@
     "dev": "node ../../scripts/prepare-dev-module-contract.mts price-group-catalog && modern dev",
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical price-group-catalog --target dist && ultramodern-create ultramodern public-surface --app price-group-catalog --target dist && modern deploy --skip-build --deploy-target node",
     "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical price-group-catalog --target cloudflare-dist && ultramodern-create ultramodern public-surface --app price-group-catalog --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare",
-    "cloudflare:deploy": "pnpm run cloudflare:build && ultramodern-create ultramodern cloudflare-output-verify --app price-group-catalog --require-public-urls && wrangler deploy --config .output/wrangler.json",
+    "cloudflare:deploy": "node ../../scripts/immutable-application-release.mts deploy --app-directory .",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app price-group-catalog",
     "db:check": "drizzle-kit check --config drizzle.config.ts",

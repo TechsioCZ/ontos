@@ -330,7 +330,7 @@ export const manageContractualDiscountAction = defineAction(
     schemaVersion: '1',
   },
   handleManageContractualDiscount,
-  (transaction, scope) => {
+  (transaction, scope, compositionRevision) => {
     if (scope.legalEntityId === undefined) {
       return Effect.fail(
         new OperationContextUnavailable({
@@ -342,7 +342,7 @@ export const manageContractualDiscountAction = defineAction(
     return Effect.gen(function* makeManageContractualDiscountServices() {
       const { currencySupport, persistence } = yield* Effect.all(
         {
-          currencySupport: currencySupportPersistenceForScope(transaction, scope),
+          currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
           persistence: contractualDiscountPersistenceForScope(transaction, scope),
         },
         { concurrency: 2 },

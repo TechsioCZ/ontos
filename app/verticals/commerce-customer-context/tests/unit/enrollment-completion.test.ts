@@ -24,7 +24,9 @@ import { retailSelfEnrollmentJourneyDefinition } from '../../src/enrollment/jour
 import type { EnrollmentAttemptSnapshot, EnrollmentOwnerOperationSnapshot } from '../../shared/enrollment-contracts.ts';
 import {
   EnrollmentActionInvocationIdSchema,
+  EnrollmentCompositionRevisionSchema,
   EnrollmentAttemptIdSchema,
+  EnrollmentAttemptSnapshotSchema,
   EnrollmentInvitationIdSchema,
   EnrollmentKeySchema,
   EnrollmentModuleKeySchema,
@@ -41,21 +43,24 @@ const actorPrincipalId = Schema.decodeSync(EnrollmentPrincipalIdSchema)('1100000
 const operationId = Schema.decodeSync(EnrollmentOwnerOperationIdSchema)('11000000-0000-4000-8000-000000000005');
 const invitationId = Schema.decodeSync(EnrollmentInvitationIdSchema)('11000000-0000-4000-8000-000000000006');
 const intentKey = Schema.decodeSync(EnrollmentKeySchema)('completion-intent-1');
+const compositionRevision = Schema.decodeSync(EnrollmentCompositionRevisionSchema)('c'.repeat(64));
 const at = DateTime.makeUnsafe('2026-09-18T09:00:00.000Z');
 
-const attempt = (overrides: Partial<EnrollmentAttemptSnapshot> = {}): EnrollmentAttemptSnapshot => ({
-  createdAt: at,
-  createdByPrincipalId: actorPrincipalId,
-  intentDigest: 'c'.repeat(64),
-  intentKey,
-  journey: 'RETAIL_SELF_ENROLLMENT',
-  portalEnrollmentAttemptId: attemptId,
-  revision: 1,
-  state: 'IN_PROGRESS',
-  tenantId,
-  updatedAt: at,
-  ...overrides,
-});
+const attempt = (overrides: Partial<EnrollmentAttemptSnapshot> = {}): EnrollmentAttemptSnapshot =>
+  Schema.decodeSync(Schema.toType(EnrollmentAttemptSnapshotSchema))({
+    compositionRevision,
+    createdAt: at,
+    createdByPrincipalId: actorPrincipalId,
+    intentDigest: 'c'.repeat(64),
+    intentKey,
+    journey: 'RETAIL_SELF_ENROLLMENT',
+    portalEnrollmentAttemptId: attemptId,
+    revision: 1,
+    state: 'IN_PROGRESS',
+    tenantId,
+    updatedAt: at,
+    ...overrides,
+  });
 
 /**
  * Proof is built from the declaration under test rather than from a second copy of the transition

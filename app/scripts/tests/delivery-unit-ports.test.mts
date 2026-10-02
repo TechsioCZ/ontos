@@ -109,18 +109,10 @@ it('starts the Shell and its browser tests on the Shell overlay port', () => {
   );
 });
 
-it('federates and waits for each vertical on its overlay port', () => {
-  const unitByFederationName = new Map(verticals.map(({ id, moduleFederation }) => [moduleFederation.name, id]));
-  const remotes = [
-    ...readText(`${topology.shell.path}/module-federation.config.ts`).matchAll(
-      /mfName: '(?<name>[^']+)',\s+port: (?<port>\d+),/gu,
-    ),
-  ].map((match) => ({ name: match.groups?.name ?? '', port: match.groups?.port }));
-  expect(remotes.length).toBeGreaterThan(0);
-  for (const { name, port } of remotes) {
-    const unitId = unitByFederationName.get(name) ?? 'an unknown vertical';
-    expect(`${name} ${port}`).toBe(`${name} ${portOf(unitId)}`);
-  }
+it('loads remotes from approved composition and waits for verticals on their overlay ports', () => {
+  const federationConfig = readText(`${topology.shell.path}/module-federation.config.ts`);
+  expect(federationConfig).toContain('remotes: {}');
+  expect(federationConfig).not.toContain('createRemoteManifestUrl');
 
   const readinessUrls = [
     ...readText(`${topology.shell.path}/playwright.config.ts`).matchAll(

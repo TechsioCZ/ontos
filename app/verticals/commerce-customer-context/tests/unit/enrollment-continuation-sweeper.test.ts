@@ -8,7 +8,11 @@ import type {
   DueEnrollmentAttempt,
   DueEnrollmentAttemptCursor,
 } from '../../src/enrollment/attempts/attempt-persistence.ts';
-import type { CommerceEnrollmentContinuationService } from '../../src/enrollment/continuation/enrollment-continuation.ts';
+import { attemptUnavailable } from '../../src/enrollment/attempts/errors.ts';
+import type {
+  CommerceEnrollmentContinuationService,
+  CommerceEnrollmentContinuationSweepPass,
+} from '../../src/enrollment/continuation/enrollment-continuation.ts';
 import {
   commerceEnrollmentContinuationSweeperFor,
   SWEEP_BUDGET,
@@ -24,6 +28,8 @@ import type { ReadEnrollmentAttemptInput } from '../../shared/enrollment-contrac
 
 const attemptId = (value: string) => Schema.decodeSync(EnrollmentAttemptIdSchema)(value);
 const tenantId = (value: string) => Schema.decodeSync(EnrollmentTenantIdSchema)(value);
+const ORIGINAL_COMPOSITION_REVISION = `sha256:${'a'.repeat(64)}`;
+const CHANGED_COMPOSITION_REVISION = `sha256:${'b'.repeat(64)}`;
 
 /** A keyset over the scripted journal's own order: a cursor resumes strictly after its row. */
 const resumeIndex = (rows: readonly DueEnrollmentAttempt[], after: Option.Option<DueEnrollmentAttemptCursor>): number =>
@@ -61,7 +67,7 @@ const scriptedContinuation = Effect.fnUntraced(function* scriptedContinuation(
 ) {
   const log = yield* Ref.make<readonly string[]>([]);
   const sweeps = yield* Ref.make<ReadonlyMap<string, ScriptedSweep>>(new Map());
-  const service: CommerceEnrollmentContinuationService = {
+  const pass: CommerceEnrollmentContinuationSweepPass = {
     advance: (input) =>
       Ref.update(log, (calls) => [...calls, input.portalEnrollmentAttemptId]).pipe(
         Effect.as(
@@ -83,6 +89,7 @@ const scriptedContinuation = Effect.fnUntraced(function* scriptedContinuation(
           new Map([...recorded, [input.portalEnrollmentAttemptId, { count, revision: input.revision }]]),
         ] as const;
       }),
+    compositionRevision: ORIGINAL_COMPOSITION_REVISION,
     listDue: (input) =>
       Effect.all([Ref.get(journal), Ref.get(sweeps)], { concurrency: 2 }).pipe(
         Effect.map(([rows, recorded]) => {
@@ -92,12 +99,17 @@ const scriptedContinuation = Effect.fnUntraced(function* scriptedContinuation(
         }),
       ),
   };
+  const service: CommerceEnrollmentContinuationService = {
+    advance: pass.advance,
+    openSweepPass: Effect.succeed(pass),
+  };
   const scripted: ScriptedContinuation = { advanced: Ref.get(log), service };
   return scripted;
 });
 
 const due = (attempt: ReadEnrollmentAttemptInput, revision = 1): DueEnrollmentAttempt => ({
   ...attempt,
+  compositionRevision: ORIGINAL_COMPOSITION_REVISION,
   revision,
   state: 'IN_PROGRESS',
   updatedAt: DateTime.makeUnsafe(new Date(0)),
@@ -279,15 +291,20 @@ it.effect('leaves an Attempt another replica has claimed alone, and charges it n
     };
     const advanced = yield* Ref.make<readonly string[]>([]);
     const claims = yield* Ref.make<readonly ClaimEnrollmentSweepInput[]>([]);
-    const service: CommerceEnrollmentContinuationService = {
+    const pass: CommerceEnrollmentContinuationSweepPass = {
       advance: (input) =>
         Ref.update(advanced, (calls) => [...calls, input.portalEnrollmentAttemptId]).pipe(
           Effect.as({ outcome: 'COMPLETE' as const }),
         ),
+      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
       // The journal refuses the claim: another replica already holds this Attempt's pass, so the
       // routine charged nothing and grants no licence to advance.
       claimSweep: (input) => Ref.update(claims, (calls) => [...calls, input]).pipe(Effect.as(Option.none())),
       listDue: () => Effect.succeed([due(attempt)]),
+    };
+    const service: CommerceEnrollmentContinuationService = {
+      advance: pass.advance,
+      openSweepPass: Effect.succeed(pass),
     };
     const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
       continuation: service,
@@ -306,5 +323,196 @@ it.effect('leaves an Attempt another replica has claimed alone, and charges it n
       attempt.portalEnrollmentAttemptId,
     ]);
     expect((yield* Ref.get(claims)).map((call) => call.maxSweeps)).toStrictEqual([SWEEP_BUDGET]);
+    expect((yield* Ref.get(claims)).map((call) => call.compositionRevision)).toStrictEqual([
+      ORIGINAL_COMPOSITION_REVISION,
+    ]);
+  }),
+);
+
+it.effect('claims the exact composition and Attempt revisions listed by the durable journal', () =>
+  Effect.gen(function* originalRevisionIsClaimed() {
+    const attempt: ReadEnrollmentAttemptInput = {
+      portalEnrollmentAttemptId: attemptId(randomUUID()),
+      tenantId: tenantId(randomUUID()),
+    };
+    const listed = due(attempt, 17);
+    const claims = yield* Ref.make<readonly ClaimEnrollmentSweepInput[]>([]);
+    const advanced = yield* Ref.make<readonly ReadEnrollmentAttemptInput[]>([]);
+    const pass: CommerceEnrollmentContinuationSweepPass = {
+      advance: (input) =>
+        Ref.update(advanced, (calls) => [...calls, input]).pipe(Effect.as({ outcome: 'COMPLETE' as const })),
+      claimSweep: (input) => Ref.update(claims, (calls) => [...calls, input]).pipe(Effect.as(Option.some(1))),
+      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
+      listDue: () => Effect.succeed([listed]),
+    };
+    const service: CommerceEnrollmentContinuationService = {
+      advance: pass.advance,
+      openSweepPass: Effect.succeed(pass),
+    };
+    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({ continuation: service, staleAfterMillis: 0 });
+
+    expect((yield* sweeper.sweep).swept).toBe(1);
+    expect(yield* Ref.get(claims)).toStrictEqual([
+      {
+        ...attempt,
+        claimTtlMillis: 0,
+        compositionRevision: ORIGINAL_COMPOSITION_REVISION,
+        maxSweeps: SWEEP_BUDGET,
+        revision: 17,
+      },
+    ]);
+    // The continuation addresses the Attempt and recovers its original revision itself. The
+    // sweeper never supplies a replacement snapshot or asks for the current composition.
+    expect(yield* Ref.get(advanced)).toStrictEqual([attempt]);
+  }),
+);
+
+it.effect('does not advance or spend budget when the original listed composition no longer matches the claim', () =>
+  Effect.gen(function* changedCompositionRefusesClaim() {
+    const attempt: ReadEnrollmentAttemptInput = {
+      portalEnrollmentAttemptId: attemptId(randomUUID()),
+      tenantId: tenantId(randomUUID()),
+    };
+    const claims = yield* Ref.make<readonly ClaimEnrollmentSweepInput[]>([]);
+    const charged = yield* Ref.make(0);
+    const advanced = yield* Ref.make<readonly string[]>([]);
+    const pass: CommerceEnrollmentContinuationSweepPass = {
+      advance: (input) =>
+        Ref.update(advanced, (calls) => [...calls, input.portalEnrollmentAttemptId]).pipe(
+          Effect.as({ outcome: 'COMPLETE' as const }),
+        ),
+      claimSweep: (input) =>
+        Ref.update(claims, (calls) => [...calls, input]).pipe(
+          Effect.andThen(
+            input.compositionRevision === CHANGED_COMPOSITION_REVISION
+              ? Ref.updateAndGet(charged, (count) => count + 1).pipe(Effect.map(Option.some))
+              : Effect.succeed(Option.none<number>()),
+          ),
+        ),
+      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
+      // This row was listed before the journal changed. A claim is the final atomic check; it
+      // refuses the stale revision without spending a pass, so a subsequent listing can retry.
+      listDue: () => Effect.succeed([due(attempt)]),
+    };
+    const service: CommerceEnrollmentContinuationService = {
+      advance: pass.advance,
+      openSweepPass: Effect.succeed(pass),
+    };
+    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({ continuation: service, staleAfterMillis: 0 });
+
+    for (let tick = 0; tick < 2; tick += 1) {
+      const sweep = yield* sweeper.sweep;
+      expect(sweep.swept).toBe(0);
+      expect(sweep.released).toBe(1);
+    }
+    expect(yield* Ref.get(advanced)).toStrictEqual([]);
+    expect(yield* Ref.get(charged)).toBe(0);
+    expect((yield* Ref.get(claims)).map((claim) => claim.compositionRevision)).toStrictEqual([
+      ORIGINAL_COMPOSITION_REVISION,
+      ORIGINAL_COMPOSITION_REVISION,
+    ]);
+  }),
+);
+
+it.effect('opens one composition pass for every page, claim, and advance in a tick', () =>
+  Effect.gen(function* onePassOwnsTheCompleteTick() {
+    const rows = Array.from({ length: 3 }, () =>
+      due({ portalEnrollmentAttemptId: attemptId(randomUUID()), tenantId: tenantId(randomUUID()) }),
+    );
+    const availableRevision = yield* Ref.make(ORIGINAL_COMPOSITION_REVISION);
+    const opened = yield* Ref.make(0);
+    const directAdvances = yield* Ref.make(0);
+    const operations = yield* Ref.make<readonly { readonly compositionRevision: string; readonly kind: string }[]>([]);
+    const claims = yield* Ref.make<readonly ClaimEnrollmentSweepInput[]>([]);
+    const service: CommerceEnrollmentContinuationService = {
+      advance: () => Ref.update(directAdvances, (count) => count + 1).pipe(Effect.as({ outcome: 'COMPLETE' as const })),
+      openSweepPass: Effect.gen(function* captureTheAvailableComposition() {
+        yield* Ref.update(opened, (count) => count + 1);
+        const compositionRevision = yield* Ref.get(availableRevision);
+        const record = (kind: string) => Ref.update(operations, (calls) => [...calls, { compositionRevision, kind }]);
+        const pass: CommerceEnrollmentContinuationSweepPass = {
+          advance: () => record('advance').pipe(Effect.as({ outcome: 'COMPLETE' as const })),
+          claimSweep: (input) =>
+            record('claim').pipe(
+              Effect.andThen(Ref.update(claims, (calls) => [...calls, input])),
+              Effect.as(Option.some(1)),
+            ),
+          compositionRevision,
+          listDue: (input) =>
+            record('list').pipe(
+              // A release changes while this tick pages through its journal. Only the next tick
+              // may open that release; this pass keeps the identity it captured on admission.
+              Effect.andThen(Ref.set(availableRevision, CHANGED_COMPOSITION_REVISION)),
+              Effect.as(rows.slice(resumeIndex(rows, input.after), resumeIndex(rows, input.after) + input.limit)),
+            ),
+        };
+        return pass;
+      }),
+    };
+    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({
+      continuation: service,
+      pageLimit: 1,
+      staleAfterMillis: 0,
+    });
+
+    expect((yield* sweeper.sweep).swept).toBe(3);
+    expect(yield* Ref.get(opened)).toBe(1);
+    expect(yield* Ref.get(directAdvances)).toBe(0);
+    expect(yield* Ref.get(availableRevision)).toBe(CHANGED_COMPOSITION_REVISION);
+    const calls = yield* Ref.get(operations);
+    expect(calls.filter((call) => call.kind === 'list')).toHaveLength(4);
+    expect(calls.filter((call) => call.kind === 'claim')).toHaveLength(3);
+    expect(calls.filter((call) => call.kind === 'advance')).toHaveLength(3);
+    expect(calls.every((call) => call.compositionRevision === ORIGINAL_COMPOSITION_REVISION)).toBe(true);
+    expect((yield* Ref.get(claims)).every((claim) => claim.compositionRevision === ORIGINAL_COMPOSITION_REVISION)).toBe(
+      true,
+    );
+  }),
+);
+
+it.effect('keeps tracked Attempts and spends no budget when opening a composition pass is rejected', () =>
+  Effect.gen(function* refusedPassDoesNoWork() {
+    const attempt: ReadEnrollmentAttemptInput = {
+      portalEnrollmentAttemptId: attemptId(randomUUID()),
+      tenantId: tenantId(randomUUID()),
+    };
+    const admitted = yield* Ref.make(false);
+    const opened = yield* Ref.make(0);
+    const lists = yield* Ref.make(0);
+    const charged = yield* Ref.make(0);
+    const advanced = yield* Ref.make(0);
+    const pass: CommerceEnrollmentContinuationSweepPass = {
+      advance: () => Ref.update(advanced, (count) => count + 1).pipe(Effect.as({ outcome: 'COMPLETE' as const })),
+      claimSweep: () => Ref.updateAndGet(charged, (count) => count + 1).pipe(Effect.map(Option.some)),
+      compositionRevision: ORIGINAL_COMPOSITION_REVISION,
+      listDue: () => Ref.update(lists, (count) => count + 1).pipe(Effect.as([due(attempt)])),
+    };
+    const service: CommerceEnrollmentContinuationService = {
+      advance: () =>
+        Effect.succeed({
+          halt: { reason: 'IN_FLIGHT' as const, transition: Option.none() },
+          outcome: 'HALTED' as const,
+        }),
+      openSweepPass: Ref.update(opened, (count) => count + 1).pipe(
+        Effect.andThen(Ref.get(admitted)),
+        Effect.flatMap((approved) =>
+          approved ? Effect.succeed(pass) : Effect.fail(attemptUnavailable('No approved composition is available')),
+        ),
+      ),
+    };
+    const sweeper = yield* commerceEnrollmentContinuationSweeperFor({ continuation: service, staleAfterMillis: 0 });
+    yield* sweeper.continuation.advance(attempt);
+
+    expect(yield* sweeper.sweep).toStrictEqual({ released: 0, swept: 0, tracked: 1 });
+    expect(yield* Ref.get(opened)).toBe(1);
+    expect(yield* Ref.get(lists)).toBe(0);
+    expect(yield* Ref.get(charged)).toBe(0);
+    expect(yield* Ref.get(advanced)).toBe(0);
+
+    yield* Ref.set(admitted, true);
+    expect(yield* sweeper.sweep).toStrictEqual({ released: 0, swept: 1, tracked: 0 });
+    expect(yield* Ref.get(opened)).toBe(2);
+    expect(yield* Ref.get(charged)).toBe(1);
+    expect(yield* Ref.get(advanced)).toBe(1);
   }),
 );

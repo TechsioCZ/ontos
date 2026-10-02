@@ -6,6 +6,10 @@ import { defineRule } from "@oxlint/plugins";
 
 import type { ESTree } from "@oxlint/plugins";
 
+import { provesDataFactoryImport } from "./data-factory-proof.ts";
+import { lookupVariable } from "../../../effect-native/shared/bindings.ts";
+import { isInsideNativeServiceFactoryCallback } from "../../../effect-native/shared/native-service-factory.ts";
+
 const SERVICE_CONSTRUCTOR_NAME = /^make[A-Z]/u;
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/u;
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
@@ -391,7 +395,7 @@ function httpApiSchemaMember(node: Syntax, model: Model, scope: FunctionScope): 
 
 function safeDataMember(node: Syntax, model: Model, scope: FunctionScope): boolean {
   const value = member(unwrap(node));
-  return value !== null && value.property === "assign" && nameOf(value.object) === "Object" && !scope.names.has("Object");
+  return value !== null && value.property === "assign" && nameOf(value.object) === "Object" && !scope.names.has("Object") && !model.values.has("Object") && !model.imports.has("Object");
 }
 
 function safeDataExpression(
@@ -437,7 +441,8 @@ function safeDataExpression(
   const name = nameOf(callee);
   if (name === null || scope.names.has(name)) return false;
   const binding = model.values.get(name);
-  return binding?.function === true && hasTypedDataParameters(binding.node, model);
+  return binding?.function === true && hasTypedDataParameters(binding.node, model) &&
+    prove(binding.node, model, state);
 }
 
 function schemaInput(node: Syntax, model: Model, scope: FunctionScope, state: ProofState): boolean {
@@ -497,6 +502,64 @@ function schemaExpression(node: Syntax, model: Model, scope: FunctionScope, stat
   return prove(local.node, model, state);
 }
 
+/** Literal factories may copy proven data, but cannot call dependencies or emit executable behavior. */
+function literalDataExpression(node: Syntax, model: Model, scope: FunctionScope, seen = new Set<Syntax>()): boolean {
+  const current = unwrap(node);
+  if (seen.has(current)) return false;
+  const nextSeen = new Set(seen).add(current);
+  const type = kind(current);
+  if (type === 'Identifier') {
+    const name = nameOf(current);
+    if (name === null) return false;
+    if (scope.parameters.has(name)) return true;
+    if (name === 'undefined' && !scope.names.has(name)) return true;
+    const initializer = scope.locals.has(name) ? scope.locals.get(name) : model.values.get(name)?.node;
+    return (
+      initializer !== null && initializer !== undefined && literalDataExpression(initializer, model, scope, nextSeen)
+    );
+  }
+  if (type === 'Literal') return current.regex === undefined;
+  if (type === 'TemplateLiteral') {
+    return (current.expressions ?? []).every((entry: unknown) =>
+      literalDataExpression(asNode(entry)!, model, scope, nextSeen),
+    );
+  }
+  if (type === 'ObjectExpression') {
+    return (current.properties ?? []).every((entry: unknown) =>
+      literalDataExpression(asNode(entry)!, model, scope, nextSeen),
+    );
+  }
+  if (type === 'ArrayExpression') {
+    return (current.elements ?? []).every(
+      (entry: unknown) => entry === null || literalDataExpression(asNode(entry)!, model, scope, nextSeen),
+    );
+  }
+  if (type === 'Property') {
+    return (
+      current.kind === 'init' &&
+      current.method !== true &&
+      current.computed !== true &&
+      literalDataExpression(asNode(current.value)!, model, scope, nextSeen)
+    );
+  }
+  if (['ConditionalExpression', 'LogicalExpression', 'BinaryExpression', 'UnaryExpression'].includes(type ?? '')) {
+    return children(current).every((child) => literalDataExpression(child, model, scope, nextSeen));
+  }
+  return false;
+}
+
+function proveLiteralDataFactory(node: Syntax, model: Model): boolean {
+  const info = functionInfo(node);
+  if (info === null || !hasDataParameters(info, model)) return false;
+  const scope = functionScope(info);
+  if (!scope.valid) return false;
+  return (
+    [...scope.locals.values()].every(
+      (initializer) => initializer !== null && literalDataExpression(initializer, model, scope),
+    ) && literalDataExpression(info.returnExpression, model, scope)
+  );
+}
+
 function prove(node: Syntax, model: Model, state: ProofState): boolean {
   if (state.proven.has(node)) return true;
   if (state.visiting.has(node)) return false;
@@ -513,7 +576,7 @@ function prove(node: Syntax, model: Model, state: ProofState): boolean {
   return result;
 }
 
-function isPureSchemaFactoryImport(
+function isPureDataFactoryImport(
   filename: string,
   source: string,
   importedName: string,
@@ -533,7 +596,8 @@ function isPureSchemaFactoryImport(
   }
   const model = cache.get(resolved);
   const exported = model?.exports.get(importedName);
-  return model !== null && exported !== undefined && prove(exported, model, { visiting: new Set(), proven: new Set() });
+  return model !== null && exported !== undefined &&
+    (prove(exported, model, { visiting: new Set(), proven: new Set() }) || proveLiteralDataFactory(exported, model));
 }
 
 /** Keep dependency-bearing Effect service constructors local to their owning capability modules. */
@@ -556,7 +620,15 @@ export const noServiceConstructorImportsRule = defineRule({
           if (specifier.type !== "ImportSpecifier") continue;
           const importedName = getImportedName(specifier);
           if (!SERVICE_CONSTRUCTOR_NAME.test(importedName)) continue;
-          if (isPureSchemaFactoryImport(context.filename, node.source.value, importedName, cache)) continue;
+          const variable = lookupVariable(context, specifier.local);
+          if (variable !== null && variable.references.length > 0 && variable.references.every((reference) => {
+            const identifier = reference.identifier;
+            const parent = identifier.parent;
+            return parent?.type === "CallExpression" && parent.callee === identifier &&
+              isInsideNativeServiceFactoryCallback(context, identifier);
+          })) continue;
+          if (isPureDataFactoryImport(context.filename, node.source.value, importedName, cache) ||
+            provesDataFactoryImport(context.filename, node.source.value, importedName)) continue;
           context.report({ node: specifier, messageId: "serviceConstructorImport", data: { name: importedName } });
         }
       },

@@ -84,6 +84,7 @@ import type { Context, ESTree, Scope, Variable } from '@oxlint/plugins';
 import { importedName } from '../shared/imports.ts';
 import { optionRecord, stringArray } from '../shared/options.ts';
 import { globToRegExp, isTestFile, normalisePath } from '../shared/paths.ts';
+import { isModernCompilerTargetComparison } from './no-ambient-process-env.ts';
 
 type AnyNode = ESTree.Node;
 
@@ -747,6 +748,9 @@ export const rule = defineRule({
     }
     function classifyComparison(node: ESTree.BinaryExpression | ESTree.PrivateInExpression): Classification {
       const comparison = node as ESTree.BinaryExpression;
+      if (isModernCompilerTargetComparison(context, comparison)) {
+        return null;
+      }
       if (!COMPARISON_OPERATORS.has(comparison.operator)) return null;
       const left = comparison.left as AnyNode;
       const right = comparison.right as AnyNode;

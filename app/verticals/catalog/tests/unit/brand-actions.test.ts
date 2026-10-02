@@ -1,7 +1,9 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionTransactionError, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { describe, expect, it } from 'effect-rstest';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -69,11 +71,13 @@ const unavailable = () =>
   Effect.fail(new BrandPersistenceUnavailable({ code: 'brand_persistence_unavailable', reason: 'No basis' }));
 const unexpected = () => Effect.die('Persistence should not run');
 const context = (
+  compositionRevision: string,
   overrides: Partial<BrandPersistence> = {},
 ): ActionHandlerContext<Readonly<Record<string, never>>, BrandPersistence> => ({
   actionInvocationId: '88888888-8888-4888-8888-888888888888',
   addDomainEvent: () => Effect.succeed(Object.create(null)),
   addOutboxMessage: () => Effect.void,
+  compositionRevision,
   recordAuditEvidence: () => Effect.void,
   recordDataAccess: () => Effect.void,
   scope,
@@ -86,8 +90,11 @@ const context = (
     ...overrides,
   },
 });
-const renameContext = (overrides: Partial<BrandPersistence> = {}): Parameters<typeof handleRenameBrand>[1] => ({
-  ...context(overrides),
+const renameContext = (
+  compositionRevision: string,
+  overrides: Partial<BrandPersistence> = {},
+): Parameters<typeof handleRenameBrand>[1] => ({
+  ...context(compositionRevision, overrides),
   addDomainEvent: () => Effect.succeed(Object.create(null)),
 });
 
@@ -228,12 +235,16 @@ describe('Brand governed Actions', () => {
 
   it.effect('never reports mutation success without authoritative persistence', () =>
     Effect.gen(function* rejectUnavailablePersistence() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const errors = yield* Effect.all([
-        handleCreateBrand(create, context()).pipe(Effect.flip),
-        handleRenameBrand(rename, renameContext()).pipe(Effect.flip),
-        handleRetireBrand(retire, context()).pipe(Effect.flip),
-        handleReactivateBrand(reactivate, context()).pipe(Effect.flip),
-        handleSetProductBrand(assign, context()).pipe(Effect.flip),
+        handleCreateBrand(create, context(compositionSnapshot.composition.revision)).pipe(Effect.flip),
+        handleRenameBrand(rename, renameContext(compositionSnapshot.composition.revision)).pipe(Effect.flip),
+        handleRetireBrand(retire, context(compositionSnapshot.composition.revision)).pipe(Effect.flip),
+        handleReactivateBrand(reactivate, context(compositionSnapshot.composition.revision)).pipe(Effect.flip),
+        handleSetProductBrand(assign, context(compositionSnapshot.composition.revision)).pipe(Effect.flip),
       ]);
       expect(errors.map((error) => error.code)).toEqual(Array.from({ length: 5 }, () => 'brand_unavailable'));
     }),
@@ -241,10 +252,16 @@ describe('Brand governed Actions', () => {
 
   it.effect('emits the committed Brand rename and linked outbox once after persistence succeeds', () =>
     Effect.gen(function* committedBrandRename() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const emitted: unknown[] = [];
       const result = Schema.decodeUnknownSync(BrandMutationResultSchema)({ brandRef, revision: 2 });
       const actionContext: Parameters<typeof handleRenameBrand>[1] = {
-        ...renameContext({ rename: () => Effect.succeed({ _tag: 'applied' as const, result }) }),
+        ...renameContext(compositionSnapshot.composition.revision, {
+          rename: () => Effect.succeed({ _tag: 'applied' as const, result }),
+        }),
         addDomainEvent: (event) => {
           emitted.push(event);
           return Effect.succeed(Object.create(null));
@@ -273,9 +290,15 @@ describe('Brand governed Actions', () => {
 
   it.effect('emits nothing when the Brand rename is rejected as stale', () =>
     Effect.gen(function* rejectedBrandRename() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const emitted: unknown[] = [];
       const actionContext: Parameters<typeof handleRenameBrand>[1] = {
-        ...renameContext({ rename: () => Effect.succeed({ _tag: 'stale' as const, actualRevision: 3 }) }),
+        ...renameContext(compositionSnapshot.composition.revision, {
+          rename: () => Effect.succeed({ _tag: 'stale' as const, actualRevision: 3 }),
+        }),
         addDomainEvent: (event) => {
           emitted.push(event);
           return Effect.die('Rejected rename must not create an event');
@@ -293,6 +316,10 @@ describe('Brand governed Actions', () => {
 
   it.effect('rejects foreign Tenant references before persistence', () =>
     Effect.gen(function* rejectForeignTenant() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const foreignBrand = Schema.decodeUnknownSync(CreateBrandPayloadSchema)({
         ...create,
         brandRef: { ...brandRef, tenantId: otherTenantId },
@@ -302,8 +329,13 @@ describe('Brand governed Actions', () => {
         assignment: { brandRef: { ...brandRef, tenantId: otherTenantId }, kind: 'brand' },
       });
       const errors = yield* Effect.all([
-        handleCreateBrand(foreignBrand, context({ create: unexpected })).pipe(Effect.flip),
-        handleSetProductBrand(foreignAssignment, context({ setProductBrand: unexpected })).pipe(Effect.flip),
+        handleCreateBrand(foreignBrand, context(compositionSnapshot.composition.revision, { create: unexpected })).pipe(
+          Effect.flip,
+        ),
+        handleSetProductBrand(
+          foreignAssignment,
+          context(compositionSnapshot.composition.revision, { setProductBrand: unexpected }),
+        ).pipe(Effect.flip),
       ]);
       expect(errors.map((error) => error.code)).toEqual(['brand_invalid', 'brand_invalid']);
     }),

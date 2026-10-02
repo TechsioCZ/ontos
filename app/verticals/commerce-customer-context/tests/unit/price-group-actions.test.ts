@@ -42,6 +42,7 @@ import type {
   PriceGroupCatalogPort,
 } from '../../shared/domain/price-group-ports.ts';
 
+const compositionRevision = 'a'.repeat(64);
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const profile = {
   kind: 'RETAIL',
@@ -293,6 +294,7 @@ describe('customer PriceGroup Actions', () => {
           actionInvocationId: '44444444-4444-4444-8444-444444444441',
           addDomainEvent: assignCollector.addDomainEvent,
           addOutboxMessage: assignCollector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: assignCollector.recordAuditEvidence,
           recordDataAccess: assignCollector.recordDataAccess,
           scope: temporalScope,
@@ -324,6 +326,7 @@ describe('customer PriceGroup Actions', () => {
           actionInvocationId: '44444444-4444-4444-8444-444444444442',
           addDomainEvent: removeCollector.addDomainEvent,
           addOutboxMessage: removeCollector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: removeCollector.recordAuditEvidence,
           recordDataAccess: removeCollector.recordDataAccess,
           scope: temporalScope,
@@ -357,6 +360,7 @@ describe('customer PriceGroup Actions', () => {
           actionInvocationId: '44444444-4444-4444-8444-444444444443',
           addDomainEvent: migrateCollector.addDomainEvent,
           addOutboxMessage: migrateCollector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: migrateCollector.recordAuditEvidence,
           recordDataAccess: migrateCollector.recordDataAccess,
           scope: temporalScope,
@@ -390,6 +394,7 @@ describe('customer PriceGroup Actions', () => {
           actionInvocationId: '44444444-4444-4444-8444-444444444444',
           addDomainEvent: collector.addDomainEvent,
           addOutboxMessage: collector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: collector.recordAuditEvidence,
           recordDataAccess: collector.recordDataAccess,
           scope: temporalScope,
@@ -501,6 +506,7 @@ describe('customer PriceGroup Actions', () => {
           actionInvocationId: '44444444-4444-4444-8444-444444444445',
           addDomainEvent: collector.addDomainEvent,
           addOutboxMessage: collector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: collector.recordAuditEvidence,
           recordDataAccess: (evidence) => {
             accesses.push(evidence.queryHash ?? '');

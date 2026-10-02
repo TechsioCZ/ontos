@@ -72,3 +72,4 @@ const buildArtifact = withUltramodernBuildIdentity(
 );
 
 export const ultramodernApiMarker = buildArtifact.surfaces.api;
+export const ultramodernDeliveryUnit = buildArtifact.deliveryUnit;

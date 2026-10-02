@@ -21,7 +21,7 @@ type SelectionEvidenceExecutor = (
   payload: SelectionEvidenceRequest,
   credential: Redacted.Redacted,
   requestCorrelation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<SelectionEvidenceResponse, SelectionEvidenceFailure>;
 
 export interface CatalogSelectionAssessmentPort {
@@ -69,7 +69,11 @@ const assessmentMatchesRequest = (
 };
 
 const makeCatalogSelectionAssessmentPort = (dependencies: {
-  readonly context: { readonly legalEntityId: string; readonly requestCorrelation: string };
+  readonly context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  };
   readonly execute: SelectionEvidenceExecutor;
   readonly issuer: CatalogSelectionGatewayCredentialIssuer;
 }): CatalogSelectionAssessmentPort =>
@@ -78,6 +82,7 @@ const makeCatalogSelectionAssessmentPort = (dependencies: {
       dependencies.issuer
         .issue({
           audience: 'catalog',
+          compositionRevision: dependencies.context.compositionRevision,
           legalEntityId: dependencies.context.legalEntityId,
           requestCorrelation: dependencies.context.requestCorrelation,
         })
@@ -89,6 +94,7 @@ const makeCatalogSelectionAssessmentPort = (dependencies: {
               dependencies.context.requestCorrelation,
               {
                 baseUrl,
+                compositionRevision: dependencies.context.compositionRevision,
               },
             ),
           ),
@@ -114,7 +120,11 @@ const makeCatalogSelectionAssessmentPort = (dependencies: {
   });
 
 export const catalogSelectionAssessmentPortFromEnvironment = (
-  context: { readonly legalEntityId: string; readonly requestCorrelation: string },
+  context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  },
   execute: SelectionEvidenceExecutor = executeSelectionEvidence,
 ): Effect.Effect<CatalogSelectionAssessmentPort> =>
   Effect.serviceOption(CatalogSelectionGatewayCredentialService).pipe(

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface SetCompositionCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type SetCompositionCurrentAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeSetCompositionCurrent = (
   payload: SetCompositionCurrentRequest,
   ...[requestCorrelation, options = {}]: SetCompositionCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeSetCompositionCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeSetCompositionCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

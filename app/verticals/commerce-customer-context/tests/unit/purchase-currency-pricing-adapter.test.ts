@@ -27,7 +27,7 @@ const purchasingContext = {
 const credentialLayer = Layer.succeed(PurchaseCurrencyPricingGatewayCredentialService, {
   issue: () =>
     Effect.succeed({
-      baseUrl: new URL('https://pricing.example.test'),
+      baseUrl: new URL('https://shell.example.test/owner-api'),
       credential: Redacted.make('Bearer pricing-owner-issued'),
     }),
 });
@@ -95,7 +95,11 @@ describe('Purchase Currency Pricing production adapter', () => {
     Effect.gen(function* exactOwnerRequest() {
       const calls: unknown[] = [];
       const port = yield* purchaseCurrencyPricingPortFromEnvironment(
-        { legalEntityId: purchasingContext.sellingLegalEntityId, requestCorrelation: 'pricing-test' },
+        {
+          compositionRevision: 'a'.repeat(64),
+          legalEntityId: purchasingContext.sellingLegalEntityId,
+          requestCorrelation: 'pricing-test',
+        },
         (payload, credential, correlation, options) => {
           calls.push({ correlation, credential: Redacted.value(credential), options, payload });
           return Effect.succeed(currentResponse);
@@ -110,7 +114,7 @@ describe('Purchase Currency Pricing production adapter', () => {
         {
           correlation: 'pricing-test',
           credential: 'Bearer pricing-owner-issued',
-          options: { baseUrl: new URL('https://pricing.example.test') },
+          options: { baseUrl: new URL('https://shell.example.test/owner-api'), compositionRevision: 'a'.repeat(64) },
           payload: { effectiveAt, tenantId },
         },
       ]);
@@ -146,7 +150,11 @@ describe('Purchase Currency Pricing production adapter', () => {
               },
         );
         const port = yield* purchaseCurrencyPricingPortFromEnvironment(
-          { legalEntityId: purchasingContext.sellingLegalEntityId, requestCorrelation: 'pricing-test' },
+          {
+            compositionRevision: 'a'.repeat(64),
+            legalEntityId: purchasingContext.sellingLegalEntityId,
+            requestCorrelation: 'pricing-test',
+          },
           () => Effect.succeed(response),
         );
         const failure = yield* port
@@ -164,7 +172,11 @@ describe('Purchase Currency Pricing production adapter', () => {
   it.effect('fails typed when a malformed Current response claims an empty support set', () =>
     Effect.gen(function* malformedCurrentSupport() {
       const port = yield* purchaseCurrencyPricingPortFromEnvironment(
-        { legalEntityId: purchasingContext.sellingLegalEntityId, requestCorrelation: 'pricing-test' },
+        {
+          compositionRevision: 'a'.repeat(64),
+          legalEntityId: purchasingContext.sellingLegalEntityId,
+          requestCorrelation: 'pricing-test',
+        },
         () => Effect.succeed({ ...currentResponse, supportedCurrencies: [] }),
       );
       const failure = yield* port.resolveCurrent({ effectiveAt, tenantId }).pipe(Effect.flip);
@@ -189,7 +201,11 @@ describe('Purchase Currency Pricing production adapter', () => {
     });
     return Effect.gen(function* compatibilityCannotAuthorizePurchase() {
       const port = yield* purchaseCurrencyPricingPortFromEnvironment(
-        { legalEntityId: purchasingContext.sellingLegalEntityId, requestCorrelation: 'pricing-test' },
+        {
+          compositionRevision: 'a'.repeat(64),
+          legalEntityId: purchasingContext.sellingLegalEntityId,
+          requestCorrelation: 'pricing-test',
+        },
         () => Effect.succeed(compatibilityResponse),
       );
       const failure = yield* port.resolveCurrent({ effectiveAt, tenantId }).pipe(Effect.flip);

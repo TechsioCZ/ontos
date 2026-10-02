@@ -22,6 +22,7 @@ import { migrateCustomerPriceGroupAction } from '../../src/actions/migrate-custo
 import { priceGroupCatalogPort } from '../../src/integrations/price-group-catalog.ts';
 
 const tenantId = '334a0000-0000-4000-8000-000000000001';
+const originalCompositionRevision = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
 const operationAt = '2026-09-23T10:00:00.000Z';
 const scheduledAt = '2026-10-01T00:00:00.000Z';
 const group = {
@@ -253,6 +254,7 @@ const contextFor = <Events extends DomainEventContractMap>(
     actionInvocationId: crypto.randomUUID(),
     addDomainEvent: collector.addDomainEvent,
     addOutboxMessage: collector.addOutboxMessage,
+    compositionRevision: originalCompositionRevision,
     recordAuditEvidence: collector.recordAuditEvidence,
     recordDataAccess: collector.recordDataAccess,
     scope: {

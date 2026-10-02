@@ -2,6 +2,7 @@ import { Effect, Layer, Option } from 'effect';
 
 import { defineOutboxWorkerEntry, startOutboxWorkerHost } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
+import { outboxWorkerCompositionLayer } from '../support/outbox-worker-composition.ts';
 
 const emptyResult = {
   claimed: 0,
@@ -44,13 +45,15 @@ startOutboxWorkerHost({
   entries: [
     defineOutboxWorkerEntry({
       claimOwnerPrefix: 'billing-outbox-worker',
-      layer: observedRuntime('billing', Option.some(3)),
+      expectedDeployment: { appId: 'billing-service', buildMarker: 'billing-service-build' },
+      layer: observedRuntime('billing', Option.some(3)).pipe(Layer.merge(outboxWorkerCompositionLayer())),
       registrations: [],
       subscriptions: [],
     }),
     defineOutboxWorkerEntry({
       claimOwnerPrefix: 'ledger-outbox-worker',
-      layer: observedRuntime('ledger', Option.none()),
+      expectedDeployment: { appId: 'ledger-service', buildMarker: 'ledger-service-build' },
+      layer: observedRuntime('ledger', Option.none()).pipe(Layer.merge(outboxWorkerCompositionLayer())),
       registrations: [],
       subscriptions: [],
     }),

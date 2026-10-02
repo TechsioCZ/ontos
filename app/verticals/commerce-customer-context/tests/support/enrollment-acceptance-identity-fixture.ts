@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { ActiveApplicationCompositionService, ActionRuntime, makeActionRuntimeLive } from '@app/core-runtime';
+
 import { and, eq } from 'drizzle-orm';
 import { Context, Effect, Layer, Option, Redacted, Schema } from 'effect';
 
@@ -8,7 +10,6 @@ import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/t
 import { acquireFixturePgClient } from './fixture-pg-client.ts';
 import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
 import { ActionRepositoryLive } from '../../../../packages/core-runtime/src/actions/repository.ts';
-import { ActionRuntime, ActionRuntimeLive } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import {
   AuthenticationNamespaceRegistrationSchema,
   ExternalAuthenticationSubjectSchema,
@@ -59,6 +60,8 @@ import type { CommerceEnrollmentCommitResolutionServicePort } from '../../src/en
 import { CommercePortalAccountSubjectSchema } from '../../shared/enrollment-contracts.ts';
 import type { CommercePortalAccountSubject } from '../../shared/enrollment-contracts.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
+import { enrollmentApplicationCompositionSnapshot } from './enrollment-application-composition.ts';
+import { installEnrollmentTestAuthority } from './enrollment-composition-authority.ts';
 
 /** The Commerce portal namespace as Core knows it, owned here as this fixture's deployment input. */
 const AcceptanceNamespaceRegistryLive = Layer.effect(
@@ -204,6 +207,8 @@ const identityClientFor = (
 
 export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
   function* makeEnrollmentAcceptanceIdentityFixture() {
+    const compositionSnapshot = yield* enrollmentApplicationCompositionSnapshot;
+    yield* installEnrollmentTestAuthority(compositionSnapshot.composition.revision);
     const connections = yield* loadDatabaseConnectionPair();
     const admin = yield* acceptanceDatabase(connections.admin.connectionString);
     const runtimeDatabase = yield* acceptanceDatabase(connections.runtime.connectionString);
@@ -248,11 +253,12 @@ export const makeEnrollmentAcceptanceIdentityFixture = Effect.fnUntraced(
     const scopeResolverLive = OperationalScopeResolverLive.pipe(
       Layer.provide(Layer.mergeAll(runtimeDatabaseLive, AcceptanceContextAccessLive)),
     );
-    const actionRuntimeLive = ActionRuntimeLive.pipe(
+    const actionRuntimeLive = makeActionRuntimeLive(compositionSnapshot.composition.shell.deployment).pipe(
       Layer.provide(
         Layer.mergeAll(
           ActionRepositoryLive,
           AcceptanceActionPermissionLive,
+          Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(compositionSnapshot) }),
           ModuleEntrypointGatewayLive.pipe(Layer.provide(moduleStateGateLive)),
           moduleStateGateLive,
           scopeResolverLive,

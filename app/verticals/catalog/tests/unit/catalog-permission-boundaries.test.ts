@@ -1,8 +1,10 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { catalogAuthorityBundles, catalogPublicOperationContracts } from '../../shared/api.ts';
 import { handleRetireVariant } from '../../src/actions/retire-variant.action.ts';
 import type { VariantPersistence } from '../../src/persistence/variant-persistence.ts';
@@ -109,6 +111,10 @@ describe('Catalog permission boundaries (#477)', () => {
 
   it.effect('does not resolve a foreign Variant during a lifecycle write', () =>
     Effect.gen(function* foreignVariantRetirement() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       let persistenceCalls = 0;
       const unexpected = () => {
         persistenceCalls += 1;
@@ -135,6 +141,7 @@ describe('Catalog permission boundaries (#477)', () => {
         actionInvocationId: '66666666-6666-4666-8666-666666666666',
         addDomainEvent: () => Effect.succeed(Object.create(null)),
         addOutboxMessage: () => Effect.void,
+        compositionRevision: compositionSnapshot.composition.revision,
         recordAuditEvidence: () => Effect.void,
         recordDataAccess: () => Effect.void,
         scope,

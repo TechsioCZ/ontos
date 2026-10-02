@@ -1,17 +1,29 @@
+import { readFileSync } from 'node:fs';
+
 import {
+  closeApplicationCompositionDurableAdmission,
+  drainApplicationCompositionAuthority,
   findPostgresFailure,
+  isApplicationCompositionDurableWorkDrained,
   loadDatabaseConnectionPair,
   scopedRoutineInvokerFromTransaction,
   TrustedPrincipalContextSchema,
 } from '@app/core-runtime';
+import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { eq, sql } from 'drizzle-orm';
-import { Effect, Exit, Option, Schema } from 'effect';
+import { Effect, Exit, Fiber, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
+  makeTestPgSession,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  backdateEnrollmentAcceptanceAttempt,
+  makeEnrollmentAcceptanceFixture,
+  startEnrollmentAcceptanceAttempt,
+} from '../support/enrollment-acceptance-fixture.ts';
 import type { CommerceCustomerContextTransaction } from '../../src/database/types.ts';
 import type {
   ClaimEnrollmentTransitionInput,
@@ -33,8 +45,13 @@ import {
   EnrollmentTenantIdSchema,
   EnrollmentTransitionKeySchema,
 } from '../../shared/enrollment-contracts.ts';
+import {
+  ENROLLMENT_TEST_COMPOSITION_REVISION,
+  installEnrollmentTestAuthority,
+} from '../support/enrollment-composition-authority.ts';
 import { commerceEnrollmentProofServiceForTransaction } from '../../src/enrollment/attempts/enrollment-proof-service.ts';
 import { commerceEnrollmentAttemptPersistenceForTransaction } from '../../src/enrollment/attempts/attempt-persistence.ts';
+import { commerceEnrollmentDueAttemptStoreForRun } from '../../src/enrollment/orchestration/owner-transition-production.ts';
 import { commerceEnrollmentAttemptServiceForPersistence } from '../../src/enrollment/attempts/attempt-service.ts';
 import type {
   CommerceEnrollmentAttemptReconciliationAuthority,
@@ -106,6 +123,7 @@ const transitionKey = (value: string) => Schema.decodeSync(EnrollmentTransitionK
 const startInput = (intentKey: string, invocationId: string): StartEnrollmentAttemptInput => ({
   actionInvocationId: actionInvocationId(invocationId),
   actorPrincipalId: principalId,
+  compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
   intentDigest: requestDigest,
   intentKey: enrollmentKey(intentKey),
   journey: 'RETAIL_SELF_ENROLLMENT',
@@ -194,6 +212,15 @@ const cleanupTenantFixtures = (
 ) =>
   admin.transaction((transaction: CommerceCustomerContextTransaction) =>
     Effect.gen(function* cleanFixtures() {
+      yield* transaction.execute(
+        sql`
+        delete from core.application_composition_durable_work
+        where owner_module_key = 'commerce.customer-context'
+          and (work_id like ${`enrollment-attempt:${tenantId}:%`}
+            or work_id like ${`enrollment-operation:${tenantId}:%`})
+      `,
+        'objects',
+      );
       yield* transaction.execute(sql`set local session_replication_role = 'replica'`, 'objects');
       yield* transaction
         .delete(portalEnrollmentOwnerOperations)
@@ -205,6 +232,7 @@ const cleanupTenantFixtures = (
 it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS in PostgreSQL', () =>
   Effect.scoped(
     Effect.gen(function* postgresAcceptance() {
+      yield* installEnrollmentTestAuthority(ENROLLMENT_TEST_COMPOSITION_REVISION);
       const connections = yield* loadDatabaseConnectionPair();
       const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
       const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 });
@@ -247,6 +275,8 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
         persistence.create(startInput('durable-enrollment-live', 'd6100000-0000-4000-8000-000000000002')),
       );
       expect(created.outcome).toBe('CREATED');
+      expect(created.attempt.compositionRevision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
+      expect(replayedCreate.attempt.compositionRevision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
       expect(replayedCreate.outcome).toBe('EXISTING');
       expect(replayedCreate.attempt.portalEnrollmentAttemptId).toBe(created.attempt.portalEnrollmentAttemptId);
 
@@ -610,6 +640,7 @@ it.live('proves durable Attempt CAS, expiry fencing, governed recovery, and RLS 
 it.live('reconciles a FAILED owner_reconciliation_required outcome instead of reporting CONFLICT', () =>
   Effect.scoped(
     Effect.gen(function* reconcileOwnerRequiredFailureAcceptance() {
+      yield* installEnrollmentTestAuthority(ENROLLMENT_TEST_COMPOSITION_REVISION);
       const connections = yield* loadDatabaseConnectionPair();
       const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
       const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 });
@@ -757,6 +788,15 @@ const cleanupFixturesForTenant = (
 ) =>
   admin.transaction((transaction: CommerceCustomerContextTransaction) =>
     Effect.gen(function* cleanFixturesForTenant() {
+      yield* transaction.execute(
+        sql`
+        delete from core.application_composition_durable_work
+        where owner_module_key = 'commerce.customer-context'
+          and (work_id like ${`enrollment-attempt:${forTenantId}:%`}
+            or work_id like ${`enrollment-operation:${forTenantId}:%`})
+      `,
+        'objects',
+      );
       yield* transaction.execute(sql`set local session_replication_role = 'replica'`, 'objects');
       yield* transaction
         .delete(portalEnrollmentOwnerOperations)
@@ -773,6 +813,430 @@ const postgresErrorCode = (exit: Exit.Exit<unknown, unknown>): string | undefine
       )
     : undefined;
 
+it.live(
+  'retains the admitted release, blocks draining pending work, and fences a late transaction after promotion',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* originalEnrollmentRelease() {
+        const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, ENROLLMENT_TEST_COMPOSITION_REVISION);
+        const authority = yield* installEnrollmentTestAuthority(ENROLLMENT_TEST_COMPOSITION_REVISION);
+        const connections = yield* loadDatabaseConnectionPair();
+        const coreClient = yield* makeTestPgClient(connections.admin.connectionString);
+        const core = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
+        const input = startInput('original-release-native', 'd6990000-0000-4000-8000-000000000001');
+        const created = yield* startEnrollmentAcceptanceAttempt(fixture, input);
+        const replayed = yield* startEnrollmentAcceptanceAttempt(fixture, {
+          ...input,
+          actionInvocationId: actionInvocationId('d6990000-0000-4000-8000-000000000002'),
+        });
+        expect(replayed.portalEnrollmentAttemptId).toBe(created.portalEnrollmentAttemptId);
+        expect(replayed.compositionRevision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
+        const cutoverGate = Schema.decodeSync(Schema.NonEmptyString)(
+          readFileSync(
+            new URL(
+              '../../drizzle/20261002170900_enrollment-original-composition-revision/migration.sql',
+              import.meta.url,
+            ),
+            'utf-8',
+          ).split('--> statement-breakpoint')[0],
+        );
+        const gateStart = cutoverGate.indexOf('DO $migration$');
+        const populatedJournalCutover = yield* fixture.admin
+          .transaction((transaction) =>
+            Effect.gen(function* executeNativeCutoverGate() {
+              yield* transaction.execute(sql.raw(cutoverGate.slice(0, gateStart)), 'objects');
+              yield* transaction.execute(sql.raw(cutoverGate.slice(gateStart)), 'objects');
+            }),
+          )
+          .pipe(Effect.exit);
+        expect(postgresErrorCode(populatedJournalCutover)).toBe('23514');
+        const rebind = yield* fixture.admin
+          .transaction((transaction) =>
+            transaction
+              .update(portalEnrollmentAttempts)
+              .set({ compositionRevision: 'b'.repeat(64) })
+              .where(eq(portalEnrollmentAttempts.portalEnrollmentAttemptId, created.portalEnrollmentAttemptId)),
+          )
+          .pipe(Effect.exit);
+        expect(postgresErrorCode(rebind)).toBe('22023');
+
+        const changedIntentRevision = yield* fixture.run(fixture.scope, (transaction) =>
+          commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope)
+            .create({ ...input, compositionRevision: 'b'.repeat(64) })
+            .pipe(Effect.exit),
+        );
+        expect(Exit.isFailure(changedIntentRevision)).toBe(true);
+
+        yield* backdateEnrollmentAcceptanceAttempt(fixture, created.portalEnrollmentAttemptId, '2001-01-01T00:00:00Z');
+        const store = commerceEnrollmentDueAttemptStoreForRun(fixture.runWorker);
+        const due = yield* store.listDue({ after: Option.none(), limit: 500, maxSweeps: 3, staleAfterMillis: 0 });
+        const listed = due.find((row) => row.portalEnrollmentAttemptId === created.portalEnrollmentAttemptId);
+        expect(listed?.compositionRevision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
+        const sweep = {
+          claimTtlMillis: 0,
+          compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
+          maxSweeps: 3,
+          portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
+          revision: created.revision,
+          tenantId,
+        };
+        expect(yield* store.claimSweep({ ...sweep, compositionRevision: 'b'.repeat(64) })).toStrictEqual(Option.none());
+        expect(yield* store.claimSweep(sweep)).toStrictEqual(Option.some(1));
+
+        yield* core.transaction((transaction) =>
+          closeApplicationCompositionDurableAdmission(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
+        );
+        const deniedDrain = yield* core
+          .transaction((transaction) =>
+            drainApplicationCompositionAuthority(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
+          )
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(deniedDrain)).toBe(true);
+        const claimed = yield* fixture.run(fixture.scope, (transaction) =>
+          commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).claim({
+            ...claimInput(
+              created.portalEnrollmentAttemptId,
+              created.revision,
+              'd6990000-0000-4000-8000-000000000003',
+              'provider.account.create',
+              'release-worker',
+            ),
+            leaseDurationMs: 30_000,
+          }),
+        );
+        expect(claimed.outcome).toBe('CLAIMED');
+        expect(claimed.attempt.compositionRevision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
+
+        const successful = yield* requireClaimed(claimed);
+        const terminateInput = {
+          actionInvocationId: actionInvocationId('d6990000-0000-4000-8000-000000000004'),
+          actorPrincipalId: principalId,
+          expectedRevision: successful.attempt.revision,
+          portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
+          reason: 'owner_finished',
+          tenantId,
+        };
+        const deniedTermination = yield* fixture.run(fixture.scope, (transaction) =>
+          commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope)
+            .terminate(terminateInput)
+            .pipe(attemptCode),
+        );
+        expect(deniedTermination).toBe('attempt_indeterminate');
+        const stillPending = yield* fixture.run(fixture.scope, (transaction) =>
+          commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).read({
+            portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
+            tenantId,
+          }),
+        );
+        expect(stillPending.state).toBe('IN_PROGRESS');
+        const optionalInvocationId = actionInvocationId('d6990000-0000-4000-8000-000000000005');
+        const optionalLease = leaseToken('d6990000-0000-4000-8000-000000000006');
+        const optionalTransition = transitionKey('optional.owner.effect');
+        yield* fixture.admin.transaction((transaction) =>
+          transaction.insert(portalEnrollmentOwnerOperations).values({
+            actorPrincipalId: principalId,
+            leaseExpiresAt: sql`clock_timestamp() + interval '30 seconds'`,
+            leaseOwner: 'optional-worker',
+            leaseToken: optionalLease,
+            ownerInvocationId: optionalInvocationId,
+            ownerModuleKey,
+            portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
+            requestDigest,
+            required: false,
+            status: 'IN_PROGRESS',
+            tenantId,
+            transitionKey: optionalTransition,
+          }),
+        );
+        const requiredOutcome = {
+          accountSubject: subject,
+          actorPrincipalId: principalId,
+          expectedRevision: successful.attempt.revision,
+          leaseToken: Schema.decodeUnknownSync(EnrollmentLeaseTokenSchema)(successful.operation.lease?.leaseToken),
+          ownerInvocationId: successful.operation.ownerInvocationId,
+          ownerModuleKey: successful.operation.ownerModuleKey,
+          portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
+          resultReference: enrollmentResourceId('original-release-account'),
+          status: 'SUCCEEDED' as const,
+          tenantId,
+          transitionKey: successful.operation.transitionKey,
+          workerId: enrollmentKey('release-worker'),
+        };
+        const deniedCompletion = yield* fixture
+          .run(fixture.scope, (transaction) =>
+            commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).record(
+              requiredOutcome,
+              'COMPLETE',
+            ),
+          )
+          .pipe(Effect.exit);
+        expect(postgresErrorCode(deniedCompletion)).toBe('attempt_unavailable');
+        const completionRefused = yield* fixture.run(fixture.scope, (transaction) =>
+          commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).read({
+            portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
+            tenantId,
+          }),
+        );
+        expect(completionRefused.state).toBe('IN_PROGRESS');
+        // The optional owner fixture reports its authoritative answer through the actual journal
+        // table and native trigger; the required owner below uses its production record routine.
+        yield* fixture.admin.transaction((transaction) =>
+          transaction
+            .update(portalEnrollmentOwnerOperations)
+            .set({
+              completedAt: sql`clock_timestamp()`,
+              leaseExpiresAt: null,
+              leaseOwner: null,
+              leaseToken: null,
+              resultReference: 'optional-owner-result',
+              status: 'SUCCEEDED',
+            })
+            .where(eq(portalEnrollmentOwnerOperations.ownerInvocationId, optionalInvocationId)),
+        );
+        const finished = yield* fixture.run(fixture.scope, (transaction) =>
+          commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).record(
+            {
+              ...requiredOutcome,
+              expectedRevision: successful.attempt.revision,
+            },
+            'IN_PROGRESS',
+          ),
+        );
+        const completed = yield* fixture.run(fixture.scope, (transaction) =>
+          commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).terminate({
+            ...terminateInput,
+            expectedRevision: finished.attempt.revision,
+          }),
+        );
+        yield* core.transaction((transaction) =>
+          drainApplicationCompositionAuthority(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
+        );
+        const deniedStart = yield* fixture.run(fixture.scope, (transaction) =>
+          commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope)
+            .create({ ...input, intentKey: enrollmentKey('denied-during-draining') })
+            .pipe(Effect.exit),
+        );
+        expect(Exit.isFailure(deniedStart)).toBe(true);
+        const late = yield* makeTestPgSession(connections.runtime.connectionString);
+        yield* late.unsafe('BEGIN');
+        yield* Effect.addFinalizer(() => late.unsafe('ROLLBACK').pipe(Effect.orDie));
+        yield* late.unsafe("select set_config('ontos.tenant_id', $1, true)", [tenantId]);
+        const [captured] = yield* late.unsafe<{ composition_revision: string }>(
+          'select composition_revision from commerce_customer_context.read_portal_enrollment_attempt($1::uuid, $2::uuid)',
+          [tenantId, created.portalEnrollmentAttemptId],
+        );
+        expect(captured?.composition_revision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
+        yield* authority.setRelease('b'.repeat(64), 'active');
+        yield* late.unsafe("select set_config('ontos.tenant_id', '', true)");
+        const staleMutation = yield* late
+          .unsafe(
+            'select commerce_customer_context.claim_portal_enrollment_sweep($1::uuid, $2::uuid, $3::integer, 3, 0, $4::text)',
+            [
+              tenantId,
+              created.portalEnrollmentAttemptId,
+              completed.attempt.revision,
+              ENROLLMENT_TEST_COMPOSITION_REVISION,
+            ],
+          )
+          .pipe(Effect.exit);
+        expect(postgresErrorCode(staleMutation)).toBe('55000');
+      }),
+    ),
+);
+
+it.live('closes new admission while existing child work remains covered by one serialized Attempt marker', () =>
+  Effect.scoped(
+    Effect.gen(function* existingAttemptFinishesAfterAdmissionCloses() {
+      const fixture = yield* makeEnrollmentAcceptanceFixture({ tenantId }, ENROLLMENT_TEST_COMPOSITION_REVISION);
+      const connections = yield* loadDatabaseConnectionPair();
+      const coreClient = yield* makeTestPgClient(connections.admin.connectionString);
+      const core = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
+      const created = yield* startEnrollmentAcceptanceAttempt(
+        fixture,
+        startInput('closed-admission-existing-attempt', 'd69b0000-0000-4000-8000-000000000001'),
+      );
+      const marker = `enrollment-attempt:${tenantId}:${created.portalEnrollmentAttemptId}`;
+      const ownedMarkers = coreClient.unsafe<{ work_id: string }>(
+        "select work_id from core.application_composition_durable_work where owner_module_key = 'commerce.customer-context' and original_revision = $1 and (work_id like $2 or work_id like $3) order by work_id",
+        [
+          ENROLLMENT_TEST_COMPOSITION_REVISION,
+          `enrollment-attempt:${tenantId}:%`,
+          `enrollment-operation:${tenantId}:%`,
+        ],
+      );
+      expect((yield* ownedMarkers).map((row) => row.work_id)).toStrictEqual([marker]);
+      yield* core.transaction((transaction) =>
+        closeApplicationCompositionDurableAdmission(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
+      );
+      expect(
+        yield* core.transaction((transaction) =>
+          isApplicationCompositionDurableWorkDrained(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
+        ),
+      ).toBe(false);
+      const deniedStart = yield* fixture.run(fixture.scope, (transaction) =>
+        commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope)
+          .create(startInput('closed-admission-new-attempt', 'd69b0000-0000-4000-8000-000000000002'))
+          .pipe(Effect.exit),
+      );
+      expect(Exit.isFailure(deniedStart)).toBe(true);
+      const claimed = yield* fixture.run(fixture.scope, (transaction) =>
+        commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).claim({
+          ...claimInput(
+            created.portalEnrollmentAttemptId,
+            created.revision,
+            'd69b0000-0000-4000-8000-000000000003',
+            'provider.account.create',
+            'closed-admission-worker',
+          ),
+          leaseDurationMs: 60_000,
+        }),
+      );
+      const successful = yield* requireClaimed(claimed);
+      expect((yield* ownedMarkers).map((row) => row.work_id)).toStrictEqual([marker]);
+      const prematureTerminal = yield* fixture.admin
+        .transaction((transaction) =>
+          transaction
+            .update(portalEnrollmentAttempts)
+            .set({ state: 'COMPLETE' })
+            .where(eq(portalEnrollmentAttempts.portalEnrollmentAttemptId, created.portalEnrollmentAttemptId)),
+        )
+        .pipe(Effect.exit);
+      expect(postgresErrorCode(prematureTerminal)).toBe('55000');
+      expect((yield* ownedMarkers).map((row) => row.work_id)).toStrictEqual([marker]);
+      const finished = yield* fixture.run(fixture.scope, (transaction) =>
+        commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).record(
+          {
+            accountSubject: subject,
+            actorPrincipalId: principalId,
+            expectedRevision: successful.attempt.revision,
+            leaseToken: Schema.decodeUnknownSync(EnrollmentLeaseTokenSchema)(successful.operation.lease?.leaseToken),
+            ownerInvocationId: successful.operation.ownerInvocationId,
+            ownerModuleKey: successful.operation.ownerModuleKey,
+            portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
+            resultReference: enrollmentResourceId('closed-admission-account'),
+            status: 'SUCCEEDED',
+            tenantId,
+            transitionKey: successful.operation.transitionKey,
+            workerId: enrollmentKey('closed-admission-worker'),
+          },
+          'IN_PROGRESS',
+        ),
+      );
+      expect((yield* ownedMarkers).map((row) => row.work_id)).toStrictEqual([marker]);
+
+      // The child admission holds the same parent row lock as terminal completion. The terminal
+      // routine must observe that child after its lock wait, rather than clear its only marker.
+      const child = yield* makeTestPgSession(connections.admin.connectionString);
+      yield* child.unsafe('BEGIN');
+      yield* Effect.addFinalizer(() => child.unsafe('ROLLBACK').pipe(Effect.orDie));
+      const [childBackend] = yield* child.unsafe<{ pid: number }>('select pg_backend_pid() as pid');
+      const childPid = Schema.decodeSync(Schema.Number)(childBackend?.pid);
+      const racedInvocation = actionInvocationId('d69b0000-0000-4000-8000-000000000004');
+      yield* child.unsafe(
+        "insert into commerce_customer_context.portal_enrollment_owner_operations (tenant_id, portal_enrollment_attempt_id, transition_key, owner_module_key, owner_invocation_id, actor_principal_id, request_digest, required, status, lease_owner, lease_token, lease_expires_at) values ($1::uuid, $2::uuid, 'raced.owner.effect', $3::text, $4::uuid, $5::uuid, $6::text, false, 'IN_PROGRESS', 'raced-worker', $7::uuid, clock_timestamp() + interval '1 hour')",
+        [
+          tenantId,
+          created.portalEnrollmentAttemptId,
+          ownerModuleKey,
+          racedInvocation,
+          principalId,
+          requestDigest,
+          'd69b0000-0000-4000-8000-000000000005',
+        ],
+      );
+      const terminateInput = {
+        actionInvocationId: actionInvocationId('d69b0000-0000-4000-8000-000000000006'),
+        actorPrincipalId: principalId,
+        expectedRevision: finished.attempt.revision,
+        portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
+        reason: 'owner_finished',
+        tenantId,
+      };
+      const terminalSession = yield* makeTestPgSession(connections.runtime.connectionString);
+      yield* terminalSession.unsafe('BEGIN');
+      yield* Effect.addFinalizer(() => terminalSession.unsafe('ROLLBACK').pipe(Effect.orDie));
+      yield* terminalSession.unsafe("select set_config('ontos.tenant_id', $1, true)", [tenantId]);
+      const [terminalBackend] = yield* terminalSession.unsafe<{ pid: number }>('select pg_backend_pid() as pid');
+      const terminalPid = Schema.decodeSync(Schema.Number)(terminalBackend?.pid);
+      const terminal = yield* terminalSession
+        .unsafe<{ attempt_outcome: string; composition_revision: string }>(
+          'select attempt_outcome, composition_revision from commerce_customer_context.terminate_portal_enrollment($1::uuid, $2::uuid, $3::integer, $4::uuid, $5::uuid, $6::text)',
+          [
+            tenantId,
+            created.portalEnrollmentAttemptId,
+            terminateInput.expectedRevision,
+            terminateInput.actionInvocationId,
+            terminateInput.actorPrincipalId,
+            terminateInput.reason,
+          ],
+        )
+        .pipe(Effect.forkChild);
+      let blocked = false;
+      for (let observation = 0; observation < 1000 && !blocked; observation += 1) {
+        const [waiting] = yield* coreClient.unsafe<{ blocked: boolean }>(
+          'select $2::integer = any(pg_blocking_pids($1::integer)) as blocked',
+          [terminalPid, childPid],
+        );
+        blocked = waiting !== undefined && waiting.blocked;
+      }
+      expect(blocked).toBe(true);
+      yield* child.unsafe('COMMIT');
+      const [refusedTerminal] = yield* Fiber.join(terminal);
+      expect(refusedTerminal?.attempt_outcome).toBe('INDETERMINATE');
+      expect(refusedTerminal?.composition_revision).toBe(ENROLLMENT_TEST_COMPOSITION_REVISION);
+      yield* terminalSession.unsafe('COMMIT');
+      expect((yield* ownedMarkers).map((row) => row.work_id)).toStrictEqual([marker]);
+      yield* fixture.admin.transaction((transaction) =>
+        transaction
+          .update(portalEnrollmentOwnerOperations)
+          .set({
+            completedAt: sql`clock_timestamp()`,
+            leaseExpiresAt: null,
+            leaseOwner: null,
+            leaseToken: null,
+            resultReference: 'raced-owner-result',
+            status: 'SUCCEEDED',
+          })
+          .where(eq(portalEnrollmentOwnerOperations.ownerInvocationId, racedInvocation)),
+      );
+      expect(
+        yield* core.transaction((transaction) =>
+          isApplicationCompositionDurableWorkDrained(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
+        ),
+      ).toBe(false);
+      yield* fixture.run(fixture.scope, (transaction) =>
+        commerceEnrollmentAttemptPersistenceForTransaction(transaction, fixture.scope).terminate(terminateInput),
+      );
+      expect(yield* ownedMarkers).toStrictEqual([]);
+      expect(
+        yield* core.transaction((transaction) =>
+          isApplicationCompositionDurableWorkDrained(transaction, ENROLLMENT_TEST_COMPOSITION_REVISION),
+        ),
+      ).toBe(true);
+      const childAfterTerminal = yield* fixture.admin
+        .transaction((transaction) =>
+          transaction.insert(portalEnrollmentOwnerOperations).values({
+            actorPrincipalId: principalId,
+            leaseExpiresAt: sql`clock_timestamp() + interval '1 hour'`,
+            leaseOwner: 'late-worker',
+            leaseToken: leaseToken('d69b0000-0000-4000-8000-000000000008'),
+            ownerInvocationId: actionInvocationId('d69b0000-0000-4000-8000-000000000007'),
+            ownerModuleKey,
+            portalEnrollmentAttemptId: created.portalEnrollmentAttemptId,
+            requestDigest,
+            required: false,
+            status: 'IN_PROGRESS',
+            tenantId,
+            transitionKey: transitionKey('late.owner.effect'),
+          }),
+        )
+        .pipe(Effect.exit);
+      expect(postgresErrorCode(childAfterTerminal)).toBe('55000');
+      expect(yield* ownedMarkers).toStrictEqual([]);
+    }),
+  ),
+);
+
 // Codex P1: `read_portal_enrollment_attempt` and `read_portal_enrollment_owner_operation` never
 // compared `p_tenant_id` with the verified `ontos.tenant_id` scope, unlike every mutation routine
 // on this Attempt. A transaction scoped to one Tenant could pass another Tenant's id as
@@ -784,6 +1248,7 @@ const postgresErrorCode = (exit: Exit.Exit<unknown, unknown>): string | undefine
 it.live("rejects a cross-Tenant read of another Tenant's enrollment Attempt and owner operation", () =>
   Effect.scoped(
     Effect.gen(function* crossTenantReadRejected() {
+      yield* installEnrollmentTestAuthority(ENROLLMENT_TEST_COMPOSITION_REVISION);
       const connections = yield* loadDatabaseConnectionPair();
       const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
       const runtimeClient = yield* makeTestPgClient(connections.runtime.connectionString, { maxConnections: 4 });
@@ -812,6 +1277,7 @@ it.live("rejects a cross-Tenant read of another Tenant's enrollment Attempt and 
         persistence.create({
           actionInvocationId: actionInvocationId('d6970000-0000-4000-8000-000000000001'),
           actorPrincipalId: principalId,
+          compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
           intentDigest: requestDigest,
           intentKey: enrollmentKey('durable-enrollment-tenant-b'),
           journey: 'RETAIL_SELF_ENROLLMENT',

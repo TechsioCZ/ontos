@@ -11,6 +11,8 @@ import { CatalogSelectionGatewayCredentialService } from '../../shared/domain/ca
 import { catalogQuantityBasisCompatibilityPortFromEnvironment } from '../../src/integrations/catalog-quantity-basis-compatibility.ts';
 import { catalogQuantityEvidencePortFromEnvironment } from '../../src/integrations/catalog-quantity-evidence.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const otherTenantId = '11111111-1111-4111-8111-111111111199';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
@@ -256,7 +258,7 @@ describe('Pricing Catalog Quantity evidence adapter', () => {
     Effect.gen(function* exactEvidence() {
       const calls: unknown[] = [];
       const port = yield* catalogQuantityEvidencePortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-quantity-evidence', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-quantity-evidence', tenantId },
         (payload, credential, requestCorrelation, options) =>
           Effect.sync(() => {
             calls.push({ credential: Redacted.value(credential), options, payload, requestCorrelation });
@@ -277,7 +279,7 @@ describe('Pricing Catalog Quantity evidence adapter', () => {
       expect(calls).toEqual([
         {
           credential: 'Bearer catalog-owner-assertion',
-          options: { baseUrl: new URL('https://catalog.example.test') },
+          options: { baseUrl: new URL('https://catalog.example.test'), compositionRevision },
           payload: { amount: '2', purpose: 'PRICING', selection },
           requestCorrelation: 'pricing-quantity-evidence',
         },
@@ -295,7 +297,7 @@ describe('Pricing Catalog Quantity evidence adapter', () => {
         { reason: 'Unit rule changed during preparation', status: 'STALE' },
       ] as const satisfies readonly CatalogQuantityHandoff[]) {
         const port = yield* catalogQuantityEvidencePortFromEnvironment(
-          { legalEntityId, requestCorrelation: 'pricing-quantity-evidence', tenantId },
+          { compositionRevision, legalEntityId, requestCorrelation: 'pricing-quantity-evidence', tenantId },
           () => Effect.succeed(ownerResponse),
         );
         expect(yield* port.assess({ amount: '2', selection })).toEqual(ownerResponse);
@@ -306,7 +308,7 @@ describe('Pricing Catalog Quantity evidence adapter', () => {
   it.effect('preserves a pinned Package Content conversion instead of consulting a newer Current revision', () =>
     Effect.gen(function* preservePinnedPackage() {
       const port = yield* catalogQuantityEvidencePortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-package-evidence', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-package-evidence', tenantId },
         () => Effect.succeed(packageReady),
       );
 
@@ -331,7 +333,7 @@ describe('Pricing Catalog Quantity evidence adapter', () => {
     });
     return Effect.gen(function* rejectCrossTenant() {
       const port = yield* catalogQuantityEvidencePortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-quantity-evidence', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-quantity-evidence', tenantId },
         () => {
           ownerCalls += 1;
           return Effect.succeed(ready);
@@ -368,7 +370,7 @@ describe('Pricing Catalog Quantity evidence adapter', () => {
         },
       ]) {
         const port = yield* catalogQuantityEvidencePortFromEnvironment(
-          { legalEntityId, requestCorrelation: 'pricing-quantity-evidence', tenantId },
+          { compositionRevision, legalEntityId, requestCorrelation: 'pricing-quantity-evidence', tenantId },
           () => Effect.succeed(ownerResponse),
         );
         expect(yield* port.assess({ amount: '2', selection })).toMatchObject({ status: 'UNVERIFIABLE' });
@@ -379,6 +381,7 @@ describe('Pricing Catalog Quantity evidence adapter', () => {
   it.effect('fails retryably when no server-owned Catalog credential is configured', () =>
     Effect.gen(function* missingCredential() {
       const port = yield* catalogQuantityEvidencePortFromEnvironment({
+        compositionRevision,
         legalEntityId,
         requestCorrelation: 'pricing-quantity-evidence',
         tenantId,
@@ -394,7 +397,7 @@ describe('Pricing Catalog Quantity-basis compatibility adapter', () => {
     Effect.gen(function* assessCompatibleBasis() {
       const calls: unknown[] = [];
       const port = yield* catalogQuantityBasisCompatibilityPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
         (payload, credential, requestCorrelation, options) =>
           Effect.sync(() => {
             calls.push({ credential: Redacted.value(credential), options, payload, requestCorrelation });
@@ -415,7 +418,7 @@ describe('Pricing Catalog Quantity-basis compatibility adapter', () => {
       expect(calls).toEqual([
         {
           credential: 'Bearer catalog-owner-assertion',
-          options: { baseUrl: new URL('https://catalog.example.test') },
+          options: { baseUrl: new URL('https://catalog.example.test'), compositionRevision },
           payload: compatibilityRequest,
           requestCorrelation: 'pricing-basis-compatibility',
         },
@@ -436,7 +439,7 @@ describe('Pricing Catalog Quantity-basis compatibility adapter', () => {
         },
       };
       const port = yield* catalogQuantityBasisCompatibilityPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
         () => Effect.succeed(ownerResponse),
       );
 
@@ -478,7 +481,7 @@ describe('Pricing Catalog Quantity-basis compatibility adapter', () => {
         },
       };
       const port = yield* catalogQuantityBasisCompatibilityPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
         () => Effect.succeed(ownerResponse),
       );
 
@@ -500,7 +503,7 @@ describe('Pricing Catalog Quantity-basis compatibility adapter', () => {
         reason: 'Catalog has no authoritative stored conversion for the requested Product Unit bases',
       };
       const port = yield* catalogQuantityBasisCompatibilityPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
         () => Effect.succeed(ownerResponse),
       );
 
@@ -520,7 +523,7 @@ describe('Pricing Catalog Quantity-basis compatibility adapter', () => {
         retryable: true,
       };
       const port = yield* catalogQuantityBasisCompatibilityPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
         () => Effect.succeed(ownerResponse),
       );
 
@@ -566,7 +569,7 @@ describe('Pricing Catalog Quantity-basis compatibility adapter', () => {
       ];
       for (const ownerResponse of responses) {
         const port = yield* catalogQuantityBasisCompatibilityPortFromEnvironment(
-          { legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
+          { compositionRevision, legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
           () => Effect.succeed(ownerResponse),
         );
         const failure = yield* port.assess(compatibilityRequest).pipe(Effect.flip);
@@ -578,6 +581,7 @@ describe('Pricing Catalog Quantity-basis compatibility adapter', () => {
   it.effect('maps missing server-owned credentials to the typed retryable unavailable error', () =>
     Effect.gen(function* rejectMissingCredential() {
       const port = yield* catalogQuantityBasisCompatibilityPortFromEnvironment({
+        compositionRevision,
         legalEntityId,
         requestCorrelation: 'pricing-basis-compatibility',
         tenantId,
@@ -603,7 +607,7 @@ describe('Pricing Catalog Quantity-basis compatibility adapter', () => {
           }),
         );
       const port = yield* catalogQuantityBasisCompatibilityPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
         execute,
       );
       expect(yield* port.assess(compatibilityRequest).pipe(Effect.flip)).toMatchObject({
@@ -616,7 +620,7 @@ describe('Pricing Catalog Quantity-basis compatibility adapter', () => {
   it.effect('rejects an owner success that substitutes quantities or basis evidence', () =>
     Effect.gen(function* rejectSubstitutedSuccess() {
       const port = yield* catalogQuantityBasisCompatibilityPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
         () =>
           Effect.succeed({
             ...noConversionResponse,
@@ -693,7 +697,7 @@ describe('Pricing Catalog Quantity-basis compatibility adapter', () => {
         ],
       };
       const port = yield* catalogQuantityBasisCompatibilityPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
         () => Effect.succeed(ownerResponse),
       );
 
@@ -719,7 +723,7 @@ describe('Pricing Catalog Quantity-basis compatibility adapter', () => {
     };
     return Effect.gen(function* rejectForeignTenant() {
       const port = yield* catalogQuantityBasisCompatibilityPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'pricing-basis-compatibility', tenantId },
         () => Effect.die('must not call Catalog'),
       );
       const failure = yield* port.assess(foreignRequest).pipe(Effect.flip);

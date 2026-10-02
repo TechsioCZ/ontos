@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { and, eq, sql } from 'drizzle-orm';
+import type { PgInsertValue } from 'drizzle-orm/pg-core';
 import { Effect, Match, Schema } from 'effect';
 import { SqlError, UnknownError } from 'effect/unstable/sql/SqlError';
 import { expect, it } from 'effect-rstest';
@@ -9,6 +10,7 @@ import { makeActionRepository } from '../../../../packages/core-runtime/src/acti
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import {
   actionInvocations,
+  applicationCompositionAuthority,
   auditEvents,
   coreRelations,
   dataAccessEvents,
@@ -25,6 +27,7 @@ import {
   makePostgresOutboxWorkerLegalEntityScopeBackend,
   OutboxWorkerLegalEntityScopeFanout,
 } from '../../../../packages/core-runtime/src/outbox/legal-entity-scope-fanout.ts';
+import { lockApplicationCompositionPublication } from '../../../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
@@ -88,6 +91,8 @@ import {
   buildInventoryOwnerAcceptanceBindingCorrectionLineage,
   inventoryOwnerAcceptanceBindingCorrectionFixture,
 } from '../support/inventory-owner-acceptance-binding-correction.ts';
+
+const compositionRevision = 'a'.repeat(64);
 
 const tenantId = '91000000-0000-4000-8000-000000000001';
 const legalEntityId = '92000000-0000-4000-8000-000000000001';
@@ -223,6 +228,44 @@ it.live(
         const admin = yield* makeTestDatabaseFromClient(adminClient, inventoryRelations);
         const coreAdmin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
         const runtimeDatabase = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+        yield* Effect.acquireRelease(
+          coreAdmin.transaction((transaction) =>
+            Effect.gen(function* admitFixtureComposition() {
+              yield* lockApplicationCompositionPublication(transaction);
+              const [previous] = yield* transaction
+                .select()
+                .from(applicationCompositionAuthority)
+                .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+              const admitted: PgInsertValue<typeof applicationCompositionAuthority> = {
+                authorityKey: 'active',
+                durableWorkAdmission: 'open',
+                phase: 'active',
+                revision: compositionRevision,
+                subscriptionsJson: [],
+                validUntil: sql`clock_timestamp() + interval '1 hour'`,
+              };
+              yield* transaction.insert(applicationCompositionAuthority).values(admitted).onConflictDoUpdate({
+                set: admitted,
+                target: applicationCompositionAuthority.authorityKey,
+              });
+              return previous;
+            }),
+          ),
+          (previous) =>
+            coreAdmin
+              .transaction((transaction) =>
+                Effect.gen(function* restoreFixtureComposition() {
+                  yield* lockApplicationCompositionPublication(transaction);
+                  yield* transaction
+                    .delete(applicationCompositionAuthority)
+                    .where(eq(applicationCompositionAuthority.revision, compositionRevision));
+                  if (previous !== undefined) {
+                    yield* transaction.insert(applicationCompositionAuthority).values(previous);
+                  }
+                }),
+              )
+              .pipe(Effect.orDie),
+        );
         yield* cleanupInventory(admin);
         yield* cleanupCore(coreAdmin);
         yield* Effect.addFinalizer(() =>
@@ -532,6 +575,7 @@ it.live(
           actorPrincipalId: principalId,
           attemptNumber: 1,
           claimId: randomUUID(),
+          compositionRevision,
           consumerModuleKey: 'commerce.inventory',
           correlationId: 'commitment-protection-postgres-recovery-worker',
           deliveryId: randomUUID(),

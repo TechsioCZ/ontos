@@ -79,6 +79,7 @@ const MARKET_OWNER = 'commerce.market-catalog';
 const PROMOTION_OWNER = 'commerce.promotion';
 
 export interface CurrentPricingDecisionExternalOwnerEvidenceEnvironment {
+  readonly compositionRevision: string;
   readonly legalEntityId: string;
   readonly requestCorrelation: string;
   readonly tenantId: string;
@@ -91,7 +92,7 @@ type CatalogExecutor = (
   payload: PricingPurposeEquivalenceRequest,
   credential: Redacted.Redacted,
   correlation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<unknown, CatalogClientFailure>;
 
 type CatalogCompatibilityClientEffect = ReturnType<typeof executeQuantityBasisCompatibilityWithAuthorization>;
@@ -101,7 +102,7 @@ type CatalogCompatibilityExecutor = (
   payload: QuantityBasisCompatibilityRequest,
   credential: Redacted.Redacted,
   correlation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<unknown, CatalogCompatibilityClientFailure>;
 
 type MarketClientEffect = ReturnType<typeof executePricingCurrentMarketEvidenceWithAuthorization>;
@@ -110,7 +111,7 @@ type MarketExecutor = (
   payload: PricingCurrentMarketEvidenceRequest,
   credential: Redacted.Redacted,
   correlation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<unknown, MarketClientFailure>;
 
 type CustomerClientEffect = ReturnType<typeof executeCustomerPriceGroupResolutionWithAuthorization>;
@@ -120,7 +121,7 @@ type CustomerExecutor = (
   payload: CustomerPriceGroupResolutionRequest,
   credential: Redacted.Redacted,
   correlation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<unknown, CustomerClientFailure>;
 
 interface LiveDependencies {
@@ -273,12 +274,16 @@ const makeCatalogReader = (
     const { baseUrl, credential } = yield* dependencies.issuer
       .issue({
         audience: 'catalog',
+        compositionRevision: environment.compositionRevision,
         legalEntityId: environment.legalEntityId,
         requestCorrelation: environment.requestCorrelation,
       })
       .pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog owner credential is unavailable')));
     const raw = yield* dependencies
-      .execute(request, credential, environment.requestCorrelation, { baseUrl })
+      .execute(request, credential, environment.requestCorrelation, {
+        baseUrl,
+        compositionRevision: environment.compositionRevision,
+      })
       .pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence read is unavailable')));
     const response = yield* Schema.decodeUnknownEffect(PricingPurposeEquivalenceResponseSchema)(raw).pipe(
       Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog equivalence response is unverifiable')),
@@ -350,7 +355,10 @@ const makeCatalogReader = (
         },
       }).pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog compatibility request is invalid')));
       const compatibilityRaw = yield* dependencies
-        .executeCompatibility(compatibilityRequest, credential, environment.requestCorrelation, { baseUrl })
+        .executeCompatibility(compatibilityRequest, credential, environment.requestCorrelation, {
+          baseUrl,
+          compositionRevision: environment.compositionRevision,
+        })
         .pipe(Effect.mapError(mapFailure(CATALOG_OWNER, 'Catalog compatibility replay is unavailable')));
       const compatibilityResponse = yield* Schema.decodeUnknownEffect(QuantityBasisCompatibilityResponseSchema)(
         compatibilityRaw,
@@ -497,12 +505,16 @@ const makeMarketReader = (
     const { baseUrl, credential } = yield* dependencies.issuer
       .issue({
         audience: 'commerce-market-catalog',
+        compositionRevision: environment.compositionRevision,
         legalEntityId: environment.legalEntityId,
         requestCorrelation: environment.requestCorrelation,
       })
       .pipe(Effect.mapError(mapFailure(MARKET_OWNER, 'Market owner credential is unavailable')));
     const raw = yield* dependencies
-      .execute(request, credential, environment.requestCorrelation, { baseUrl })
+      .execute(request, credential, environment.requestCorrelation, {
+        baseUrl,
+        compositionRevision: environment.compositionRevision,
+      })
       .pipe(Effect.mapError(mapFailure(MARKET_OWNER, 'Market owner evidence is unavailable')));
     const response = yield* Schema.decodeUnknownEffect(PricingCurrentMarketEvidenceResponseSchema)(raw).pipe(
       Effect.mapError(mapFailure(MARKET_OWNER, 'Market owner evidence response is unverifiable')),
@@ -686,12 +698,16 @@ const makeCustomerContextReader = (
     const { baseUrl, credential } = yield* dependencies.issuer
       .issue({
         audience: 'commerce-customer-context',
+        compositionRevision: environment.compositionRevision,
         legalEntityId: environment.legalEntityId,
         requestCorrelation: environment.requestCorrelation,
       })
       .pipe(Effect.mapError(mapFailure(CUSTOMER_CONTEXT_OWNER, 'Customer Context credential is unavailable')));
     const raw = yield* dependencies
-      .execute(request, credential, environment.requestCorrelation, { baseUrl })
+      .execute(request, credential, environment.requestCorrelation, {
+        baseUrl,
+        compositionRevision: environment.compositionRevision,
+      })
       .pipe(Effect.mapError(mapFailure(CUSTOMER_CONTEXT_OWNER, 'Customer Price Group owner read is unavailable')));
     yield* Schema.decodeUnknownEffect(CustomerPriceGroupResolutionResponseSchema)(raw).pipe(
       Effect.mapError(mapFailure(CUSTOMER_CONTEXT_OWNER, 'Customer Price Group response is unverifiable')),
@@ -743,7 +759,10 @@ const makeCustomerContextReader = (
   }),
 });
 
-const makePromotionReader = (applicationComposition?: ActiveApplicationCompositionServiceContract) => ({
+const makePromotionReader = (
+  environment: CurrentPricingDecisionExternalOwnerEvidenceEnvironment,
+  applicationComposition?: ActiveApplicationCompositionServiceContract,
+) => ({
   loadFresh: Effect.fn('CurrentPricingDecisionPromotionEvidence.loadFresh')(function* loadFresh(
     context: CurrentPricingDecisionExternalOwnerEvidenceReadContext,
   ) {
@@ -767,6 +786,7 @@ const makePromotionReader = (applicationComposition?: ActiveApplicationCompositi
     yield* gateway
       .verifyOpaqueProofsAgainstCurrentState({
         candidateRef: context.commercialTotal.candidateRef,
+        compositionRevision: environment.compositionRevision,
         sources: [],
         typedSources: [],
         verificationContext: {
@@ -795,7 +815,7 @@ export const makeCurrentPricingDecisionExternalOwnerEvidenceLivePort = (
     catalog: makeCatalogReader(environment, dependencies.catalog),
     customerContext: makeCustomerContextReader(environment, dependencies.customerContext),
     market: makeMarketReader(environment, dependencies.market),
-    promotion: makePromotionReader(dependencies.applicationComposition),
+    promotion: makePromotionReader(environment, dependencies.applicationComposition),
     validation: dependencies.validation,
   });
 

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface InventoryBackendConfigurationCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type InventoryBackendConfigurationCurrentAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeInventoryBackendConfigurationCurrent = (
   payload: InventoryBackendConfigurationCurrentRequest,
   ...[requestCorrelation, options = {}]: InventoryBackendConfigurationCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeInventoryBackendConfigurationCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeInventoryBackendConfigurationCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -2641,6 +2641,7 @@ it.live('reconciles mixed persisted Product targets and retries only the owner-p
           targetIntents: intents,
           trusted: {
             actionInvocationId: 'e8070000-0000-4000-8000-000000000030',
+            compositionRevision: 'a'.repeat(64),
             principalContext: scope,
             requestCorrelationId: 'pricing-recovery-807',
             trustedOperationAt: instant('2026-09-27T10:00:01.000Z'),

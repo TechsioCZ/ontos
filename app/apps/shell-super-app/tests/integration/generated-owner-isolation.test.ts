@@ -1,21 +1,24 @@
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 
 import {
+  ActionTransactionError,
   ContextAccess,
   GatewayAssertionRedemptionService,
   ReadRuntime,
   TenantModuleStateService,
-  buildInstalledModuleCatalog,
   getVerticalRuntimeActions,
   getVerticalRuntimeEntrypoints,
+  makeActiveApplicationCompositionLayer,
+  publishApplicationCompositionAuthority,
+  readVerifiedGatewayCompositionRevision,
 } from '@app/core-runtime';
 import type {
+  ActiveApplicationCompositionService,
   ActionRegistration,
   DomainEventContractMap,
   GatewayAssertionRedemption,
-  InstalledModuleCatalog,
   OntosModuleDeploymentContract,
   OperationalScopeResolverService,
   ReadRuntimeService,
@@ -75,7 +78,11 @@ import { GatewayPrincipalVerifierLive } from '../../../../packages/gateway-princ
 import { deriveOntosModuleDeploymentContract } from '../../../../scripts/generate-ontos-module-contract.mts';
 import type { GatewayIssuerConfigValue } from '../../api/auth/gateway-issuer-config.ts';
 import { issueGatewayContextAssertion, makeGatewayIssuerLayer } from '../../api/auth/gateway-issuer.ts';
-import { ShellInstalledModuleCatalog } from '../../api/modules/installed-module-catalog.ts';
+import { CapturedShellCompositionCatalog } from '../../api/modules/captured-shell-catalog.ts';
+import {
+  makeInstalledModuleCatalogLoader,
+  ShellInstalledModuleCatalog,
+} from '../../api/modules/installed-module-catalog.ts';
 import { ShellCompositionFactoryLive } from '../../api/modules/shell-composition.ts';
 import { ShellGovernedReads, createShellGovernedReadsLayer } from '../../api/modules/shell-governed-reads.ts';
 import {
@@ -85,6 +92,7 @@ import {
   makeShellSearch,
 } from '../../api/modules/shell-resources.ts';
 import type { ShellResourceGateways } from '../../api/modules/shell-resources.ts';
+import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
 import { makeContextAccessDouble } from '../support/context-access-double.ts';
 import { GENERATED_OWNER, createGeneratedOwnerFixture } from './generated-owner-fixture.ts';
 
@@ -152,7 +160,7 @@ interface GeneratedOwnerModules {
       readonly environment: Readonly<Record<string, string>>;
       readonly redemption: GatewayAssertionRedemption;
     },
-  ) => Effect.Effect<TrustedPrincipalContext, unknown>;
+  ) => Effect.Effect<TrustedPrincipalContext, unknown, ActiveApplicationCompositionService>;
   readonly wiring: {
     readonly action: boolean;
     readonly detailClient: boolean;
@@ -210,14 +218,21 @@ const relationship = (
       }),
     }),
   });
-const makeCatalog = (contract: OntosModuleDeploymentContract): InstalledModuleCatalog =>
-  buildInstalledModuleCatalog([{ contract, expectedAppId: GENERATED_OWNER.appId }]);
-const makeOwnerHandler = (
+const makeCatalog = (contract: OntosModuleDeploymentContract) =>
+  makeInstalledModuleCatalogLoader(makeCompositionSnapshot([contract]));
+const materializeOwnerRelease = (verticalRoot: string, contract: OntosModuleDeploymentContract) =>
+  Effect.tryPromise(() =>
+    writeFile(
+      `${verticalRoot}/shared/ultramodern-build.ts`,
+      `export const ultramodernApiMarker = ${JSON.stringify(contract.deployment)} as const;\n`,
+    ),
+  );
+const makeOwnerHandler = <Configuration>(
   api: OwnerApi,
   group: OwnerGroupLayer,
   runtime: ReadRuntimeService,
   loggerLayer: Layer.Layer<never>,
-  configLayer: Layer.Layer<TestClock.TestClock>,
+  configLayer: Layer.Layer<Configuration>,
 ) => {
   const loggedRuntime: ReadRuntimeService = {
     runRead: (input) => runtime.runRead(input).pipe(Effect.provide(loggerLayer)),
@@ -265,11 +280,11 @@ const loadClientWiring = Effect.fnUntraced(function* loadClientWiring(
   };
 });
 
-const loadGeneratedOwner = Effect.fnUntraced(function* runIntegration1(
+const loadGeneratedOwner = Effect.fnUntraced(function* runIntegration1<Configuration>(
   verticalRoot: string,
   runtime: ReadRuntimeService,
   loggerLayer: Layer.Layer<never>,
-  configLayer: Layer.Layer<TestClock.TestClock>,
+  configLayer: Layer.Layer<Configuration>,
 ) {
   const load = Effect.fnUntraced(function* runIntegration2(relativePath: string) {
     const importedModule: unknown = yield* Effect.tryPromise(
@@ -495,6 +510,7 @@ it.live(
       vertical: GENERATED_OWNER.slug,
       workspaceRoot: fixture.root,
     }).pipe(Effect.provide(NodeServices.layer));
+    yield* materializeOwnerRelease(fixture.verticalRoot, contract);
     const compileRuntime: ReadRuntimeService = {
       runRead: () => Effect.die(new Error('The compile fixture must not execute a governed read')),
     };
@@ -502,7 +518,7 @@ it.live(
       fixture.verticalRoot,
       compileRuntime,
       capturedLoggerLayer([]),
-      TestClock.layer(),
+      Layer.merge(TestClock.layer(), makeActiveApplicationCompositionLayer(makeCompositionSnapshot([contract]))),
     );
     yield* Effect.acquireRelease(
       Effect.void,
@@ -510,7 +526,9 @@ it.live(
         yield* disposeOwnerHandlers([generated.detail, generated.list, generated.search]);
       }, Effect.orDie),
     );
-    expect(makeCatalog(contract).getByModuleId(GENERATED_OWNER.moduleId)).toEqual(contract);
+    expect(
+      (yield* makeCatalog(contract).pipe(Effect.provide(TestClock.layer()))).getByModuleId(GENERATED_OWNER.moduleId),
+    ).toEqual(contract);
     expect(generated.action.descriptor.actionKey).toBe(GENERATED_OWNER.actionKey);
     expect(generated.action.descriptor.legalEntityScope).toBe('required');
     expect(generated.counts).toEqual({
@@ -543,7 +561,7 @@ it.live(
     const bindingB = randomUUID();
     const collidingResourceId = randomUUID();
     const deniedResourceId = randomUUID();
-    const testClockLayer = TestClock.layer();
+    const clockLayer = Layer.succeed(Clock.Clock, yield* Clock.Clock);
     const connections = yield* loadDatabaseConnectionPair();
     expect(connections.runtime.user).toBe('ontos_runtime');
     const admin = yield* makeTestPgClient(connections.admin.connectionString);
@@ -555,6 +573,13 @@ it.live(
       vertical: GENERATED_OWNER.slug,
       workspaceRoot: fixture.root,
     }).pipe(Effect.provide(NodeServices.layer));
+    yield* materializeOwnerRelease(fixture.verticalRoot, contract);
+    const approvedSnapshot = yield* makeCompositionSnapshot([contract], 120_000);
+    const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(approvedSnapshot));
+    const adminDatabase = yield* makeCoreDatabase(connections.admin);
+    yield* adminDatabase.executor.transaction((transaction) =>
+      publishApplicationCompositionAuthority(transaction, approvedSnapshot),
+    );
     const capturedLogs: string[] = [];
     const loggerLayer = capturedLoggerLayer(capturedLogs);
     const testSpiceDb = yield* TestSpiceDbConfig;
@@ -596,16 +621,21 @@ it.live(
         ],
       }),
     };
-    const verifierConfigLayer = Layer.merge(
-      testClockLayer,
+    const verifierConfigLayer = Layer.mergeAll(
+      clockLayer,
       ConfigProvider.layer(ConfigProvider.fromUnknown(verifierEnvironment)),
+      makeActiveApplicationCompositionLayer(Effect.succeed(approvedSnapshot)),
     );
     const generated = yield* loadGeneratedOwner(fixture.verticalRoot, readRuntime, loggerLayer, verifierConfigLayer);
     const handlers: OwnerHttpHandler[] = [generated.detail, generated.list, generated.search];
     let assertionCount = 0;
-    const issueAuthorization = Effect.fnUntraced(function* runIntegration10(principalContext: TrustedPrincipalContext) {
+    const issueAuthorization = Effect.fnUntraced(function* runIntegration10(
+      principalContext: TrustedPrincipalContext,
+      compositionRevision = catalog.composition.revision,
+    ) {
       return yield* issueGatewayContextAssertion({
         audience: GENERATED_OWNER.appId,
+        compositionRevision,
         principal: principalContext,
       }).pipe(
         Effect.provide(
@@ -617,17 +647,25 @@ it.live(
               assertionCount += 1;
               return randomUUID();
             }),
-            loadAudiences: Effect.succeed(new Set([GENERATED_OWNER.appId])),
+            loadAdmission: Effect.succeed({
+              audiences: new Map([[GENERATED_OWNER.appId, contract.deployment.buildMarker]]),
+              revision: catalog.composition.revision,
+            }),
             loadConfig: Effect.succeed(issuerConfiguration),
           }),
         ),
         Effect.map(({ token }) => `Bearer ${token}`),
-        Effect.provide(testClockLayer),
+        Effect.provide(clockLayer),
       );
     });
     const principalA1 = principal(tenantA, entityA1, principalA, bindingA);
     const principalB1 = principal(tenantB, entityB1, principalB, bindingB);
-    const issueProviderAuthorization = Effect.fnUntraced(function* runIntegration11(context: TrustedPrincipalContext) {
+    const providerRevisions: string[] = [];
+    const issueProviderAuthorization = Effect.fnUntraced(function* runIntegration11(
+      context: TrustedPrincipalContext,
+      compositionRevision: string,
+    ) {
+      providerRevisions.push(compositionRevision);
       return yield* issueAuthorization(
         withOptionalProperty(
           withOptionalProperty(
@@ -664,6 +702,7 @@ it.live(
           context.legalEntityId,
           {},
         ),
+        compositionRevision,
       );
     });
     const resourceRef = yield* Schema.decodeUnknownEffect(ResourceRefSchema)({
@@ -884,7 +923,6 @@ it.live(
     const ownerSearchProbeBody = yield* decodeResponse(ownerSearchProbe, OwnerSearchSchema);
     expect(ownerSearchProbe.status, JSON.stringify(ownerSearchProbeBody)).toBe(200);
     expect(ownerSearchProbeBody.map(({ title }) => title)).toEqual(['A1 searchable']);
-    const catalog = makeCatalog(contract);
     const gateway = {
       resource: {
         detail: Effect.fnUntraced(
@@ -995,8 +1033,14 @@ it.live(
         catalog: Effect.succeed(catalog),
         contextAccess,
         issueAssertion: Effect.fnUntraced(
-          function* integrationEffect29({ context }: { readonly context: TrustedPrincipalContext }) {
-            return yield* issueProviderAuthorization(context);
+          function* integrationEffect29({
+            compositionRevision,
+            context,
+          }: {
+            readonly compositionRevision: string;
+            readonly context: TrustedPrincipalContext;
+          }) {
+            return yield* issueProviderAuthorization(context, compositionRevision);
           },
           Effect.catchCause(() => Effect.fail(new ShellProviderUnavailableError())),
         ),
@@ -1021,8 +1065,14 @@ it.live(
       gateway,
       {
         issueAssertion: Effect.fnUntraced(
-          function* integrationEffect30({ context }: { readonly context: TrustedPrincipalContext }) {
-            return yield* issueProviderAuthorization(context);
+          function* integrationEffect30({
+            compositionRevision,
+            context,
+          }: {
+            readonly compositionRevision: string;
+            readonly context: TrustedPrincipalContext;
+          }) {
+            return yield* issueProviderAuthorization(context, compositionRevision);
           },
           Effect.catchCause(() => Effect.fail(new ShellProviderUnavailableError())),
         ),
@@ -1043,26 +1093,36 @@ it.live(
       ),
     );
     const shellReads = yield* ShellGovernedReads.pipe(Effect.provide(shellLayer));
-    const searchA = yield* shellReads.search({
-      correlationId: randomUUID(),
-      principal: principalA1,
-      query: 'searchable',
-    });
-    const detailA = yield* shellReads.resourceDetail({
-      correlationId: randomUUID(),
-      principal: principalA1,
-      ref: resourceRef,
-    });
-    const searchB = yield* shellReads.search({
-      correlationId: randomUUID(),
-      principal: principalB1,
-      query: 'searchable',
-    });
-    const detailB = yield* shellReads.resourceDetail({
-      correlationId: randomUUID(),
-      principal: principalB1,
-      ref: resourceRef,
-    });
+    const searchA = yield* shellReads
+      .search({
+        compositionRevision: catalog.composition.revision,
+        correlationId: randomUUID(),
+        principal: principalA1,
+        query: 'searchable',
+      })
+      .pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog));
+    const detailA = yield* shellReads
+      .resourceDetail({
+        correlationId: randomUUID(),
+        principal: principalA1,
+        ref: resourceRef,
+      })
+      .pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog));
+    const searchB = yield* shellReads
+      .search({
+        compositionRevision: catalog.composition.revision,
+        correlationId: randomUUID(),
+        principal: principalB1,
+        query: 'searchable',
+      })
+      .pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog));
+    const detailB = yield* shellReads
+      .resourceDetail({
+        correlationId: randomUUID(),
+        principal: principalB1,
+        ref: resourceRef,
+      })
+      .pipe(Effect.provideService(CapturedShellCompositionCatalog, catalog));
     expect(searchA.results.map(({ title }) => title)).toEqual(['A1 searchable']);
     expect(detailA.detail.title).toBe('A1 searchable');
     expect(detailA.timeline.map(({ summary }) => summary)).toEqual(['Tenant A list']);
@@ -1070,6 +1130,7 @@ it.live(
     expect(detailB.detail.title).toBe('B1 searchable');
     expect(detailB.timeline.map(({ summary }) => summary)).toEqual(['Tenant B list']);
     expect(assertionCount, 'every provider attempt must receive a fresh assertion').toBe(9);
+    expect(providerRevisions).toEqual(Array.from({ length: 7 }, () => catalog.composition.revision));
     capturedLogs.length = 0;
     const beforeForgedShell = { ...generated.counts };
     expect(
@@ -1202,7 +1263,21 @@ it.live(
       makeActionRepository(),
       makeActionPermissionService(permissionClient),
       scopeResolver,
-      { moduleEntrypointGateway: moduleGateway, moduleStateGate },
+      {
+        moduleEntrypointGateway: moduleGateway,
+        moduleStateGate,
+        resolveCompositionRevision: (verifiedPrincipal) => {
+          const revision = readVerifiedGatewayCompositionRevision(verifiedPrincipal);
+          return revision === undefined
+            ? Effect.fail(
+                new ActionTransactionError({
+                  code: 'action_transaction_failed',
+                  reason: 'The generated owner requires a verified release assertion',
+                }),
+              )
+            : Effect.succeed(revision);
+        },
+      },
     );
     if (!isRuntimeActionRegistration(generated.action)) {
       throw new TypeError('Generated Action registration is missing its runtime handler');
@@ -1224,7 +1299,7 @@ it.live(
           environment: verifierEnvironment,
           redemption: testGatewayAssertionRedemption,
         })
-        .pipe(Effect.provide(testClockLayer));
+        .pipe(Effect.provide(verifierConfigLayer));
       return yield* actionRuntime
         .runAction({
           payload,

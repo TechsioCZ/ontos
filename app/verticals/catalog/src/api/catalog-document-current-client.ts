@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CatalogDocumentCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CatalogDocumentCurrentAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCatalogDocumentCurrent = (
   payload: CatalogDocumentCurrentRequest,
   ...[requestCorrelation, options = {}]: CatalogDocumentCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCatalogDocumentCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCatalogDocumentCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ResolveCommerceMarketClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ResolveCommerceMarketAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeResolveCommerceMarket = (
   payload: ResolveCommerceMarketRequest,
   ...[requestCorrelation, options = {}]: ResolveCommerceMarketOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeResolveCommerceMarketWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeResolveCommerceMarketWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

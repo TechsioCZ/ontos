@@ -57,6 +57,6 @@ export const commerceQuantityPolicyCurrentRead = defineRead(
       result,
     };
   }),
-  (transaction, scope) => customerCommercePolicyAdministrationServiceFactory(transaction, scope),
+  customerCommercePolicyAdministrationServiceFactory,
   () => ({ kind: 'module', moduleId: 'commerce.customer-context' }),
 );

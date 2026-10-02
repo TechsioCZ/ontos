@@ -20,6 +20,10 @@ import {
 } from '../../src/api/customer-price-group-resolution.read.ts';
 import type { PriceGroupRoutineInvoker } from '../../src/persistence/price-group-persistence.ts';
 
+interface CapturedCompositionContext {
+  readonly revision?: string;
+}
+
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
 const scopeFields = {
@@ -78,19 +82,28 @@ it.effect(
         issue: () =>
           Effect.sync(() => {
             credentialIssues += 1;
-            return Redacted.make(`Bearer production-wiring-${credentialIssues}`);
+            return {
+              baseUrl: new URL('https://shell.example.test/owner-api'),
+              credential: Redacted.make(`Bearer production-wiring-${credentialIssues}`),
+            };
           }),
       });
 
-      const firstActionServices = yield* priceGroupActionServicesForTransaction(priceGroupInvoker, scope).pipe(
-        Effect.provide(credentialLayer),
-      );
-      const secondActionServices = yield* priceGroupActionServicesForTransaction(priceGroupInvoker, scope).pipe(
-        Effect.provide(credentialLayer),
-      );
-      const readServices = yield* customerPriceGroupResolutionServicesForTransaction(priceGroupInvoker, scope).pipe(
-        Effect.provide(credentialLayer),
-      );
+      const firstActionServices = yield* priceGroupActionServicesForTransaction(
+        priceGroupInvoker,
+        scope,
+        'a'.repeat(64),
+      ).pipe(Effect.provide(credentialLayer));
+      const secondActionServices = yield* priceGroupActionServicesForTransaction(
+        priceGroupInvoker,
+        scope,
+        'a'.repeat(64),
+      ).pipe(Effect.provide(credentialLayer));
+      const readServices = yield* customerPriceGroupResolutionServicesForTransaction(
+        priceGroupInvoker,
+        scope,
+        'a'.repeat(64),
+      ).pipe(Effect.provide(credentialLayer));
 
       expect(firstActionServices.catalog).not.toBe(secondActionServices.catalog);
       expect(readServices.catalog).not.toBe(firstActionServices.catalog);
@@ -105,19 +118,54 @@ it.effect('keeps both remove Actions catalog-free and rejects missing Legal Enti
       issue: () =>
         Effect.sync(() => {
           credentialIssues += 1;
-          return Redacted.make('Bearer must-not-be-issued');
+          return {
+            baseUrl: new URL('https://shell.example.test/owner-api'),
+            credential: Redacted.make('Bearer must-not-be-issued'),
+          };
         }),
     });
 
-    yield* priceGroupActionServicesForTransaction(priceGroupInvoker, scope).pipe(Effect.provide(credentialLayer));
+    yield* priceGroupActionServicesForTransaction(priceGroupInvoker, scope, 'a'.repeat(64)).pipe(
+      Effect.provide(credentialLayer),
+    );
     expect(credentialIssues).toBe(0);
 
     const failure = yield* Effect.flip(
-      priceGroupActionServicesForTransaction(priceGroupInvoker, scopeWithoutLegalEntity).pipe(
+      priceGroupActionServicesForTransaction(priceGroupInvoker, scopeWithoutLegalEntity, 'a'.repeat(64)).pipe(
         Effect.provide(credentialLayer),
       ),
     );
     expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
     expect(credentialIssues).toBe(0);
   }),
+);
+
+it.effect(
+  'rejects a cross-owner Read without its captured verified composition revision before issuing credentials',
+  () =>
+    Effect.gen(function* missingCompositionRevision() {
+      let credentialIssues = 0;
+      const missingComposition: CapturedCompositionContext = {};
+      const failure = yield* customerPriceGroupResolutionServicesForTransaction(
+        priceGroupInvoker,
+        scope,
+        missingComposition.revision,
+      ).pipe(
+        Effect.provide(
+          Layer.succeed(PriceGroupCatalogGatewayCredentialService, {
+            issue: () =>
+              Effect.sync(() => {
+                credentialIssues += 1;
+                return {
+                  baseUrl: new URL('https://shell.example.test/owner-api'),
+                  credential: Redacted.make('Bearer must-not-be-issued'),
+                };
+              }),
+          }),
+        ),
+        Effect.flip,
+      );
+      expect(Schema.is(OperationContextUnavailable)(failure)).toBe(true);
+      expect(credentialIssues).toBe(0);
+    }),
 );

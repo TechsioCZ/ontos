@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface InventoryEffectOutcomeClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type InventoryEffectOutcomeAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeInventoryEffectOutcome = (
   payload: InventoryEffectOutcomeRequest,
   ...[requestCorrelation, options = {}]: InventoryEffectOutcomeOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeInventoryEffectOutcomeWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeInventoryEffectOutcomeWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -1,5 +1,6 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ReadHandlerNotFound, ReadHandlerUnavailable, TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -8,6 +9,7 @@ import { ConfirmVariantCombinationPayloadSchema } from '../../shared/actions/con
 import type { GovernVariantAllowedValuesPayload } from '../../shared/actions/govern-variant-allowed-values.ts';
 import { GovernVariantAllowedValuesPayloadSchema } from '../../shared/actions/govern-variant-allowed-values.ts';
 import { ListRecordedVariantsResponseSchema } from '../../shared/apis/list-recorded-variants.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
   confirmVariantCombinationAction,
   handleConfirmVariantCombination,
@@ -116,26 +118,38 @@ const axisServices = (overrides: Partial<VariantAxisPersistence> = {}): VariantA
 });
 
 const confirmContext = (confirm: VariantPersistence['confirm']) =>
-  ({
-    actionInvocationId: '99999999-9999-4999-8999-999999999999',
-    addDomainEvent: () => Effect.succeed(Object.create(null)),
-    addOutboxMessage: () => Effect.void,
-    recordAuditEvidence: () => Effect.void,
-    recordDataAccess: () => Effect.void,
-    scope,
-    services: variantServices({ confirm }),
-  }) satisfies ActionHandlerContext<Readonly<Record<string, never>>, VariantPersistence>;
+  makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker).pipe(
+    Effect.map(
+      ({ composition }) =>
+        ({
+          actionInvocationId: '99999999-9999-4999-8999-999999999999',
+          addDomainEvent: () => Effect.succeed(Object.create(null)),
+          addOutboxMessage: () => Effect.void,
+          compositionRevision: composition.revision,
+          recordAuditEvidence: () => Effect.void,
+          recordDataAccess: () => Effect.void,
+          scope,
+          services: variantServices({ confirm }),
+        }) satisfies ActionHandlerContext<Readonly<Record<string, never>>, VariantPersistence>,
+    ),
+  );
 
 const allowedValuesContext = (governAllowedValues: VariantAxisPersistence['governAllowedValues']) =>
-  ({
-    actionInvocationId: '99999999-9999-4999-8999-999999999999',
-    addDomainEvent: () => Effect.succeed(Object.create(null)),
-    addOutboxMessage: () => Effect.void,
-    recordAuditEvidence: () => Effect.void,
-    recordDataAccess: () => Effect.void,
-    scope,
-    services: axisServices({ governAllowedValues }),
-  }) satisfies ActionHandlerContext<Readonly<Record<string, never>>, VariantAxisPersistence>;
+  makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker).pipe(
+    Effect.map(
+      ({ composition }) =>
+        ({
+          actionInvocationId: '99999999-9999-4999-8999-999999999999',
+          addDomainEvent: () => Effect.succeed(Object.create(null)),
+          addOutboxMessage: () => Effect.void,
+          compositionRevision: composition.revision,
+          recordAuditEvidence: () => Effect.void,
+          recordDataAccess: () => Effect.void,
+          scope,
+          services: axisServices({ governAllowedValues }),
+        }) satisfies ActionHandlerContext<Readonly<Record<string, never>>, VariantAxisPersistence>,
+    ),
+  );
 
 const decodeConfirmOutcome = Schema.decodeUnknownSync(ConfirmVariantCombinationOutcomeSchema);
 const decodeAllowedValuesOutcome = Schema.decodeUnknownSync(GovernVariantAllowedValuesOutcomeSchema);
@@ -193,10 +207,7 @@ describe('Confirm Variant combination Action surface (#440)', () => {
     it.effect(`maps ${outcome._tag} to a distinct typed conflict`, () =>
       Effect.gen(function* mapsConflict() {
         const error = yield* Effect.flip(
-          handleConfirmVariantCombination(
-            confirmPayload,
-            confirmContext(() => Effect.succeed(outcome)),
-          ),
+          handleConfirmVariantCombination(confirmPayload, yield* confirmContext(() => Effect.succeed(outcome))),
         );
         expect(Schema.is(VariantCombinationConflict)(error)).toBe(true);
         if (Schema.is(VariantCombinationConflict)(error)) {
@@ -218,7 +229,7 @@ describe('Confirm Variant combination Action surface (#440)', () => {
       });
       const result = yield* handleConfirmVariantCombination(
         confirmPayload,
-        confirmContext(() => Effect.succeed(outcome)),
+        yield* confirmContext(() => Effect.succeed(outcome)),
       );
       expect(result).toEqual({
         combinationAxisRevision: 1,
@@ -243,7 +254,7 @@ describe('Govern Variant allowed values Action surface (#438)', () => {
       const outcome = decodeAllowedValuesOutcome({ _tag: 'governed', allowanceRevision: 1, changed: true });
       const result = yield* handleGovernVariantAllowedValues(
         allowedValuesPayload,
-        allowedValuesContext(() => Effect.succeed(outcome)),
+        yield* allowedValuesContext(() => Effect.succeed(outcome)),
       );
       expect(result).toEqual({ allowanceRevision: 1, changed: true, productRef });
     }),
@@ -255,7 +266,7 @@ describe('Govern Variant allowed values Action surface (#438)', () => {
       const error = yield* Effect.flip(
         handleGovernVariantAllowedValues(
           allowedValuesPayload,
-          allowedValuesContext(() => Effect.succeed(outcome)),
+          yield* allowedValuesContext(() => Effect.succeed(outcome)),
         ),
       );
       expect(Schema.is(VariantAxisWriteConflict)(error)).toBe(true);
@@ -277,7 +288,7 @@ describe('Govern Variant allowed values Action surface (#438)', () => {
       const error = yield* Effect.flip(
         handleGovernVariantAllowedValues(
           foreignPayload,
-          allowedValuesContext(() => {
+          yield* allowedValuesContext(() => {
             calls += 1;
             return Effect.succeed(outcome);
           }),

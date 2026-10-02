@@ -1,4 +1,4 @@
-import { Struct, DateTime, Effect, Option, Predicate, Schema } from 'effect';
+import { Struct, Clock, DateTime, Effect, Option, Predicate, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 import { TestClock } from 'effect/testing';
@@ -14,7 +14,12 @@ import type {
   FlushActionSuccessInput,
 } from '../../../../packages/core-runtime/src/actions/repository.ts';
 import { ActionTransactionError } from '../../../../packages/core-runtime/src/actions/errors.ts';
-import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
+import {
+  makeActionCompositionRevisionResolver,
+  makeActionRuntime,
+} from '../../../../packages/core-runtime/src/actions/runtime.ts';
+import { trustVerifiedGatewayPrincipalContext } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
+import { buildApplicationCompositionCatalog } from '../../../../packages/core-runtime/src/modules/application-composition-catalog.ts';
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
@@ -26,6 +31,11 @@ import {
 } from '../../../../packages/core-runtime/src/modules/module-state-gate.ts';
 import { makeOperationalScopeResolver } from '../../../../packages/core-runtime/src/operations/context.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
+import {
+  freshOutboxWorkerCompositionSnapshot,
+  makeOutboxWorkerComposition,
+} from '../../../../packages/core-runtime/tests/support/outbox-worker-composition.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { CreatePriceGroupDefinitionRevisionPayload } from '../../shared/actions/create-price-group-definition-revision.ts';
 import type { CreatePriceGroupPayload } from '../../shared/actions/create-price-group.ts';
 import type { RetirePriceGroupPayload } from '../../shared/actions/retire-price-group.ts';
@@ -219,6 +229,20 @@ interface HarnessOptions {
 
 const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}) {
   yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe('2026-11-30T00:00:00.000Z')));
+  const approvedComposition = yield* freshOutboxWorkerCompositionSnapshot(
+    makeOutboxWorkerComposition([
+      {
+        appId: ultramodernApiMarker.appId,
+        buildMarker: ultramodernApiMarker.buildMarker,
+        moduleId: 'pricing.price-group-catalog',
+      },
+    ]),
+  );
+  const approvedCatalog = yield* buildApplicationCompositionCatalog(approvedComposition.composition);
+  const admittedTenantPrincipal = trustVerifiedGatewayPrincipalContext(
+    tenantPrincipal,
+    approvedComposition.composition.revision,
+  );
   const flushAttempts: FlushActionSuccessInput[] = [];
   const successfulFlushes: FlushActionSuccessInput[] = [];
   const businessChecks: unknown[] = [];
@@ -300,6 +324,24 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       }
       if (sql === 'rollback') {
         rollbackCount += 1;
+      }
+      if (sql.includes("current_setting('transaction_isolation')")) {
+        return Effect.succeed([{ isolation: 'read committed' }]);
+      }
+      if (sql.includes('pg_advisory_xact_lock_shared')) {
+        return Effect.succeed([]);
+      }
+      if (sql.includes('application_composition_authority')) {
+        return Clock.currentTimeMillis.pipe(
+          Effect.map((now) => [
+            {
+              phase: 'active',
+              revision: approvedComposition.composition.revision,
+              subscriptionsJson: approvedCatalog.outboxSubscriptions,
+              unexpired: DateTime.toEpochMillis(approvedComposition.validUntil) > now,
+            },
+          ]),
+        );
       }
       if (sql.includes('current_setting')) {
         return Effect.succeed([{ legal_entity_id: installedLegalEntityId, tenant_id: installedTenantId }]);
@@ -408,6 +450,10 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       moduleEntrypointGateway: makeModuleEntrypointGateway(moduleStateGate),
       moduleStateGate,
       ownerAuthorizationOverlay: allowOwnerAuthorizationOverlay,
+      resolveCompositionRevision: makeActionCompositionRevisionResolver(
+        { load: Effect.succeed(approvedComposition) },
+        ultramodernApiMarker,
+      ),
       resolveHandler: (registration) => {
         handlerResolutionCount += 1;
         return getActionHandler(registration);
@@ -420,21 +466,21 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   ) =>
     runtime.runAction({
       payload: candidate,
-      principal,
+      principal: trustVerifiedGatewayPrincipalContext(principal, approvedComposition.composition.revision),
       registration: createRegistration,
       transport: { correlationId: 'create-price-group', idempotencyKey: 'create-dealer' },
     });
   const runRevision = (candidate: CreatePriceGroupDefinitionRevisionPayload = revisionPayload) =>
     runtime.runAction({
       payload: candidate,
-      principal: tenantPrincipal,
+      principal: admittedTenantPrincipal,
       registration: revisionRegistration,
       transport: { correlationId: 'revise-price-group', idempotencyKey: 'revise-dealer' },
     });
   const runRetirement = (candidate: RetirePriceGroupPayload = retirementPayload) =>
     runtime.runAction({
       payload: candidate,
-      principal: tenantPrincipal,
+      principal: admittedTenantPrincipal,
       registration: retirementRegistration,
       transport: { correlationId: 'retire-price-group', idempotencyKey: 'retire-dealer' },
     });
@@ -449,7 +495,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       serviceResolutionCount,
     }),
     flushAttempts,
-    resolveCommit: () => runtime.resolveActionCommit({ invocationId, principal: tenantPrincipal }),
+    resolveCommit: () => runtime.resolveActionCommit({ invocationId, principal: admittedTenantPrincipal }),
     runCreate,
     runRetirement,
     runRevision,

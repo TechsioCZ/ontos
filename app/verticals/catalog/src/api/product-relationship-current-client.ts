@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ProductRelationshipCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ProductRelationshipCurrentAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeProductRelationshipCurrent = (
   payload: ProductRelationshipCurrentRequest,
   ...[requestCorrelation, options = {}]: ProductRelationshipCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeProductRelationshipCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeProductRelationshipCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

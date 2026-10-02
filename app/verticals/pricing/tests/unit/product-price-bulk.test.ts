@@ -83,6 +83,7 @@ const intents = snapshot.targets.map(({ target, targetId }, index): ProductPrice
 
 const trusted = {
   actionInvocationId: '77777777-7777-4777-8777-777777777777',
+  compositionRevision: 'b'.repeat(64),
   principalContext: {
     authBindingId: '88888888-8888-4888-8888-888888888888',
     authContextRef: 'session:product-price-bulk',

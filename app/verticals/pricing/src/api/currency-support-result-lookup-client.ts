@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CurrencySupportResultLookupClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CurrencySupportResultLookupAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCurrencySupportResultLookup = (
   payload: CurrencySupportResultLookupRequest,
   ...[requestCorrelation, options = {}]: CurrencySupportResultLookupOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCurrencySupportResultLookupWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCurrencySupportResultLookupWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

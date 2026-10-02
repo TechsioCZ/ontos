@@ -5,6 +5,7 @@ import { ConnectionError, UnknownError, isSqlError } from 'effect/unstable/sql/S
 import {
   decodeTrustedPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
+  readVerifiedGatewayCompositionRevision,
 } from '../auth/system-principal-context-provenance.ts';
 import { isDatabaseCommitAcknowledgementAmbiguous } from '../database/driver-failure.ts';
 import { findPostgresFailure } from '../database/postgres-failure.ts';
@@ -12,6 +13,13 @@ import { CoreDatabase as CoreDatabaseService } from '../db/client.ts';
 import { installOperationalScope } from '../db/scoped-transaction.ts';
 import { trustedTransactionTime } from '../operations/transaction-time.ts';
 import type { CoreTransaction } from '../db/types.ts';
+import {
+  ActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '../modules/active-application-composition.ts';
+import type { ActiveApplicationCompositionServiceContract } from '../modules/active-application-composition.ts';
+import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
+import type { OntosDeploymentIdentitySchema } from '../modules/manifest.ts';
 import type { ModuleEntrypointGatewayService } from '../modules/module-entrypoint-gateway.ts';
 import { ModuleEntrypointGateway } from '../modules/module-entrypoint-gateway.ts';
 import type { TenantModuleEntrypoint } from '../modules/module-entrypoint.ts';
@@ -92,6 +100,7 @@ import {
   ActionTrustedContextValidationError,
 } from './errors.ts';
 import type { ActionCoreError } from './errors.ts';
+import { createActionTransactionErrorWithCause } from './transaction-error.ts';
 import type { DomainEventContractMap } from './events.ts';
 import { ModuleStateCheckUnavailableError, ModuleStateDeniedError } from '../modules/module-state-gate-errors.ts';
 import {
@@ -195,6 +204,7 @@ export const ACTION_RUNTIME_STAGES = [
   'permission_checked',
   'policy_boundary',
   'invocation_running',
+  'composition_authority_locked',
   'invocation_locked',
   'database_scope_installed',
   'module_state_rechecked',
@@ -281,10 +291,14 @@ export interface ActionRuntimeOptions {
   readonly authorizationPreflight?: ActionAuthorizationPreflightService;
   readonly contextAccess?: (typeof ContextAccess)['Service'];
   readonly installScope?: typeof installOperationalScope;
+  readonly lockCompositionAuthority?: typeof lockApplicationCompositionAuthority;
   readonly moduleEntrypointGateway: ModuleEntrypointGatewayService;
   readonly moduleStateGate: ModuleStateGateService;
   readonly onStage?: (stage: ActionRuntimeStage) => void;
   readonly ownerAuthorizationOverlay?: (typeof OwnerAuthorizationOverlay)['Service'];
+  readonly resolveCompositionRevision?: (
+    principal: TrustedPrincipalContext,
+  ) => Effect.Effect<string, ActionTransactionError>;
   readonly resolveHandler?: typeof getActionHandler;
   readonly resolveServiceFactory?: typeof getActionServiceFactory;
 }
@@ -960,6 +974,16 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
   const resolveHandler = options.resolveHandler ?? getActionHandler;
   const resolveServiceFactory = options.resolveServiceFactory ?? getActionServiceFactory;
   const installScope = options.installScope ?? installOperationalScope;
+  const lockCompositionAuthority = options.lockCompositionAuthority ?? lockApplicationCompositionAuthority;
+  const resolveCompositionRevision =
+    options.resolveCompositionRevision ??
+    (() =>
+      Effect.fail(
+        new ActionTransactionError({
+          code: 'action_transaction_failed',
+          reason: 'The Action has no approved Application Composition authority',
+        }),
+      ));
   const notifyStage = (stage: ActionRuntimeStage): void => {
     options.onStage?.(stage);
   };
@@ -1743,6 +1767,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
       },
     );
     const allowedPolicies = yield* authorizeAndEvaluatePolicies();
+    const admittedCompositionRevision = yield* resolveCompositionRevision(principal);
 
     const executeTransactionAndHandleExit = Effect.fn('ActionRuntime.executeTransactionAndHandleExit')(
       function* executeTransactionAndHandleExitEffect() {
@@ -1755,6 +1780,18 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
           ActionCoreError | DomainErrorSchema['Type'],
           HandlerRequirements
         > = Effect.fn('ActionRuntime.transaction')(function* executeTransaction(drizzleTransaction: CoreTransaction) {
+          yield* lockCompositionAuthority(drizzleTransaction, admittedCompositionRevision, 'write').pipe(
+            Effect.mapError((cause) =>
+              createActionTransactionErrorWithCause(
+                {
+                  code: 'action_transaction_failed',
+                  reason: 'The approved Application Composition no longer admits owner writes',
+                },
+                cause,
+              ),
+            ),
+          );
+          notifyStage('composition_authority_locked');
           const lockedInvocation = yield* repository
             .lockInvocation(drizzleTransaction, invocation.actionInvocationId)
             .pipe(
@@ -1817,7 +1854,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             repository.loadRecordedRejection(scopedTransaction, runningInvocation.actionInvocationId),
           );
           const serviceFactory = resolveServiceFactory(input.registration);
-          const services = yield* serviceFactory(scopedTransaction, scope);
+          const services = yield* serviceFactory(scopedTransaction, scope, admittedCompositionRevision);
           const handler = resolveHandler(input.registration);
 
           const collector = createActionCollector(
@@ -1830,6 +1867,7 @@ export const makeActionRuntime = (...construction: ActionRuntimeConstruction): A
             actionInvocationId: lockedInvocation.actionInvocationId,
             addDomainEvent: collector.addDomainEvent,
             addOutboxMessage: collector.addOutboxMessage,
+            compositionRevision: admittedCompositionRevision,
             recordAuditEvidence: collector.recordAuditEvidence,
             recordDataAccess: collector.recordDataAccess,
             scope,
@@ -2086,38 +2124,83 @@ export class ActionRuntime extends Context.Service<ActionRuntime, ActionRuntimeS
   '@app/core-runtime/actions/runtime/ActionRuntime',
 ) {}
 
-export const ActionRuntimeLive = Layer.effect(
-  ActionRuntime,
-  Effect.gen(function* makeActionRuntimeService() {
-    const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
-    const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
-    const [database, repository, permission, moduleEntrypointGateway, moduleStateGate, scopeResolver, contextAccess] =
-      yield* Effect.all(
-        [
-          CoreDatabaseService,
-          ActionRepository,
-          ActionPermission,
-          ModuleEntrypointGateway,
-          ModuleStateGate,
-          OperationalScopeResolver,
-          ContextAccess,
-        ] as const,
-        { concurrency: 7 },
-      );
-    let runtimeOptions: ActionRuntimeOptions = {
-      contextAccess,
-      moduleEntrypointGateway,
-      moduleStateGate,
-      ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
-        ? ownerAuthorizationOverlay.value
-        : failClosedOwnerAuthorizationOverlay,
-    };
-    if (Option.isSome(authorizationPreflight)) {
-      runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
+const unavailableActionComposition = (cause?: unknown) =>
+  createActionTransactionErrorWithCause(
+    {
+      code: 'action_transaction_failed',
+      reason: 'The receiving owner release is not approved by the active Application Composition',
+    },
+    cause,
+  );
+
+/** Core-private resolver shared by the live runtime and its release-race regression tests. */
+export const makeActionCompositionRevisionResolver = (
+  applicationComposition: ActiveApplicationCompositionServiceContract,
+  expectedDeployment: typeof OntosDeploymentIdentitySchema.Type,
+) => {
+  const receivingDeployment = Object.freeze({ ...expectedDeployment });
+  return Effect.fn('ActionRuntime.resolveCompositionRevision')(function* resolveCompositionRevision(
+    principal: TrustedPrincipalContext,
+  ) {
+    const snapshot = yield* applicationComposition.load.pipe(
+      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+      Effect.mapError(unavailableActionComposition),
+    );
+    const selectedOwner = snapshot.composition.modules.find(
+      (module) =>
+        module.deployment.appId === receivingDeployment.appId &&
+        module.deployment.buildMarker === receivingDeployment.buildMarker,
+    );
+    const shellDeployment = snapshot.composition.shell.deployment;
+    const isSelectedShell =
+      receivingDeployment.appId === shellDeployment.appId &&
+      receivingDeployment.buildMarker === shellDeployment.buildMarker;
+    const gatewayRevision = readVerifiedGatewayCompositionRevision(principal);
+    if (
+      (selectedOwner === undefined && !isSelectedShell) ||
+      (gatewayRevision !== undefined && gatewayRevision !== snapshot.composition.revision)
+    ) {
+      return yield* unavailableActionComposition();
     }
-    return makeActionRuntime(database, repository, permission, scopeResolver, runtimeOptions);
-  }),
-);
+    return snapshot.composition.revision;
+  });
+};
+
+export const makeActionRuntimeLive = (expectedDeployment: typeof OntosDeploymentIdentitySchema.Type) =>
+  Layer.effect(
+    ActionRuntime,
+    Effect.gen(function* makeActionRuntimeService() {
+      const applicationComposition = yield* ActiveApplicationCompositionService;
+      const ownerAuthorizationOverlay = yield* Effect.serviceOption(OwnerAuthorizationOverlay);
+      const authorizationPreflight = yield* Effect.serviceOption(ActionAuthorizationPreflight);
+      const [database, repository, permission, moduleEntrypointGateway, moduleStateGate, scopeResolver, contextAccess] =
+        yield* Effect.all(
+          [
+            CoreDatabaseService,
+            ActionRepository,
+            ActionPermission,
+            ModuleEntrypointGateway,
+            ModuleStateGate,
+            OperationalScopeResolver,
+            ContextAccess,
+          ] as const,
+          { concurrency: 7 },
+        );
+      let runtimeOptions: ActionRuntimeOptions = {
+        contextAccess,
+        moduleEntrypointGateway,
+        moduleStateGate,
+        ownerAuthorizationOverlay: Option.isSome(ownerAuthorizationOverlay)
+          ? ownerAuthorizationOverlay.value
+          : failClosedOwnerAuthorizationOverlay,
+        resolveCompositionRevision: makeActionCompositionRevisionResolver(applicationComposition, expectedDeployment),
+      };
+      if (Option.isSome(authorizationPreflight)) {
+        runtimeOptions = { ...runtimeOptions, authorizationPreflight: authorizationPreflight.value };
+      }
+      return makeActionRuntime(database, repository, permission, scopeResolver, runtimeOptions);
+    }),
+  );
 
 export const runAction = <
   PayloadSchema extends Schema.ConstraintDecoder<unknown>,

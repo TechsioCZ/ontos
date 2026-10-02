@@ -19,6 +19,7 @@ const sellerId = 'e3470000-0000-4000-8000-000000000003';
 const principalId = 'e3470000-0000-4000-8000-000000000004';
 const marketId = 'e3471000-0000-4000-8000-000000000001';
 const associationId = 'e3472000-0000-4000-8000-000000000001';
+const compositionRevision = 'a'.repeat(64);
 
 type MarketCatalogTestDatabase = TestDatabaseFromClient<typeof coreRelations>;
 type MarketCatalogTransaction = Parameters<Parameters<MarketCatalogTestDatabase['transaction']>[0]>[0];
@@ -79,7 +80,7 @@ const currentAt = (database: MarketCatalogTestDatabase, at: string) =>
   scoped(database, (transaction) =>
     Effect.gen(function* readCurrentCatalog() {
       const ownerTransaction = yield* installOperationalScope(transaction, scope);
-      const persistence = yield* marketCatalogReadPersistenceForScope(ownerTransaction, scope);
+      const persistence = yield* marketCatalogReadPersistenceForScope(ownerTransaction, scope, compositionRevision);
       const input = Schema.decodeUnknownSync(CurrentMarketCatalogRequestSchema)({ at });
       return yield* persistence.current(input);
     }),
@@ -252,7 +253,7 @@ it.live('reads scheduled Current state and immutable retained history through ru
       const historyBeforeRetirement = yield* scoped(runtime, (transaction) =>
         Effect.gen(function* readHistory() {
           const ownerTransaction = yield* installOperationalScope(transaction, scope);
-          const persistence = yield* marketCatalogReadPersistenceForScope(ownerTransaction, scope);
+          const persistence = yield* marketCatalogReadPersistenceForScope(ownerTransaction, scope, compositionRevision);
           return yield* persistence.history(marketId);
         }),
       );
@@ -327,7 +328,7 @@ it.live('reads scheduled Current state and immutable retained history through ru
       const retainedHistory = yield* scoped(runtime, (transaction) =>
         Effect.gen(function* readRetainedHistory() {
           const ownerTransaction = yield* installOperationalScope(transaction, scope);
-          const persistence = yield* marketCatalogReadPersistenceForScope(ownerTransaction, scope);
+          const persistence = yield* marketCatalogReadPersistenceForScope(ownerTransaction, scope, compositionRevision);
           return yield* persistence.history(marketId);
         }),
       );

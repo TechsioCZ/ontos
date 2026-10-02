@@ -95,7 +95,15 @@ export const paymentTermsResolutionRead = defineRead(
     schemaVersion: '1',
   },
   handlePaymentTermsResolution,
-  (transaction, scope) => {
+  (transaction, scope, compositionRevision) => {
+    if (compositionRevision === undefined) {
+      return Effect.fail(
+        new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason: 'Cross-owner Read credentials require a verified composition revision',
+        }),
+      );
+    }
     const { legalEntityId, trustedStorefrontId } = scope;
     if (legalEntityId === undefined || trustedStorefrontId === undefined) {
       return Effect.fail(
@@ -107,11 +115,16 @@ export const paymentTermsResolutionRead = defineRead(
     }
     return Effect.gen(function* makePaymentTermResolutionServices() {
       const catalog = yield* paymentTermCatalogPortFromEnvironment({
+        compositionRevision,
         legalEntityId,
         requestCorrelation: scope.correlationId,
       });
       // oxlint-disable-next-line effect-native/no-sequential-independent-yields -- Deterministic owner-port construction; neither constructor performs the governed read.
-      const policyService = yield* customerCommercePolicyAdministrationServiceFactory(transaction, scope);
+      const policyService = yield* customerCommercePolicyAdministrationServiceFactory(
+        transaction,
+        scope,
+        compositionRevision,
+      );
       const policy = customerCommercePaymentTermsPolicyResolver(
         'PROFILE',
         {

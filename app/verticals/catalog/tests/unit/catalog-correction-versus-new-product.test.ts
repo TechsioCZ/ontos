@@ -1,7 +1,10 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import {
   ProductAttributeChangeClassificationSchema,
@@ -84,89 +87,95 @@ type AuditEvidence = Readonly<Record<string, Schema.Schema.Type<typeof Schema.Js
 const context = <Events extends typeof correctProductAction.descriptor.domainEvents>(
   domainEvents: Events,
   services: Partial<CatalogPersistence>,
-) => {
-  const events: { eventType: string; payloadJson: unknown; reference: object }[] = [];
-  const audit: AuditEvidence[] = [];
-  const persistence: CatalogPersistence = {
-    correct: unexpected,
-    create: unexpected,
-    getCreatedByInvocation: unexpected,
-    getCurrent: unexpected,
-    getHistory: unexpected,
-    reactivate: unexpected,
-    recoverCreateProduct: unexpected,
-    recoverUpdateProduct: unexpected,
-    retire: unexpected,
-    update: unexpected,
-    ...services,
-  };
-  const value: ActionHandlerContext<Events, CatalogPersistence> = {
-    actionInvocationId: '55555555-5555-4555-8555-555555555555',
-    addDomainEvent: (event) =>
-      Effect.sync(() => {
-        expect(Object.keys(domainEvents)).toContain(event.eventType);
-        const reference = Object.create(null);
-        events.push({ eventType: event.eventType, payloadJson: event.payloadJson, reference });
-        return reference;
-      }),
-    addOutboxMessage: () => Effect.void,
-    recordAuditEvidence: (evidence) =>
-      Effect.sync(() => {
-        audit.push(evidence);
-      }),
-    recordDataAccess: () => Effect.void,
-    scope,
-    services: persistence,
-  };
-  return { audit, events, value };
-};
+) =>
+  Effect.gen(function* makeContext() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const events: { eventType: string; payloadJson: unknown; reference: object }[] = [];
+    const audit: AuditEvidence[] = [];
+    const persistence: CatalogPersistence = {
+      correct: unexpected,
+      create: unexpected,
+      getCreatedByInvocation: unexpected,
+      getCurrent: unexpected,
+      getHistory: unexpected,
+      reactivate: unexpected,
+      recoverCreateProduct: unexpected,
+      recoverUpdateProduct: unexpected,
+      retire: unexpected,
+      update: unexpected,
+      ...services,
+    };
+    const value: ActionHandlerContext<Events, CatalogPersistence> = {
+      actionInvocationId: '55555555-5555-4555-8555-555555555555',
+      addDomainEvent: (event) =>
+        Effect.sync(() => {
+          expect(Object.keys(domainEvents)).toContain(event.eventType);
+          const reference = Object.create(null);
+          events.push({ eventType: event.eventType, payloadJson: event.payloadJson, reference });
+          return reference;
+        }),
+      addOutboxMessage: () => Effect.void,
+      compositionRevision: snapshot.composition.revision,
+      recordAuditEvidence: (evidence) =>
+        Effect.sync(() => {
+          audit.push(evidence);
+        }),
+      recordDataAccess: () => Effect.void,
+      scope,
+      services: persistence,
+    };
+    return { audit, events, value };
+  });
 
 const decodeClassification = Schema.decodeUnknownSync(ProductChangeClassificationSchema);
 
-const createContext = () => {
-  const events: { eventType: string; payloadJson: unknown }[] = [];
-  const audit: AuditEvidence[] = [];
-  const services = {
-    captureResult: () => Effect.void,
-    correct: unexpected,
-    create: () =>
-      Effect.succeed({
-        _tag: 'created' as const,
-        product: successorProduct,
-        variantId: replacementVariantRef.resourceId,
-      }),
-    getCreatedByInvocation: unexpected,
-    getCurrent: unexpected,
-    getHistory: unexpected,
-    reactivate: unexpected,
-    recoverCreateProduct: unexpected,
-    recoverUpdateProduct: unexpected,
-    retire: unexpected,
-    update: unexpected,
-  };
-  const value: ActionHandlerContext<typeof createProductAction.descriptor.domainEvents, typeof services> = {
-    actionInvocationId: '55555555-5555-4555-8555-555555555555',
-    addDomainEvent: (event) =>
-      Effect.sync(() => {
-        events.push({ eventType: event.eventType, payloadJson: event.payloadJson });
-        return Object.create(null);
-      }),
-    addOutboxMessage: () => Effect.void,
-    recordAuditEvidence: (evidence) =>
-      Effect.sync(() => {
-        audit.push(evidence);
-      }),
-    recordDataAccess: () => Effect.void,
-    scope,
-    services,
-  };
-  return { audit, events, value };
-};
+const createContext = () =>
+  Effect.gen(function* makeCreateContext() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const events: { eventType: string; payloadJson: unknown }[] = [];
+    const audit: AuditEvidence[] = [];
+    const services = {
+      captureResult: () => Effect.void,
+      correct: unexpected,
+      create: () =>
+        Effect.succeed({
+          _tag: 'created' as const,
+          product: successorProduct,
+          variantId: replacementVariantRef.resourceId,
+        }),
+      getCreatedByInvocation: unexpected,
+      getCurrent: unexpected,
+      getHistory: unexpected,
+      reactivate: unexpected,
+      recoverCreateProduct: unexpected,
+      recoverUpdateProduct: unexpected,
+      retire: unexpected,
+      update: unexpected,
+    };
+    const value: ActionHandlerContext<typeof createProductAction.descriptor.domainEvents, typeof services> = {
+      actionInvocationId: '55555555-5555-4555-8555-555555555555',
+      addDomainEvent: (event) =>
+        Effect.sync(() => {
+          events.push({ eventType: event.eventType, payloadJson: event.payloadJson });
+          return Object.create(null);
+        }),
+      addOutboxMessage: () => Effect.void,
+      compositionRevision: snapshot.composition.revision,
+      recordAuditEvidence: (evidence) =>
+        Effect.sync(() => {
+          audit.push(evidence);
+        }),
+      recordDataAccess: () => Effect.void,
+      scope,
+      services,
+    };
+    return { audit, events, value };
+  });
 
 describe('Catalog Correction versus new Product realization (#415)', () => {
   it.effect('corrects a typo in place and keeps Product identity without Current revalidation', () =>
     Effect.gen(function* typo() {
-      const state = context(correctProductAction.descriptor.domainEvents, {
+      const state = yield* context(correctProductAction.descriptor.domainEvents, {
         correct: () => Effect.succeed({ _tag: 'corrected', changed: true, product: product(2, 'Police Alfa') }),
       });
       const result = yield* handleCorrectProduct(
@@ -197,7 +206,7 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
   it.effect('preserves identity for a documented dimension correction and hands open selections to #479', () =>
     Effect.gen(function* dimension() {
       const reason = 'Recorded width was wrong; the item always measured 90 cm';
-      const state = context(correctProductAction.descriptor.domainEvents, {
+      const state = yield* context(correctProductAction.descriptor.domainEvents, {
         correct: () => Effect.succeed({ _tag: 'corrected', changed: true, product: product(2, 'Police 90 cm') }),
       });
       const result = yield* handleCorrectProduct(
@@ -263,7 +272,7 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
         }),
       ];
       for (const classification of classifications) {
-        const state = context(correctProductAction.descriptor.domainEvents, {});
+        const state = yield* context(correctProductAction.descriptor.domainEvents, {});
         const error = yield* handleCorrectProduct(
           { classification, expectedRevision: 1, name: 'Police 90 cm', productRef, reason },
           state.value,
@@ -278,7 +287,7 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
   it.effect('creates and durably captures the evidenced successor under its new Product identity', () =>
     Effect.gen(function* successor() {
       const reason = 'A new common business identity replaces the previous Product';
-      const state = createContext();
+      const state = yield* createContext();
       const result = yield* handleCreateProduct(
         {
           classification: {
@@ -469,7 +478,7 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
   it.effect('revisions and explains a correction without rewriting accepted history', () =>
     Effect.gen(function* afterAcceptance() {
       const reason = 'Recorded width corrected after order acceptance';
-      const state = context(correctProductAction.descriptor.domainEvents, {
+      const state = yield* context(correctProductAction.descriptor.domainEvents, {
         correct: () => Effect.succeed({ _tag: 'corrected', changed: true, product: product(2, 'Police 90 cm') }),
       });
       const result = yield* handleCorrectProduct(
@@ -505,7 +514,7 @@ describe('Catalog Correction versus new Product realization (#415)', () => {
   it.effect('binds the correction decision to the exact Product scope and stated reason', () =>
     Effect.gen(function* binding() {
       const reason = 'Recorded width was wrong';
-      const state = context(correctProductAction.descriptor.domainEvents, {});
+      const state = yield* context(correctProductAction.descriptor.domainEvents, {});
       const variantScoped = yield* handleCorrectProduct(
         {
           classification: {

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CustomerPriceGroupAssignmentReadClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CustomerPriceGroupAssignmentReadAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCustomerPriceGroupAssignmentRead = (
   payload: CustomerPriceGroupAssignmentReadRequest,
   ...[requestCorrelation, options = {}]: CustomerPriceGroupAssignmentReadOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCustomerPriceGroupAssignmentReadWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCustomerPriceGroupAssignmentReadWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

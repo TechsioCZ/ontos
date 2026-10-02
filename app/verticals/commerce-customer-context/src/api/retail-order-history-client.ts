@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RetailOrderHistoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RetailOrderHistoryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRetailOrderHistory = (
   payload: RetailOrderHistoryRequest,
   ...[requestCorrelation, options = {}]: RetailOrderHistoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRetailOrderHistoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRetailOrderHistoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface QuantityTierResultLookupClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type QuantityTierResultLookupAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeQuantityTierResultLookup = (
   payload: QuantityTierResultLookupRequest,
   ...[requestCorrelation, options = {}]: QuantityTierResultLookupOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeQuantityTierResultLookupWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeQuantityTierResultLookupWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

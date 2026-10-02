@@ -56,6 +56,7 @@ const handleStartPortalEnrollment = Effect.fn('StartPortalEnrollmentAction.handl
       ...payload,
       actionInvocationId,
       actorPrincipalId,
+      compositionRevision: context.compositionRevision,
       tenantId,
     });
   },

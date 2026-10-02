@@ -25,9 +25,11 @@ export type SwitchLegalEntityResponse = typeof SwitchLegalEntityResponseSchema.T
 export type ShellNavigationItem = typeof ShellNavigationItemSchema.Type;
 export type ShellUnavailableDeployment = typeof ShellUnavailableDeploymentSchema.Type;
 export type ShellComposition = typeof ShellCompositionSchema.Type;
+export type ShellCompositionRequest = typeof ShellCompositionRequestSchema.Type;
 export type ResolveModuleTargetPayload = typeof ResolveModuleTargetPayloadSchema.Type;
 export type ResolvedModuleTarget = typeof ResolvedModuleTargetSchema.Type;
 export type ResourceRef = typeof ResourceRefSchema.Type;
+export type ShellResourceRequest = typeof ShellResourceRequestSchema.Type;
 export type ShellSearchResult = typeof ShellSearchResultSchema.Type;
 export type ShellSearchPayload = typeof ShellSearchPayloadSchema.Type;
 export type ShellSearchResponse = typeof ShellSearchResponseSchema.Type;
@@ -219,6 +221,7 @@ export type ShellAuthenticationRequiredProblem = typeof ShellAuthenticationRequi
 export type ShellTargetForbiddenProblem = typeof ShellTargetForbiddenProblemSchema.Type;
 export type ShellTargetNotFoundProblem = typeof ShellTargetNotFoundProblemSchema.Type;
 export type ShellSelectionRequiredProblem = typeof ShellSelectionRequiredProblemSchema.Type;
+export type ShellReloadRequiredProblem = typeof ShellReloadRequiredProblemSchema.Type;
 export type ShellPolicyConflictProblem = typeof ShellPolicyConflictProblemSchema.Type;
 export type ShellPolicyUnprocessableProblem = typeof ShellPolicyUnprocessableProblemSchema.Type;
 export type ShellInvalidRequestProblem = typeof ShellInvalidRequestProblemSchema.Type;
@@ -366,22 +369,46 @@ export const ShellCompositionSchema = Schema.Union([
     state: Schema.Literal('selection_required'),
   }),
   Schema.Struct({
+    compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
     navigation: Schema.Array(ShellNavigationItemSchema),
     state: Schema.Literal('available'),
     unavailableDeployments: Schema.Array(ShellUnavailableDeploymentSchema),
   }),
 ]);
 
-export const ResolveModuleTargetPayloadSchema = Schema.Struct({
-  entrypointKey: Schema.optionalKey(EntrypointKeySchema),
-  moduleId: ModuleIdSchema,
+export const ShellCompositionRequestSchema = Schema.Struct({
+  compositionRevision: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u))),
 });
+
+export const ResolveModuleTargetPayloadSchema = Schema.Struct({
+  canonicalPath: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(40_000))),
+  compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
+  entrypointKey: Schema.optionalKey(EntrypointKeySchema),
+  moduleId: Schema.optionalKey(ModuleIdSchema),
+}).check(
+  Schema.makeFilter(({ canonicalPath, entrypointKey, moduleId }) =>
+    (canonicalPath === undefined) !== (moduleId === undefined) &&
+    (canonicalPath === undefined || entrypointKey === undefined)
+      ? undefined
+      : 'select either a canonical path or a module target',
+  ),
+);
 
 export const ResolvedModuleTargetSchema = Schema.Struct({
   appId: AppIdSchema,
   componentKey: ComponentKeySchema,
+  compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
   entrypointKey: EntrypointKeySchema,
+  federation: Schema.Struct({
+    expose: Schema.NonEmptyString,
+    manifest: Schema.Struct({
+      sha256: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
+      url: Schema.NonEmptyString,
+    }),
+    remoteName: Schema.NonEmptyString,
+  }),
   moduleId: ModuleIdSchema,
+  routeParameters: Schema.Record(Schema.String, Schema.String),
   writable: Schema.Boolean,
 });
 
@@ -390,6 +417,11 @@ export const ResourceRefSchema = Schema.Struct({
   resourceId: ResourceIdSchema,
   resourceType: Schema.String.check(Schema.isMinLength(3)),
   tenantId: Schema.optionalKey(TenantIdSchema),
+});
+
+export const ShellResourceRequestSchema = Schema.Struct({
+  ...ResourceRefSchema.fields,
+  compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
 });
 
 const searchTitle = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
@@ -432,6 +464,7 @@ const ShellSearchResultSchema = Schema.Union([
 ]);
 
 export const ShellSearchPayloadSchema = Schema.Struct({
+  compositionRevision: Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u)),
   includeArchived: Schema.optionalKey(Schema.Boolean),
   query: Schema.String.check(Schema.isMaxLength(300)),
   role: Schema.optionalKey(PartyRoleSchema),
@@ -508,6 +541,8 @@ export const ShellTargetForbiddenProblemSchema = makeProblemDetailsSchema('Shell
 export const ShellTargetNotFoundProblemSchema = makeProblemDetailsSchema('ShellTargetNotFoundProblem', 404);
 
 export const ShellSelectionRequiredProblemSchema = makeProblemDetailsSchema('ShellSelectionRequiredProblem', 409);
+
+export const ShellReloadRequiredProblemSchema = makeProblemDetailsSchema('ShellReloadRequiredProblem', 409);
 
 export const ShellPolicyConflictProblemSchema = makeProblemDetailsSchema('ShellPolicyConflictProblem', 409);
 
@@ -679,6 +714,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       .add(
         HttpApiEndpoint.get('shellComposition', '/shell/composition', {
           error: [
+            ShellReloadRequiredProblemSchema,
             ShellAuthenticationRequiredProblemSchema,
             ShellTargetForbiddenProblemSchema,
             ShellPolicyConflictProblemSchema,
@@ -686,12 +722,14 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             ShellCapabilityUnavailableProblemSchema,
             ShellInternalProblemSchema,
           ],
+          query: ShellCompositionRequestSchema,
           success: ShellCompositionSchema,
         }),
       )
       .add(
         HttpApiEndpoint.post('resolveModuleTarget', '/shell/module-target', {
           error: [
+            ShellReloadRequiredProblemSchema,
             ShellAuthenticationRequiredProblemSchema,
             ShellTargetForbiddenProblemSchema,
             ShellTargetNotFoundProblemSchema,
@@ -761,6 +799,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       .add(
         HttpApiEndpoint.post('search', '/shell/search', {
           error: [
+            ShellReloadRequiredProblemSchema,
             ShellAuthenticationRequiredProblemSchema,
             ShellTargetForbiddenProblemSchema,
             ShellPolicyConflictProblemSchema,
@@ -776,6 +815,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
       .add(
         HttpApiEndpoint.post('resourceDetail', '/shell/resource', {
           error: [
+            ShellReloadRequiredProblemSchema,
             ShellAuthenticationRequiredProblemSchema,
             ShellTargetForbiddenProblemSchema,
             ShellTargetNotFoundProblemSchema,
@@ -785,13 +825,14 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             ShellCapabilityUnavailableProblemSchema,
             ShellInternalProblemSchema,
           ],
-          payload: ResourceRefSchema,
+          payload: ShellResourceRequestSchema,
           success: ShellResourceResponseSchema,
         }),
       )
       .add(
         HttpApiEndpoint.post('attachMedia', '/shell/resource/media-attachment', {
           error: [
+            ShellReloadRequiredProblemSchema,
             ShellAuthenticationRequiredProblemSchema,
             ShellTargetForbiddenProblemSchema,
             ShellTargetNotFoundProblemSchema,
@@ -801,7 +842,7 @@ export const ShellAuthenticationApi = HttpApi.make('shellAuthenticationApi')
             ShellCapabilityUnavailableProblemSchema,
             ShellInternalProblemSchema,
           ],
-          payload: ResourceRefSchema,
+          payload: ShellResourceRequestSchema,
           success: MediaAttachmentResponseSchema,
         }),
       ),

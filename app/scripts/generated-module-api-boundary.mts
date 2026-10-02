@@ -1119,6 +1119,12 @@ const exportedOperationsUseClientHelperAndGateway = (
     [SyntaxKind.OpenParenToken],
     [SyntaxKind.OpenParenToken],
     [SyntaxKind.Identifier, 'credential'],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.OpenBraceToken],
+    [SyntaxKind.Identifier, 'apiBaseUrl'],
+    [SyntaxKind.CommaToken],
+    [SyntaxKind.Identifier, 'compositionRevision'],
+    [SyntaxKind.CloseBraceToken],
     [SyntaxKind.CloseParenToken],
     [SyntaxKind.EqualsGreaterThanToken],
     [SyntaxKind.Identifier, expectation.authorizedOperation],
@@ -1129,12 +1135,28 @@ const exportedOperationsUseClientHelperAndGateway = (
     [SyntaxKind.CommaToken],
     [SyntaxKind.Identifier, 'requestCorrelation'],
     [SyntaxKind.CommaToken],
-    [SyntaxKind.Identifier, 'options'],
   ] satisfies readonly ExpectedToken[];
   const gatewayInvocationEnd = operationArrow + 1 + gatewayInvocation.length;
+  const targetOptions = (trailingComma: boolean) =>
+    [
+      [SyntaxKind.OpenBraceToken],
+      [SyntaxKind.DotDotDotToken],
+      [SyntaxKind.Identifier, 'options'],
+      [SyntaxKind.CommaToken],
+      [SyntaxKind.Identifier, 'baseUrl'],
+      [SyntaxKind.ColonToken],
+      [SyntaxKind.Identifier, 'apiBaseUrl'],
+      [SyntaxKind.CommaToken],
+      [SyntaxKind.Identifier, 'compositionRevision'],
+      ...(trailingComma ? ([[SyntaxKind.CommaToken]] as const) : []),
+      [SyntaxKind.CloseBraceToken],
+    ] satisfies readonly ExpectedToken[];
+  const targetOptionsEnd = matchingSequenceEnd(tokens, gatewayInvocationEnd, [
+    targetOptions(false),
+    targetOptions(true),
+  ]);
   const operationUsesGateway =
-    matchesSequence(tokens, operationArrow + 1, gatewayInvocation) &&
-    hasInvocationClosure(tokens, gatewayInvocationEnd);
+    matchesSequence(tokens, operationArrow + 1, gatewayInvocation) && hasInvocationClosure(tokens, targetOptionsEnd);
   const helperShadowsImports = clientHelperShadowsImports(tokens, helper, expectation);
   const shadowsBindings = operationParametersShadowBindings(
     tokens,

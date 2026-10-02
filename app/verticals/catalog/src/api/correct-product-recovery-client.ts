@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CorrectProductRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CorrectProductRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCorrectProductRecovery = (
   payload: CorrectProductRecoveryRequest,
   ...[requestCorrelation, options = {}]: CorrectProductRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCorrectProductRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCorrectProductRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

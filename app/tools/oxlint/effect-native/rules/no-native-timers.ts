@@ -26,7 +26,8 @@
  *   3. `timerBindingCall` — every call of a binding introduced by such an import, including aliases
  *      (`import { setTimeout as delay } from "node:timers/promises"; await delay(50)`) and
  *      namespace imports (`import * as timers from "node:timers"; timers.setInterval(...)`).
- *   4. `realTimeInTest` — in test files only, and only when the file installs no `TestClock`:
+ *   4. `realTimeInTest` — in declared test entry files or files that register tests, and only
+ *      when the file installs no `TestClock`. Shared factories retain their caller's Clock:
  *      Effect time operators (`Effect.sleep`, `Effect.delay`, `Effect.timeout*`, `Effect.schedule`,
  *      `Effect.repeat*`, `Effect.retry*`), any `Schedule.*` member, `Clock.currentTimeMillis` /
  *      `Clock.currentTimeNanos` / `Clock.sleep`, and `DateTime.now` / `DateTime.unsafeNow`. Aliased
@@ -45,6 +46,10 @@
  *   - A file with value-import evidence of `TestClock` from `effect/testing`,
  *     or an explicitly configured imported harness in `testClockIndicators`, keeps its
  *     Effect time operators — that is the target pattern, not the anti-pattern.
+ *   - Consumed native Effect time in genuine `effect-rstest` live registrations uses the
+ *     runner's real Clock. Immutable helpers must be reachable exclusively from those
+ *     registrations; runner mutation, opaque escapes and unsupported dynamic runner origins
+ *     prevent this proof. Native JavaScript timers remain prohibited inside live registrations.
  *   - Effect time operators in **production** code: `Effect.repeat(Schedule.spaced(...))` and
  *     `Effect.timeout` are exactly what B1 asks for, so they are only questioned inside tests.
  *   - Locally shadowed or non-timer bindings: a parameter named `setTimeout`, a test double
@@ -60,8 +65,9 @@
 import { defineRule } from '@oxlint/plugins';
 import type { Context, ESTree, Scope } from '@oxlint/plugins';
 
-import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts';
+import { collectEffectBindings } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
+import { createNativeLiveClockProof } from '../shared/native-live-clock.ts';
 import { isScriptFile, isTestFile, matchesAny } from '../shared/paths.ts';
 
 type AnyNode = ESTree.Node;
@@ -114,6 +120,11 @@ const DEFAULT_IGNORE_PATHS: readonly string[] = ['**/tests/e2e/**', '**/*.e2e.*'
 
 /** `effect/Effect`-style submodules whose named exports are the time operators themselves. */
 const SUBMODULE_SOURCE = /^effect\/(Effect|Schedule|Clock|DateTime)$/u;
+
+/** Registrations execute in the runner; imported helpers retain their caller's ambient Clock. */
+const TEST_RUNNER_SOURCES = new Set(['effect-rstest', '@rstest/core', 'node:test']);
+const TEST_REGISTRATION_EXPORTS = new Set(['it', 'test', 'beforeAll', 'beforeEach', 'afterAll', 'afterEach']);
+const TEST_ENTRY_FILE = /\.(?:test|spec|test-d|spec-d)\.[cm]?[jt]sx?$/u;
 
 /** Marker stored in `timerBindings` for `import * as timers from "node:timers"`. */
 const NAMESPACE_BINDING = '*';
@@ -403,7 +414,7 @@ export const rule = defineRule({
     const clockMembers = new Set(options.clockMembers);
     const dateTimeMembers = new Set(options.dateTimeMembers);
     const testClockIndicators = new Set(options.testClockIndicators);
-    const checkEffectTime = inTest && options.requireTestClockInTests;
+    const checkEffectTime = options.requireTestClockInTests;
 
     /** local name → imported timer member, or `*` for a namespace import. */
     const timerBindings = new Map<string, string>();
@@ -415,6 +426,9 @@ export const rule = defineRule({
     let hasMockTimers = false;
     const testingNamespaces = new Set<string>();
     const nodeTestMocks = new Set<string>();
+    const testRegistrationBindings = new Set<string>();
+    const testRunnerNamespaces = new Set<string>();
+    let hasTestRegistration = false;
 
     const nativeSites: Site[] = [];
     const bindingSites: Site[] = [];
@@ -459,6 +473,49 @@ export const rule = defineRule({
         if (isClockImport(source, imported)) hasTestClock = true;
         if (source === 'node:test' && imported === 'mock') nodeTestMocks.add(specifier.local.name);
       }
+    }
+
+    function collectTestRegistrations(source: string, values: ESTree.ImportDeclaration['specifiers']) {
+      if (!TEST_RUNNER_SOURCES.has(source)) return;
+      for (const specifier of values) {
+        if (specifier.type === 'ImportNamespaceSpecifier') {
+          testRunnerNamespaces.add(specifier.local.name);
+        } else if (specifier.type === 'ImportSpecifier') {
+          const imported =
+            specifier.imported.type === 'Identifier' ? specifier.imported.name : specifier.imported.value;
+          if (TEST_REGISTRATION_EXPORTS.has(imported)) testRegistrationBindings.add(specifier.local.name);
+        } else if (source === 'node:test') {
+          testRegistrationBindings.add(specifier.local.name);
+        }
+      }
+    }
+
+    function registersTest(node: ESTree.CallExpression): boolean {
+      let root = unwrap(node.callee);
+      const chain: string[] = [];
+      // `it.each(cases)(name, program)` and `it.layer(layer)(suite)` are registrations
+      // at the outer call, while merely exporting a prepared helper is not.
+      while (root.type === 'CallExpression' || root.type === 'MemberExpression') {
+        if (root.type === 'CallExpression') {
+          root = unwrap(root.callee);
+        } else {
+          const key = staticKey(root.property, root.computed);
+          if (key === null) return false;
+          chain.push(key);
+          root = unwrap(root.object);
+        }
+      }
+      if (root.type !== 'Identifier' || resolve(context, root, root.name) !== 'import') return false;
+      const directBuilder =
+        unwrap(node.callee).type === 'MemberExpression' &&
+        ['each', 'layer', 'runIf', 'skipIf'].includes(chain[0] ?? '');
+      if (directBuilder) return false;
+      if (testRunnerNamespaces.has(root.name)) {
+        const exported = chain.at(-1);
+        return exported !== undefined && TEST_REGISTRATION_EXPORTS.has(exported);
+      }
+      if (!testRegistrationBindings.has(root.name)) return false;
+      return true;
     }
 
     function collectTimerBindings(node: ESTree.ImportDeclaration) {
@@ -570,6 +627,7 @@ export const rule = defineRule({
         );
         if (node.specifiers.length > 0 && values.length === 0) return;
         collectClockEvidence(source, values);
+        collectTestRegistrations(source, values);
         if (timerModules.has(source)) {
           importSites.push({ node, callee: source });
           collectTimerBindings(node);
@@ -579,6 +637,7 @@ export const rule = defineRule({
       },
 
       CallExpression(node) {
+        if (registersTest(node)) hasTestRegistration = true;
         const callee = unwrap(node.callee);
         if (callee.type === 'Identifier') {
           collectIdentifierCall(node, callee);
@@ -632,8 +691,14 @@ export const rule = defineRule({
             });
           }
         }
-        if (hasTestClock) return;
+        const explicitTest = matchesAny(filename, options.testPaths);
+        const explicitProduction = !explicitTest && matchesAny(filename, options.productionPaths);
+        const testEntry =
+          !explicitProduction && (explicitTest || TEST_ENTRY_FILE.test(filename) || hasTestRegistration);
+        if (hasTestClock || !testEntry || !options.includeTests) return;
+        const nativeLiveClock = createNativeLiveClockProof(context);
         for (const site of timeSites) {
+          if (nativeLiveClock(site.node)) continue;
           context.report({
             node: site.node,
             messageId: 'realTimeInTest',

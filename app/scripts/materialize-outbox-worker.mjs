@@ -1,17 +1,33 @@
 import { isBuiltin } from 'node:module';
 
 import { NodeServices } from '@effect/platform-node';
-import { Config, Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
-import { build } from 'esbuild';
+import {
+  resolveUltramodernReleaseIdentity,
+  resolveUltramodernSourceRevision,
+} from '@modern-js/app-tools-extensions/release-identity';
+import { Effect, FileSystem, ManagedRuntime, Option, Path, Schema } from 'effect';
+import { build, transform } from 'esbuild';
 import { parseSync } from 'oxc-parser';
 
 import { readOutboxWorkerHost, renderOutboxWorkerHostEntry } from './generate-outbox-worker-deployment.mjs';
 import { OUTBOX_WORKER_BUNDLE, OUTBOX_WORKER_HOST, outboxWorkerDelivery } from './outbox-worker-delivery.mjs';
 
+const TOPOLOGY_PATH = 'topology/reference-topology.json';
+const UnitIdSchema = Schema.String.pipe(Schema.brand('UnitId'));
+const BuildConstantSchema = Schema.fromJsonString(Schema.String);
+
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({
     verticals: Schema.Array(
       Schema.Struct({
+        deliveryUnit: Schema.optionalKey(
+          Schema.Struct({
+            buildMarker: Schema.String,
+            packageName: Schema.String,
+            sourceRevision: Schema.String,
+            unitId: UnitIdSchema,
+          }),
+        ),
         id: Schema.String,
         moduleFederation: Schema.Struct({ manifestUrl: Schema.String }),
         package: Schema.String,
@@ -71,12 +87,19 @@ export const focusedEntrypointValueExports = (source) =>
   );
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
 const ServiceIdSchema = Schema.String.pipe(Schema.brand('ServiceId'));
+const OwnerBuildIdentitySchema = Schema.Struct({
+  appId: AppIdSchema,
+  buildMarker: Schema.String,
+  sourceRevision: Schema.String,
+  unitId: UnitIdSchema,
+});
 
 const WorkerArtifactSchema = Schema.fromJsonString(
   Schema.Struct({
     appId: AppIdSchema,
     entry: Schema.Literal(WORKER_ENTRY),
-    schemaVersion: Schema.Literal(1),
+    ownerBuildIdentities: Schema.Array(OwnerBuildIdentitySchema),
+    schemaVersion: Schema.Literal(2),
     serviceId: ServiceIdSchema,
     sourceInputs: Schema.Array(Schema.String),
     sourceRevision: Schema.OptionFromNullOr(Schema.String),
@@ -106,6 +129,65 @@ const nodeRuntime = ManagedRuntime.make(NodeServices.layer);
  * @returns {RegExp} Equivalent esbuild-compatible filter.
  */
 const esbuildFilter = (pattern) => new RegExp(pattern.source, pattern.flags.replaceAll('u', ''));
+
+/**
+ * @param {string} markerPath Original owner-local generated source path.
+ * @param {{ identity: Schema.Schema.Type<typeof OwnerBuildIdentitySchema>, source: string }} marker Resolved identity and source.
+ * @param {import('effect/Path').Path} path Platform paths.
+ * @param {Set<string>} compiledMarkers Successfully compiled source paths.
+ * @returns {Effect.Effect<import('esbuild').OnLoadResult, OutboxWorkerMaterializationError | Schema.SchemaError>} Compiled owner marker source.
+ */
+const compileOwnerBuildIdentityEffect = (markerPath, marker, path, compiledMarkers) =>
+  Effect.gen(function* compileOwnerBuildIdentity() {
+    const buildMarker = yield* Schema.encodeEffect(BuildConstantSchema)(marker.identity.buildMarker);
+    const sourceRevision = yield* Schema.encodeEffect(BuildConstantSchema)(marker.identity.sourceRevision);
+    const result = yield* Effect.tryPromise({
+      catch: () => failure(`Unable to compile the ${marker.identity.appId} Outbox Worker build identity`),
+      try: () =>
+        /** @type {PromiseLike<import('esbuild').TransformResult>} */
+        (
+          transform(marker.source, {
+            define: {
+              ULTRAMODERN_BUILD_MARKER: buildMarker,
+              ULTRAMODERN_SOURCE_REVISION: sourceRevision,
+            },
+            loader: 'ts',
+            sourcefile: markerPath,
+            target: 'node26',
+          })
+        ),
+    });
+    compiledMarkers.add(markerPath);
+    /** @type {import('esbuild').OnLoadResult} */
+    const loaded = { contents: result.code, loader: 'js', resolveDir: path.dirname(markerPath) };
+    return loaded;
+  });
+
+/**
+ * Compile each owner's generated marker at its original source path. A combined worker cannot use
+ * global esbuild defines because its owners have different delivery-unit release identities.
+ * @param {{
+ *   compiledMarkers: Set<string>,
+ *   markers: Map<string, { identity: Schema.Schema.Type<typeof OwnerBuildIdentitySchema>, source: string }>,
+ *   path: import('effect/Path').Path,
+ * }} context Owner-local sources and resolved release identities.
+ * @returns {import('esbuild').Plugin} Owner-local build constant injection.
+ */
+const makeOwnerBuildIdentityPlugin = ({ compiledMarkers, markers, path }) => ({
+  name: 'worker-owner-build-identities',
+  setup(builder) {
+    builder.onLoad(
+      { filter: esbuildFilter(/[/\\]shared[/\\]ultramodern-build\.ts$/u) },
+      /** @returns {PromiseLike<import('esbuild').OnLoadResult> | null} Loaded owner source when selected. */
+      (args) => {
+        const marker = markers.get(args.path);
+        return marker === undefined
+          ? null
+          : nodeRuntime.runPromise(compileOwnerBuildIdentityEffect(args.path, marker, path, compiledMarkers));
+      },
+    );
+  },
+});
 
 /**
  * @param {{
@@ -236,9 +318,9 @@ const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, workspaceRo
           failure('Outbox Worker host entry drift: run node scripts/generate-outbox-worker-deployment.mjs --write'),
         );
       }
-      return { entryPoint: host.entry, serviceId: host.id };
+      return { entryPoint: host.entry, owners: host.owners, serviceId: host.id };
     }
-    const topologySource = yield* fs.readFileString(path.join(workspaceRoot, 'topology/reference-topology.json'));
+    const topologySource = yield* fs.readFileString(path.join(workspaceRoot, TOPOLOGY_PATH));
     const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(topologySource);
     const vertical = topology.verticals.find((candidate) => candidate.id === appId);
     if (vertical === undefined || vertical.package !== packageName || vertical.path !== packageDir) {
@@ -250,12 +332,12 @@ const resolveOutboxWorkerEffect = ({ appId, packageDir, packageName, workspaceRo
     if (delivery === undefined) {
       return yield* Effect.fail(failure(`${appId} has no generated Outbox Worker host`));
     }
-    return { entryPoint: path.join(packageDir, delivery.entry), serviceId: delivery.id };
+    return { entryPoint: path.join(packageDir, delivery.entry), owners: [delivery], serviceId: delivery.id };
   });
 
 /**
  * @param {WorkerIdentity} identity Materialization identity.
- * @returns {PromiseLike<{ entryPoint: string, serviceId: string }>} The worker's bundle entry and service id.
+ * @returns {PromiseLike<{ entryPoint: string, owners: readonly import('./outbox-worker-delivery.mjs').OutboxWorkerDelivery[], serviceId: string }>} The worker's bundle entry, hosted owners, and service id.
  */
 export const resolveOutboxWorker = (identity) => nodeRuntime.runPromise(resolveOutboxWorkerEffect(identity));
 
@@ -268,6 +350,60 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const delivery = yield* resolveOutboxWorkerEffect({ appId, packageDir, packageName, workspaceRoot });
+    const topology = yield* Schema.decodeUnknownEffect(TopologySchema)(
+      yield* fs.readFileString(path.join(workspaceRoot, TOPOLOGY_PATH)),
+    );
+    const sourceRevision = yield* Effect.try({
+      catch: () => failure('Unable to resolve the Outbox Worker source revision'),
+      try: () => resolveUltramodernSourceRevision(workspaceRoot),
+    });
+    /** @type {Map<string, { identity: Schema.Schema.Type<typeof OwnerBuildIdentitySchema>, source: string }>} */
+    const markers = new Map();
+    for (const owner of delivery.owners) {
+      const vertical = topology.verticals.find((candidate) => candidate.id === owner.ownerId);
+      const declared = vertical?.deliveryUnit;
+      const declaredMarkerPath = path.resolve(workspaceRoot, owner.path, 'shared/ultramodern-build.ts');
+      if (!(yield* fs.exists(declaredMarkerPath))) {
+        if (declared === undefined) {
+          continue;
+        }
+        return yield* Effect.fail(failure(`Missing owner build identity source for ${owner.ownerId}`));
+      }
+      const markerPath = yield* fs.realPath(declaredMarkerPath);
+      if (
+        declared === undefined ||
+        declared.packageName !== owner.packageName ||
+        declared.buildMarker.length === 0 ||
+        declared.unitId.length === 0
+      ) {
+        return yield* Effect.fail(failure(`Missing delivery-unit build identity for ${owner.ownerId}`));
+      }
+      const releaseIdentity = yield* Effect.try({
+        catch: () => failure(`Unable to resolve the ${owner.ownerId} Outbox Worker release identity`),
+        try: () =>
+          resolveUltramodernReleaseIdentity({
+            generationBuildMarker: declared.buildMarker,
+            sourceRevision: declared.sourceRevision,
+            unitId: declared.unitId,
+            workspaceRoot,
+          }),
+      });
+      markers.set(markerPath, {
+        identity: {
+          appId: yield* Schema.decodeUnknownEffect(AppIdSchema)(owner.ownerId),
+          ...releaseIdentity,
+          unitId: declared.unitId,
+        },
+        source: yield* fs.readFileString(markerPath),
+      });
+    }
+    const ownerSourceRevisions = [...new Set([...markers.values()].map(({ identity }) => identity.sourceRevision))];
+    if (ownerSourceRevisions.length > 1) {
+      return yield* Effect.fail(failure('The Outbox Worker owner identities do not share one source revision'));
+    }
+    const artifactSourceRevision = ownerSourceRevisions[0] ?? sourceRevision;
+    /** @type {Set<string>} */
+    const compiledMarkers = new Set();
     /** @type {Record<string, string>} */
     const dependencies = {};
     /** @type {Map<string, { manifest: Schema.Schema.Type<typeof PackageManifestSchema> }>} */
@@ -307,6 +443,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
             outfile: path.join(runtimeDir, WORKER_ENTRY),
             platform: 'node',
             plugins: [
+              makeOwnerBuildIdentityPlugin({ compiledMarkers, markers, path }),
               makeProductionDependenciesPlugin({
                 packages,
                 path,
@@ -317,6 +454,14 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
           })
         ),
     });
+    const missingMarkers = [...markers.entries()]
+      .filter(([markerPath]) => !compiledMarkers.has(markerPath))
+      .map(([, marker]) => marker.identity.appId);
+    if (missingMarkers.length > 0) {
+      return yield* Effect.fail(
+        failure(`The Outbox Worker does not import its owner build identity: ${missingMarkers.join(', ')}`),
+      );
+    }
     const { metafile } = result;
     // esbuild rejects a missing named import from the focused Core entrypoint, but a TypeScript re-export of a
     // missing name may be a type, so it bundles as undefined and the worker crashes at start. Reject it here.
@@ -345,11 +490,7 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     for (const imported of externalImports) {
       yield* collectProductionDependency(imported.path, packages, dependencies);
     }
-    yield* fs.copyFile(
-      path.join(workspaceRoot, 'topology/reference-topology.json'),
-      path.join(runtimeDir, 'topology.json'),
-    );
-    const sourceRevision = yield* Config.option(Config.String('ULTRAMODERN_SOURCE_REVISION'));
+    yield* fs.copyFile(path.join(workspaceRoot, TOPOLOGY_PATH), path.join(runtimeDir, 'topology.json'));
     const artifactAppId = yield* Schema.decodeUnknownEffect(AppIdSchema)(appId);
     const artifactServiceId = yield* Schema.decodeUnknownEffect(ServiceIdSchema)(delivery.serviceId);
     const { inputs: sourceInputMetadata } = yield* Schema.decodeUnknownEffect(MetafileInputsSchema)(metafile);
@@ -364,10 +505,11 @@ const materializeOutboxWorkerEffect = ({ appId, packageDir, packageName, runtime
     const artifactSource = yield* Schema.encodeEffect(WorkerArtifactSchema)({
       appId: artifactAppId,
       entry: WORKER_ENTRY,
-      schemaVersion: 1,
+      ownerBuildIdentities: [...markers.values()].map(({ identity }) => identity),
+      schemaVersion: 2,
       serviceId: artifactServiceId,
       sourceInputs,
-      sourceRevision,
+      sourceRevision: Option.some(artifactSourceRevision),
     });
     yield* fs.writeFileString(path.join(runtimeDir, 'worker-artifact.json'), `${artifactSource}\n`);
     return {

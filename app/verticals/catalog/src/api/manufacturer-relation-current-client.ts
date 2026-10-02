@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ManufacturerRelationCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ManufacturerRelationCurrentAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeManufacturerRelationCurrent = (
   payload: ManufacturerRelationCurrentRequest,
   ...[requestCorrelation, options = {}]: ManufacturerRelationCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeManufacturerRelationCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeManufacturerRelationCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CustomerGroupHistoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CustomerGroupHistoryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCustomerGroupHistory = (
   payload: CustomerGroupHistoryRequest,
   ...[requestCorrelation, options = {}]: CustomerGroupHistoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCustomerGroupHistoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCustomerGroupHistoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

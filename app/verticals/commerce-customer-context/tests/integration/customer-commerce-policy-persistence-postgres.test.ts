@@ -1,3 +1,4 @@
+import { readVerifiedGatewayCompositionRevision } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { sql } from 'drizzle-orm';
 import { Effect, Schema } from 'effect';
@@ -1008,6 +1009,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
               const service = yield* customerCommercePolicyAdministrationServiceFactory(
                 yield* installOperationalScope(transaction, replacementScope),
                 replacementScope,
+                'a'.repeat(64),
               );
               const result = yield* service.administerPurchaseCurrencyPolicy(
                 toTrustedPurchaseCurrencyPolicyAdministrationCommand(
@@ -1033,6 +1035,7 @@ it.live('enforces immutable temporal policy history, typed scopes, assignment in
             const service = yield* customerCommercePolicyAdministrationServiceFactory(
               yield* installOperationalScope(transaction, replacementScope),
               replacementScope,
+              readVerifiedGatewayCompositionRevision(replacementScope),
             );
             const repository = yield* customerCommercePolicyRepositoryForScope(invoker, replacementScope);
             const retained = yield* repository.loadPurchaseCurrencyPolicyState;

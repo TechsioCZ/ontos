@@ -1,9 +1,11 @@
 import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import type { GatewayPrincipalVerifierConfiguration } from '@app/gateway-principal-verifier/server';
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
+import type { ActiveApplicationCompositionService } from '@app/core-runtime/modules/active-application-composition';
 import { Context, Effect, Layer, Schema } from 'effect';
 import type { Redacted } from 'effect';
 import type { CommercePortalAuthVerificationRequest } from '../../../shared/portal-auth-verification.ts';
+import { ultramodernApiMarker } from '../../../shared/ultramodern-build.ts';
 import {
   CommercePortalAuthVerificationWorkloadGrantConfiguration,
   CommercePortalAuthVerificationWorkloadGrantsSchema,
@@ -41,6 +43,7 @@ export interface CommercePortalAuthVerificationWorkloadAuthorizationService {
     | CommercePortalAuthVerificationWorkloadGrantConfiguration
     | GatewayAssertionRedemptionService
     | GatewayPrincipalVerifierConfiguration
+    | ActiveApplicationCompositionService
   >;
 }
 
@@ -105,6 +108,7 @@ const authorize = Effect.fn('CommercePortalAuthVerificationWorkloadAuthorization
   | CommercePortalAuthVerificationWorkloadGrantConfiguration
   | GatewayAssertionRedemptionService
   | GatewayPrincipalVerifierConfiguration
+  | ActiveApplicationCompositionService
 > {
   const configured = yield* CommercePortalAuthVerificationWorkloadGrantConfiguration;
   const configuration = yield* decodeGrantConfiguration(configured);
@@ -112,7 +116,7 @@ const authorize = Effect.fn('CommercePortalAuthVerificationWorkloadAuthorization
     return yield* Effect.fail(rejected('No trusted workload grant is configured'));
   }
   const redemption = yield* GatewayAssertionRedemptionService;
-  const verifier = bindGatewayPrincipalVerifier(configuration.providerEndpointAudience);
+  const verifier = bindGatewayPrincipalVerifier(configuration.providerEndpointAudience, ultramodernApiMarker);
   const principal = yield* verifier.verifyAndRedeem(input.authorization, { redemption }).pipe(
     Effect.catchTags({
       ActionPrincipalConfigurationError: gatewayVerificationUnavailable,

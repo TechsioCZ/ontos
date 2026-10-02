@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface MarkGtinUnresolvedRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type MarkGtinUnresolvedRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeMarkGtinUnresolvedRecovery = (
   payload: MarkGtinUnresolvedRecoveryRequest,
   ...[requestCorrelation, options = {}]: MarkGtinUnresolvedRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeMarkGtinUnresolvedRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeMarkGtinUnresolvedRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ReactivateBrandRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ReactivateBrandRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeReactivateBrandRecovery = (
   payload: ReactivateBrandRecoveryRequest,
   ...[requestCorrelation, options = {}]: ReactivateBrandRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeReactivateBrandRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeReactivateBrandRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

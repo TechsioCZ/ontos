@@ -13,6 +13,7 @@ export interface CatalogSelectionGatewayConnection {
 export interface CatalogSelectionGatewayCredentialIssuer {
   readonly issue: (input: {
     readonly audience: 'catalog';
+    readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
   }) => Effect.Effect<CatalogSelectionGatewayConnection, PricingCatalogSelectionUnavailable>;

@@ -153,6 +153,7 @@ if (firstIntent === undefined || laterTarget === undefined) {
 }
 const trusted = {
   actionInvocationId: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
+  compositionRevision: 'b'.repeat(64),
   principalContext: {
     authBindingId: 'ffffffff-ffff-4fff-8fff-fffffffffff2',
     authContextRef: 'session:bulk-management-acceptance',
@@ -419,6 +420,7 @@ describe('Product Price bulk management acceptance', () => {
         actionInvocationId: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
         addDomainEvent: () => Effect.die('must not add an event'),
         addOutboxMessage: () => Effect.die('must not add an outbox message'),
+        compositionRevision: trusted.compositionRevision,
         recordAuditEvidence: () => Effect.die('must not record successful evidence'),
         recordDataAccess: () => Effect.die('must not record data access'),
         scope: {

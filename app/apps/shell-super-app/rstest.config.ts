@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -8,42 +7,11 @@ import { defineConfig } from '@rstest/core';
 import type { Rspack } from '@rstest/core';
 import { Result, Schema } from 'effect';
 
-import {
-  DeploymentAllowlistOverlaySchema,
-  DeploymentAllowlistTopologySchema,
-} from './api/modules/deployment-allowlist.ts';
-
 Object.assign(globalThis, { require: createRequire(import.meta.url) });
 
-const topologyJsonSchema = Schema.fromJsonString(DeploymentAllowlistTopologySchema);
-const overlayJsonSchema = Schema.fromJsonString(DeploymentAllowlistOverlaySchema);
-const moduleDeploymentAllowlistJsonSchema = Schema.fromJsonString(
-  Schema.Struct({
-    environment: Schema.Literal('development'),
-    overlay: DeploymentAllowlistOverlaySchema,
-    topology: DeploymentAllowlistTopologySchema,
-  }),
+const encodedSiteUrl = Result.getOrThrow(
+  Schema.encodeResult(Schema.fromJsonString(Schema.String))('http://localhost:3020'),
 );
-const siteUrlJsonSchema = Schema.fromJsonString(Schema.String);
-const referenceTopology = Result.getOrThrow(
-  Schema.decodeUnknownResult(topologyJsonSchema)(
-    readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'),
-  ),
-);
-const developmentOverlay = Result.getOrThrow(
-  Schema.decodeUnknownResult(overlayJsonSchema)(
-    readFileSync(new URL('../../topology/local-overlays/development.json', import.meta.url), 'utf-8'),
-  ),
-);
-const encodedReferenceTopology = Result.getOrThrow(Schema.encodeResult(topologyJsonSchema)(referenceTopology));
-const encodedModuleDeploymentAllowlist = Result.getOrThrow(
-  Schema.encodeResult(moduleDeploymentAllowlistJsonSchema)({
-    environment: 'development',
-    overlay: developmentOverlay,
-    topology: referenceTopology,
-  }),
-);
-const encodedSiteUrl = Result.getOrThrow(Schema.encodeResult(siteUrlJsonSchema)('http://localhost:3020'));
 
 const coreRuntimeRoot = fileURLToPath(new URL('../../packages/core-runtime/', import.meta.url));
 // Generated owner modules are imported natively from disk, so core-runtime must be one Node
@@ -87,11 +55,19 @@ export default defineConfig({
       output: {
         module: false,
       },
+      plugins: [
+        {
+          name: 'ontos:unit-without-ssr-compilation',
+          remove: ['@modern-js/builder-plugin-ssr'],
+          setup() {
+            // This plugin only removes SSR compilation from browser lifecycle tests.
+          },
+        },
+      ],
       restoreMocks: true,
       source: {
         define: {
-          ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: encodedReferenceTopology,
-          ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: encodedModuleDeploymentAllowlist,
+          __ONTOS_BROWSER_BUILD__: 'true',
           ULTRAMODERN_SITE_URL: encodedSiteUrl,
         },
       },
@@ -100,12 +76,8 @@ export default defineConfig({
     {
       include: ['tests/integration/**/*.test.ts'],
       name: 'integration',
-      // The API module reads the authoritative topology and allowlist from build-time defines.
-      // Integration tests assemble that same module, so they need the same deployment inputs.
       source: {
         define: {
-          ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY: encodedReferenceTopology,
-          ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST: encodedModuleDeploymentAllowlist,
           ULTRAMODERN_SITE_URL: encodedSiteUrl,
         },
       },

@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PriceGroupDefinitionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PriceGroupDefinitionAuthorizedInvocation = readonly [
@@ -48,6 +49,10 @@ export const executePriceGroupDefinition = (
   payload: PriceGroupDefinitionRequest,
   ...[requestCorrelation, options = {}]: PriceGroupDefinitionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePriceGroupDefinitionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePriceGroupDefinitionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

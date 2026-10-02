@@ -18,6 +18,8 @@ export interface OpsCommand {
   readonly cwd?: string;
   /** Added to the inherited environment; values are secret and never rendered. */
   readonly env?: SecretValues;
+  /** Set false when inherited environment values must not influence the command. */
+  readonly extendEnv?: boolean;
   /** Written to the child's standard input; the payload is secret and never rendered. */
   readonly stdin?: Redacted.Redacted;
 }
@@ -60,7 +62,7 @@ const spawnOptions = (command: OpsCommand): ChildProcessModel.CommandOptions => 
   }
   if (command.env !== undefined) {
     options.env = Object.fromEntries(Object.entries(command.env).map(([key, value]) => [key, Redacted.value(value)]));
-    options.extendEnv = true;
+    options.extendEnv = command.extendEnv ?? true;
   }
   return options;
 };

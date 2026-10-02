@@ -68,7 +68,7 @@ const ownerResponse = Schema.decodeSync(CurrentSupportedCurrenciesSuccessSchema)
 const credentialLayer = Layer.succeed(PurchaseCurrencyPricingGatewayCredentialService, {
   issue: () =>
     Effect.succeed({
-      baseUrl: new URL('https://pricing.example.test'),
+      baseUrl: new URL('https://shell.example.test/owner-api'),
       credential: Redacted.make('Bearer pricing-owner-issued'),
     }),
 });
@@ -79,6 +79,7 @@ describe('issue #786 Tenant Currency Support evidence propagation', () => {
       const ownerCalls: unknown[] = [];
       const port = yield* purchaseCurrencyPricingPortFromEnvironment(
         {
+          compositionRevision: 'a'.repeat(64),
           legalEntityId: '40000000-0000-4000-8000-000000000001',
           requestCorrelation: 'issue-786-currency-proof',
         },

@@ -5,16 +5,14 @@ import { expect, it } from 'effect-rstest';
 
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { StaffAuthenticationNamespaceRegistryLive } from '../../api/auth/authentication-namespace-registry.ts';
-import { installedVerticalIds } from '../../api/verticals/installed-verticals.ts';
 
-it.effect('constructs production staff trust without granting customer namespace authority', () =>
+it.effect('constructs Shell receiving trust without requiring installed composition or granting module audiences', () =>
   Effect.gen(function* verifyProductionStaffRegistry() {
     const registry = yield* AuthenticationNamespaceRegistry;
     const registration = yield* registry
       .lookup(STAFF_AUTHENTICATION_NAMESPACE_ID)
       .pipe(Effect.flatMap(Effect.fromOption));
-    const installedAudiences = yield* installedVerticalIds;
-    expect(registration.allowedAudiences).toEqual(['shell-super-app', ...installedAudiences]);
+    expect(registration.allowedAudiences).toEqual(['shell-super-app']);
     expect(registration.subjectTypes).toEqual(['user', 'api_key']);
     expect(registration.requiresOperationAdmission).toBe(false);
     expect(registration.trustedAttesterPrincipalIds).toEqual([]);

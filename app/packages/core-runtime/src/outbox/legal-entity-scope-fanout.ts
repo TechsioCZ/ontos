@@ -6,6 +6,7 @@ import { legalEntities } from '../db/schema.ts';
 import { scopedRoutineInvokerFromTransaction } from '../db/scoped-routine.ts';
 import type { ScopedRoutineInvoker } from '../db/scoped-routine.ts';
 import type { CoreDatabaseExecutor, CoreTransaction } from '../db/types.ts';
+import { lockApplicationCompositionAuthority } from '../modules/application-composition-authority.ts';
 import type { OutboxWorkerHandlerContext } from './definition.ts';
 import { isVerifiedOutboxWorkerHandlerContext } from './definition.ts';
 import { OutboxWorkerLegalEntityScopeError } from './legal-entity-scope-error.ts';
@@ -104,6 +105,7 @@ export const makeOutboxWorkerLegalEntityScopeFanout = (
   forEachScope: (context, observe) => {
     if (
       !isVerifiedOutboxWorkerHandlerContext(context) ||
+      !/^[\da-f]{64}$/u.test(context.compositionRevision) ||
       (context.legalEntityScope ?? 'required') !== 'required' ||
       !uuidPattern.test(context.tenantId)
     ) {
@@ -182,6 +184,9 @@ export const makePostgresOutboxWorkerLegalEntityScopeBackend = (database: {
       Effect.fn('OutboxWorkerLegalEntityScopeFanout.transaction')(function* runLegalEntityScopeTransaction(
         scopedTransaction: CoreTransaction,
       ) {
+        yield* lockApplicationCompositionAuthority(scopedTransaction, context.compositionRevision, 'worker').pipe(
+          Effect.mapError(unavailable),
+        );
         const settings = yield* scopedTransaction
           .execute<ScopeSettingRow>(
             sql`

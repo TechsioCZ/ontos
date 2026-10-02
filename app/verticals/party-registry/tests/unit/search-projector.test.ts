@@ -5,6 +5,7 @@ import {
   makeInMemoryCoreSearchProjectionStore,
 } from '@app/core-runtime';
 import type { CoreSearchProjectionDocument, OutboxWorkerHandlerContext } from '@app/core-runtime';
+import { attestOutboxWorkerHandlerContext } from '@app/core-runtime/testing/outbox';
 import { Effect, Exit, Match, Predicate } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -25,6 +26,26 @@ const partyRef = {
   resourceType: 'party.registry.party' as const,
   tenantId,
 };
+const contextInput: OutboxWorkerHandlerContext = {
+  attemptNumber: 1,
+  claimId: 'claim',
+  compositionRevision: 'a'.repeat(64),
+  consumerModuleKey: 'party.registry',
+  deliveryId: 'delivery',
+  domainEventId: 'event',
+  messageId: 'message',
+  producerModuleKey: 'party.registry',
+  tenantId,
+  tenantSequenceNo: 1n,
+  topic: 'party.registry.party-updated.v1',
+  workerKey: 'party.registry.project-party-updated-to-search',
+};
+const context = attestOutboxWorkerHandlerContext(contextInput);
+const rebuildContext = attestOutboxWorkerHandlerContext({
+  ...contextInput,
+  topic: 'party.registry.search-rebuild-requested.v1',
+  workerKey: 'party.registry.rebuild-search',
+});
 const snapshot: PartySearchSourceSnapshot = {
   counterparties: [],
   parties: [
@@ -75,10 +96,13 @@ it.effect('post-commit projection makes only active permission-safe identity evi
     const store = makeInMemoryCoreSearchProjectionStore();
     const search = yield* createCoreSearchQueryRuntime.pipe(Effect.provideService(CoreSearchProjectionStore, store));
     yield* Effect.forEach((document: CoreSearchProjectionDocument) =>
-      store.apply({
-        document,
-        kind: 'upsert',
-      }),
+      store.apply(
+        {
+          document,
+          kind: 'upsert',
+        },
+        context,
+      ),
     )(documents);
     const query = (value: string) =>
       search.search({
@@ -134,10 +158,13 @@ it.effect('aliases collapse to canonical identity and only alias-only evidence l
       ],
     });
     yield* Effect.forEach((document: CoreSearchProjectionDocument) =>
-      store.apply({
-        document,
-        kind: 'upsert',
-      }),
+      store.apply(
+        {
+          document,
+          kind: 'upsert',
+        },
+        context,
+      ),
     )(documents);
     const query = (value: string) =>
       search.search({
@@ -155,18 +182,6 @@ it.effect('aliases collapse to canonical identity and only alias-only evidence l
     expect(canonicalHits[0]?.matchedRef).toBe(undefined);
   }),
 );
-const context: OutboxWorkerHandlerContext = {
-  attemptNumber: 1,
-  claimId: 'claim',
-  deliveryId: 'delivery',
-  domainEventId: 'event',
-  messageId: 'message',
-  producerModuleKey: 'party.registry',
-  tenantId,
-  tenantSequenceNo: 1n,
-  topic: 'party.registry.party-updated.v1',
-  workerKey: 'party.registry.project-party-updated-to-search',
-};
 it.effect(
   'snapshot-generation replay is idempotent, archive/unarchive refreshes and older delivery cannot resurrect a tombstone',
   () =>
@@ -256,10 +271,13 @@ it.effect('future-ended contact disappears at its period boundary without anothe
       ],
     });
     yield* Effect.forEach((document: CoreSearchProjectionDocument) =>
-      store.apply({
-        document,
-        kind: 'upsert',
-      }),
+      store.apply(
+        {
+          document,
+          kind: 'upsert',
+        },
+        context,
+      ),
     )(documents);
     const query = (effectiveAt: string) =>
       search.search({
@@ -324,10 +342,13 @@ it.effect('Counterparty identity survives aliases, current-role expiry and canon
       ],
     });
     yield* Effect.forEach((document: CoreSearchProjectionDocument) =>
-      store.apply({
-        document,
-        kind: 'upsert',
-      }),
+      store.apply(
+        {
+          document,
+          kind: 'upsert',
+        },
+        context,
+      ),
     )(documents);
     const gateway = makePartySearchProjectionGateway(search);
     const input = {
@@ -383,10 +404,13 @@ it.effect('shared public contact returns multiple Parties without uniqueness or 
       ],
     });
     yield* Effect.forEach((document: CoreSearchProjectionDocument) =>
-      store.apply({
-        document,
-        kind: 'upsert',
-      }),
+      store.apply(
+        {
+          document,
+          kind: 'upsert',
+        },
+        context,
+      ),
     )(documents);
     const hits = yield* search.search({
       includeArchived: false,
@@ -418,10 +442,10 @@ it.effect('rebuild reconciles omitted documents and preserves tombstones against
       parties: [],
       projectionVersion: '8',
     };
-    yield* projector.project(context, {
+    yield* projector.project(rebuildContext, {
       rebuild: true,
     });
-    yield* projector.project(context, {
+    yield* projector.project(rebuildContext, {
       rebuild: true,
     });
     current = snapshot;
@@ -549,10 +573,10 @@ it.effect('projection generation is independent of an out-of-order business even
       store,
     );
     yield* projector.project(
-      {
-        ...context,
+      attestOutboxWorkerHandlerContext({
+        ...contextInput,
         tenantSequenceNo: 999n,
-      },
+      }),
       {
         partyId: 'party-1',
       },
@@ -639,7 +663,7 @@ it.effect('a complete empty rebuild also rejects delayed evidence for a never-be
       makeCoreSearchIngestion(store),
       store,
     );
-    yield* projector.project(context, {
+    yield* projector.project(rebuildContext, {
       rebuild: true,
     });
     current = snapshot;

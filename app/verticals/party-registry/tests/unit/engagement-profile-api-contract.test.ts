@@ -1,3 +1,6 @@
+// @rstest-environment happy-dom
+// @rstest-environment-options {"url":"https://shell.example/en"}
+import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { Effect, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/unstable/http';
@@ -68,17 +71,28 @@ it.effect('attach contracts accept only public Party Registry refs', () =>
 
 it.effect('public engagement mutations preserve owner request context at the HTTP boundary', () =>
   Effect.gen(function* verifyCase3() {
+    const compositionRevision = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const apiBaseUrl = '/module-api/party-registry/build-approved/party-registry-api';
+    yield* pinDocumentCompositionRevision(compositionRevision);
     const requests: Request[] = [];
     const timestamp = '2026-09-07T00:00:00.000Z';
     const traceparent = '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01';
     const fakeFetch: typeof fetch = (input, init) => {
       const request = new Request(input, init);
       requests.push(request);
-      const { pathname } = new URL(request.url);
-      if (pathname === '/auth/gateway-context') {
-        return Promise.resolve(Response.json({ expiresAt: 1, token: 'test-gateway-token' }));
+      const { origin, pathname } = new URL(request.url);
+      expect(origin).toBe('https://shell.example');
+      if (pathname === '/shell-super-app-api/auth/gateway-context') {
+        return Promise.resolve(
+          Response.json({
+            apiBaseUrl,
+            compositionRevision,
+            expiresAt: 2_000_000_000,
+            token: 'test-gateway-token',
+          }),
+        );
       }
-      expect(pathname).toBe('/party-registry-api/contacts/engagement/organizations/attach');
+      expect(pathname).toBe(`${apiBaseUrl}/contacts/engagement/organizations/attach`);
       return Promise.resolve(
         Response.json({
           archivedAt: null,
@@ -100,8 +114,9 @@ it.effect('public engagement mutations preserve owner request context at the HTT
       { counterpartyRef, partyRef },
       {
         baseUrl: 'https://party.example/party-registry-api',
+        compositionRevision: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
         correlationId: 'engagement-correlation',
-        gateway: { baseUrl: 'https://party.example' },
+        gateway: { baseUrl: 'https://shell.example/shell-super-app-api' },
         idempotencyKey: 'attach-engagement',
         locale: 'cs',
         traceId: 'engagement-trace',
@@ -114,12 +129,16 @@ it.effect('public engagement mutations preserve owner request context at the HTT
     expect(gatewayRequest).toBeDefined();
     expect(mutationRequest).toBeDefined();
     const gatewayPayload = yield* Effect.promise(() => Option.getOrThrow(Option.fromNullishOr(gatewayRequest)).json());
-    expect(gatewayPayload).toEqual({ audience: 'party-registry' });
+    expect(gatewayPayload).toEqual({ audience: 'party-registry', compositionRevision });
+    expect(gatewayRequest?.url).toBe('https://shell.example/shell-super-app-api/auth/gateway-context');
+    expect(mutationRequest?.url).toBe(`https://shell.example${apiBaseUrl}/contacts/engagement/organizations/attach`);
     expect(mutationRequest?.headers.get('authorization')).toBe('Bearer test-gateway-token');
+    expect(mutationRequest?.headers.get('x-ontos-composition-revision')).toBe(compositionRevision);
     expect(mutationRequest?.headers.get('accept-language')).toBe('cs');
     expect(mutationRequest?.headers.get('x-trace-id')).toBe('engagement-trace');
     expect(mutationRequest?.headers.get('traceparent')).toBe(traceparent);
     expect(mutationRequest?.headers.get('x-correlation-id')).toBe('engagement-correlation');
+    expect(mutationRequest?.headers.get('idempotency-key')).toBe('attach-engagement');
     expect(mutationRequest?.headers.get('x-operation-id')).toBe(
       engagementProfileOperationContexts.attachOrganizationEngagement.operationId,
     );

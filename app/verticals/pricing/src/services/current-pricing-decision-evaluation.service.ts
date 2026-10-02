@@ -133,7 +133,8 @@ export class CurrentPricingDecisionEvaluation extends Context.Service<
 export interface CurrentPricingDecisionEvaluationFactoryService {
   readonly make: (
     source: CurrentPricingDecisionWholeEvaluationPort,
-    scopedPricingGateway?: PricingOwnerMaterialEvidenceFenceGateway,
+    scopedPricingGateway: PricingOwnerMaterialEvidenceFenceGateway | undefined,
+    compositionRevision: string,
   ) => CurrentPricingDecisionEvaluationService;
 }
 
@@ -465,14 +466,17 @@ export const makeCurrentPricingDecisionEvaluationService = (
 
 export const makeCurrentPricingDecisionEvaluationFactory = (
   publishResolved: PublishResolvedDecision,
-  publishWithScopedPricingGateway?: (gateway: PricingOwnerMaterialEvidenceFenceGateway) => PublishResolvedDecision,
+  publishWithScopedPricingGateway?: (
+    gateway: PricingOwnerMaterialEvidenceFenceGateway,
+    compositionRevision: string,
+  ) => PublishResolvedDecision,
 ): CurrentPricingDecisionEvaluationFactoryService => ({
-  make: (source, scopedPricingGateway) =>
+  make: (source, scopedPricingGateway, compositionRevision) =>
     makeCurrentPricingDecisionEvaluationService(
       source,
       scopedPricingGateway === undefined || publishWithScopedPricingGateway === undefined
         ? publishResolved
-        : publishWithScopedPricingGateway(scopedPricingGateway),
+        : publishWithScopedPricingGateway(scopedPricingGateway, compositionRevision),
     ),
 });
 
@@ -500,16 +504,19 @@ export const currentPricingDecisionEvaluationFactoryLive = Layer.effect(
     // A governed transaction supplies its Pricing gateway after the owner-local ports are scoped.
     return makeCurrentPricingDecisionEvaluationFactory(
       publishResolvedWithOwners(externalOwnerValidation, defaultOwnerFinalFence),
-      (pricing) =>
+      (pricing, compositionRevision) =>
         publishResolvedWithOwners(
           externalOwnerValidation,
-          makePricingMaterialEvidenceOwnerFinalFenceFromGateways({
-            'commerce.catalog': catalog,
-            'commerce.customer-context': customerContext,
-            'commerce.market-catalog': market,
-            'commerce.pricing': pricing,
-            'commerce.promotion': promotion,
-          }),
+          makePricingMaterialEvidenceOwnerFinalFenceFromGateways(
+            {
+              'commerce.catalog': catalog,
+              'commerce.customer-context': customerContext,
+              'commerce.market-catalog': market,
+              'commerce.pricing': pricing,
+              'commerce.promotion': promotion,
+            },
+            compositionRevision,
+          ),
         ),
     );
   }),

@@ -5,6 +5,7 @@ import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
 import { createOutboxWorkerHealth, serveOutboxWorkerHealth } from '../../src/outbox/health.ts';
 import { defineOutboxWorkerEntry, runOutboxWorkerHost } from '../../src/outbox/process.ts';
 import { OutboxRuntime } from '../../src/outbox/runtime.ts';
+import { outboxWorkerCompositionLayer } from '../support/outbox-worker-composition.ts';
 
 it.live('production health binds all IPv4 interfaces for external-container probes', () =>
   Effect.gen(function* externallyReachableHealth() {
@@ -72,10 +73,11 @@ it.effect('invalid configured health ports fail startup with a typed configurati
           entries: [
             defineOutboxWorkerEntry({
               claimOwnerPrefix: 'health-config-test',
+              expectedDeployment: { appId: 'health-config-test', buildMarker: 'health-config-test-build' },
               layer: Layer.succeed(OutboxRuntime, {
                 matchMessages: () => Effect.die('Invalid configuration must prevent matching'),
                 runCycle: () => Effect.die('Invalid configuration must prevent polling'),
-              }),
+              }).pipe(Layer.merge(outboxWorkerCompositionLayer())),
               registrations: [],
               subscriptions: [],
             }),

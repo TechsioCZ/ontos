@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface SetProductUnitTargetDivisibilityRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type SetProductUnitTargetDivisibilityRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeSetProductUnitTargetDivisibilityRecovery = (
   payload: SetProductUnitTargetDivisibilityRecoveryRequest,
   ...[requestCorrelation, options = {}]: SetProductUnitTargetDivisibilityRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeSetProductUnitTargetDivisibilityRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeSetProductUnitTargetDivisibilityRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

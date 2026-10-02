@@ -11,6 +11,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface RenameSkuActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
   readonly [traceIdOption]?: string;
@@ -55,6 +56,11 @@ export const executeRenameSkuWithAuthorization = (
 
 export const executeRenameSku = (payload: RenameSkuPayload, ...[requestCorrelation, options]: OperationInvocation) =>
   operationGateway.invoke(
-    (credential) => executeRenameSkuWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      executeRenameSkuWithAuthorization(payload, credential, requestCorrelation, {
+        ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
     options.gateway,
   );

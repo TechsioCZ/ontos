@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 
 import { Clock, DateTime, Effect, Option, Predicate, Result, Schema } from 'effect';
+import { isVerifiedOutboxWorkerHandlerContext } from '../outbox/definition.ts';
+import type { OutboxWorkerHandlerContext } from '../outbox/definition.ts';
 
 import { CoreSearchProjectionStore } from './projection-store.ts';
 import type { CoreSearchProjectionStoreService } from './projection-store.ts';
@@ -197,6 +199,18 @@ const hasUniqueKeys = (values: readonly { readonly key: string }[]): boolean =>
 
 const toEpochMillis = (value: string): number | undefined =>
   DateTime.make(value).pipe(Option.map(DateTime.toEpochMillis), Option.getOrUndefined);
+
+/** Search mutations retain the trusted worker's owner, tenant, and executable release. */
+export const validateCoreSearchProjectionWorkerContext = (
+  context: OutboxWorkerHandlerContext,
+  owner: { readonly moduleId: string; readonly tenantId: string },
+): Effect.Effect<void, CoreSearchProjectionInvalid> =>
+  isVerifiedOutboxWorkerHandlerContext(context) &&
+  /^[a-f0-9]{64}$/u.test(context.compositionRevision) &&
+  context.tenantId === owner.tenantId &&
+  context.producerModuleKey === owner.moduleId
+    ? Effect.void
+    : Effect.fail(invalid('Core Search mutation requires its verified owner worker and Application Composition'));
 
 const invalidPeriod = ({ validFrom, validTo }: Readonly<{ validFrom: string; validTo?: string }>): boolean => {
   const from = toEpochMillis(validFrom);
@@ -422,9 +436,10 @@ export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionSto
   const units = new Map<string, Map<string, Stored>>();
   const rebuilds = new Map<string, { readonly fingerprint: string; readonly version: bigint }>();
   const apply: CoreSearchProjectionStoreService['apply'] = Effect.fn('CoreSearchProjectionStore.apply')(
-    function* applyCoreSearchProjection(input: UnparsedCoreSearchInput) {
+    function* applyCoreSearchProjection(input: UnparsedCoreSearchInput, context: OutboxWorkerHandlerContext) {
       const mutation = yield* decodeMutationEffect(input);
       const ref = mutation.kind === 'upsert' ? mutation.document.ref : mutation.ref;
+      yield* validateCoreSearchProjectionWorkerContext(context, ref);
       const version = mutation.kind === 'upsert' ? mutation.document.projectionVersion : mutation.projectionVersion;
       const unitKey = projectionUnitKey(ref.tenantId, ref.moduleId, ref.resourceType);
       const rebuild = rebuilds.get(unitKey);
@@ -452,8 +467,9 @@ export const makeInMemoryCoreSearchProjectionStore = (): CoreSearchProjectionSto
       ),
     );
   const replace: CoreSearchProjectionStoreService['replace'] = Effect.fn('CoreSearchProjectionStore.replace')(
-    function* replaceCoreSearchProjection(input: UnparsedCoreSearchInput) {
+    function* replaceCoreSearchProjection(input: UnparsedCoreSearchInput, context: OutboxWorkerHandlerContext) {
       const replacement = yield* decodeReplacementEffect(input);
+      yield* validateCoreSearchProjectionWorkerContext(context, replacement);
       const unitKey = projectionUnitKey(replacement.tenantId, replacement.moduleId, replacement.resourceType);
       const prior = rebuilds.get(unitKey);
       const version = BigInt(replacement.rebuildVersion);

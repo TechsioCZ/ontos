@@ -16,7 +16,7 @@ import {
 } from 'effect';
 import type { PlatformError } from 'effect/PlatformError';
 import { parseSync, Visitor } from 'oxc-parser';
-import type { ImportExpression } from 'oxc-parser';
+import type { ImportExpression, MemberExpression } from 'oxc-parser';
 
 /**
  * Lean-Core gate: `packages/core-runtime` must never depend on Commerce,
@@ -33,10 +33,14 @@ export interface LeanCoreDependencyViolation {
 }
 
 const sourceExtensions = new Set(['.ts', '.tsx', '.mts']);
+const graphSourceExtensions = new Set([...sourceExtensions, '.js', '.mjs', '.cjs']);
 const ignoredDirectories = new Set(['dist', 'dist-cloudflare', 'node_modules', 'repos', '.output', '.codex']);
 const isTestSource = (relative: string): boolean => /(?:^|\/)(?:tests?|__tests__)\//u.test(relative);
 
-const collect = (root: string): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem | Path.Path> =>
+const collect = (
+  root: string,
+  extensions: ReadonlySet<string> = sourceExtensions,
+): Effect.Effect<readonly string[], PlatformError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* collectSourceFiles() {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -50,9 +54,9 @@ const collect = (root: string): Effect.Effect<readonly string[], PlatformError, 
         return fileSystem.stat(candidate).pipe(
           Effect.flatMap((info) => {
             if (info.type === 'Directory') {
-              return collect(candidate);
+              return collect(candidate, extensions);
             }
-            return Effect.succeed(sourceExtensions.has(path.extname(entry)) ? [candidate] : []);
+            return Effect.succeed(extensions.has(path.extname(entry)) ? [candidate] : []);
           }),
         );
       }),
@@ -67,6 +71,11 @@ interface ImportOccurrence {
   readonly index: number;
   readonly isTypeOnly: boolean;
   readonly specifier: string;
+}
+
+interface SourceImportAnalysis {
+  readonly occurrences: readonly ImportOccurrence[];
+  readonly unsupportedRuntimeImport: boolean;
 }
 
 type ProgramStatement = ReturnType<typeof parseSync>['program']['body'][number];
@@ -96,32 +105,94 @@ const occurrenceForStatement = (statement: ProgramStatement): ImportOccurrence |
   return undefined;
 };
 
+const staticMemberName = (node: MemberExpression): string | undefined => {
+  if (!node.computed && node.property.type === 'Identifier') {
+    return node.property.name;
+  }
+  if (node.property.type === 'Literal' && Predicate.isString(node.property.value)) {
+    return node.property.value;
+  }
+  if (node.property.type === 'TemplateLiteral' && node.property.expressions.length === 0) {
+    return node.property.quasis[0]?.value.cooked ?? undefined;
+  }
+  return undefined;
+};
+
 /** All specifier-bearing import/export forms, including multi-line and dynamic `import(...)`. */
-const importsIn = (file: string, source: string): readonly ImportOccurrence[] => {
+const analyzeImports = (file: string, source: string): SourceImportAnalysis => {
+  const typedLanguage = file.endsWith('.tsx') ? 'tsx' : 'ts';
   const parsed = parseSync(file, source, {
     astType: 'ts',
-    lang: file.endsWith('.tsx') ? 'tsx' : 'ts',
-    sourceType: 'module',
+    lang: sourceExtensions.has(posixPath.extname(file)) ? typedLanguage : 'js',
+    sourceType: file.endsWith('.cjs') ? 'script' : 'module',
   });
   if (parsed.errors.length > 0) {
-    return [];
+    return { occurrences: [], unsupportedRuntimeImport: true };
   }
   const occurrences = parsed.program.body.flatMap((statement) => {
     const occurrence = occurrenceForStatement(statement);
     return occurrence === undefined ? [] : [occurrence];
   });
   const dynamicOccurrences: ImportOccurrence[] = [];
+  let unsupportedRuntimeImport = parsed.program.body.some(
+    (statement) => statement.type === 'TSImportEqualsDeclaration' && statement.importKind !== 'type',
+  );
   const recordDynamicImportExpression = (node: ImportExpression): void => {
     if (node.source.type === 'Literal' && Predicate.isString(node.source.value)) {
       dynamicOccurrences.push({ index: node.start, isTypeOnly: false, specifier: node.source.value });
+    } else if (node.source.type === 'TemplateLiteral' && node.source.expressions.length === 0) {
+      const specifier = node.source.quasis[0]?.value.cooked;
+      if (specifier !== undefined && specifier !== null) {
+        dynamicOccurrences.push({ index: node.start, isTypeOnly: false, specifier });
+      } else {
+        unsupportedRuntimeImport = true;
+      }
+    } else {
+      unsupportedRuntimeImport = true;
     }
   };
-  new Visitor({ ImportExpression: recordDynamicImportExpression }).visit(parsed.program);
-  return EffectArray.sort(
-    [...occurrences, ...dynamicOccurrences],
-    Order.mapInput(Order.Number, (occurrence: ImportOccurrence) => occurrence.index),
+  new Visitor({
+    CallExpression: (node) => {
+      if (node.callee.type !== 'MemberExpression' || staticMemberName(node.callee) !== 'getBuiltinModule') {
+        return;
+      }
+      const [target] = node.arguments;
+      const nativeModule = target?.type === 'Literal' ? target.value : undefined;
+      if (nativeModule === undefined || nativeModule === 'module' || nativeModule === 'node:module') {
+        unsupportedRuntimeImport = true;
+      }
+    },
+    Identifier: (node) => {
+      if (node.name === 'require' || node.name === 'createRequire') {
+        unsupportedRuntimeImport = true;
+      }
+    },
+    ImportExpression: recordDynamicImportExpression,
+    MemberExpression: (node) => {
+      const name = staticMemberName(node);
+      if (
+        name === 'require' ||
+        name === 'createRequire' ||
+        (node.computed && node.object.type === 'Identifier' && node.object.name === 'module')
+      ) {
+        unsupportedRuntimeImport = true;
+      }
+    },
+  }).visit(parsed.program);
+  unsupportedRuntimeImport ||= occurrences.some(
+    ({ specifier }) => specifier === 'module' || specifier === 'node:module',
   );
+  return {
+    occurrences: EffectArray.sort(
+      [...occurrences, ...dynamicOccurrences],
+      Order.mapInput(Order.Number, (occurrence: ImportOccurrence) => occurrence.index),
+    ),
+    unsupportedRuntimeImport,
+  };
 };
+
+const importsIn = (file: string, source: string): readonly ImportOccurrence[] =>
+  analyzeImports(file, source).occurrences;
 
 // --- Core: package.json + source imports must stay provider-neutral ------
 
@@ -164,11 +235,15 @@ const coreRelativeEscapeReason = (specifier: string, resolved: string): string =
 const isInsideCoreSource = (resolved: string): boolean =>
   resolved === coreSourceRoot || resolved.startsWith(`${coreSourceRoot}/`);
 
+// These native dependencies are admitted only behind a proven Node condition, never in the shared set.
+const nodeTransportSpecifiers = new Set(['node:stream', 'node:stream/web', '@effect/platform-node/Undici']);
+
 const recordCoreSourceViolations = (
   record: (violation: LeanCoreDependencyViolation) => void,
   relative: string,
   source: string,
   corePackageImports: ReadonlySet<string>,
+  nodeOnlyFiles: ReadonlySet<string>,
 ): void => {
   if (!relative.startsWith(`${coreSourceRoot}/`)) {
     return;
@@ -180,7 +255,9 @@ const recordCoreSourceViolations = (
     // every condition target stays inside Core source.
     const isExempt = isRelative
       ? resolved !== undefined && isInsideCoreSource(resolved)
-      : corePackageImports.has(specifier) || isAllowedCoreExternalSpecifier(specifier);
+      : corePackageImports.has(specifier) ||
+        isAllowedCoreExternalSpecifier(specifier) ||
+        (nodeOnlyFiles.has(relative) && nodeTransportSpecifiers.has(specifier));
     if (isExempt) {
       continue;
     }
@@ -199,12 +276,213 @@ const PackageImportTargetSchema = Schema.Union([Schema.String, Schema.Record(Sch
 const WorkspacePackageManifestSchema = Schema.Struct({
   dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  exports: Schema.optional(Schema.Record(Schema.String, PackageImportTargetSchema)),
   imports: Schema.optional(Schema.Record(Schema.String, PackageImportTargetSchema)),
 });
 
 const packageImportTargets = (target: typeof PackageImportTargetSchema.Type): readonly string[] =>
   Predicate.isString(target) ? [target] : Object.values(target);
 const WorkspacePackageManifestFromJson = Schema.fromJsonString(WorkspacePackageManifestSchema);
+
+type PackageImportTarget = typeof PackageImportTargetSchema.Type;
+interface CorePackageBoundary {
+  readonly exports: ReadonlyMap<string, PackageImportTarget>;
+  readonly imports: ReadonlyMap<string, PackageImportTarget>;
+  readonly nodeDriverDeclared: boolean;
+}
+
+const SourceHostSchema = Schema.Literals(['node', 'workerd', 'browser']);
+type SourceHost = typeof SourceHostSchema.Type;
+
+const hasSupportedConditions = (target: PackageImportTarget): boolean =>
+  Predicate.isString(target) ||
+  Object.keys(target).every(
+    (condition) => Schema.is(SourceHostSchema)(condition) || condition === 'import' || condition === 'default',
+  );
+
+/** Native conditional maps select the first matching property; default is not a fallback reordered by this gate. */
+const selectHostTarget = (target: PackageImportTarget, host: SourceHost): string | undefined => {
+  if (Predicate.isString(target)) {
+    return target;
+  }
+  return Object.entries(target).find(
+    ([condition]) => condition === host || condition === 'import' || condition === 'default',
+  )?.[1];
+};
+
+const resolveCoreTarget = (target: string): string =>
+  posixPath.normalize(posixPath.join(posixPath.dirname(corePackageJsonRelative), target));
+
+/** Resolve actual indexed files; an ambiguous extensionless import supplies no isolation evidence. */
+const resolveIndexedSource = (
+  target: string,
+  sources: ReadonlyMap<string, SourceImportAnalysis>,
+): string | undefined => {
+  if (sources.has(target)) {
+    return target;
+  }
+  const extension = posixPath.extname(target);
+  const candidates =
+    extension === ''
+      ? [...sourceExtensions]
+          .map((sourceExtension) => `${target}${sourceExtension}`)
+          .filter((file) => sources.has(file))
+      : [];
+  return candidates.length === 1 ? candidates[0] : undefined;
+};
+
+const resolveManifestSource = (
+  target: string,
+  sources: ReadonlyMap<string, SourceImportAnalysis>,
+): string | undefined => {
+  const file = resolveCoreTarget(target);
+  return sources.has(file) ? file : undefined;
+};
+
+interface HostEdges {
+  readonly files: readonly string[];
+  readonly unsupported: boolean;
+}
+
+const sourceHostEdges = (
+  file: string,
+  host: SourceHost,
+  sources: ReadonlyMap<string, SourceImportAnalysis>,
+  boundary: CorePackageBoundary,
+): HostEdges => {
+  const source = sources.get(file);
+  if (source === undefined) {
+    return { files: [], unsupported: true };
+  }
+  const edges = source.occurrences
+    .filter(({ isTypeOnly }) => !isTypeOnly)
+    .map((occurrence): HostEdges => {
+      let target: string | undefined;
+      if (occurrence.specifier.startsWith('.')) {
+        target = resolveRelativeSpecifier(file, occurrence.specifier);
+      } else if (occurrence.specifier.startsWith('#')) {
+        const condition = boundary.imports.get(occurrence.specifier);
+        if (condition === undefined || !hasSupportedConditions(condition)) {
+          return { files: [], unsupported: true };
+        }
+        const selected = selectHostTarget(condition, host);
+        if (selected === undefined) {
+          return { files: [], unsupported: false };
+        }
+        const resolvedManifestFile = resolveManifestSource(selected, sources);
+        return resolvedManifestFile === undefined
+          ? { files: [], unsupported: true }
+          : { files: [resolvedManifestFile], unsupported: false };
+      } else {
+        return { files: [], unsupported: false };
+      }
+      if (target === undefined) {
+        return { files: [], unsupported: false };
+      }
+      const resolved = resolveIndexedSource(target, sources);
+      if (resolved === undefined || !isInsideCoreSource(resolved)) {
+        return { files: [], unsupported: true };
+      }
+      return { files: [resolved], unsupported: false };
+    });
+  return {
+    files: edges.flatMap(({ files }) => files),
+    unsupported: source.unsupportedRuntimeImport || edges.some(({ unsupported }) => unsupported),
+  };
+};
+
+interface HostClosure {
+  readonly files: ReadonlySet<string>;
+  readonly unsupported: boolean;
+}
+
+const hostClosure = (
+  roots: readonly string[],
+  host: SourceHost,
+  sources: ReadonlyMap<string, SourceImportAnalysis>,
+  boundary: CorePackageBoundary,
+): HostClosure => {
+  const files = new Set<string>();
+  const pending = [...roots];
+  let unsupported = false;
+  while (pending.length > 0) {
+    const file = pending.pop();
+    if (file === undefined || files.has(file)) {
+      continue;
+    }
+    files.add(file);
+    const edges = sourceHostEdges(file, host, sources, boundary);
+    unsupported ||= edges.unsupported;
+    pending.push(...edges.files);
+  }
+  return { files, unsupported };
+};
+
+/** Host isolation comes from consumed native conditions and runtime edges, never a filename suffix. */
+const nodeOnlyCoreSources = (
+  sources: ReadonlyMap<string, SourceImportAnalysis>,
+  boundary: CorePackageBoundary,
+): ReadonlySet<string> => {
+  if (!boundary.nodeDriverDeclared) {
+    return new Set();
+  }
+  const consumedImports = new Set(
+    [...sources.values()].flatMap(({ occurrences }) =>
+      occurrences.filter(({ isTypeOnly }) => !isTypeOnly).map(({ specifier }) => specifier),
+    ),
+  );
+  const conditions = [
+    ...boundary.exports.values(),
+    ...[...boundary.imports].filter(([name]) => consumedImports.has(name)).map(([, target]) => target),
+  ];
+  const nodeRoots = conditions.flatMap((target) => {
+    if (
+      Predicate.isString(target) ||
+      !hasSupportedConditions(target) ||
+      target.node === undefined ||
+      selectHostTarget(target, 'node') !== target.node
+    ) {
+      return [];
+    }
+    const file = resolveManifestSource(target.node, sources);
+    return file === undefined ? [] : [file];
+  });
+  const node = hostClosure(nodeRoots, 'node', sources, boundary);
+  if (node.unsupported) {
+    return new Set();
+  }
+  const sharedRoots = [...sources.keys()].filter((file) => !node.files.has(file));
+  const allConditions = [...boundary.exports.values(), ...boundary.imports.values()];
+  const nonNode = new Set<string>();
+  for (const host of ['workerd', 'browser'] satisfies readonly SourceHost[]) {
+    let unsupportedTarget = false;
+    const roots = allConditions.flatMap((target) => {
+      const targets = hasSupportedConditions(target) ? [selectHostTarget(target, host)] : packageImportTargets(target);
+      return targets.flatMap((selected) => {
+        if (selected === undefined) {
+          return [];
+        }
+        const file = resolveManifestSource(selected, sources);
+        if (file === undefined) {
+          unsupportedTarget = true;
+          return [];
+        }
+        return [file];
+      });
+    });
+    if (unsupportedTarget) {
+      return new Set();
+    }
+    const closure = hostClosure([...sharedRoots, ...roots], host, sources, boundary);
+    if (closure.unsupported) {
+      return new Set();
+    }
+    for (const file of closure.files) {
+      nonNode.add(file);
+    }
+  }
+  return new Set([...node.files].filter((file) => !nonNode.has(file)));
+};
 
 const allowedCorePackageDependencies = new Set([
   '@authzed/authzed-node',
@@ -221,16 +499,16 @@ const checkCorePackageJson = (
   root: string,
   path: Path.Path,
   record: (violation: LeanCoreDependencyViolation) => void,
-): Effect.Effect<ReadonlySet<string>, PlatformError> =>
+): Effect.Effect<CorePackageBoundary, PlatformError> =>
   Effect.gen(function* checkCorePackageJsonProgram() {
     const file = path.join(root, corePackageJsonRelative);
     const exists = yield* fileSystem.exists(file);
     if (!exists) {
-      return new Set<string>();
+      return { exports: new Map(), imports: new Map(), nodeDriverDeclared: false };
     }
     const raw = yield* fileSystem.readFileString(file, 'utf-8');
     const parsed = yield* Schema.decodeUnknownEffect(WorkspacePackageManifestFromJson)(raw).pipe(Effect.orDie);
-    const corePackageImports = new Set<string>();
+    const corePackageImports = new Map<string, PackageImportTarget>();
     for (const [name, target] of Object.entries(parsed.imports ?? {})) {
       const escaping = packageImportTargets(target).filter(
         (targetPath) =>
@@ -239,7 +517,7 @@ const checkCorePackageJson = (
           ),
       );
       if (escaping.length === 0) {
-        corePackageImports.add(name);
+        corePackageImports.set(name, target);
         continue;
       }
       record({
@@ -268,7 +546,11 @@ const checkCorePackageJson = (
         });
       }
     }
-    return corePackageImports;
+    return {
+      exports: new Map(Object.entries(parsed.exports ?? {})),
+      imports: corePackageImports,
+      nodeDriverDeclared: parsed.dependencies?.['@effect/platform-node'] !== undefined,
+    };
   });
 
 // --- Non-Commerce apps/verticals must not import Commerce private impl ---
@@ -476,7 +758,7 @@ export const checkLeanCoreDependencies = (
       violations.push(violation);
     };
 
-    const [files, commerceExports, nonCommerceOwnerRoots, corePackageImports] = yield* Effect.all([
+    const [files, commerceExports, nonCommerceOwnerRoots, coreBoundary] = yield* Effect.all([
       collect(root),
       readCommerceExportsMap(fileSystem, root, path),
       discoverNonCommerceOwnerRoots(fileSystem, root, path),
@@ -489,9 +771,30 @@ export const checkLeanCoreDependencies = (
       { concurrency: 32 },
     );
 
+    // Source policy retains its original TS inventory. Native JS/CJS is indexed only to prove graph edges.
+    const coreRoot = path.join(root, coreSourceRoot);
+    const coreRootExists = yield* fileSystem.exists(coreRoot);
+    const coreGraphFiles = coreRootExists ? yield* collect(coreRoot, graphSourceExtensions) : [];
+    const sourceFiles = new Set(files);
+    const additionalGraphSources = yield* Effect.all(
+      coreGraphFiles
+        .filter((file) => !sourceFiles.has(file))
+        .map((file) => fileSystem.readFileString(file, 'utf-8').pipe(Effect.map((source) => [file, source] as const))),
+      { concurrency: 32 },
+    );
+
+    const coreSources = new Map(
+      [...sourcePairs, ...additionalGraphSources].flatMap(([file, source]) => {
+        const relative = path.relative(root, file).split(path.sep).join('/');
+        return isInsideCoreSource(relative) ? [[relative, analyzeImports(relative, source)] as const] : [];
+      }),
+    );
+    const nodeOnlyFiles = nodeOnlyCoreSources(coreSources, coreBoundary);
+    const corePackageImports = new Set(coreBoundary.imports.keys());
+
     for (const [file, source] of sourcePairs) {
       const relative = path.relative(root, file).split(path.sep).join('/');
-      recordCoreSourceViolations(record, relative, source, corePackageImports);
+      recordCoreSourceViolations(record, relative, source, corePackageImports, nodeOnlyFiles);
       recordNonCommerceImportViolations(record, relative, source, commerceExports, nonCommerceOwnerRoots);
     }
 

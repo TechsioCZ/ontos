@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ExternalTargetResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ExternalTargetResolutionAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeExternalTargetResolution = (
   payload: ExternalTargetResolutionRequest,
   ...[requestCorrelation, options = {}]: ExternalTargetResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeExternalTargetResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeExternalTargetResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

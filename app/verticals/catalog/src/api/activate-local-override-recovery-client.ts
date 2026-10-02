@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ActivateLocalOverrideRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ActivateLocalOverrideRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeActivateLocalOverrideRecovery = (
   payload: ActivateLocalOverrideRecoveryRequest,
   ...[requestCorrelation, options = {}]: ActivateLocalOverrideRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeActivateLocalOverrideRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeActivateLocalOverrideRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

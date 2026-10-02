@@ -233,7 +233,7 @@ const installAssessmentPermission = Effect.fnUntraced(function* installAssessmen
   if (legalEntityObjectId === undefined || moduleObjectId === undefined) {
     return yield* Effect.die('Could not encode the Customer Context module permission');
   }
-  const configuration = yield* loadSpiceDbConfig();
+  const configuration = yield* loadSpiceDbConfig({ envPath: '/dev/null' });
   const { caCertificate } = configuration;
   if (caCertificate === undefined) {
     return yield* Effect.die('SPICEDB_CA_CERT is required to reach SpiceDB over TLS');
@@ -364,10 +364,11 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* productionHttpReservation() {
-        const connections = yield* loadDatabaseConnectionPair();
+        const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          compositionRevision: COMPOSITION_REVISION,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
@@ -514,10 +515,11 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* failClosedComposition() {
-        const connections = yield* loadDatabaseConnectionPair();
+        const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          compositionRevision: COMPOSITION_REVISION,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
@@ -608,10 +610,11 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* liveReferenceRejection() {
-        const connections = yield* loadDatabaseConnectionPair();
+        const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
+          compositionRevision: COMPOSITION_REVISION,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));

@@ -18,6 +18,7 @@ import {
 import type { PriceGroupCatalogPersistence } from '../../src/persistence/price-group-catalog-persistence.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
+const compositionRevision = 'b'.repeat(64);
 const principalId = '22222222-2222-4222-8222-222222222222';
 const priceGroupRef = {
   moduleId: 'pricing.price-group-catalog',
@@ -141,6 +142,7 @@ it.effect('persists expected-current evidence and emits the revision event with 
       actionInvocationId: '66666666-6666-4666-8666-666666666666',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision,
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope,
@@ -222,6 +224,7 @@ it.effect('preserves a stale expected-current conflict as a typed domain failure
         actionInvocationId: '66666666-6666-4666-8666-666666666666',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,

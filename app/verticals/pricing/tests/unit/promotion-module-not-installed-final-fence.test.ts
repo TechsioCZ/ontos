@@ -20,7 +20,9 @@ const validUntil = '2026-09-28T12:01:00.000Z';
 
 const promotionModule = {
   allowedContributions: [],
+  backend: { baseUrl: 'https://promotion.example.test/', transport: 'node-http' as const },
   contract: { sha256: 'b'.repeat(64), url: 'https://promotion.example.test/contract.json' },
+  contractDocument: '{}',
   dependencies: [],
   deployment: { appId: 'promotion', buildMarker: 'promotion-build-1' },
   federation: {
@@ -45,10 +47,19 @@ const snapshot = (
     composition: {
       modules,
       revision,
-      schemaVersion: '1',
+      schemaVersion: '2',
       shell: {
         contributionAbi: { id: 'ontos.shell-contributions', version: '1' },
         coreCapabilities: [],
+        deployment: { appId: 'shell-super-app', buildMarker: 'shell-build-1' },
+        federationManifest: {
+          sha256: 'e'.repeat(64),
+          url: 'https://shell.example.test/mf-manifest.json',
+        },
+        runtimeContract: {
+          sha256: 'f'.repeat(64),
+          url: 'https://shell.example.test/.well-known/ontos-shell-runtime.json',
+        },
         sharedSingletons: [],
       },
     },
@@ -86,6 +97,7 @@ const makeVerifyRequest = Effect.gen(function* makePromotionVerifyRequest() {
   const { compositionRequest } = yield* makeIssue779Scenario();
   return {
     candidateRef,
+    compositionRevision: revision,
     sources: [],
     verificationContext: verificationContext(compositionRequest.decision),
   } satisfies PricingOwnerMaterialEvidenceFenceGatewayRequest;
@@ -101,6 +113,7 @@ describe('Promotion module-not-installed final fence (#790)', () => {
 
       const generation = yield* gateway.confirmObservedGenerationsThrough({
         candidateRef: verifyRequest.candidateRef,
+        compositionRevision: revision,
         observations: verification.observations,
         through: evaluatedAt,
         typedSources: [],
@@ -156,6 +169,29 @@ describe('Promotion module-not-installed final fence (#790)', () => {
         const failure = yield* gateway.verifyOpaqueProofsAgainstCurrentState(verifyRequest).pipe(Effect.flip);
         expect(failure.reason).toMatch(/not Current/iu);
       }
+    }),
+  );
+  it.effect('rejects a different captured revision in both final-fence phases', () =>
+    Effect.gen(function* rejectsCrossRevisionAbsence() {
+      const gateway = makePromotionModuleNotInstalledFinalFenceGateway(Effect.succeed(snapshot()));
+      const request = yield* makeVerifyRequest;
+      const mismatchedRevision = 'e'.repeat(64);
+      const first = yield* gateway
+        .verifyOpaqueProofsAgainstCurrentState({
+          ...request,
+          compositionRevision: mismatchedRevision,
+        })
+        .pipe(Effect.flip);
+      const second = yield* gateway
+        .confirmObservedGenerationsThrough({
+          candidateRef,
+          compositionRevision: mismatchedRevision,
+          observations: [],
+          through: evaluatedAt,
+        })
+        .pipe(Effect.flip);
+      expect(first.reason).toMatch(/different composition revision/u);
+      expect(second.reason).toMatch(/different composition revision/u);
     }),
   );
 });

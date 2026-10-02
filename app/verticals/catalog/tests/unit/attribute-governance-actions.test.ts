@@ -1,6 +1,8 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionPermissionDenied, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { describe, expect, it } from 'effect-rstest';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { Effect, Schema } from 'effect';
 import { makeActionTestHarness } from '@app/core-runtime/testing/actions';
 
@@ -152,6 +154,10 @@ describe('Catalog attribute governance Actions', () => {
 
   it.effect('retains Color group, preview, and scoped swatch at the handler/service boundary', () =>
     Effect.gen(function* colorMetadataHandoff() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const payload = Schema.decodeUnknownSync(CreateControlledAttributeValuePayloadSchema)({
         attributeDefinitionRef: definitionRef,
         color: {
@@ -204,6 +210,7 @@ describe('Catalog attribute governance Actions', () => {
         actionInvocationId: '55555555-5555-4555-8555-555555555555',
         addDomainEvent: () => Effect.succeed(Object.create(null)),
         addOutboxMessage: () => Effect.void,
+        compositionRevision: compositionSnapshot.composition.revision,
         recordAuditEvidence: () => Effect.void,
         recordDataAccess: () => Effect.void,
         scope,

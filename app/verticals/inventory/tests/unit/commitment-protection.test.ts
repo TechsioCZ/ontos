@@ -56,6 +56,8 @@ import {
 } from '../../src/services/inventory-effect-ledger.service.ts';
 import { makeInMemoryInventoryEffectLedger } from '../support/inventory-effect-ledger.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = Schema.decodeUnknownSync(LegalEntityIdSchema)('12111111-1111-4111-8111-111111111111');
 const reservationId = '22222222-2222-4222-8222-222222222222';
@@ -484,15 +486,18 @@ describe('Inventory Commitment Protection', () => {
       const confirmation = yield* buildConfirmation();
       const harness = yield* makeHarness(confirmation);
       yield* Ref.set(harness.observation, confirmedObservation(confirmation));
-      const scope = trustVerifiedGatewayPrincipalContext({
-        authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        authContextRef: 'test:commitment-protection-pending',
-        authMethod: 'api_key',
-        correlationId: 'commitment-protection-pending-test',
-        legalEntityId,
-        principalId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-        tenantId,
-      });
+      const scope = trustVerifiedGatewayPrincipalContext(
+        {
+          authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          authContextRef: 'test:commitment-protection-pending',
+          authMethod: 'api_key',
+          correlationId: 'commitment-protection-pending-test',
+          legalEntityId,
+          principalId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+          tenantId,
+        },
+        compositionRevision,
+      );
       const execute = (invocationId: string) => {
         const collector = createActionCollector(
           establishCommitmentProtectionAction.descriptor.domainEvents,
@@ -503,6 +508,7 @@ describe('Inventory Commitment Protection', () => {
           actionInvocationId: invocationId,
           addDomainEvent: collector.addDomainEvent,
           addOutboxMessage: collector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: collector.recordAuditEvidence,
           recordDataAccess: collector.recordDataAccess,
           scope,

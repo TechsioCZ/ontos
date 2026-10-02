@@ -28,6 +28,7 @@ import { handleRetirePriceGroup, retirePriceGroupAction } from '../../src/action
 import { priceGroupCatalogPersistenceFromRoutineInvoker } from '../../src/persistence/price-group-catalog-persistence.ts';
 
 const tenantId = 'a3400000-0000-4000-8000-000000000001';
+const compositionRevision = 'b'.repeat(64);
 const otherTenantId = 'a3400000-0000-4000-8000-000000000002';
 const principalId = 'a3400000-0000-4000-8000-000000000003';
 const createInvocationId = 'a3400000-0000-4000-8000-000000000004';
@@ -831,6 +832,7 @@ it.live('executes the tenant-only Price Group lifecycle through the six governed
             actionInvocationId: actionDbRetireInvocationId,
             addDomainEvent: collector.addDomainEvent,
             addOutboxMessage: collector.addOutboxMessage,
+            compositionRevision,
             recordAuditEvidence: collector.recordAuditEvidence,
             recordDataAccess: collector.recordDataAccess,
             scope,

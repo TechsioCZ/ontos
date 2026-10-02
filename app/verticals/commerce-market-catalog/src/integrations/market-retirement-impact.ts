@@ -8,7 +8,7 @@ import type {
   ReserveMarketRetirementResult,
 } from '@app/customer-market-retirement-contracts/reserve-market-retirement';
 import { executeReserveMarketRetirementWithAuthorization } from '@app/customer-market-retirement-contracts/reserve-market-retirement/client';
-import { issueGatewayContext } from '@app/shared-contracts';
+import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
 import { Config, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 
 import type {
@@ -23,13 +23,21 @@ import { MarketRetirementImpactAuthorityService } from '../services/market-retir
 
 type ExecuteMarketAffectedUseAssessment<Failure> = (
   payload: MarketAffectedUseAssessmentRequest,
-  requestCorrelation: string,
+  context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  },
 ) => Effect.Effect<MarketAffectedUseAssessmentResponse, Failure>;
 
 type ExecuteMarketRetirementReservation<Failure> = (
   payload: ReserveMarketRetirementPayload,
-  requestCorrelation: string,
-  idempotencyKey: string,
+  context: {
+    readonly compositionRevision: string;
+    readonly idempotencyKey: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  },
 ) => Effect.Effect<ReserveMarketRetirementResult, Failure>;
 
 const CUSTOMER_CONTEXT_MODULE_KEY = 'commerce.customer-context' as const;
@@ -45,7 +53,7 @@ const httpUrl = Schema.URLFromString.check(
   ),
 );
 const productionClientConfiguration = Config.all({
-  customerContextBaseUrl: Config.schema(httpUrl, 'ONTOS_COMMERCE_CUSTOMER_CONTEXT_BASE_URL'),
+  apiKey: Config.Redacted('ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
   shellGatewayBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 const GatewayFailureSchema = Schema.Struct({
@@ -262,12 +270,18 @@ export const makeMarketRetirementImpactAuthority = <AssessmentFailure, Reservati
 ): MarketRetirementImpactAuthority => {
   const load = (input: {
     readonly actionInvocationId: string;
+    readonly compositionRevision: string;
     readonly effectiveAt: string;
     readonly expectedMarketRevision: number;
+    readonly legalEntityId: string;
     readonly marketRef: MarketAffectedUseAssessmentRequest['marketRef'];
   }) => {
     const request = requestFor(input);
-    return executeAssessment(request, input.actionInvocationId).pipe(
+    return executeAssessment(request, {
+      compositionRevision: input.compositionRevision,
+      legalEntityId: input.legalEntityId,
+      requestCorrelation: input.actionInvocationId,
+    }).pipe(
       Effect.mapError((cause) =>
         unavailable('The Customer Context Market retirement-impact authority is unavailable', cause),
       ),
@@ -281,6 +295,8 @@ export const makeMarketRetirementImpactAuthority = <AssessmentFailure, Reservati
     input: {
       readonly actionInvocationId: string;
       readonly assessment: ReservedMarketRetirementImpactAssessment;
+      readonly compositionRevision: string;
+      readonly legalEntityId: string;
       readonly reason: string;
     },
   ) => {
@@ -296,11 +312,12 @@ export const makeMarketRetirementImpactAuthority = <AssessmentFailure, Reservati
       reservationVersion: input.assessment.reservation.version,
       tenantId: input.assessment.assessedMarketRef.tenantId,
     };
-    return executeReservation(
-      payload,
-      input.actionInvocationId,
-      `${input.actionInvocationId}:${operation.toLowerCase()}`,
-    ).pipe(
+    return executeReservation(payload, {
+      compositionRevision: input.compositionRevision,
+      idempotencyKey: `${input.actionInvocationId}:${operation.toLowerCase()}`,
+      legalEntityId: input.legalEntityId,
+      requestCorrelation: input.actionInvocationId,
+    }).pipe(
       Effect.mapError(mapReservationFailure),
       Effect.flatMap((result) =>
         finishedReservationMatches(result, input.assessment, operation === 'COMMIT' ? 'COMMITTED' : 'RELEASED')
@@ -333,7 +350,12 @@ export const makeMarketRetirementImpactAuthority = <AssessmentFailure, Reservati
             sourceEvidence: response.sourceEvidence,
             tenantId: response.tenantId,
           };
-          return executeReservation(payload, input.actionInvocationId, `${input.actionInvocationId}:reserve`).pipe(
+          return executeReservation(payload, {
+            compositionRevision: input.compositionRevision,
+            idempotencyKey: `${input.actionInvocationId}:reserve`,
+            legalEntityId: input.legalEntityId,
+            requestCorrelation: input.actionInvocationId,
+          }).pipe(
             Effect.mapError(mapReservationFailure),
             Effect.flatMap((result) =>
               result.lifecycle === 'RESERVED' && reservationResultMatches(result, assessment)
@@ -353,25 +375,41 @@ export const makeMarketRetirementImpactAuthority = <AssessmentFailure, Reservati
 
 export const makeMarketRetirementImpactAuthorityFromPublishedClient = () =>
   makeMarketRetirementImpactAuthority(
-    (payload, requestCorrelation) =>
+    (payload, { compositionRevision, legalEntityId, requestCorrelation }) =>
       productionClientConfiguration.pipe(
-        Effect.flatMap(({ customerContextBaseUrl, shellGatewayBaseUrl }) =>
-          issueGatewayContext({ audience: 'commerce-customer-context' }, { baseUrl: shellGatewayBaseUrl }).pipe(
-            Effect.flatMap(({ token }) =>
+        Effect.flatMap(({ apiKey, shellGatewayBaseUrl }) =>
+          issueApiKeyGatewayContext(
+            { audience: 'commerce-customer-context', compositionRevision, legalEntityId },
+            { apiKey, baseUrl: shellGatewayBaseUrl, requestCorrelation },
+          ).pipe(
+            Effect.filterOrFail(
+              (response) => response.compositionRevision === compositionRevision,
+              () => unavailable('Customer Context gateway returned a different composition revision'),
+            ),
+            Effect.flatMap(({ apiBaseUrl, token }) =>
               executeMarketAffectedUseAssessmentWithAuthorization(payload, `Bearer ${token}`, requestCorrelation, {
-                baseUrl: customerContextBaseUrl,
+                baseUrl: new URL(apiBaseUrl, shellGatewayBaseUrl),
+                compositionRevision,
               }),
             ),
           ),
         ),
       ),
-    (payload, requestCorrelation, idempotencyKey) =>
+    (payload, { compositionRevision, idempotencyKey, legalEntityId, requestCorrelation }) =>
       productionClientConfiguration.pipe(
-        Effect.flatMap(({ customerContextBaseUrl, shellGatewayBaseUrl }) =>
-          issueGatewayContext({ audience: 'commerce-customer-context' }, { baseUrl: shellGatewayBaseUrl }).pipe(
-            Effect.flatMap(({ token }) =>
+        Effect.flatMap(({ apiKey, shellGatewayBaseUrl }) =>
+          issueApiKeyGatewayContext(
+            { audience: 'commerce-customer-context', compositionRevision, legalEntityId },
+            { apiKey, baseUrl: shellGatewayBaseUrl, requestCorrelation },
+          ).pipe(
+            Effect.filterOrFail(
+              (response) => response.compositionRevision === compositionRevision,
+              () => unavailable('Customer Context gateway returned a different composition revision'),
+            ),
+            Effect.flatMap(({ apiBaseUrl, token }) =>
               executeReserveMarketRetirementWithAuthorization(payload, `Bearer ${token}`, requestCorrelation, {
-                baseUrl: customerContextBaseUrl,
+                baseUrl: new URL(apiBaseUrl, shellGatewayBaseUrl),
+                compositionRevision,
                 idempotencyKey,
               }),
             ),

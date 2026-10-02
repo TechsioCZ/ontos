@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PartyContactPointsClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PartyContactPointsAuthorizedInvocation = readonly [
@@ -48,6 +49,10 @@ export const executePartyContactPoints = (
   payload: PartyContactPointsRequest,
   ...[requestCorrelation, options = {}]: PartyContactPointsOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePartyContactPointsWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePartyContactPointsWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -61,6 +61,8 @@ import {
 } from '../../src/workers/execute-inventory-reservation-create.worker.ts';
 import { makeInMemoryInventoryEffectLedger } from '../support/inventory-effect-ledger.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const reservationId = '33333333-3333-4333-8333-333333333333';
@@ -828,18 +830,22 @@ describe('Inventory Reservation create result', () => {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
-        scope: trustVerifiedGatewayPrincipalContext({
-          authBindingId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
-          authContextRef: 'test:inventory-reservation-create',
-          authMethod: 'api_key',
-          correlationId: 'inventory-reservation-create-test',
-          legalEntityId,
-          principalId: 'dddddddd-dddd-4ddd-8ddd-ddddddddddd1',
-          tenantId,
-          trustedStorefrontId: 'storefront-primary',
-        }),
+        scope: trustVerifiedGatewayPrincipalContext(
+          {
+            authBindingId: 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1',
+            authContextRef: 'test:inventory-reservation-create',
+            authMethod: 'api_key',
+            correlationId: 'inventory-reservation-create-test',
+            legalEntityId,
+            principalId: 'dddddddd-dddd-4ddd-8ddd-ddddddddddd1',
+            tenantId,
+            trustedStorefrontId: 'storefront-primary',
+          },
+          compositionRevision,
+        ),
         services: harness.service,
       });
       const material = collector.snapshot();
@@ -885,6 +891,7 @@ describe('Inventory Reservation create result', () => {
       const requestWorkerContext: OutboxWorkerHandlerContext = {
         attemptNumber: 1,
         claimId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1',
+        compositionRevision,
         consumerModuleKey: 'commerce.inventory',
         deliveryId: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
         domainEventId: workerDomainEventId,
@@ -988,6 +995,7 @@ describe('Inventory Reservation create result', () => {
       const workerContext = (deliveryId: string): OutboxWorkerHandlerContext => ({
         attemptNumber: 1,
         claimId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1',
+        compositionRevision,
         consumerModuleKey: 'commerce.inventory',
         deliveryId,
         domainEventId: '11111111-2222-4333-8444-555555555555',

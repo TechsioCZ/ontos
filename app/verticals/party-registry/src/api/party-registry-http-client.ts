@@ -17,6 +17,7 @@ const requestCorrelationHeaderName = 'x-correlation-id' as const;
 
 export interface PartyRegistryHttpClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly locale?: string;
   readonly operationContext?: OperationContext;
   readonly [traceparentOption]?: string;
@@ -24,6 +25,7 @@ export interface PartyRegistryHttpClientOptions {
 
 export interface PartyRegistryHttpRequestContextValue {
   readonly baseUrl: string | URL;
+  readonly compositionRevision?: string;
   readonly credential?: Redacted.Redacted<string>;
   /** Action transport header; the endpoint contracts declare no header codec. */
   readonly idempotencyKey?: string;
@@ -41,7 +43,11 @@ export const partyRegistryHttpRequestContext = (
   const { baseUrl: configuredBaseUrl, locale: requestLocale, operationContext } = options;
   const baseUrl = configuredBaseUrl ?? partyRegistryApiContract.apiPrefix;
   const requestTraceparent = options[traceparentOption];
-  const context = operationContext === undefined ? { baseUrl } : { baseUrl, operationContext };
+  const transportContext =
+    options.compositionRevision === undefined
+      ? { baseUrl }
+      : { baseUrl, compositionRevision: options.compositionRevision };
+  const context = operationContext === undefined ? transportContext : { ...transportContext, operationContext };
   if (requestLocale === undefined) {
     return requestTraceparent === undefined ? context : { ...context, requestTraceparent };
   }
@@ -77,6 +83,7 @@ const effectBffClientOptions = (context: PartyRegistryHttpRequestContextValue): 
           [requestCorrelationHeader]: context.requestCorrelation,
           'x-trace-id': context.requestTrace,
           'idempotency-key': context.idempotencyKey,
+          'x-ontos-composition-revision': context.compositionRevision,
         };
   const requestContext: EffectBffRequestContext = {};
   if (context.requestLocale !== undefined) {

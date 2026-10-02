@@ -37,6 +37,7 @@ import {
   EnrollmentActionInvocationIdSchema,
   EnrollmentAttemptIdSchema,
   EnrollmentAttemptStateSchema,
+  EnrollmentCompositionRevisionSchema,
   EnrollmentAuthenticationNamespaceIdSchema,
   EnrollmentDigestSchema,
   EnrollmentEvidenceReferenceSchema,
@@ -83,6 +84,7 @@ const AttemptRoutineRowSchema = Schema.Struct({
   attempt_outcome: Schema.String,
   authentication_namespace_id: nullableAuthenticationNamespaceId,
   completed_at: nullableTimestamp,
+  composition_revision: EnrollmentCompositionRevisionSchema,
   created_at: Schema.Union([Schema.Date, Schema.String]),
   created_by_principal_id: EnrollmentPrincipalIdSchema,
   failure_code: nullableKey,
@@ -156,6 +158,7 @@ type OwnerOperationRoutineRow = typeof OwnerOperationRoutineRowSchema.Type;
 /* oxlint-enable effect-native/no-nullable-schema-field */
 
 const DueAttemptRoutineRowSchema = Schema.Struct({
+  composition_revision: EnrollmentCompositionRevisionSchema,
   portal_enrollment_attempt_id: EnrollmentAttemptIdSchema,
   revision: Schema.Number.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   state: EnrollmentAttemptStateSchema,
@@ -190,6 +193,7 @@ const createAttemptRoutine = defineScopedRoutine({
     nullableUuid(),
     nullableUuid(),
     nullableText(),
+    text(),
   ],
   resultSchema: AttemptRoutineRowSchema,
   routineKey: 'portal-enrollment-attempt.create',
@@ -402,6 +406,7 @@ export interface AttemptTerminateResult {
  * transition, so this is deliberately the whole record rather than a snapshot.
  */
 export type DueEnrollmentAttempt = ReadEnrollmentAttemptInput & {
+  readonly compositionRevision: string;
   /**
    * The Attempt's durable revision: what tells a worker "still exactly as I left it" apart from
    * "something has moved it since", without reading the Attempt again.
@@ -433,6 +438,7 @@ export interface ListDueEnrollmentAttemptsInput {
 export type ClaimEnrollmentSweepInput = ReadEnrollmentAttemptInput & {
   /** How long the claim withholds the Attempt from every other replica's listing. */
   readonly claimTtlMillis: number;
+  readonly compositionRevision: string;
   /** The same budget the listing applies; the claim refuses once it is spent at this revision. */
   readonly maxSweeps: number;
   readonly revision: number;
@@ -692,6 +698,7 @@ const mapAttempt = (
     };
   }
   let attempt = {
+    compositionRevision: row.composition_revision,
     createdAt,
     createdByPrincipalId: row.created_by_principal_id,
     intentDigest: row.intent_digest,
@@ -851,6 +858,7 @@ const mapDueAttempt = (
   return updatedAt === undefined
     ? Effect.fail(invalid('The listed Enrollment Attempt activity timestamp is invalid'))
     : Effect.succeed({
+        compositionRevision: row.composition_revision,
         portalEnrollmentAttemptId: row.portal_enrollment_attempt_id,
         revision: row.revision,
         state: row.state,
@@ -1137,6 +1145,16 @@ const mapTerminateRow = (
   input: TerminateEnrollmentAttemptInput,
   row: AttemptRoutineRow,
 ): Effect.Effect<AttemptTerminateResult, CommerceEnrollmentAttemptError> => {
+  if (row.attempt_outcome === 'INDETERMINATE') {
+    return Effect.fail(
+      new CommerceEnrollmentAttemptIndeterminate({
+        attemptId: input.portalEnrollmentAttemptId,
+        code: 'attempt_indeterminate',
+        reason: 'Pending owner outcomes must be reconciled before the Enrollment Attempt can terminate',
+        retryable: true,
+      }),
+    );
+  }
   if (row.attempt_outcome === 'NOT_FOUND') {
     return Effect.fail(
       new CommerceEnrollmentAttemptNotFound({
@@ -1228,6 +1246,7 @@ export const commerceEnrollmentAttemptPersistenceForTransaction = (
             input.invitationId ?? null,
             input.targetLegalEntityId ?? null,
             input.targetResourceId ?? null,
+            input.compositionRevision,
           ]).pipe(
             Effect.flatMap((rows) => requireAttemptRow(rows, 'create_portal_enrollment_attempt')),
             Effect.flatMap(mapCreateRow),
@@ -1382,7 +1401,7 @@ const listDueStatement = (input: ListDueEnrollmentAttemptsInput): SQL => {
 };
 
 const claimSweepStatement = (input: ClaimEnrollmentSweepInput): SQL =>
-  sql`select ${sql.identifier(DUE_WORK_ROUTINE_SCHEMA)}.${sql.identifier(SWEEP_ROUTINE_NAME)}(${input.tenantId}::uuid, ${input.portalEnrollmentAttemptId}::uuid, ${input.revision}::integer, ${input.maxSweeps}::integer, ${input.claimTtlMillis}::integer) as sweep_count`;
+  sql`select ${sql.identifier(DUE_WORK_ROUTINE_SCHEMA)}.${sql.identifier(SWEEP_ROUTINE_NAME)}(${input.tenantId}::uuid, ${input.portalEnrollmentAttemptId}::uuid, ${input.revision}::integer, ${input.maxSweeps}::integer, ${input.claimTtlMillis}::integer, ${input.compositionRevision}::text) as sweep_count`;
 
 /** A refused claim is a NULL count, not an empty answer: the routine always returns its one row. */
 const SweepRoutineRowSchema = Schema.Struct({

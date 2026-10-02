@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ReviseAttributeDefinitionRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ReviseAttributeDefinitionRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeReviseAttributeDefinitionRecovery = (
   payload: ReviseAttributeDefinitionRecoveryRequest,
   ...[requestCorrelation, options = {}]: ReviseAttributeDefinitionRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeReviseAttributeDefinitionRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeReviseAttributeDefinitionRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

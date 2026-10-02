@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RetailPortalProfileBindingReadClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RetailPortalProfileBindingReadAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRetailPortalProfileBindingRead = (
   payload: RetailPortalProfileBindingReadRequest,
   ...[requestCorrelation, options = {}]: RetailPortalProfileBindingReadOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRetailPortalProfileBindingReadWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRetailPortalProfileBindingReadWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

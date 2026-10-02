@@ -133,6 +133,7 @@ export const currentStorefrontApplicationRead = defineRead(
     schemaVersion: '1',
   },
   handleCurrentStorefrontApplication,
-  (transaction, scope) => currentStorefrontApplicationPersistenceForScope(transaction, scope),
+  (transaction, scope, compositionRevision) =>
+    currentStorefrontApplicationPersistenceForScope(transaction, scope, compositionRevision),
   () => ({ kind: 'module', moduleId: moduleKey }),
 );

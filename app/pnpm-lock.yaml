@@ -230,6 +230,8 @@ overrides:
   zod: 4.6.5
 
 patchedDependencies:
+  '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28': 198c625d3aff5d18f747b91b145726da6fd8c5c7a6aeb4387d76334fb953fe1f
+  '@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28': 98d915eb42d26b18913ce2f102aadd89a8e65f8239ea4a5016891f4908bf707a
   drizzle-orm@1.0.0-rc.5-ab785fc: b99614c9074d41f359743addc0f2a131dbd9c9c479d57cc0f0bb2bb1344bf5fe
 
 importers:
@@ -284,7 +286,7 @@ importers:
         version: '@bleedingdev/modern-js-bff-effect@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@effect/opentelemetry@4.0.0-rc.117(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-rc.117))(core-js@3.50.0)(effect@4.0.0-rc.117)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.6.5)'
       '@modern-js/code-tools':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28(oxlint-tsgolint@7.0.2001)'
+        version: '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28(patch_hash=198c625d3aff5d18f747b91b145726da6fd8c5c7a6aeb4387d76334fb953fe1f)(oxlint-tsgolint@7.0.2001)'
       '@modern-js/codesmith':
         specifier: 2.6.9
         version: 2.6.9(supports-color@10.2.2)
@@ -296,7 +298,7 @@ importers:
         version: '@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@effect/opentelemetry@4.0.0-rc.117(@opentelemetry/api-logs@0.222.0)(@opentelemetry/api@1.9.1)(@opentelemetry/resources@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-logs@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-metrics@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-node@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-web@2.11.0(@opentelemetry/api@1.9.1))(@opentelemetry/semantic-conventions@1.43.0)(effect@4.0.0-rc.117))(@swc/helpers@0.5.23)(core-js@3.50.0)(effect@4.0.0-rc.117)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(zod@4.6.5)'
       '@modern-js/ultramodern-create':
         specifier: catalog:ultramodern
-        version: '@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28(@rsbuild/core@2.2.9(core-js@3.50.0))(@rspack/core@2.2.8(@swc/helpers@0.5.23))(@types/node@26.6.3)(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(core-js@3.50.0)(csso@5.0.5)(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(lightningcss@1.33.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.9)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))(zod@4.6.5)'
+        version: '@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28(patch_hash=98d915eb42d26b18913ce2f102aadd89a8e65f8239ea4a5016891f4908bf707a)(@rsbuild/core@2.2.9(core-js@3.50.0))(@rspack/core@2.2.8(@swc/helpers@0.5.23))(@types/node@26.6.3)(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(core-js@3.50.0)(csso@5.0.5)(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(lightningcss@1.33.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.9)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))(zod@4.6.5)'
       '@nkzw/eslint-plugin':
         specifier: 2.0.0
         version: 2.0.0(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))
@@ -381,48 +383,21 @@ importers:
 
   apps/shell-super-app:
     dependencies:
-      '@app/assortment':
-        specifier: workspace:*
-        version: link:../../verticals/assortment
       '@app/better-auth-effect-drizzle':
         specifier: workspace:*
         version: link:../../packages/better-auth-effect-drizzle
-      '@app/catalog':
-        specifier: workspace:*
-        version: link:../../verticals/catalog
       '@app/commerce-customer-context':
         specifier: workspace:*
         version: link:../../verticals/commerce-customer-context
-      '@app/commerce-market-catalog':
-        specifier: workspace:*
-        version: link:../../verticals/commerce-market-catalog
       '@app/core-runtime':
         specifier: workspace:*
         version: link:../../packages/core-runtime
-      '@app/inventory':
-        specifier: workspace:*
-        version: link:../../verticals/inventory
-      '@app/party-registry':
-        specifier: workspace:*
-        version: link:../../verticals/party-registry
-      '@app/payment-term-catalog':
-        specifier: workspace:*
-        version: link:../../verticals/payment-term-catalog
-      '@app/price-group-catalog':
-        specifier: workspace:*
-        version: link:../../verticals/price-group-catalog
-      '@app/pricing':
-        specifier: workspace:*
-        version: link:../../verticals/pricing
       '@app/shared-contracts':
         specifier: workspace:*
         version: link:../../packages/shared-contracts
       '@app/shared-design-tokens':
         specifier: workspace:*
         version: link:../../packages/shared-design-tokens
-      '@app/storefront-registry':
-        specifier: workspace:*
-        version: link:../../verticals/storefront-registry
       '@authzed/authzed-node':
         specifier: 1.6.1
         version: 1.6.1
@@ -10614,7 +10589,7 @@ snapshots:
     dependencies:
       '@babel/compat-data': 7.29.7
       '@babel/helper-validator-option': 7.29.7
-      browserslist: 4.29.0
+      browserslist: 4.29.3
       lru-cache: 5.1.1
       semver: 6.3.1
 
@@ -11392,7 +11367,7 @@ snapshots:
       - typescript
       - webpack
 
-  '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28(oxlint-tsgolint@7.0.2001)':
+  '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28(patch_hash=198c625d3aff5d18f747b91b145726da6fd8c5c7a6aeb4387d76334fb953fe1f)(oxlint-tsgolint@7.0.2001)':
     dependencies:
       '@babel/parser': 8.0.6
       '@babel/traverse': 8.0.6
@@ -11942,7 +11917,7 @@ snapshots:
       - webpack
       - zod
 
-  '@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28(@rsbuild/core@2.2.9(core-js@3.50.0))(@rspack/core@2.2.8(@swc/helpers@0.5.23))(@types/node@26.6.3)(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(core-js@3.50.0)(csso@5.0.5)(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(lightningcss@1.33.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.9)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))(zod@4.6.5)':
+  '@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28(patch_hash=98d915eb42d26b18913ce2f102aadd89a8e65f8239ea4a5016891f4908bf707a)(@rsbuild/core@2.2.9(core-js@3.50.0))(@rspack/core@2.2.8(@swc/helpers@0.5.23))(@types/node@26.6.3)(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(core-js@3.50.0)(csso@5.0.5)(eslint@9.39.5(jiti@2.7.0)(supports-color@10.2.2))(lightningcss@1.33.0)(oxlint@1.81.0(oxlint-tsgolint@7.0.2001))(prettier@3.9.9)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))(zod@4.6.5)':
     dependencies:
       '@babel/parser': 8.0.6
       '@modern-js/app-tools-extensions': '@bleedingdev/modern-js-app-tools-extensions@3.9.0-ultramodern.28(@bleedingdev/mf-runtime-tools@2.9.2)(@rsbuild/core@2.2.9(@bleedingdev/mf-runtime-tools@2.9.2)(core-js@3.50.0))(@rspack/core@2.2.8(@bleedingdev/mf-runtime-tools@2.9.2)(@swc/helpers@0.5.23))(@typescript/native-preview@7.0.0-dev.20260707.2)(clean-css@5.3.3)(core-js@3.50.0)(csso@5.0.5)(lightningcss@1.33.0)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(supports-color@10.2.2)(typescript@7.0.2)(webpack@5.111.1(@swc/core@1.16.2(@swc/helpers@0.5.23))(clean-css@5.3.3)(cssnano@9.0.5(postcss@8.5.28))(csso@5.0.5)(esbuild@0.28.1)(html-minifier-terser@7.2.0)(lightningcss@1.33.0)(postcss@8.5.28)(sharp@0.35.4(@types/node@26.6.3))(svgo@4.1.0))(zod@4.6.5)'
@@ -15031,7 +15006,7 @@ snapshots:
 
   autoprefixer@10.6.1(postcss@8.5.28):
     dependencies:
-      browserslist: 4.29.0
+      browserslist: 4.29.3
       caniuse-lite: 1.0.30001814
       fraction.js: 5.3.4
       picocolors: 1.1.1
@@ -15158,7 +15133,7 @@ snapshots:
 
   browserslist-to-es-version@1.4.2:
     dependencies:
-      browserslist: 4.29.0
+      browserslist: 4.29.3
 
   browserslist@4.29.0:
     dependencies:
@@ -15228,7 +15203,7 @@ snapshots:
 
   caniuse-api@3.0.0:
     dependencies:
-      browserslist: 4.29.0
+      browserslist: 4.29.3
       caniuse-lite: 1.0.30001814
       lodash.memoize: 4.1.2
       lodash.uniq: 4.5.0
@@ -15454,7 +15429,7 @@ snapshots:
 
   cssnano-preset-default@7.0.17(postcss@8.5.28):
     dependencies:
-      browserslist: 4.29.0
+      browserslist: 4.29.3
       css-declaration-sorter: 7.4.0(postcss@8.5.28)
       cssnano-utils: 5.0.3(postcss@8.5.28)
       postcss: 8.5.28
@@ -17925,7 +17900,7 @@ snapshots:
   postcss-colormin@7.0.10(postcss@8.5.28):
     dependencies:
       '@colordx/core': 5.8.0
-      browserslist: 4.29.0
+      browserslist: 4.29.3
       caniuse-api: 3.0.0
       postcss: 8.5.28
       postcss-value-parser: 4.2.0
@@ -17941,7 +17916,7 @@ snapshots:
 
   postcss-convert-values@7.0.12(postcss@8.5.28):
     dependencies:
-      browserslist: 4.29.0
+      browserslist: 4.29.3
       postcss: 8.5.28
       postcss-value-parser: 4.2.0
 
@@ -18025,7 +18000,7 @@ snapshots:
 
   postcss-merge-rules@7.0.11(postcss@8.5.28):
     dependencies:
-      browserslist: 4.29.0
+      browserslist: 4.29.3
       caniuse-api: 3.0.0
       cssnano-utils: 5.0.3(postcss@8.5.28)
       postcss: 8.5.28
@@ -18066,7 +18041,7 @@ snapshots:
 
   postcss-minify-params@7.0.9(postcss@8.5.28):
     dependencies:
-      browserslist: 4.29.0
+      browserslist: 4.29.3
       cssnano-utils: 5.0.3(postcss@8.5.28)
       postcss: 8.5.28
       postcss-value-parser: 4.2.0
@@ -18079,7 +18054,7 @@ snapshots:
 
   postcss-minify-selectors@7.1.2(postcss@8.5.28):
     dependencies:
-      browserslist: 4.29.0
+      browserslist: 4.29.3
       caniuse-api: 3.0.0
       cssesc: 3.0.0
       postcss: 8.5.28
@@ -18162,7 +18137,7 @@ snapshots:
 
   postcss-normalize-unicode@7.0.9(postcss@8.5.28):
     dependencies:
-      browserslist: 4.29.0
+      browserslist: 4.29.3
       postcss: 8.5.28
       postcss-value-parser: 4.2.0
 
@@ -18212,7 +18187,7 @@ snapshots:
 
   postcss-reduce-initial@7.0.9(postcss@8.5.28):
     dependencies:
-      browserslist: 4.29.0
+      browserslist: 4.29.3
       caniuse-api: 3.0.0
       postcss: 8.5.28
 
@@ -18925,7 +18900,7 @@ snapshots:
 
   stylehacks@7.0.11(postcss@8.5.28):
     dependencies:
-      browserslist: 4.29.0
+      browserslist: 4.29.3
       postcss: 8.5.28
       postcss-selector-parser: 7.1.6
 

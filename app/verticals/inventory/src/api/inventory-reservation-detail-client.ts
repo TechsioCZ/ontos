@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface InventoryReservationDetailClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type InventoryReservationDetailAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeInventoryReservationDetail = (
   payload: InventoryReservationDetailRequest,
   ...[requestCorrelation, options = {}]: InventoryReservationDetailOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeInventoryReservationDetailWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeInventoryReservationDetailWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

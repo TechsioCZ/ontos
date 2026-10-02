@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PartyMergeReadinessClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PartyMergeReadinessAuthorizedInvocation = readonly [
@@ -48,6 +49,10 @@ export const executePartyMergeReadiness = (
   payload: PartyMergeReadinessRequest,
   ...[requestCorrelation, options = {}]: PartyMergeReadinessOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePartyMergeReadinessWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePartyMergeReadinessWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

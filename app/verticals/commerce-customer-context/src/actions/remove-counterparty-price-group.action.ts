@@ -205,8 +205,8 @@ export const removeCounterpartyPriceGroupAction = defineAction(
     schemaVersion: '1',
   },
   handleRemoveCounterpartyPriceGroup,
-  (transaction, scope) =>
-    priceGroupActionServicesForTransaction(transaction, scope).pipe(
+  (transaction, scope, compositionRevision) =>
+    priceGroupActionServicesForTransaction(transaction, scope, compositionRevision).pipe(
       Effect.map(({ now, profileValidation, store }) => ({ now, profileValidation, store })),
     ),
 );

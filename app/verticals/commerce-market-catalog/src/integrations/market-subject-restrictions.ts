@@ -1,7 +1,9 @@
 import { MarketSubjectRestrictionsCurrentRequestSchema } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
 import type { MarketSubjectRestrictionsCurrentResponse } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current';
-import { executeMarketSubjectRestrictionsCurrent } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current/client';
-import { Effect, Schema } from 'effect';
+import { executeMarketSubjectRestrictionsCurrentWithAuthorization } from '@app/customer-market-retirement-contracts/market-subject-restrictions-current/client';
+import { GatewayContextResponseSchema } from '@app/shared-contracts';
+import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
+import { Config, Effect, Schema } from 'effect';
 
 import type { PurchasingSubjectRefSchema } from '../../shared/market-contracts.ts';
 
@@ -10,6 +12,22 @@ type OwnerCurrentRestrictions = Extract<
   MarketSubjectRestrictionsCurrentResponse,
   { readonly outcome: 'SUBJECT_RESTRICTIONS_CURRENT' }
 >;
+
+const httpUrl = Schema.URLFromString.check(
+  Schema.makeFilter((url) =>
+    (url.protocol === 'http:' || url.protocol === 'https:') &&
+    url.username.length === 0 &&
+    url.password.length === 0 &&
+    url.search.length === 0 &&
+    url.hash.length === 0
+      ? undefined
+      : 'Service URL must be an HTTP(S) URL without credentials, query, or fragment',
+  ),
+);
+const configuration = Config.all({
+  apiKey: Config.Redacted('ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
+  shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
+});
 
 export class MarketSubjectRestrictionsUnavailable extends Schema.TaggedError<MarketSubjectRestrictionsUnavailable>()(
   'MarketSubjectRestrictionsUnavailable',
@@ -78,12 +96,46 @@ const toSnapshot = (
   );
 };
 
-/** Contract-derived adapter; this module imports only Customer Context's published client. */
-export const marketSubjectRestrictionsReaderFromPublishedClient: MarketSubjectRestrictionsReader = {
-  current: (subject, requestCorrelation) =>
-    Schema.decodeEffect(MarketSubjectRestrictionsCurrentRequestSchema)({ subject }).pipe(
-      Effect.flatMap((payload) => executeMarketSubjectRestrictionsCurrent(payload, requestCorrelation)),
-      Effect.flatMap(toSnapshot),
+export const makeServerMarketSubjectRestrictionsReader = ({
+  compositionRevision,
+  legalEntityId,
+}: {
+  readonly compositionRevision: string | undefined;
+  readonly legalEntityId: string | undefined;
+}): MarketSubjectRestrictionsReader => ({
+  current: Effect.fn('MarketSubjectRestrictionsReader.current')(function* current(
+    subject: Parameters<MarketSubjectRestrictionsReader['current']>[0],
+    requestCorrelation: string,
+  ) {
+    if (compositionRevision === undefined) {
+      return yield* unavailable('Cross-owner subject restrictions require the original verified composition revision');
+    }
+    if (legalEntityId === undefined) {
+      return yield* unavailable('Cross-owner subject restrictions require the original verified Legal Entity');
+    }
+    const payload = yield* Schema.decodeEffect(MarketSubjectRestrictionsCurrentRequestSchema)({ subject }).pipe(
       Effect.mapError(unavailable),
-    ),
-};
+    );
+    const response = yield* Effect.gen(function* executeCustomerOwnerRead() {
+      const configured = yield* configuration;
+      const issued = yield* issueApiKeyGatewayContext(
+        { audience: 'commerce-customer-context', compositionRevision, legalEntityId },
+        { apiKey: configured.apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation },
+      );
+      const admitted = yield* Schema.decodeEffect(GatewayContextResponseSchema)(issued);
+      if (admitted.compositionRevision !== compositionRevision) {
+        return yield* unavailable('Customer Context gateway returned a different composition revision');
+      }
+      return yield* executeMarketSubjectRestrictionsCurrentWithAuthorization(
+        payload,
+        `Bearer ${admitted.token}`,
+        requestCorrelation,
+        {
+          baseUrl: new URL(admitted.apiBaseUrl, configured.shellBaseUrl),
+          compositionRevision,
+        },
+      );
+    }).pipe(Effect.mapError(unavailable));
+    return yield* toSnapshot(response);
+  }),
+});

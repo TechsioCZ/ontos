@@ -97,6 +97,7 @@ const operation = (
 
 const attempt: EnrollmentAttemptSnapshot = {
   accountSubject,
+  compositionRevision: 'c'.repeat(64),
   createdAt: at,
   createdByPrincipalId: actorPrincipalId,
   intentDigest: 'd'.repeat(64),
@@ -154,6 +155,7 @@ const context: CommerceEnrollmentOwnerEffectContext = {
 const reconciliationInput: CommerceEnrollmentOwnerReconciliationInput = {
   ...Schema.decodeUnknownSync(CommerceEnrollmentOwnerTransitionSchema)({
     actorPrincipalId: PRINCIPAL_ID,
+    compositionRevision: attempt.compositionRevision,
     correlationId: 'enrollment-core-identity-reconciliation',
     expectedRevision: attempt.revision,
     // The activation's own invocation, which Core never names back on a binding read.

@@ -15,7 +15,7 @@ import type {
   ResolveExternalSubjectRequestSchema,
   ReservePrincipalBindingRequestSchema,
 } from './external-identity.ts';
-import type { GatewayContextResponseSchema } from './gateway-context.ts';
+import type { GatewayContextResponseSchema, GatewayReloadRequiredProblemSchema } from './gateway-context.ts';
 import type {
   ActivatePrincipalBindingResultSchema,
   ChangePrincipalBindingStatusResultSchema,
@@ -60,7 +60,8 @@ export type ExternalIdentityProblem =
   | Schema.Schema.Type<typeof ExternalIdentityNotFoundProblemSchema>
   | Schema.Schema.Type<typeof ExternalIdentityThrottledProblemSchema>
   | Schema.Schema.Type<typeof ExternalIdentityUnauthorizedProblemSchema>
-  | Schema.Schema.Type<typeof ExternalIdentityUnavailableProblemSchema>;
+  | Schema.Schema.Type<typeof ExternalIdentityUnavailableProblemSchema>
+  | Schema.Schema.Type<typeof GatewayReloadRequiredProblemSchema>;
 
 export type ExternalIdentityClientError =
   | ExternalIdentityProblem
@@ -83,13 +84,17 @@ export interface ExternalIdentityMutationClientOptions extends ExternalIdentityC
 }
 
 /** Transport configuration is supplied by server composition, never by external subject input. */
-export const ExternalIdentityTransport = Context.Reference<Option.Option<ExternalIdentityClientOptions>>(
+interface ExternalIdentityTransportOptions extends ExternalIdentityClientOptions {
+  readonly compositionRevision: string | null;
+}
+
+export const ExternalIdentityTransport = Context.Reference<Option.Option<ExternalIdentityTransportOptions>>(
   '@app/shared-contracts/external-identity-client/ExternalIdentityTransport',
   { defaultValue: Option.none },
 );
 
 export const externalIdentityTransportLayer = (options: ExternalIdentityClientOptions) =>
-  Layer.succeed(ExternalIdentityTransport, Option.some(options));
+  Layer.succeed(ExternalIdentityTransport, Option.some({ ...options, compositionRevision: null }));
 
 export type ExternalIdentityClientEffect<Success> = Effect.Effect<Success, ExternalIdentityClientError>;
 
@@ -102,7 +107,10 @@ const externalIdentityHttpClient = makeEffectHttpApiClient(ExternalIdentityApi, 
           onSome: (options) => {
             let nextRequest = HttpClientRequest.prependUrl(request, options.baseUrl.toString());
             nextRequest = HttpClientRequest.setHeader(nextRequest, 'x-api-key', Redacted.value(options.apiKey));
-            return HttpClientRequest.setHeader(nextRequest, 'x-correlation-id', options.requestCorrelation);
+            nextRequest = HttpClientRequest.setHeader(nextRequest, 'x-correlation-id', options.requestCorrelation);
+            return options.compositionRevision === null
+              ? nextRequest
+              : HttpClientRequest.setHeader(nextRequest, 'x-ontos-composition-revision', options.compositionRevision);
           },
         }),
       ),
@@ -111,7 +119,7 @@ const externalIdentityHttpClient = makeEffectHttpApiClient(ExternalIdentityApi, 
 });
 
 const invokeExternalIdentity = <Success>(
-  options: ExternalIdentityClientOptions,
+  options: ExternalIdentityTransportOptions,
   operation: (client: ExternalIdentityGeneratedClient) => Effect.Effect<Success, ExternalIdentityClientError>,
 ): ExternalIdentityClientEffect<Success> =>
   Schema.decodeEffect(ExternalIdentityRequestCorrelationSchema)(options.requestCorrelation).pipe(
@@ -129,7 +137,7 @@ export const reservePrincipalBinding = (
   payload: ReservePrincipalBindingRequest,
   options: ExternalIdentityMutationClientOptions,
 ): ExternalIdentityClientEffect<ReservePrincipalBindingResult> =>
-  invokeExternalIdentity(options, (client) =>
+  invokeExternalIdentity({ ...options, compositionRevision: payload.compositionRevision }, (client) =>
     client.externalIdentity.reservePrincipalBinding({
       headers: mutationHeaders(options),
       payload,
@@ -141,7 +149,7 @@ export const activatePrincipalBinding = (
   payload: ActivatePrincipalBindingRequest,
   options: ExternalIdentityMutationClientOptions,
 ): ExternalIdentityClientEffect<ActivatePrincipalBindingResult> =>
-  invokeExternalIdentity(options, (client) =>
+  invokeExternalIdentity({ ...options, compositionRevision: payload.compositionRevision }, (client) =>
     client.externalIdentity.activatePrincipalBinding({
       headers: mutationHeaders(options),
       payload,
@@ -153,7 +161,7 @@ export const changePrincipalBindingStatus = (
   payload: ChangePrincipalBindingStatusRequest,
   options: ExternalIdentityMutationClientOptions,
 ): ExternalIdentityClientEffect<ChangePrincipalBindingStatusResult> =>
-  invokeExternalIdentity(options, (client) =>
+  invokeExternalIdentity({ ...options, compositionRevision: payload.compositionRevision }, (client) =>
     client.externalIdentity.changePrincipalBindingStatus({
       headers: mutationHeaders(options),
       payload,
@@ -165,7 +173,7 @@ export const readPrincipalBinding = (
   payload: ReadPrincipalBindingRequest,
   options: ExternalIdentityClientOptions,
 ): ExternalIdentityClientEffect<ReadPrincipalBindingResult> =>
-  invokeExternalIdentity(options, (client) => {
+  invokeExternalIdentity({ ...options, compositionRevision: null }, (client) => {
     if (payload.lookup === 'binding') {
       return client.externalIdentity.readPrincipalBinding({
         payload: { authBindingId: payload.authBindingId, lookup: payload.lookup },
@@ -186,14 +194,18 @@ export const resolveExternalSubject = (
   payload: ResolveExternalSubjectRequest,
   options: ExternalIdentityClientOptions,
 ): ExternalIdentityClientEffect<ResolveExternalSubjectResult> =>
-  invokeExternalIdentity(options, (client) => client.externalIdentity.resolveExternalSubject({ payload }));
+  invokeExternalIdentity({ ...options, compositionRevision: payload.compositionRevision }, (client) =>
+    client.externalIdentity.resolveExternalSubject({ payload }),
+  );
 
 /** Issue a fresh audience-bound gateway context after Shell revalidates the external binding. */
 export const issueExternalGatewayContext = (
   payload: ExternalGatewayContextRequest,
   options: ExternalIdentityClientOptions,
 ): ExternalIdentityClientEffect<Schema.Schema.Type<typeof GatewayContextResponseSchema>> =>
-  invokeExternalIdentity(options, (client) => client.externalIdentity.issueExternalGatewayContext({ payload }));
+  invokeExternalIdentity({ ...options, compositionRevision: payload.compositionRevision }, (client) =>
+    client.externalIdentity.issueExternalGatewayContext({ payload }),
+  );
 
 export interface ExternalIdentityClientPort {
   readonly activatePrincipalBinding: typeof activatePrincipalBinding;

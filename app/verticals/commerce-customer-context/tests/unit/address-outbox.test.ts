@@ -154,6 +154,7 @@ it.effect('forwards trusted attribution and attaches outbox only for a material 
       actionInvocationId: '20000000-0000-4000-8000-000000000002',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: 'a'.repeat(64),
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope: {
@@ -196,6 +197,7 @@ it.effect('forwards trusted attribution and attaches outbox only for a material 
       actionInvocationId: '50000000-0000-4000-8000-000000000005',
       addDomainEvent: unchangedCollector.addDomainEvent,
       addOutboxMessage: unchangedCollector.addOutboxMessage,
+      compositionRevision: 'a'.repeat(64),
       recordAuditEvidence: unchangedCollector.recordAuditEvidence,
       recordDataAccess: unchangedCollector.recordDataAccess,
       scope: {
@@ -234,6 +236,7 @@ it.effect('does not attach a duplicate add event when an exact business replay i
       actionInvocationId: '60000000-0000-4000-8000-000000000006',
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision: 'a'.repeat(64),
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope: {
@@ -285,6 +288,7 @@ it.effect('records the contributing Party Contact Point read for add and update'
         actionInvocationId: '70000000-0000-4000-8000-000000000007',
         addDomainEvent: addCollector.addDomainEvent,
         addOutboxMessage: addCollector.addOutboxMessage,
+        compositionRevision: 'a'.repeat(64),
         recordAuditEvidence: addCollector.recordAuditEvidence,
         recordDataAccess: addCollector.recordDataAccess,
         scope: {
@@ -319,6 +323,7 @@ it.effect('records the contributing Party Contact Point read for add and update'
         actionInvocationId: '80000000-0000-4000-8000-000000000008',
         addDomainEvent: updateCollector.addDomainEvent,
         addOutboxMessage: updateCollector.addOutboxMessage,
+        compositionRevision: 'a'.repeat(64),
         recordAuditEvidence: updateCollector.recordAuditEvidence,
         recordDataAccess: updateCollector.recordDataAccess,
         scope: {

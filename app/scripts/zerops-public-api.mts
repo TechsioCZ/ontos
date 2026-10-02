@@ -5,7 +5,7 @@ import { ZeropsApiError } from './zerops-public-api-error.mts';
 
 /**
  * Minimal adapter over the Zerops public REST API for the operations the deploy runs without zcli: project
- * variables, service restarts and stops, and subdomain access. Responses are decoded, never logged, because
+ * variables, service stops, and subdomain access. Responses are decoded, never logged, because
  * project variable listings can contain secrets. The token is read per request, so commands that
  * never call Zerops need no credentials.
  */
@@ -44,6 +44,14 @@ const ServiceStackSchema = Schema.Struct({
   status: Schema.String,
   subdomainAccess: Schema.Boolean,
 });
+/** Native identity needed before permanently retiring an executable service. */
+const ServiceStackIdentitySchema = Schema.Struct({
+  base: Schema.NonEmptyString,
+  isSystem: Schema.Boolean,
+  name: Schema.NonEmptyString,
+  status: Schema.String,
+  subdomainAccess: Schema.Boolean,
+});
 /** Zerops answers a read of a deleted or unknown service with HTTP 400 and this error code. */
 const SERVICE_STACK_NOT_FOUND = 'serviceStackNotFound';
 const ErrorBodySchema = Schema.Struct({ error: Schema.Struct({ code: Schema.String }) });
@@ -57,6 +65,7 @@ const SERVICE_USER_DATA_PAGE = 100;
 
 export type ZeropsProjectEnv = typeof ProjectEnvSchema.Type;
 export type ZeropsServiceStack = typeof ServiceStackSchema.Type;
+export type ZeropsServiceStackIdentity = typeof ServiceStackIdentitySchema.Type;
 
 interface ProjectEnvBody {
   readonly content: string;
@@ -92,12 +101,16 @@ export interface ZeropsPublicApiService {
     key: string,
     content: string,
   ) => Effect.Effect<void, ZeropsApiError>;
+  /** Permanently deletes a service and waits for the native deletion process to finish. */
+  readonly deleteService: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
   readonly enableSubdomainAccess: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
   /** Reads a service like `serviceStack`, but a deleted or unknown service is `None` rather than an error. */
   readonly findServiceStack: (serviceId: string) => Effect.Effect<Option.Option<ZeropsServiceStack>, ZeropsApiError>;
+  readonly findServiceStackIdentity: (
+    serviceId: string,
+  ) => Effect.Effect<Option.Option<ZeropsServiceStackIdentity>, ZeropsApiError>;
   readonly projectEnvFile: (projectId: string) => Effect.Effect<ReadonlyMap<string, string>, ZeropsApiError>;
   readonly projectEnvs: (projectId: string) => Effect.Effect<readonly ZeropsProjectEnv[], ZeropsApiError>;
-  readonly restartService: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
   /**
    * Reads every secret on one service (its "user data" entries) with their values. Unlike `zcli project env`,
    * which prints `REDACTED` for sensitive secrets, the API returns the stored values to the owning token.
@@ -111,6 +124,7 @@ export interface ZeropsPublicApiService {
     existing: ZeropsProjectEnv | undefined,
     key: string,
     content: string,
+    sensitive: boolean,
   ) => Effect.Effect<void, ZeropsApiError>;
 }
 
@@ -199,8 +213,9 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     existing: ZeropsProjectEnv | undefined,
     key: string,
     content: string,
+    sensitive: boolean,
   ) {
-    const body: ProjectEnvBody = { content, key, sensitive: false };
+    const body: ProjectEnvBody = { content, key, sensitive };
     const process =
       existing === undefined
         ? yield* withJson(
@@ -256,7 +271,7 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
 
   const serviceAction = Effect.fn('ZeropsPublicApi.serviceAction')(function* runServiceAction(
     serviceId: string,
-    action: 'enable-subdomain-access' | 'restart' | 'stop',
+    action: 'enable-subdomain-access' | 'stop',
   ) {
     const process = yield* send(
       HttpClientRequest.put(`${ZEROPS_PUBLIC_API_URL}/service-stack/${serviceId}/${action}`),
@@ -266,40 +281,51 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     yield* awaitProcess(process, `service ${action}`);
   });
 
-  const findServiceStack = Effect.fn('ZeropsPublicApi.findServiceStack')(function* findServiceStack(serviceId: string) {
-    const readFailed = failure('Zerops service read failed');
-    const response = yield* authorizedClient
-      .execute(HttpClientRequest.get(`${ZEROPS_PUBLIC_API_URL}/service-stack/${serviceId}`))
-      .pipe(
-        Effect.mapError(readFailed),
-        Effect.timeoutOrElse({
-          duration: REQUEST_TIMEOUT,
-          orElse: () => Effect.fail(new ZeropsApiError({ message: 'Zerops service read timed out' })),
-        }),
-      );
-    const body = yield* response.json.pipe(Effect.mapError(readFailed));
-    if (response.status >= 200 && response.status < 300) {
-      return Option.some(yield* Schema.decodeUnknownEffect(ServiceStackSchema)(body).pipe(Effect.mapError(readFailed)));
-    }
-    const notFound = Schema.decodeUnknownOption(ErrorBodySchema)(body).pipe(
-      Option.exists(({ error }) => error.code === SERVICE_STACK_NOT_FOUND),
+  const deleteService = Effect.fn('ZeropsPublicApi.deleteService')(function* deleteService(serviceId: string) {
+    const process = yield* send(
+      HttpClientRequest.make('DELETE')(`${ZEROPS_PUBLIC_API_URL}/service-stack/${serviceId}`),
+      ProcessSchema,
+      'service delete',
     );
-    if (notFound) {
-      return Option.none();
-    }
-    return yield* new ZeropsApiError({ message: `Zerops service read failed with HTTP ${String(response.status)}` });
+    yield* awaitProcess(process, 'service delete');
   });
+
+  const findServiceStackWith = <A, I>(serviceId: string, schema: Schema.Codec<A, I>) =>
+    Effect.gen(function* readServiceStack() {
+      const readFailed = failure('Zerops service read failed');
+      const response = yield* authorizedClient
+        .execute(HttpClientRequest.get(`${ZEROPS_PUBLIC_API_URL}/service-stack/${serviceId}`))
+        .pipe(
+          Effect.mapError(readFailed),
+          Effect.timeoutOrElse({
+            duration: REQUEST_TIMEOUT,
+            orElse: () => Effect.fail(new ZeropsApiError({ message: 'Zerops service read timed out' })),
+          }),
+        );
+      const body = yield* response.json.pipe(Effect.mapError(readFailed));
+      if (response.status >= 200 && response.status < 300) {
+        return Option.some(yield* Schema.decodeUnknownEffect(schema)(body).pipe(Effect.mapError(readFailed)));
+      }
+      const notFound = Schema.decodeUnknownOption(ErrorBodySchema)(body).pipe(
+        Option.exists(({ error }) => error.code === SERVICE_STACK_NOT_FOUND),
+      );
+      if (response.status === 400 && notFound) {
+        return Option.none();
+      }
+      return yield* new ZeropsApiError({ message: `Zerops service read failed with HTTP ${String(response.status)}` });
+    });
 
   return ZeropsPublicApi.of({
     createServiceSecret,
+    deleteService,
     enableSubdomainAccess: (serviceId) => serviceAction(serviceId, 'enable-subdomain-access'),
-    findServiceStack,
+    findServiceStack: (serviceId) => findServiceStackWith(serviceId, ServiceStackSchema),
+    findServiceStackIdentity: (serviceId) => findServiceStackWith(serviceId, ServiceStackIdentitySchema),
     projectEnvFile: (projectId) =>
       get(`/project/${projectId}/env-file?${PROJECT_ENV_FILE_QUERY}`, EnvFileSchema, 'project env file').pipe(
         Effect.map(({ envFile }) => parseZeropsEnvFile(envFile)),
       ),
     projectEnvs,
-    restartService: (serviceId) => serviceAction(serviceId, 'restart'),
     serviceSecrets,
     serviceStack: (serviceId) => get(`/service-stack/${serviceId}`, ServiceStackSchema, 'service read'),
     stopService: (serviceId) => serviceAction(serviceId, 'stop'),

@@ -4,7 +4,7 @@ import { beforeEach, expect, rstest, it } from 'effect-rstest';
 import * as actualAuthClient from '../../../../src/api/auth-client.ts' with {
   rstest: 'importActual',
 };
-import { loadHomePageModel } from '../../../../src/routes/[lang]/page.data.ts';
+import { loadHomePageModel } from '../../../../src/routes/[lang]/home-page-model.ts';
 
 const {
   availableLegalEntitiesMock,
@@ -36,6 +36,7 @@ const identity = {
   principalId: 'principal-1',
   tenantId: 'tenant-1',
 };
+const compositionRevision = '1'.repeat(64);
 const navigation = [
   {
     appId: 'future-generated',
@@ -79,6 +80,7 @@ beforeEach(() => {
   );
   shellCompositionMock.mockReturnValue(
     Effect.succeed({
+      compositionRevision,
       navigation,
       state: 'available' as const,
       unavailableDeployments: [],
@@ -97,6 +99,7 @@ beforeEach(() => {
 it.effect('resolves trusted context before returning one serializable composition', () =>
   Effect.gen(function* verifyCase1() {
     expect(yield* loadModel({ request: request() })).toEqual({
+      compositionRevision,
       contextState: 'authenticated',
       identity,
       legalEntities: {
@@ -120,6 +123,12 @@ it.effect('resolves trusted context before returning one serializable compositio
     });
     expect(currentSessionMock.mock.invocationCallOrder[0]).toBeLessThan(
       shellCompositionMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(shellCompositionMock.mock.invocationCallOrder[0]).toBeLessThan(
+      availableLegalEntitiesMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
+    );
+    expect(shellCompositionMock.mock.invocationCallOrder[0]).toBeLessThan(
+      availableTenantsMock.mock.invocationCallOrder[0] ?? Number.POSITIVE_INFINITY,
     );
   }),
 );
@@ -202,15 +211,21 @@ it.effect('keeps the configured local HTTP origin for the server-side session re
   }),
 );
 
-it.effect('maps composition failure to unavailable without discarding verified context', () =>
+it.effect('stops before legal-entity and tenant reads when composition is unavailable', () =>
   Effect.gen(function* verifyCase8() {
     shellCompositionMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellCapabilityUnavailableProblem' }));
-    expect(yield* loadModel({ request: request() })).toMatchObject({
-      contextState: 'authenticated',
-      identity,
-      navigation: { items: [], state: 'unavailable' },
-      state: 'authenticated',
-    });
+    expect(yield* loadModel({ request: request() })).toEqual({ state: 'unavailable' });
+    expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
+    expect(availableTenantsMock).not.toHaveBeenCalled();
+  }),
+);
+
+it.effect('requires a document reload before legal-entity and tenant reads for a stale release', () =>
+  Effect.gen(function* staleCompositionStopsOwnerReads() {
+    shellCompositionMock.mockReturnValueOnce(Effect.fail({ _tag: 'ShellReloadRequiredProblem' }));
+    expect(yield* loadModel({ request: request() })).toEqual({ state: 'reload_required' });
+    expect(availableLegalEntitiesMock).not.toHaveBeenCalled();
+    expect(availableTenantsMock).not.toHaveBeenCalled();
   }),
 );
 

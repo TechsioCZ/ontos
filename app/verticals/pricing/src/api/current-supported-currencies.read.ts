@@ -156,8 +156,11 @@ const handleCurrentSupportedCurrencies = Effect.fn('CurrentSupportedCurrenciesRe
   };
 });
 
-const currentSupportedCurrenciesPersistenceForScope: typeof currencySupportPersistenceForScope = (transaction, scope) =>
-  currencySupportPersistenceForScope(transaction, scope);
+const currentSupportedCurrenciesPersistenceForScope: typeof currencySupportPersistenceForScope = (
+  transaction,
+  scope,
+  compositionRevision,
+) => currencySupportPersistenceForScope(transaction, scope, compositionRevision);
 
 export const currentSupportedCurrenciesRead = defineRead(
   {

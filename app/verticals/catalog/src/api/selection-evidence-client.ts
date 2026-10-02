@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface SelectionEvidenceClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type SelectionEvidenceAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeSelectionEvidence = (
   payload: SelectionEvidenceRequest,
   ...[requestCorrelation, options = {}]: SelectionEvidenceOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeSelectionEvidenceWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeSelectionEvidenceWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

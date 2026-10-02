@@ -27,6 +27,7 @@ const tenantId = 'e346f000-0000-4000-8000-000000000001';
 const principalId = 'e346f000-0000-4000-8000-000000000002';
 const createActionInvocationId = 'e346f000-0000-4000-8000-000000000003';
 const associateActionInvocationId = 'e346f000-0000-4000-8000-000000000004';
+const compositionRevision = 'a'.repeat(64);
 const fixtureScope = CZECH_LAUNCH_COMMERCE_FIXTURE.scope;
 const fixtureMarket = CZECH_LAUNCH_COMMERCE_FIXTURE.market;
 const [fixtureAssociation] = CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.marketCatalog.associations;
@@ -130,11 +131,16 @@ it.live('persists and reads the Czech Launch Market fixture through owner Action
               createMarketAction.descriptor.accessEvidencePolicy,
               createMarketAction.descriptor.auditEvidenceSchema,
             );
-            const services = yield* getActionServiceFactory(createMarketAction)(transaction, scope);
+            const services = yield* getActionServiceFactory(createMarketAction)(
+              transaction,
+              scope,
+              compositionRevision,
+            );
             const result = yield* getActionHandler(createMarketAction)(createPayload, {
               actionInvocationId: createActionInvocationId,
               addDomainEvent: collector.addDomainEvent,
               addOutboxMessage: collector.addOutboxMessage,
+              compositionRevision,
               recordAuditEvidence: collector.recordAuditEvidence,
               recordDataAccess: collector.recordDataAccess,
               scope,
@@ -181,12 +187,17 @@ it.live('persists and reads the Czech Launch Market fixture through owner Action
               associateStorefrontAction.descriptor.accessEvidencePolicy,
               associateStorefrontAction.descriptor.auditEvidenceSchema,
             );
-            const productionServices = yield* getActionServiceFactory(associateStorefrontAction)(transaction, scope);
+            const productionServices = yield* getActionServiceFactory(associateStorefrontAction)(
+              transaction,
+              scope,
+              compositionRevision,
+            );
             const services = { ...productionServices, ...storefrontAuthority };
             const result = yield* getActionHandler(associateStorefrontAction)(associatePayload, {
               actionInvocationId: associateActionInvocationId,
               addDomainEvent: collector.addDomainEvent,
               addOutboxMessage: collector.addOutboxMessage,
+              compositionRevision,
               recordAuditEvidence: collector.recordAuditEvidence,
               recordDataAccess: collector.recordDataAccess,
               scope,
@@ -214,7 +225,7 @@ it.live('persists and reads the Czech Launch Market fixture through owner Action
 
       const current = yield* scoped(runtime, (transaction) =>
         Effect.gen(function* readCurrentMarketCatalog() {
-          const persistence = yield* marketCatalogReadPersistenceForScope(transaction, scope);
+          const persistence = yield* marketCatalogReadPersistenceForScope(transaction, scope, compositionRevision);
           return yield* persistence.current(currentInput);
         }),
       );

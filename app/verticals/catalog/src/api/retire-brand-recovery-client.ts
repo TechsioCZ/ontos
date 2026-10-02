@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RetireBrandRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RetireBrandRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRetireBrandRecovery = (
   payload: RetireBrandRecoveryRequest,
   ...[requestCorrelation, options = {}]: RetireBrandRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRetireBrandRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRetireBrandRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

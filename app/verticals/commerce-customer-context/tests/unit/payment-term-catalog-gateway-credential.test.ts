@@ -19,7 +19,12 @@ it.effect('fails closed when the server-owned issuance configuration is absent',
   Effect.gen(function* missingConfigurationTest() {
     const issuer = yield* PaymentTermCatalogGatewayCredentialService;
     const failure = yield* issuer
-      .issue({ audience: 'payment-term-catalog', legalEntityId, requestCorrelation })
+      .issue({
+        audience: 'payment-term-catalog',
+        compositionRevision: 'a'.repeat(64),
+        legalEntityId,
+        requestCorrelation,
+      })
       .pipe(Effect.flip);
 
     expect(Schema.is(PaymentTermsDependencyUnavailable)(failure)).toBe(true);
@@ -42,7 +47,12 @@ it.effect('maps denied or mismatched Shell issuance to a sanitized typed depende
       }),
     );
     const failure = yield* issuer
-      .issue({ audience: 'payment-term-catalog', legalEntityId, requestCorrelation })
+      .issue({
+        audience: 'payment-term-catalog',
+        compositionRevision: 'a'.repeat(64),
+        legalEntityId,
+        requestCorrelation,
+      })
       .pipe(Effect.flip);
 
     expect(Schema.is(PaymentTermsDependencyUnavailable)(failure)).toBe(true);
@@ -72,6 +82,8 @@ it.effect('requests a fresh audience and Legal-Entity-bound assertion for every 
       Effect.sync(() => {
         requests.push({ options, payload });
         return {
+          apiBaseUrl: '/owner-api',
+          compositionRevision: payload.compositionRevision,
           expiresAt: 1_700_000_300 + requests.length,
           token: `fresh-assertion-${requests.length}`,
         };
@@ -80,23 +92,49 @@ it.effect('requests a fresh audience and Legal-Entity-bound assertion for every 
 
     const first = yield* issuer.issue({
       audience: 'payment-term-catalog',
+      compositionRevision: 'a'.repeat(64),
       legalEntityId,
       requestCorrelation,
     });
     const second = yield* issuer.issue({
       audience: 'payment-term-catalog',
+      compositionRevision: 'a'.repeat(64),
       legalEntityId,
       requestCorrelation,
     });
 
     expect(requests).toHaveLength(2);
     expect(requests.map(({ payload }) => payload)).toEqual([
-      { audience: 'payment-term-catalog', legalEntityId },
-      { audience: 'payment-term-catalog', legalEntityId },
+      { audience: 'payment-term-catalog', compositionRevision: 'a'.repeat(64), legalEntityId },
+      { audience: 'payment-term-catalog', compositionRevision: 'a'.repeat(64), legalEntityId },
     ]);
     expect(requests.map(({ options }) => options.requestCorrelation)).toEqual([requestCorrelation, requestCorrelation]);
     expect(requests.every(({ options }) => options.apiKey === configuration.apiKey)).toBe(true);
-    expect(Redacted.value(first)).toBe('Bearer fresh-assertion-1');
-    expect(Redacted.value(second)).toBe('Bearer fresh-assertion-2');
+    expect(first.baseUrl.href).toBe('https://shell.example.test/owner-api');
+    expect(second.baseUrl.href).toBe('https://shell.example.test/owner-api');
+    expect(Redacted.value(first.credential)).toBe('Bearer fresh-assertion-1');
+    expect(Redacted.value(second.credential)).toBe('Bearer fresh-assertion-2');
+  }),
+);
+
+it.effect('rejects issuance from a different composition before returning the selected owner connection', () =>
+  Effect.gen(function* mismatchedComposition() {
+    const issuer = makePaymentTermCatalogGatewayCredentialIssuer(configuration, () =>
+      Effect.succeed({
+        apiBaseUrl: '/owner-api',
+        compositionRevision: 'b'.repeat(64),
+        expiresAt: 1_700_000_300,
+        token: 'must-not-be-used',
+      }),
+    );
+    const failure = yield* issuer
+      .issue({
+        audience: 'payment-term-catalog',
+        compositionRevision: 'a'.repeat(64),
+        legalEntityId,
+        requestCorrelation,
+      })
+      .pipe(Effect.flip);
+    expect(Schema.is(PaymentTermsDependencyUnavailable)(failure)).toBe(true);
   }),
 );

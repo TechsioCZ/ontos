@@ -25,7 +25,7 @@ type CurrentSupportedCurrenciesExecutor = (
   payload: CurrentSupportedCurrenciesRequest,
   credential: Redacted.Redacted,
   requestCorrelation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<CurrentSupportedCurrenciesResponse, CurrentSupportedCurrenciesClientFailure>;
 
 const executeAuthorizedCurrentSupportedCurrencies: CurrentSupportedCurrenciesExecutor = (
@@ -91,7 +91,11 @@ const requestPayload = (
 const makePricingPort = (input: {
   readonly execute: CurrentSupportedCurrenciesExecutor;
   readonly issuer: PurchaseCurrencyPricingGatewayCredentialIssuer;
-  readonly requestContext: { readonly legalEntityId: string; readonly requestCorrelation: string };
+  readonly requestContext: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  };
 }): PurchaseCurrencyPricingPortService => ({
   resolveCurrent: (request) =>
     requestPayload(request).pipe(
@@ -99,12 +103,16 @@ const makePricingPort = (input: {
         input.issuer
           .issue({
             audience: 'pricing',
+            compositionRevision: input.requestContext.compositionRevision,
             legalEntityId: input.requestContext.legalEntityId,
             requestCorrelation: input.requestContext.requestCorrelation,
           })
           .pipe(
             Effect.flatMap(({ baseUrl, credential }) =>
-              input.execute(payload, credential, input.requestContext.requestCorrelation, { baseUrl }),
+              input.execute(payload, credential, input.requestContext.requestCorrelation, {
+                baseUrl,
+                compositionRevision: input.requestContext.compositionRevision,
+              }),
             ),
             Effect.mapError((cause) =>
               Schema.is(PurchaseCurrencyDependencyUnavailable)(cause)
@@ -122,7 +130,11 @@ const makePricingPort = (input: {
 });
 
 export const purchaseCurrencyPricingPortFromEnvironment = (
-  requestContext: { readonly legalEntityId: string; readonly requestCorrelation: string },
+  requestContext: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  },
   execute: CurrentSupportedCurrenciesExecutor = executeAuthorizedCurrentSupportedCurrencies,
 ): Effect.Effect<PurchaseCurrencyPricingPortService> =>
   Effect.serviceOption(PurchaseCurrencyPricingGatewayCredentialService).pipe(

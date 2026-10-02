@@ -2,6 +2,7 @@
 import type {
   OperationalScope,
   ReadHandlerContext,
+  ReadServiceFactory,
   ScopedTransactionExecutor,
   TrustedPrincipalContext,
 } from '@app/core-runtime';
@@ -33,6 +34,7 @@ import type {
   CurrentPricingDecisionSubjectAuthorityService,
   CurrentPricingDecisionSubjectAuthorityVerified,
 } from '../services/current-pricing-decision-subject-authority.service.ts';
+import type { PricingExternalOwnerEvidenceValidation } from '../services/external-owner-evidence-validation.service.ts';
 
 const MODULE_KEY = 'commerce.pricing';
 
@@ -214,27 +216,38 @@ export const resolveCurrentPricingDecisionTrustedScope = (
 export const makeCurrentPricingDecisionReadServiceFactory = (
   wholeEvaluationForScope: typeof currentPricingDecisionWholeEvaluationForScope,
   pricingOwnerFinalFenceForScope: typeof pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope = pricingCurrentDecisionPricingOwnerFinalFenceGatewayForScope,
-) =>
+): ReadServiceFactory<
+  CurrentPricingDecisionReadServices,
+  CurrentPricingDecisionEvaluationFactory | PricingExternalOwnerEvidenceValidation
+> =>
   Effect.fn('CurrentPricingDecisionRead.serviceFactory')(function* currentPricingDecisionServiceFactory(
     transaction: ScopedTransactionExecutor,
     scope: OperationalScope,
+    compositionRevision: string | undefined,
   ) {
+    if (compositionRevision === undefined) {
+      return yield* new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Current Pricing Decision requires a captured composition revision',
+      });
+    }
     const trustedScope = yield* resolveCurrentPricingDecisionTrustedScope(scope);
     const verifiedScope = { ...scope, legalEntityId: trustedScope.legalEntityId };
     const [source, pricingOwnerFinalFence, evaluationFactory, subjectAuthorityOption] = yield* Effect.all(
       [
-        wholeEvaluationForScope(transaction, verifiedScope),
-        pricingOwnerFinalFenceForScope(transaction, verifiedScope),
+        wholeEvaluationForScope(transaction, verifiedScope, compositionRevision),
+        pricingOwnerFinalFenceForScope(transaction, verifiedScope, compositionRevision),
         CurrentPricingDecisionEvaluationFactory,
         Effect.serviceOption(CurrentPricingDecisionSubjectAuthority),
       ],
       { concurrency: 4 },
     );
     const subjectAuthority = yield* Option.match(subjectAuthorityOption, {
-      onNone: () => currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment(scope.correlationId),
+      onNone: () =>
+        currentPricingDecisionCustomerContextSubjectAuthorityFromEnvironment(scope.correlationId, compositionRevision),
       onSome: Effect.succeed,
     });
-    const evaluation = evaluationFactory.make(source, pricingOwnerFinalFence);
+    const evaluation = evaluationFactory.make(source, pricingOwnerFinalFence, compositionRevision);
     return {
       evaluate: evaluation.evaluate,
       trustedScope,
@@ -264,6 +277,6 @@ export const currentPricingDecisionRead = defineRead(
     schemaVersion: '1',
   },
   handleCurrentPricingDecision,
-  (transaction, scope) => currentPricingDecisionReadServiceFactory(transaction, scope),
+  currentPricingDecisionReadServiceFactory,
   () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

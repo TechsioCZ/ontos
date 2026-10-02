@@ -11,7 +11,6 @@ import type {
   InventoryReconciliationEvidenceQuery,
   InventoryReconciliationEvidenceRequest,
 } from '../../shared/apis/inventory-reconciliation-evidence.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core invokes this owner-local transaction-scoped persistence factory only after the governed Read scope gate; expires: 2027-03-31.
 import { makeDrizzleCatalogToStockBindingPersistence } from '../persistence/catalog-to-stock-binding-repository.ts';
 import { commitmentProtectionPersistenceForScope } from '../persistence/commitment-protection-repository.ts';
 import { externalStockCorrelationPersistenceForScope } from '../persistence/external-stock-correlation-repository.ts';

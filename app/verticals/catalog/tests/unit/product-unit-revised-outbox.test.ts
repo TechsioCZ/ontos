@@ -1,7 +1,10 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import { ReviseProductUnitPayloadSchema } from '../../shared/actions/revise-product-unit.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/commerce-catalog-product-unit-revised-v1.ts';
@@ -34,14 +37,18 @@ const scope = {
 
 const unexpected = () => Effect.die('Unexpected Product Unit operation');
 
-const makeContext = (revise: ProductUnitPersistence['revise']) => {
-  const events: { readonly eventType: string; readonly payloadJson: unknown; readonly reference: object }[] = [];
-  const outbox: {
-    readonly event: object;
-    readonly message: { readonly payloadJson: unknown; readonly topic: string };
-  }[] = [];
-  const context: ActionHandlerContext<typeof reviseProductUnitAction.descriptor.domainEvents, ProductUnitPersistence> =
-    {
+const makeContext = (revise: ProductUnitPersistence['revise']) =>
+  Effect.gen(function* makeMakeContext() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const events: { readonly eventType: string; readonly payloadJson: unknown; readonly reference: object }[] = [];
+    const outbox: {
+      readonly event: object;
+      readonly message: { readonly payloadJson: unknown; readonly topic: string };
+    }[] = [];
+    const context: ActionHandlerContext<
+      typeof reviseProductUnitAction.descriptor.domainEvents,
+      ProductUnitPersistence
+    > = {
       actionInvocationId: '44444444-4444-4444-8444-444444444444',
       addDomainEvent: (event) =>
         Effect.sync(() => {
@@ -53,18 +60,19 @@ const makeContext = (revise: ProductUnitPersistence['revise']) => {
         Effect.sync(() => {
           outbox.push({ event, message });
         }),
+      compositionRevision: snapshot.composition.revision,
       recordAuditEvidence: () => Effect.void,
       recordDataAccess: () => Effect.void,
       scope,
       services: { create: unexpected, retire: unexpected, revise, setTargetDivisibility: unexpected },
     };
-  return { context, events, outbox };
-};
+    return { context, events, outbox };
+  });
 
 describe('Product Unit committed revision event', () => {
   it.effect('links the message to the exact revised Unit source and resulting revision', () =>
     Effect.gen(function* revised() {
-      const state = makeContext(() =>
+      const state = yield* makeContext(() =>
         Effect.succeed({ _tag: 'revised', ruleRevision: { ...payload.rule, revision: 3, unit }, unit }),
       );
       const result = yield* handleReviseProductUnit(payload, state.context);
@@ -85,12 +93,12 @@ describe('Product Unit committed revision event', () => {
 
   it.effect('emits no committed fact for a rejected or inconsistent revision', () =>
     Effect.gen(function* rejected() {
-      const stale = makeContext(() => Effect.succeed({ _tag: 'stale', actualRevision: 4 }));
+      const stale = yield* makeContext(() => Effect.succeed({ _tag: 'stale', actualRevision: 4 }));
       yield* handleReviseProductUnit(payload, stale.context).pipe(Effect.flip);
       expect(stale.events).toHaveLength(0);
       expect(stale.outbox).toHaveLength(0);
 
-      const inconsistent = makeContext(() =>
+      const inconsistent = yield* makeContext(() =>
         Effect.succeed({ _tag: 'revised', ruleRevision: { ...payload.rule, revision: 2, unit }, unit }),
       );
       yield* handleReviseProductUnit(payload, inconsistent.context).pipe(Effect.flip);

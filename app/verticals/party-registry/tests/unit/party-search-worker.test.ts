@@ -10,6 +10,7 @@ import { definePartySearchWorker } from '../../src/workers/party-search-worker.t
 const context: OutboxWorkerHandlerContext = {
   attemptNumber: 2,
   claimId: 'claim',
+  compositionRevision: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   deliveryId: 'delivery',
   domainEventId: 'event',
   messageId: 'message',
@@ -76,6 +77,10 @@ for (const targetField of ['partyId', 'counterpartyId'] as const) {
           project: (receivedContext, target) => {
             calls += 1;
             assert.equal(receivedContext, context);
+            assert.equal(
+              receivedContext.compositionRevision,
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            );
             assert.deepEqual(target, targetField === 'partyId' ? { partyId: 'target' } : { counterpartyId: 'target' });
             return Effect.fail(failure);
           },

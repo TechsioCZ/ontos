@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface DecisionExplanationClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type DecisionExplanationAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeDecisionExplanation = (
   payload: DecisionExplanationRequest,
   ...[requestCorrelation, options = {}]: DecisionExplanationOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeDecisionExplanationWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeDecisionExplanationWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

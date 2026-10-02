@@ -24,7 +24,7 @@ type QuantityPreparationExecutor = (
   payload: QuantityPreparationRequest,
   credential: Redacted.Redacted,
   requestCorrelation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<QuantityPreparationResponse, QuantityPreparationFailure>;
 
 const executeQuantityPreparation: QuantityPreparationExecutor = (payload, credential, requestCorrelation, options) =>
@@ -66,7 +66,7 @@ const decodeOwnerQuantity = (value: string) =>
 const resolveCurrentSelection = (
   line: CommerceQuantityCatalogLineRequest,
   credential: Redacted.Redacted,
-  context: { readonly requestCorrelation: string },
+  context: { readonly compositionRevision: string; readonly requestCorrelation: string },
   baseUrl: URL,
   execute: QuantityPreparationExecutor,
 ): Effect.Effect<CurrentCommerceQuantityCatalogLine, CommerceQuantityCatalogUnavailable> =>
@@ -78,7 +78,7 @@ const resolveCurrentSelection = (
     },
     credential,
     context.requestCorrelation,
-    { baseUrl },
+    { baseUrl, compositionRevision: context.compositionRevision },
   ).pipe(
     Effect.mapError((cause) =>
       unavailable('catalog_selection_unavailable', 'Catalog Quantity preparation is unavailable', cause),
@@ -115,7 +115,11 @@ const resolveCurrentSelection = (
   );
 
 const makeCatalogQuantityPort = (dependencies: {
-  readonly context: { readonly legalEntityId: string; readonly requestCorrelation: string };
+  readonly context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  };
   readonly execute: QuantityPreparationExecutor;
   readonly issuer: CatalogQuantityGatewayCredentialIssuer;
 }): CommerceQuantityCatalogPortService => ({
@@ -123,6 +127,7 @@ const makeCatalogQuantityPort = (dependencies: {
     dependencies.issuer
       .issue({
         audience: 'catalog',
+        compositionRevision: dependencies.context.compositionRevision,
         legalEntityId: dependencies.context.legalEntityId,
         requestCorrelation: dependencies.context.requestCorrelation,
       })
@@ -142,7 +147,11 @@ const makeCatalogQuantityPort = (dependencies: {
 });
 
 export const catalogQuantityPortFromEnvironment = (
-  context: { readonly legalEntityId: string; readonly requestCorrelation: string },
+  context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  },
   execute: QuantityPreparationExecutor = executeQuantityPreparation,
 ): Effect.Effect<CommerceQuantityCatalogPortService> =>
   Effect.serviceOption(CatalogQuantityGatewayCredentialService).pipe(

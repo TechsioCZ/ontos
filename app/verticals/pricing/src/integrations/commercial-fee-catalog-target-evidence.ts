@@ -17,7 +17,7 @@ type SnapshotExecutor = (
   payload: SnapshotRequest,
   credential: Redacted.Redacted,
   requestCorrelation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<SnapshotResponse, SnapshotFailure>;
 
 export interface CommercialFeeCatalogTargetAssessmentPort {
@@ -78,7 +78,11 @@ const snapshotMatchesEvidence = (
   );
 
 const makePort = (dependencies: {
-  readonly context: { readonly legalEntityId: string; readonly requestCorrelation: string };
+  readonly context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  };
   readonly execute: SnapshotExecutor;
   readonly issuer: CatalogSelectionGatewayCredentialIssuer;
 }): CommercialFeeCatalogTargetAssessmentPort => ({
@@ -86,6 +90,7 @@ const makePort = (dependencies: {
     dependencies.issuer
       .issue({
         audience: 'catalog',
+        compositionRevision: dependencies.context.compositionRevision,
         legalEntityId: dependencies.context.legalEntityId,
         requestCorrelation: dependencies.context.requestCorrelation,
       })
@@ -95,7 +100,7 @@ const makePort = (dependencies: {
             { productRef: evidence.productRef },
             credential,
             dependencies.context.requestCorrelation,
-            { baseUrl },
+            { baseUrl, compositionRevision: dependencies.context.compositionRevision },
           ),
         ),
         Effect.mapError((cause) =>
@@ -108,7 +113,11 @@ const makePort = (dependencies: {
 });
 
 export const commercialFeeCatalogTargetAssessmentPortFromEnvironment = (
-  context: { readonly legalEntityId: string; readonly requestCorrelation: string },
+  context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  },
   execute: SnapshotExecutor = executeSnapshot,
 ): Effect.Effect<CommercialFeeCatalogTargetAssessmentPort> =>
   Effect.serviceOption(CatalogSelectionGatewayCredentialService).pipe(

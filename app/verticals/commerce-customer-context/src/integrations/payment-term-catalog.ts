@@ -32,12 +32,14 @@ type AuthorizedCurrentPaymentTermsExecutor = (
   payload: CurrentPaymentTermsRequest,
   credential: Redacted.Redacted,
   requestCorrelation: string,
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<CurrentPaymentTermsResponse, CurrentPaymentTermsClientError | PaymentTermsDependencyUnavailable>;
 const executeAuthorizedCurrentPaymentTerms: AuthorizedCurrentPaymentTermsExecutor = (
   payload,
   credential,
   requestCorrelation,
-) => executeCurrentPaymentTermsWithAuthorization(payload, Redacted.value(credential), requestCorrelation);
+  options,
+) => executeCurrentPaymentTermsWithAuthorization(payload, Redacted.value(credential), requestCorrelation, options);
 
 const unavailable = (cause: unknown): PaymentTermsDependencyUnavailable => {
   const failure = new PaymentTermsDependencyUnavailable({
@@ -123,6 +125,7 @@ export const paymentTermCatalogPort = (
 
 export const paymentTermCatalogPortFromEnvironment = (
   context: {
+    readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
   },
@@ -142,10 +145,15 @@ export const paymentTermCatalogPortFromEnvironment = (
         issuerOption.value
           .issue({
             audience: 'payment-term-catalog',
+            compositionRevision: context.compositionRevision,
             legalEntityId: context.legalEntityId,
             requestCorrelation: correlation,
           })
-          .pipe(Effect.flatMap((credential) => execute(payload, credential, correlation))),
+          .pipe(
+            Effect.flatMap(({ baseUrl, credential }) =>
+              execute(payload, credential, correlation, { baseUrl, compositionRevision: context.compositionRevision }),
+            ),
+          ),
       );
     }),
   );

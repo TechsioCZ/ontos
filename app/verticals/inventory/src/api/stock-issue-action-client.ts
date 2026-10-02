@@ -11,6 +11,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface StockIssueActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
   readonly [traceIdOption]?: string;
@@ -54,6 +55,11 @@ export const executeStockIssueWithAuthorization = (
 
 export const executeStockIssue = (payload: StockIssuePayload, ...[requestCorrelation, options]: OperationInvocation) =>
   operationGateway.invoke(
-    (credential) => executeStockIssueWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      executeStockIssueWithAuthorization(payload, credential, requestCorrelation, {
+        ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
     options.gateway,
   );

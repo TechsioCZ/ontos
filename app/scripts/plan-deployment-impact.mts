@@ -1177,6 +1177,21 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   'pnpm-lock.yaml',
   'scripts/generate-ontos-module-contract.mts',
   'scripts/generate-ontos-shell-runtime-contract.mts',
+  'scripts/application-release-intent.mts',
+  'scripts/application-composition-authority-publication.mts',
+  'scripts/immutable-application-release.mts',
+  'scripts/immutable-backend-package.mts',
+  'scripts/immutable-shell-release.mts',
+  'scripts/active-application-composition.mts',
+  'scripts/configure-runtime-composition-source.mts',
+  'scripts/initial-composition-cutover-provider.mts',
+  'scripts/initial-composition-cutover.mts',
+  'scripts/observe-application-composition-backend.mts',
+  'scripts/publish-active-application-composition.mts',
+  'scripts/zerops-public-api-error.mts',
+  'scripts/zerops-public-api.mts',
+  'scripts/ops/ops-shell.mts',
+  'scripts/ops/ops-command-error.mts',
   'scripts/scaffolding-runtime.mts',
   'scripts/scaffolding/shared.mts',
   'tsconfig.base.json',
@@ -1195,7 +1210,8 @@ export const CONSERVATIVE_FULL_DEPLOY_PATHS: ReadonlySet<string> = new Set([
   'zerops.yaml',
 ]);
 const isConservativeFullDeployChange = (changedPath: string): boolean =>
-  CONSERVATIVE_FULL_DEPLOY_PATHS.has(changedPath) || changedPath.startsWith('topology/');
+  CONSERVATIVE_FULL_DEPLOY_PATHS.has(changedPath) ||
+  (changedPath.startsWith('topology/') && changedPath !== 'topology/application-release-intent.json');
 
 const toPhase = (unit: TopologyUnit): DeploymentPhase => ({
   id: unit.id,

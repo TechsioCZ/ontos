@@ -1,8 +1,9 @@
-import { Effect, Fiber, Schema } from 'effect';
+import { Deferred, Effect, Fiber, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
+import { ActiveApplicationCompositionUnavailableError } from '../../src/modules/active-application-composition-errors.ts';
 import { defineOutboxWorker } from '../../src/outbox/definition.ts';
 import { PersistenceFailure } from '../../src/database/persistence-failure.ts';
 import { OutboxPollerConfigError } from '../../src/outbox/errors.ts';
@@ -138,6 +139,7 @@ it.effect('runs immediately, survives a typed cycle failure, and continues polli
       });
     const running = yield* runOutboxPollingLoop(
       {
+        admitComposition: Effect.succeed('a'.repeat(64)),
         config: {
           claimOwner: 'consumer:test',
           maxDeliveries: 10,
@@ -158,4 +160,83 @@ it.effect('runs immediately, survives a typed cycle failure, and continues polli
     expect(calls, 'polling loop did not continue').toBe(3);
     expect(healthTransitions).toEqual(['failed', 'ready', 'ready']);
   }).pipe(Effect.scoped),
+);
+
+it.effect('admits every new cycle while preserving the revision already supplied to an earlier cycle', () =>
+  Effect.gen(function* renewedCycleAdmission() {
+    const firstCycle = yield* Deferred.make<null>();
+    const cycleInputs: { readonly compositionRevision: string }[] = [];
+    let admissions = 0;
+    let activeRevision = 'a'.repeat(64);
+    const runCycle: OutboxCycleRunner<typeof registration, never> = (input) =>
+      Effect.sync(() => {
+        cycleInputs.push(input);
+        return emptyResult;
+      }).pipe(Effect.tap(() => Deferred.succeed(firstCycle, null)));
+    const running = yield* runOutboxPollingLoop(
+      {
+        admitComposition: Effect.sync(() => {
+          admissions += 1;
+          return activeRevision;
+        }),
+        config: { claimOwner: 'consumer:test', maxDeliveries: 10, pollIntervalMs: 10 },
+        registrations: [registration],
+        subscriptions: [registration.descriptor],
+      },
+      runCycle,
+    ).pipe(Effect.forkChild);
+
+    yield* Deferred.await(firstCycle);
+    activeRevision = 'b'.repeat(64);
+    yield* TestClock.adjust('20 millis');
+    yield* Fiber.interrupt(running);
+
+    expect(admissions).toBe(3);
+    expect(cycleInputs.map(({ compositionRevision }) => compositionRevision)).toEqual([
+      'a'.repeat(64),
+      'b'.repeat(64),
+      'b'.repeat(64),
+    ]);
+  }),
+);
+
+it.effect('does not claim during unavailable admission and marks the next admitted cycle healthy', () =>
+  Effect.gen(function* noClaimBeforeAdmission() {
+    let admissions = 0;
+    let cycles = 0;
+    const healthTransitions: string[] = [];
+    const runCycle: OutboxCycleRunner<typeof registration, never> = ({ compositionRevision }) =>
+      Effect.sync(() => {
+        expect(compositionRevision).toBe('a'.repeat(64));
+        cycles += 1;
+        return emptyResult;
+      });
+    const running = yield* runOutboxPollingLoop(
+      {
+        admitComposition: Effect.suspend(() => {
+          admissions += 1;
+          return admissions === 1
+            ? Effect.fail(
+                new ActiveApplicationCompositionUnavailableError({ reason: 'controlled unavailable authority' }),
+              )
+            : Effect.succeed('a'.repeat(64));
+        }),
+        config: { claimOwner: 'consumer:test', maxDeliveries: 10, pollIntervalMs: 10 },
+        health: {
+          cycleFailed: Effect.sync(() => healthTransitions.push('failed')),
+          cycleSucceeded: Effect.sync(() => healthTransitions.push('ready')),
+        },
+        registrations: [registration],
+        subscriptions: [registration.descriptor],
+      },
+      runCycle,
+    ).pipe(Effect.forkChild);
+
+    yield* TestClock.adjust('20 millis');
+    yield* Fiber.interrupt(running);
+
+    expect(admissions).toBe(3);
+    expect(cycles).toBe(2);
+    expect(healthTransitions).toEqual(['failed', 'ready', 'ready']);
+  }),
 );

@@ -84,6 +84,7 @@ export const currencySupportResultLookupRead = defineRead(
         result,
       })),
     ),
-  (transaction, scope) => currencySupportResultLookupPersistenceForScope(transaction, scope),
+  (transaction, scope, compositionRevision) =>
+    currencySupportResultLookupPersistenceForScope(transaction, scope, compositionRevision),
   () => ({ kind: 'module', moduleId: MODULE_KEY }),
 );

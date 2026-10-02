@@ -13,6 +13,7 @@ export interface CommercialContextGatewayConnection {
 export interface CommercialContextGatewayCredentialIssuer {
   readonly issue: (input: {
     readonly audience: 'commerce-market-catalog';
+    readonly compositionRevision: string;
     readonly legalEntityId: string;
     readonly requestCorrelation: string;
   }) => Effect.Effect<CommercialContextGatewayConnection, PricingCommercialContextUnavailable>;

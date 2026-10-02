@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CurrentSupportedCurrenciesClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CurrentSupportedCurrenciesAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCurrentSupportedCurrencies = (
   payload: CurrentSupportedCurrenciesRequest,
   ...[requestCorrelation, options = {}]: CurrentSupportedCurrenciesOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCurrentSupportedCurrenciesWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCurrentSupportedCurrenciesWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

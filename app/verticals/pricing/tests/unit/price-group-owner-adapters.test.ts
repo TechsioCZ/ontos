@@ -14,6 +14,8 @@ import { PriceGroupCompatibilityGatewayCredentialService } from '../../shared/do
 import { commercePriceGroupResolutionPortFromEnvironment } from '../../src/integrations/commerce-price-group-resolution.ts';
 import { priceGroupCompatibilityPortFromEnvironment } from '../../src/integrations/price-group-compatibility.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const otherTenantId = '10000000-0000-4000-8000-000000000099';
 const legalEntityId = '20000000-0000-4000-8000-000000000001';
@@ -98,22 +100,38 @@ describe('Price Group interpretation owner adapters', () => {
   it.effect('sends the exact customer profile request and preserves the complete Commerce owner decision', () =>
     Effect.gen(function* exactCommerceResolution() {
       const calls: unknown[] = [];
+      const issued: unknown[] = [];
       const port = yield* commercePriceGroupResolutionPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'commerce-resolution-test', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'commerce-resolution-test', tenantId },
         (payload, credential, correlation, options) => {
           calls.push({ correlation, credential: Redacted.value(credential), options, payload });
           return Effect.succeed(assignmentResponse);
         },
+      ).pipe(
+        Effect.provideService(CommercePriceGroupResolutionGatewayCredentialService, {
+          issue: (input) => {
+            issued.push(input);
+            return commerceOwnerCredential.issue();
+          },
+        }),
       );
 
       const result = yield* port.resolve({ request: assignmentRequest, sellingLegalEntityId: legalEntityId });
 
       expect(result).toEqual(assignmentResponse);
+      expect(issued).toEqual([
+        {
+          audience: 'commerce-customer-context',
+          compositionRevision,
+          legalEntityId,
+          requestCorrelation: 'commerce-resolution-test',
+        },
+      ]);
       expect(calls).toEqual([
         {
           correlation: 'commerce-resolution-test',
           credential: 'Bearer commerce-owner-issued',
-          options: { baseUrl: new URL('https://commerce-customer.example.test') },
+          options: { baseUrl: new URL('https://commerce-customer.example.test'), compositionRevision },
           payload: assignmentRequest,
         },
       ]);
@@ -127,7 +145,7 @@ describe('Price Group interpretation owner adapters', () => {
     Effect.gen(function* rejectUnverifiableCommerceEvidence() {
       let executions = 0;
       const port = yield* commercePriceGroupResolutionPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'commerce-resolution-test', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'commerce-resolution-test', tenantId },
         () => {
           executions += 1;
           return Effect.succeed(
@@ -174,7 +192,7 @@ describe('Price Group interpretation owner adapters', () => {
     };
     return Effect.gen(function* rejectSellingLegalEntityMismatch() {
       const port = yield* commercePriceGroupResolutionPortFromEnvironment(
-        { legalEntityId, requestCorrelation: 'commerce-resolution-test', tenantId },
+        { compositionRevision, legalEntityId, requestCorrelation: 'commerce-resolution-test', tenantId },
         () => {
           executions += 1;
           return Effect.succeed(assignmentResponse);
@@ -197,7 +215,7 @@ describe('Price Group interpretation owner adapters', () => {
     Effect.gen(function* exactCompatibility() {
       const calls: unknown[] = [];
       const port = yield* priceGroupCompatibilityPortFromEnvironment(
-        { requestCorrelation: 'compatibility-test', tenantId },
+        { compositionRevision, requestCorrelation: 'compatibility-test', tenantId },
         (payload, credential, correlation, options) => {
           calls.push({ correlation, credential: Redacted.value(credential), options, payload });
           return Effect.succeed(compatibilityDecision);
@@ -211,7 +229,7 @@ describe('Price Group interpretation owner adapters', () => {
         {
           correlation: 'compatibility-test',
           credential: 'Bearer price-group-owner-issued',
-          options: { baseUrl: new URL('https://price-groups.example.test') },
+          options: { baseUrl: new URL('https://price-groups.example.test'), compositionRevision },
           payload: compatibilityRequest,
         },
       ]);
@@ -224,7 +242,7 @@ describe('Price Group interpretation owner adapters', () => {
   it.effect('fails closed when Price Group Catalog evidence is bound to another Group or operation time', () =>
     Effect.gen(function* rejectUnverifiableCompatibilityEvidence() {
       const port = yield* priceGroupCompatibilityPortFromEnvironment(
-        { requestCorrelation: 'compatibility-test', tenantId },
+        { compositionRevision, requestCorrelation: 'compatibility-test', tenantId },
         () =>
           Effect.succeed({
             evidence: {

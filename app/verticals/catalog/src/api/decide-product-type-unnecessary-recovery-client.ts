@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface DecideProductTypeUnnecessaryRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type DecideProductTypeUnnecessaryRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeDecideProductTypeUnnecessaryRecovery = (
   payload: DecideProductTypeUnnecessaryRecoveryRequest,
   ...[requestCorrelation, options = {}]: DecideProductTypeUnnecessaryRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeDecideProductTypeUnnecessaryRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeDecideProductTypeUnnecessaryRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

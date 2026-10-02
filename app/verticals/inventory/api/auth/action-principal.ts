@@ -2,15 +2,32 @@
 // @ontos-action-boundary-owner inventory
 // @ontos-action-boundary-audience inventory
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
+import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
-import { bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
-import { Effect } from 'effect';
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
+import { GatewayPrincipalVerifierLive, bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
+import { Effect, Layer } from 'effect';
 import type { Redacted } from 'effect';
 
-const ACTION_GATEWAY_AUDIENCE = 'inventory' as const;
-export { GatewayPrincipalVerifierLive as ActionPrincipalVerifierLive } from '@app/gateway-principal-verifier/server';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
-const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE);
+const ACTION_GATEWAY_AUDIENCE = 'inventory' as const;
+type ActionPrincipalVerifierLayers =
+  | typeof GatewayPrincipalVerifierLive
+  | typeof ActiveApplicationCompositionConfigLive
+  | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>;
+
+export const ActionPrincipalVerifierLive: Layer.Layer<
+  Layer.Success<ActionPrincipalVerifierLayers>,
+  Layer.Error<ActionPrincipalVerifierLayers>,
+  Layer.Services<ActionPrincipalVerifierLayers>
+> = Layer.mergeAll(
+  GatewayPrincipalVerifierLive,
+  ActiveApplicationCompositionConfigLive,
+  staffAuthenticationNamespaceRegistryLayer([ACTION_GATEWAY_AUDIENCE]),
+);
+
+const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE, ultramodernApiMarker);
 
 const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
   GatewayAssertionRedemptionService.pipe(

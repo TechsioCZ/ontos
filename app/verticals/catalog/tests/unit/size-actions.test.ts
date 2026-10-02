@@ -1,6 +1,8 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { describe, expect, it } from 'effect-rstest';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { Effect, Schema } from 'effect';
 import {
   getActionDecodedSuccessHook,
@@ -42,13 +44,14 @@ const scope = {
   correlationId: 'size-action-test',
 };
 const unexpected = () => Effect.die('Unexpected persistence call');
-const context = (overrides: Partial<SizeUsagePersistence> = {}) => {
+const context = (compositionRevision: string, overrides: Partial<SizeUsagePersistence> = {}) => {
   const audits: unknown[] = [];
   const accesses: unknown[] = [];
   const handler: ActionHandlerContext<Readonly<Record<string, never>>, SizeUsagePersistence> = {
     actionInvocationId: '77777777-7777-4777-8777-777777777777',
     addDomainEvent: () => Effect.succeed(Object.create(null)),
     addOutboxMessage: () => Effect.void,
+    compositionRevision,
     recordAuditEvidence: (value) =>
       Effect.sync(() => {
         audits.push(value);
@@ -166,13 +169,17 @@ describe('governed Size Actions', () => {
   );
   it.effect('preserves local order and revision CAS with trusted actor and evidence', () =>
     Effect.gen(function* replaceSizes() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const payload = Schema.decodeUnknownSync(ReplaceProductSizesPayloadSchema)({
         evidenceRefs: ['catalog-range-2026'],
         expectedRevision: 2,
         list: { orderedSizeRefs: [size42, sizeM], productRef },
         reason: 'Product range confirmed',
       });
-      const { accesses, audits, handler } = context({
+      const { accesses, audits, handler } = context(compositionSnapshot.composition.revision, {
         replace: (input) =>
           Effect.sync(() => {
             expect(input.actionInvocationId).toBe(handler.actionInvocationId);
@@ -193,6 +200,10 @@ describe('governed Size Actions', () => {
 
   it.effect('passes only evidenced scoped assertions through persistence', () =>
     Effect.gen(function* assertEquivalence() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const payload = Schema.decodeUnknownSync(AssertSizeEquivalencePayloadSchema)({
         assertion: {
           evidence: 'manufacturer-chart-2026',
@@ -202,7 +213,7 @@ describe('governed Size Actions', () => {
         },
         reason: 'Manufacturer chart reviewed',
       });
-      const { audits, handler } = context({
+      const { audits, handler } = context(compositionSnapshot.composition.revision, {
         assertEquivalence: (input) =>
           Effect.sync(() => {
             expect(input.actionInvocationId).toBe(handler.actionInvocationId);
@@ -220,6 +231,10 @@ describe('governed Size Actions', () => {
 
   it.effect('rejects cross-tenant references before persistence and preserves typed CAS failures', () =>
     Effect.gen(function* rejectInvalidSizes() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const foreign = Schema.decodeUnknownSync(ReplaceProductSizesPayloadSchema)({
         evidenceRefs: [],
         expectedRevision: 0,
@@ -229,7 +244,10 @@ describe('governed Size Actions', () => {
         },
         reason: 'Range reviewed',
       });
-      const invalid = yield* handleReplaceProductSizes(foreign, context().handler).pipe(Effect.flip);
+      const invalid = yield* handleReplaceProductSizes(
+        foreign,
+        context(compositionSnapshot.composition.revision).handler,
+      ).pipe(Effect.flip);
       expect(invalid).toMatchObject({ conflict: 'INVALID_INPUT' });
       const valid = Schema.decodeUnknownSync(ReplaceProductSizesPayloadSchema)({
         evidenceRefs: [],
@@ -239,7 +257,7 @@ describe('governed Size Actions', () => {
       });
       const stale = yield* handleReplaceProductSizes(
         valid,
-        context({
+        context(compositionSnapshot.composition.revision, {
           replace: () =>
             Effect.fail(
               new SizePersistenceConflict({

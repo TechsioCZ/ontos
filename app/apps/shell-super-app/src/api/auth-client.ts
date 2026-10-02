@@ -44,6 +44,8 @@ import type {
   ShellAuthenticationRequiredProblem,
   ShellCapabilityUnavailableProblem,
   ShellComposition,
+  ShellCompositionRequest,
+  ShellReloadRequiredProblem,
   ShellInternalProblem,
   IdentityProblem,
   ApiKeyIssueResponse,
@@ -65,7 +67,7 @@ import type {
   ShellSelectionRequiredProblem,
   ShellTargetForbiddenProblem,
   ShellTargetNotFoundProblem,
-  ResourceRef,
+  ShellResourceRequest,
   ShellResourceResponse,
   ShellSearchPayload,
   ShellSearchResponse,
@@ -125,6 +127,7 @@ export type SwitchLegalEntityClientError = AvailableTenantsClientError | LegalEn
 export type SwitchLegalEntityClientEffect = Effect.Effect<SwitchLegalEntityResponse, SwitchLegalEntityClientError>;
 
 export type ShellCompositionClientError =
+  | ShellReloadRequiredProblem
   | HttpClientError.HttpClientError
   | Schema.SchemaError
   | IdentityProblem
@@ -217,9 +220,10 @@ export const switchLegalEntity = (
   invokeShellAuthenticationClient(options, (client) => client.legalEntities.switchLegalEntity({ payload }));
 
 export const shellComposition = (
+  payload: ShellCompositionRequest,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ShellComposition, ShellCompositionClientError> =>
-  invokeShellAuthenticationClient(options, (client) => client.composition.shellComposition({}));
+  invokeShellAuthenticationClient(options, (client) => client.composition.shellComposition({ query: payload }));
 
 export const resolveModuleTarget = (
   payload: ResolveModuleTargetPayload,
@@ -234,13 +238,13 @@ export const searchResources = (
   invokeShellAuthenticationClient(options, (client) => client.resources.search({ payload }));
 
 export const resourceDetail = (
-  payload: ResourceRef,
+  payload: ShellResourceRequest,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<ShellResourceResponse, ShellResourceClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.resources.resourceDetail({ payload }));
 
 export const attachResourceMedia = (
-  payload: ResourceRef,
+  payload: ShellResourceRequest,
   options: ShellAuthenticationClientOptions = {},
 ): Effect.Effect<MediaAttachmentResponse, ShellResourceClientError> =>
   invokeShellAuthenticationClient(options, (client) => client.resources.attachMedia({ payload }));

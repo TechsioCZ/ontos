@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ManufacturerRelationHistoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ManufacturerRelationHistoryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeManufacturerRelationHistory = (
   payload: ManufacturerRelationHistoryRequest,
   ...[requestCorrelation, options = {}]: ManufacturerRelationHistoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeManufacturerRelationHistoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeManufacturerRelationHistoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -40,7 +40,7 @@ import {
   provideExternalIdentityHttpWorkload,
 } from '../../api/auth/external-identity/request-context.ts';
 import type { ExternalIdentityHttpWorkloadContextValue } from '../../api/auth/external-identity/request-context.ts';
-import { GatewayIssuer } from '../../api/auth/gateway-issuer.ts';
+import { GatewayIssuer, GatewayIssuerError } from '../../api/auth/gateway-issuer.ts';
 import { FetchHttpClient } from 'effect/unstable/http';
 
 type CommercePortalAuthVerificationClientPort = CommercePortalAuthVerificationClient['Service'];
@@ -61,6 +61,7 @@ const providerSubjectId = 'commerce-user-01';
 const sessionRef = `better-auth-session:${COMMERCE_AUTHENTICATION_NAMESPACE_ID}:session-01`;
 const providerEndpointAudience = 'commerce-customer-context';
 const gatewayAudience = 'party-registry';
+const compositionRevision = 'a'.repeat(64);
 const now = DateTime.makeUnsafe('2026-09-17T09:00:00.000Z');
 const nowMillis = DateTime.toEpochMillis(now);
 const fixedClock: Clock.Clock = {
@@ -116,6 +117,7 @@ const makeContext = (overrides: Partial<ExternalIdentityHttpWorkloadContextValue
     bindingRevision: 7,
     principalId: boundPrincipalId,
   },
+  compositionRevision,
   operation: 'gateway-context' as const,
   principal: workloadPrincipal,
   providerSubjectId,
@@ -170,7 +172,7 @@ it.effect('registers Commerce audiences from the explicit provider and gateway g
 it.effect('mints a fresh Commerce audience assertion for every exact workload call', () =>
   Effect.gen(function* freshWorkloadAssertion() {
     const authorizationCalls: { operation: string; targetAudience?: string }[] = [];
-    const issueCalls: { audience: string; principal: unknown }[] = [];
+    const issueCalls: { audience: string; compositionRevision: string; principal: unknown }[] = [];
     const authorization: ExternalIdentityWorkloadAuthorizationService = {
       authenticate: () => Effect.succeed(workloadPrincipal),
       authorize: () => Effect.succeed(workloadPrincipal),
@@ -180,9 +182,15 @@ it.effect('mints a fresh Commerce audience assertion for every exact workload ca
       },
     };
     const issuer: GatewayIssuer['Service'] = {
-      issue: <Principal>({ audience, principal }: { audience: string; principal: Principal }) => {
-        issueCalls.push({ audience, principal });
-        return Effect.succeed({ expiresAt: 300, token: `commerce-workload-token-${issueCalls.length}` });
+      issue: ({ audience, compositionRevision: revision, principal }) => {
+        issueCalls.push({ audience, compositionRevision: revision, principal });
+        return Effect.succeed({
+          apiBaseUrl:
+            '/shell-super-app-api/module-api/commerce-customer-context/test-build/commerce-customer-context-api',
+          compositionRevision: revision,
+          expiresAt: 300,
+          token: `commerce-workload-token-${issueCalls.length}`,
+        });
       },
     };
     const request = makeProviderRequest();
@@ -217,8 +225,16 @@ it.effect('mints a fresh Commerce audience assertion for every exact workload ca
       },
     ]);
     expect(issueCalls).toHaveLength(2);
-    expect(issueCalls[0]).toEqual({ audience: providerEndpointAudience, principal: workloadPrincipal });
-    expect(issueCalls[1]).toEqual({ audience: providerEndpointAudience, principal: workloadPrincipal });
+    expect(issueCalls[0]).toEqual({
+      audience: providerEndpointAudience,
+      compositionRevision,
+      principal: workloadPrincipal,
+    });
+    expect(issueCalls[1]).toEqual({
+      audience: providerEndpointAudience,
+      compositionRevision,
+      principal: workloadPrincipal,
+    });
   }),
 );
 
@@ -230,16 +246,22 @@ it.effect('mints a fresh Commerce audience assertion for every exact workload ca
  */
 it.effect('admits a gateway-context assertion audienced for the Commerce verification endpoint', () =>
   Effect.gen(function* gatewayContextAssertionAudience() {
-    const issueCalls: { audience: string; principal: unknown }[] = [];
+    const issueCalls: { audience: string; compositionRevision: string; principal: unknown }[] = [];
     const authorization: ExternalIdentityWorkloadAuthorizationService = {
       authenticate: () => Effect.succeed(workloadPrincipal),
       authorize: () => Effect.succeed(workloadPrincipal),
       authorizePrincipal: (principal) => Effect.succeed(principal),
     };
     const issuer: GatewayIssuer['Service'] = {
-      issue: <Principal>({ audience, principal }: { audience: string; principal: Principal }) => {
-        issueCalls.push({ audience, principal });
-        return Effect.succeed({ expiresAt: 300, token: `commerce-gateway-token-${issueCalls.length}` });
+      issue: ({ audience, compositionRevision: revision, principal }) => {
+        issueCalls.push({ audience, compositionRevision: revision, principal });
+        return Effect.succeed({
+          apiBaseUrl:
+            '/shell-super-app-api/module-api/commerce-customer-context/test-build/commerce-customer-context-api',
+          compositionRevision: revision,
+          expiresAt: 300,
+          token: `commerce-gateway-token-${issueCalls.length}`,
+        });
       },
     };
     const acquireFor = (request: CommercePortalAuthVerificationRequest) =>
@@ -256,7 +278,9 @@ it.effect('admits a gateway-context assertion audienced for the Commerce verific
 
     const admitted = yield* acquireFor(makeProviderRequest(providerEndpointAudience));
     expect(Redacted.value(admitted)).toBe('Bearer commerce-gateway-token-1');
-    expect(issueCalls).toEqual([{ audience: providerEndpointAudience, principal: workloadPrincipal }]);
+    expect(issueCalls).toEqual([
+      { audience: providerEndpointAudience, compositionRevision, principal: workloadPrincipal },
+    ]);
 
     // An assertion minted for any other audience is still refused: the guard is a real check.
     const refused = yield* Effect.result(acquireFor(makeProviderRequest(gatewayAudience)));
@@ -265,6 +289,46 @@ it.effect('admits a gateway-context assertion audienced for the Commerce verific
       expect(refused.failure.reason).toBe('The external identity receiving audience changed during admission');
     }
     expect(issueCalls).toHaveLength(1);
+  }),
+);
+
+it.effect('refuses a Commerce workload assertion when its captured composition revision is no longer approved', () =>
+  Effect.gen(function* staleCompositionAssertion() {
+    const staleRevision = 'b'.repeat(64);
+    const issueRevisions: string[] = [];
+    const authorization: ExternalIdentityWorkloadAuthorizationService = {
+      authenticate: () => Effect.succeed(workloadPrincipal),
+      authorize: () => Effect.succeed(workloadPrincipal),
+      authorizePrincipal: (principal) => Effect.succeed(principal),
+    };
+    const issuer: GatewayIssuer['Service'] = {
+      issue: (input) => {
+        issueRevisions.push(input.compositionRevision);
+        return Effect.fail(
+          new GatewayIssuerError({
+            code: 'gateway_revision_unsupported',
+            reason: 'The requested composition revision is no longer approved',
+            stage: 'audience',
+          }),
+        );
+      },
+    };
+    const result = yield* Effect.gen(function* acquireStaleAssertion() {
+      const assertion = yield* CommercePortalAuthVerificationWorkloadAssertion;
+      return yield* assertion.acquire({ request: makeProviderRequest(), requestCorrelation: 'correlation-stale' });
+    }).pipe(
+      Effect.provide(makeCommerceExternalIdentityWorkloadAssertionLayer(configuration)),
+      Effect.provideService(ExternalIdentityWorkloadAuthorization, authorization),
+      Effect.provideService(GatewayIssuer, issuer),
+      Effect.provideService(ExternalIdentityHttpWorkloadContext, makeContext({ compositionRevision: staleRevision })),
+      Effect.result,
+    );
+
+    expect(issueRevisions).toEqual([staleRevision]);
+    expect(Result.isFailure(result)).toBe(true);
+    if (Result.isFailure(result)) {
+      expect(result.failure.reason).toBe('The Shell workload is not authorized to call Commerce verification');
+    }
   }),
 );
 
@@ -297,6 +361,7 @@ it.effect('projects an ALLOWED Commerce response into a binding revision bound t
           bindingRevision: 7,
           principalId: boundPrincipalId,
         },
+        compositionRevision,
         operation: 'resolve',
         principal: workloadPrincipal,
         providerSubjectId,
@@ -371,10 +436,17 @@ it.effect('routes the production deployment client to the Commerce API prefix', 
       },
     };
     const issuer: GatewayIssuer['Service'] = {
-      issue: <Principal>({ audience, principal }: { audience: string; principal: Principal }) => {
+      issue: ({ audience, compositionRevision: revision, principal }) => {
         expect(audience).toBe(providerEndpointAudience);
+        expect(revision).toBe(compositionRevision);
         expect(principal).toBe(workloadPrincipal);
-        return Effect.succeed({ expiresAt: nowMillis + 30_000, token: 'commerce-workload-token' });
+        return Effect.succeed({
+          apiBaseUrl:
+            '/shell-super-app-api/module-api/commerce-customer-context/test-build/commerce-customer-context-api',
+          compositionRevision: revision,
+          expiresAt: nowMillis + 30_000,
+          token: 'commerce-workload-token',
+        });
       },
     };
     const fakeFetch: typeof fetch = async (input, init) => {
@@ -402,6 +474,7 @@ it.effect('routes the production deployment client to the Commerce API prefix', 
       return yield* provideExternalIdentityHttpWorkload(
         {
           authenticationRef: sessionRef,
+          compositionRevision,
           operation: 'reserve',
           principal: workloadPrincipal,
           providerSubjectId,

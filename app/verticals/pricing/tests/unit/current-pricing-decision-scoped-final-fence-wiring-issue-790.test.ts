@@ -43,6 +43,7 @@ describe('Current Pricing Decision scoped final fence wiring (#790)', () => {
       let observedTransaction: unknown;
       let observedScope: OperationalScope | undefined;
       let observedGateway: PricingOwnerMaterialEvidenceFenceGateway | undefined;
+      let observedRevision: string | undefined;
       let publishedSource: CurrentPricingDecisionWholeEvaluationPort | undefined;
       const serviceFactory = makeCurrentPricingDecisionReadServiceFactory(
         () => Effect.succeed(source),
@@ -53,9 +54,10 @@ describe('Current Pricing Decision scoped final fence wiring (#790)', () => {
         },
       );
 
-      yield* serviceFactory(transaction, scope).pipe(
+      yield* serviceFactory(transaction, scope, 'revision:790').pipe(
         Effect.provideService(CurrentPricingDecisionEvaluationFactory, {
-          make: (candidateSource, candidateGateway) => {
+          make: (candidateSource, candidateGateway, revision) => {
+            observedRevision = revision;
             publishedSource = candidateSource;
             observedGateway = candidateGateway;
             return { evaluate: () => Effect.die('This test stops before evaluation') };
@@ -70,6 +72,7 @@ describe('Current Pricing Decision scoped final fence wiring (#790)', () => {
       expect(observedScope).toEqual(scope);
       expect(observedGateway).toBe(gateway);
       expect(publishedSource).toBe(source);
+      expect(observedRevision).toBe('revision:790');
     }).pipe(
       Effect.provideService(
         PricingExternalOwnerEvidenceValidation,

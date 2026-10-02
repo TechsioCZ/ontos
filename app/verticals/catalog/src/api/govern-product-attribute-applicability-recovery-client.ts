@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface GovernProductAttributeApplicabilityRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type GovernProductAttributeApplicabilityRecoveryAuthorizedInvocation = readonly [
@@ -47,11 +48,10 @@ export const executeGovernProductAttributeApplicabilityRecovery = (
   payload: GovernProductAttributeApplicabilityRecoveryRequest,
   ...[requestCorrelation, options = {}]: GovernProductAttributeApplicabilityRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeGovernProductAttributeApplicabilityRecoveryWithAuthorization(
-      payload,
-      credential,
-      requestCorrelation,
-      options,
-    ),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeGovernProductAttributeApplicabilityRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

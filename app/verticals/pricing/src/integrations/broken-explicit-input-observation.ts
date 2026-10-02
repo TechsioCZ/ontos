@@ -191,8 +191,9 @@ export const makeBrokenExplicitInputObservationPort = (
 export const brokenExplicitInputObservationPortForScope: ReadServiceFactory<BrokenExplicitInputObservationPort> = (
   transaction,
   scope,
+  compositionRevision,
 ) =>
-  currencySupportPersistenceForScope(transaction, scope).pipe(
+  currencySupportPersistenceForScope(transaction, scope, compositionRevision).pipe(
     Effect.map((currencySupport) =>
       makeBrokenExplicitInputObservationPort({ loadCurrencySupport: currencySupport.loadCurrent }),
     ),

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface GovernVariantAllowedValuesRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type GovernVariantAllowedValuesRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeGovernVariantAllowedValuesRecovery = (
   payload: GovernVariantAllowedValuesRecoveryRequest,
   ...[requestCorrelation, options = {}]: GovernVariantAllowedValuesRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeGovernVariantAllowedValuesRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeGovernVariantAllowedValuesRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

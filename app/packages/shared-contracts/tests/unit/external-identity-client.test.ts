@@ -26,7 +26,7 @@ import {
   reservePrincipalBinding,
   externalIdentityTransportLayer,
 } from '../../src/external-identity-client.ts';
-import { GatewayContextResponseSchema } from '../../src/gateway-context.ts';
+import { GatewayContextResponseSchema, GatewayReloadRequiredProblemSchema } from '../../src/gateway-context.ts';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { Context, Effect, Layer, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
@@ -43,6 +43,7 @@ const decode = <S extends Schema.ConstraintDecoder<unknown>>(schema: S, input: S
 
 const reserveRequest = decode(ReservePrincipalBindingRequestSchema, {
   authenticationRef: 'commerce-admission-reference-1',
+  compositionRevision: 'a'.repeat(64),
   reservation: {
     authenticationNamespaceId: 'commerce-customer',
     displayName: 'Ada Lovelace',
@@ -63,6 +64,7 @@ const activateRequest = decode(ActivatePrincipalBindingRequestSchema, {
     expectedRevision: reserveResult.bindingRevision,
   },
   authenticationRef: 'commerce-admission-reference-2',
+  compositionRevision: 'a'.repeat(64),
 });
 const activateResult = decode(ActivatePrincipalBindingResultSchema, {
   authBindingId: reserveResult.authBindingId,
@@ -79,6 +81,7 @@ const statusRequest = decode(ChangePrincipalBindingStatusRequestSchema, {
     reason: 'Administrative test transition',
     requestedStatus: 'disabled',
   },
+  compositionRevision: 'a'.repeat(64),
 });
 const statusResult = decode(ChangePrincipalBindingStatusResultSchema, {
   authBindingId: reserveResult.authBindingId,
@@ -106,6 +109,7 @@ const readResult = decode(ReadPrincipalBindingResultSchema, {
 const resolveRequest = decode(ResolveExternalSubjectRequestSchema, {
   authenticationNamespaceId: reserveRequest.reservation.authenticationNamespaceId,
   authenticationRef: 'commerce-admission-reference-4',
+  compositionRevision: 'a'.repeat(64),
   providerSubjectId: reserveRequest.reservation.providerSubjectId,
   subjectType: reserveRequest.reservation.subjectType,
 });
@@ -122,10 +126,13 @@ const gatewayRequest = decode(ExternalGatewayContextRequestSchema, {
   audience: 'commerce-customer-context',
   authenticationNamespaceId: resolveRequest.authenticationNamespaceId,
   authenticationRef: 'commerce-admission-reference-5',
+  compositionRevision: 'a'.repeat(64),
   providerSubjectId: resolveRequest.providerSubjectId,
   subjectType: resolveRequest.subjectType,
 });
 const gatewayResult = decode(GatewayContextResponseSchema, {
+  apiBaseUrl: '/shell-super-app-api/module-api/commerce-customer-context/build-1/commerce-customer-context-api',
+  compositionRevision: 'a'.repeat(64),
   expiresAt: 1_700_000_300,
   token: 'fresh-gateway-context-token',
 });
@@ -232,6 +239,22 @@ it.live('uses the real neutral HTTP fixture for all six typed operations', () =>
       idempotencyKey,
     ]);
     expect(requests.slice(3).every((request) => request.headers.get('idempotency-key') === null)).toBe(true);
+    expect(requests.map((request) => request.headers.get('x-ontos-composition-revision'))).toEqual([
+      reserveRequest.compositionRevision,
+      activateRequest.compositionRevision,
+      statusRequest.compositionRevision,
+      null,
+      resolveRequest.compositionRevision,
+      gatewayRequest.compositionRevision,
+    ]);
+    expect(yield* Effect.promise(() => requests.at(5)?.clone().json() ?? Promise.resolve())).toEqual({
+      audience: gatewayRequest.audience,
+      authenticationNamespaceId: gatewayRequest.authenticationNamespaceId,
+      authenticationRef: gatewayRequest.authenticationRef,
+      compositionRevision: gatewayRequest.compositionRevision,
+      providerSubjectId: gatewayRequest.providerSubjectId,
+      subjectType: gatewayRequest.subjectType,
+    });
 
     const reserveRequestSent = requests.at(0);
     expect(reserveRequestSent).toBeDefined();
@@ -241,6 +264,7 @@ it.live('uses the real neutral HTTP fixture for all six typed operations', () =>
     const reserveWire = yield* Effect.promise(() => reserveRequestSent.clone().json());
     expect(reserveWire).toEqual({
       authenticationRef: reserveRequest.authenticationRef,
+      compositionRevision: reserveRequest.compositionRevision,
       reservation: {
         authenticationNamespaceId: reserveRequest.reservation.authenticationNamespaceId,
         displayName: reserveRequest.reservation.displayName,
@@ -287,6 +311,33 @@ it.live('isolates explicit per-call transport options from missing or conflictin
       expect(request.headers.get('authorization')).toBeNull();
       expect(request.headers.get('cookie')).toBeNull();
     }
+  }),
+);
+
+it.live('preserves a stale-composition reload failure without retrying external gateway issuance', () =>
+  Effect.gen(function* externalGatewayReloadRequiredScenario() {
+    const reloadRequired = GatewayReloadRequiredProblemSchema.make({
+      detail: 'Reload to select the approved composition.',
+      reloadRequired: true,
+      status: 409,
+      title: 'Gateway reload required',
+      type: 'https://ontos.dev/problems/gateway-reload-required',
+    });
+    const encoded = yield* Schema.encodeEffect(GatewayReloadRequiredProblemSchema)(reloadRequired);
+    const requests: Request[] = [];
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json(encoded, { status: 409 }));
+    };
+    const failure = yield* issueExternalGatewayContext(gatewayRequest, { apiKey, baseUrl, requestCorrelation }).pipe(
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+      Effect.flip,
+    );
+    expect(Schema.is(GatewayReloadRequiredProblemSchema)(failure)).toBe(true);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.headers.get('x-api-key')).toBe('dedicated-external-identity-key');
+    expect(requests[0]?.headers.get('authorization')).toBeNull();
+    expect(yield* Effect.promise(() => requests[0]?.json() ?? Promise.resolve())).toEqual(gatewayRequest);
   }),
 );
 
@@ -424,12 +475,14 @@ it.live('decodes a declared typed failure and sends only the trusted service cre
 it('keeps the six route inputs schema-backed and rejects a raw subject without authenticationRef', () => {
   expect(() =>
     Schema.decodeUnknownSync(ReservePrincipalBindingRequestSchema)({
+      compositionRevision: reserveRequest.compositionRevision,
       reservation: reserveRequest.reservation,
     }),
   ).toThrow();
   expect(() =>
     Schema.decodeUnknownSync(ResolveExternalSubjectRequestSchema)({
       authenticationNamespaceId: resolveRequest.authenticationNamespaceId,
+      compositionRevision: resolveRequest.compositionRevision,
       providerSubjectId: resolveRequest.providerSubjectId,
       subjectType: resolveRequest.subjectType,
     }),
@@ -438,8 +491,26 @@ it('keeps the six route inputs schema-backed and rejects a raw subject without a
     Schema.decodeUnknownSync(ExternalGatewayContextRequestSchema)({
       audience: gatewayRequest.audience,
       authenticationNamespaceId: gatewayRequest.authenticationNamespaceId,
+      compositionRevision: gatewayRequest.compositionRevision,
       providerSubjectId: gatewayRequest.providerSubjectId,
       subjectType: gatewayRequest.subjectType,
     }),
   ).toThrow();
+});
+
+it('rejects external identity operations without a valid pinned composition', () => {
+  const cases = [
+    [ReservePrincipalBindingRequestSchema, reserveRequest],
+    [ActivatePrincipalBindingRequestSchema, activateRequest],
+    [ChangePrincipalBindingStatusRequestSchema, statusRequest],
+    [ResolveExternalSubjectRequestSchema, resolveRequest],
+    [ExternalGatewayContextRequestSchema, gatewayRequest],
+  ] as const;
+  for (const [schema, request] of cases) {
+    const { compositionRevision: _revision, ...unboundRequest } = request;
+    expect(() => Schema.decodeUnknownSync(schema)(unboundRequest)).toThrow();
+    for (const compositionRevision of ['', 'a'.repeat(63), 'A'.repeat(64), `sha256:${'a'.repeat(64)}`]) {
+      expect(() => Schema.decodeSync(schema)({ ...request, compositionRevision })).toThrow();
+    }
+  }
 });

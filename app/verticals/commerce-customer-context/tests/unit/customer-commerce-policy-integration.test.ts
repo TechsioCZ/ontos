@@ -4,6 +4,7 @@ import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime
 import { Effect, Predicate, Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { readVerifiedGatewayCompositionRevision } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 import { makeReadRuntime } from '../../../../packages/core-runtime/src/reads/runtime.ts';
 import { makeTestDatabase } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { openModuleEntrypointGateway } from '../../../../packages/core-runtime/tests/support/open-module-entrypoint-gateway.ts';
@@ -569,7 +570,11 @@ describe('Customer Commerce Policy integration', () => {
   it.effect('persists a changed mutation once, replays idempotently, and maps stale generation', () => {
     const { calls, invoker } = statefulInvoker();
     return Effect.gen(function* mutationRoundTrip() {
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(asServiceTransaction(invoker), scope);
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(
+        asServiceTransaction(invoker),
+        scope,
+        'a'.repeat(64),
+      );
       const changed = yield* service.administerPurchaseCurrencyPolicy(purchaseCurrencyCommand);
       const replay = yield* service.administerPurchaseCurrencyPolicy(purchaseCurrencyCommand);
       const stale = yield* Effect.flip(service.administerPurchaseCurrencyPolicy(stalePurchaseCurrencyCommand));
@@ -586,7 +591,11 @@ describe('Customer Commerce Policy integration', () => {
   it.effect('combines quantity owner sets and rejects an incomplete bootstrap seller exchange', () => {
     const { invoker } = statefulInvoker({ sellers: [] });
     return Effect.gen(function* currentReads() {
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(asServiceTransaction(invoker), scope);
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(
+        asServiceTransaction(invoker),
+        scope,
+        readVerifiedGatewayCompositionRevision(scope),
+      );
       const quantity = yield* service.readCurrentCommerceQuantityPolicy(purchaseCurrencyCommand.observedAt);
       const bootstrapFailure = yield* Effect.flip(
         service.readCurrentMarketBootstrapPolicyCandidates({
@@ -606,7 +615,11 @@ describe('Customer Commerce Policy integration', () => {
   it.effect('projects resolver-facing Current sets without private administration metadata', () => {
     const { invoker } = statefulInvoker(emptyBootstrapBatch, currentProjectionStates);
     return Effect.gen(function* safeCurrentProjections() {
-      const service = yield* customerCommercePolicyAdministrationServiceFactory(asServiceTransaction(invoker), scope);
+      const service = yield* customerCommercePolicyAdministrationServiceFactory(
+        asServiceTransaction(invoker),
+        scope,
+        readVerifiedGatewayCompositionRevision(scope),
+      );
       const currency = yield* service.readCurrentPurchaseCurrencyPolicy(at);
       const paymentTerm = yield* service.readCurrentPaymentTermPolicy(at);
       const quantity = yield* service.readCurrentCommerceQuantityPolicy(at);

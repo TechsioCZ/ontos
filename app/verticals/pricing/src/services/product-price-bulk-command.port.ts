@@ -9,6 +9,7 @@ import type { ManageProductPriceOperation } from '../../shared/actions/manage-pr
 
 export interface ProductPriceBulkTrustedContext {
   readonly actionInvocationId: string;
+  readonly compositionRevision: string;
   readonly principalContext: TrustedPrincipalContext;
   readonly requestCorrelationId: string;
   readonly trustedOperationAt: Date;

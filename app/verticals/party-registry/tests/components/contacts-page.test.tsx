@@ -1,5 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, expect, rstest, test } from 'effect-rstest';
+import type { ReactNode } from 'react';
 
 import csCatalog from '../../locales/cs/party-registry.json';
 import enCatalog from '../../locales/en/party-registry.json';
@@ -17,6 +18,7 @@ const { localeState } = rstest.hoisted(() => {
 const catalogs = { cs: csCatalog, en: enCatalog } as const;
 
 rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
+  FederatedI18nBoundary: ({ children }: { readonly children: ReactNode }) => children,
   useModernI18n: () => ({
     language: localeState.current,
     t: (key: string) => {

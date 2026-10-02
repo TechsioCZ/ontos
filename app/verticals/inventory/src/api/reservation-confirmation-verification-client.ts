@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ReservationConfirmationVerificationClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ReservationConfirmationVerificationAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeReservationConfirmationVerification = (
   payload: ReservationConfirmationVerificationRequest,
   ...[requestCorrelation, options = {}]: ReservationConfirmationVerificationOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeReservationConfirmationVerificationWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeReservationConfirmationVerificationWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

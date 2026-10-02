@@ -10,7 +10,7 @@ import {
   makeAuthenticationNamespaceRegistry,
 } from '@app/core-runtime/auth/external-identity-admission';
 import { makeOperationalScopeResolver } from '@app/core-runtime/operations/context';
-import { OperationAuthenticationRequired } from '@app/core-runtime';
+import { ActiveApplicationCompositionService, OperationAuthenticationRequired } from '@app/core-runtime';
 import { ConfigProvider, Effect, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
@@ -23,11 +23,15 @@ import {
   makeGatewayPrincipalVerifierLayer,
 } from '../../src/server.ts';
 import type { LegacyGatewayNamespaceMapping } from '../../src/server.ts';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 
 type FixturePrincipal = TrustedPrincipalContext & {
   readonly permissions?: readonly string[];
   readonly providerSubjectId?: string;
 };
+
+const GATEWAY_FIXTURE_BUILD_MARKER = 'gateway-test-release';
+const gatewayComposition = makeApplicationCompositionSnapshotFixture(['party-registry'], GATEWAY_FIXTURE_BUILD_MARKER);
 
 const currentTimeSeconds = 1_700_000_001;
 const issuer = 'https://shell.ontos.test';
@@ -78,6 +82,7 @@ const makeAssertion = (options?: {
   readonly version?: 1 | 2;
 }) =>
   Effect.gen(function* createAssertion() {
+    const snapshot = yield* gatewayComposition;
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
       ...(yield* Effect.promise(() => exportJWK(publicKey))),
@@ -87,7 +92,9 @@ const makeAssertion = (options?: {
     };
     const token = yield* Effect.promise(() =>
       new SignJWT({
+        compositionRevision: snapshot.composition.revision,
         principal: options?.principal ?? legacyPrincipal,
+        targetBuildMarker: GATEWAY_FIXTURE_BUILD_MARKER,
         ver: options?.version ?? 1,
       })
         .setProtectedHeader({
@@ -124,7 +131,7 @@ const verifyWithMapping = (
   environment: { readonly ONTOS_GATEWAY_ISSUER: string; readonly ONTOS_GATEWAY_PUBLIC_JWKS: string },
   mapping: LegacyGatewayNamespaceMapping = legacyNamespaceMapping,
 ) =>
-  bindGatewayPrincipalVerifier('party-registry')
+  bindGatewayPrincipalVerifier('party-registry', { appId: 'party-registry', buildMarker: GATEWAY_FIXTURE_BUILD_MARKER })
     .verify(Redacted.make(`Bearer ${token}`), {
       currentTimeSeconds: Effect.succeed(currentTimeSeconds),
     })
@@ -140,7 +147,7 @@ const verifyWithoutMapping = (
   token: string,
   environment: { readonly ONTOS_GATEWAY_ISSUER: string; readonly ONTOS_GATEWAY_PUBLIC_JWKS: string },
 ) =>
-  bindGatewayPrincipalVerifier('party-registry')
+  bindGatewayPrincipalVerifier('party-registry', { appId: 'party-registry', buildMarker: GATEWAY_FIXTURE_BUILD_MARKER })
     .verify(Redacted.make(`Bearer ${token}`), {
       currentTimeSeconds: Effect.succeed(currentTimeSeconds),
     })
@@ -172,7 +179,7 @@ it.effect('maps a verified staff v1 assertion before Core resolves a migrated no
 
     expect(scope.authenticationNamespaceId).toBe(staffNamespace);
     expect(scope.principalId).toBe(principalId);
-  }),
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );
 
 it.effect('rejects a mapped v1 assertion whose binding IDs belong to another namespace', () =>
@@ -205,7 +212,7 @@ it.effect('rejects a mapped v1 assertion whose binding IDs belong to another nam
       );
 
     expect(failure).toBeInstanceOf(OperationAuthenticationRequired);
-  }),
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );
 
 it.effect('does not fall back to a namespace-less v1 context for a migrated staff binding', () =>
@@ -232,7 +239,7 @@ it.effect('does not fall back to a namespace-less v1 context for a migrated staf
       );
 
     expect(failure).toBeInstanceOf(OperationAuthenticationRequired);
-  }),
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );
 
 it.effect('keeps issuer and namespace mismatches fail closed', () =>
@@ -247,7 +254,7 @@ it.effect('keeps issuer and namespace mismatches fail closed', () =>
       issuer: 'https://other-shell.ontos.test',
     }).pipe(Effect.flip);
     expect(Schema.is(ActionPrincipalConfigurationErrorSchema)(mismatchFailure)).toBe(true);
-  }),
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );
 
 it.effect('does not let the v1 JWT choose a namespace and leaves v2 namespace claims unchanged', () =>
@@ -264,5 +271,5 @@ it.effect('does not let the v1 JWT choose a namespace and leaves v2 namespace cl
     const v2 = yield* makeAssertion({ principal: v2Principal, version: 2 });
     const verifiedV2 = yield* verifyWithMapping(v2.token, v2.environment);
     expect(verifiedV2.authenticationNamespaceId).toBe(externalNamespace);
-  }),
+  }).pipe(Effect.provideService(ActiveApplicationCompositionService, { load: gatewayComposition })),
 );

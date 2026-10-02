@@ -6,6 +6,7 @@ class VerifiedOutboxWorkerHandlerContextValue implements OutboxWorkerHandlerCont
   declare readonly actorPrincipalId?: string;
   declare readonly attemptNumber: number;
   declare readonly claimId: string;
+  declare readonly compositionRevision: string;
   declare readonly consumerModuleKey?: string;
   // oxlint-disable-next-line effect-native/no-threaded-correlation-parameter -- Immutable persisted claim evidence copied into a Core-attested worker context, not ambient request threading.
   declare readonly correlationId?: string;

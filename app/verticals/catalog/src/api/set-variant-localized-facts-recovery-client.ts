@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface SetVariantLocalizedFactsRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type SetVariantLocalizedFactsRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeSetVariantLocalizedFactsRecovery = (
   payload: SetVariantLocalizedFactsRecoveryRequest,
   ...[requestCorrelation, options = {}]: SetVariantLocalizedFactsRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeSetVariantLocalizedFactsRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeSetVariantLocalizedFactsRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

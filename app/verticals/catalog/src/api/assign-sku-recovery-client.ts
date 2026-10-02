@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface AssignSkuRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type AssignSkuRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeAssignSkuRecovery = (
   payload: AssignSkuRecoveryRequest,
   ...[requestCorrelation, options = {}]: AssignSkuRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeAssignSkuRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeAssignSkuRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

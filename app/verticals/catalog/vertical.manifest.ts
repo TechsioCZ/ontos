@@ -524,6 +524,7 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
             role: 'public_component',
             scope: 'tenant',
           },
+          expose: './CatalogWidget',
         }),
         // </generated-module-shell-components>
       ],

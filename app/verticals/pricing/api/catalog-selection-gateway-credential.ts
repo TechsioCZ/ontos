@@ -23,16 +23,15 @@ const httpUrl = Schema.URLFromString.check(
 
 const configuration = Config.all({
   apiKey: Config.Redacted('ONTOS_PRICING_GATEWAY_API_KEY'),
-  catalogBaseUrl: Config.schema(httpUrl, 'ONTOS_CATALOG_BASE_URL'),
   shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 
 type GatewayContextIssue = (
-  payload: { readonly audience: 'catalog'; readonly legalEntityId: string },
+  payload: { readonly audience: 'catalog'; readonly compositionRevision: string; readonly legalEntityId: string },
   options: ApiKeyGatewayContextClientOptions,
 ) => Effect.Effect<GatewayContextResponse, GatewayContextClientError>;
 
-const unavailable = (reason: string, cause: unknown): PricingCatalogSelectionUnavailable => {
+const unavailable = (reason: string, cause?: unknown): PricingCatalogSelectionUnavailable => {
   const failure = new PricingCatalogSelectionUnavailable({
     code: 'pricing_catalog_selection_unavailable',
     reason,
@@ -42,7 +41,7 @@ const unavailable = (reason: string, cause: unknown): PricingCatalogSelectionUna
   return failure;
 };
 
-const unavailableConfigurationIssuer = (cause: unknown): CatalogSelectionGatewayCredentialIssuer =>
+const unavailableConfigurationIssuer = (cause?: unknown): CatalogSelectionGatewayCredentialIssuer =>
   Object.freeze({
     issue: () => Effect.fail(unavailable('Catalog gateway configuration is unavailable', cause)),
   });
@@ -50,7 +49,6 @@ const unavailableConfigurationIssuer = (cause: unknown): CatalogSelectionGateway
 export const makeCatalogSelectionGatewayCredentialIssuer = (
   configured: {
     readonly apiKey: Redacted.Redacted;
-    readonly catalogBaseUrl: URL;
     readonly shellBaseUrl: URL;
   },
   issue: GatewayContextIssue = issueApiKeyGatewayContext,
@@ -58,19 +56,27 @@ export const makeCatalogSelectionGatewayCredentialIssuer = (
   Object.freeze({
     issue: Effect.fn('CatalogSelectionGatewayCredentialIssuer.issue')(function* issueCredential(input: {
       readonly audience: 'catalog';
+      readonly compositionRevision: string;
       readonly legalEntityId: string;
       readonly requestCorrelation: string;
     }) {
       const response = yield* issue(
-        { audience: input.audience, legalEntityId: input.legalEntityId },
+        {
+          audience: input.audience,
+          compositionRevision: input.compositionRevision,
+          legalEntityId: input.legalEntityId,
+        },
         {
           apiKey: configured.apiKey,
           baseUrl: configured.shellBaseUrl,
           requestCorrelation: input.requestCorrelation,
         },
       ).pipe(Effect.mapError((cause) => unavailable('The Catalog gateway credential could not be issued', cause)));
+      if (response.compositionRevision !== input.compositionRevision) {
+        return yield* unavailable('Catalog gateway returned a credential for a different composition revision');
+      }
       return {
-        baseUrl: configured.catalogBaseUrl,
+        baseUrl: new URL(response.apiBaseUrl, configured.shellBaseUrl),
         credential: Redacted.make(`Bearer ${response.token}`),
       };
     }),

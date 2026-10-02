@@ -77,6 +77,7 @@ export const handleManageProductPricesBulk = Effect.fn('ManageProductPricesBulkA
   }
   const trusted = {
     actionInvocationId: context.actionInvocationId,
+    compositionRevision: context.compositionRevision,
     principalContext: context.scope,
     requestCorrelationId: context.scope.correlationId,
     trustedOperationAt: yield* DateTime.nowAsDate,

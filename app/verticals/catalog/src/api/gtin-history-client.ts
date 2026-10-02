@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface GtinHistoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type GtinHistoryAuthorizedInvocation = readonly [
@@ -44,6 +45,10 @@ export const executeGtinHistory = (
   payload: GtinHistoryRequest,
   ...[requestCorrelation, options = {}]: GtinHistoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeGtinHistoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeGtinHistoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -133,6 +133,7 @@ if (firstIntent === undefined || secondIntent === undefined) {
 }
 const trusted = {
   actionInvocationId: '66666666-6666-4666-8666-666666666666',
+  compositionRevision: 'b'.repeat(64),
   principalContext: {
     authBindingId: '77777777-7777-4777-8777-777777777777',
     authContextRef: 'session:commercial-fee-bulk',

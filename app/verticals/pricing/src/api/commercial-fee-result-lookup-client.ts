@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CommercialFeeResultLookupClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CommercialFeeResultLookupAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCommercialFeeResultLookup = (
   payload: CommercialFeeResultLookupRequest,
   ...[requestCorrelation, options = {}]: CommercialFeeResultLookupOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCommercialFeeResultLookupWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCommercialFeeResultLookupWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

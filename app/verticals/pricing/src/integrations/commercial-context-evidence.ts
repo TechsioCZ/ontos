@@ -17,7 +17,7 @@ type CurrentMarketCatalogExecutor = (
   payload: CurrentMarketCatalogRequest,
   credential: Redacted.Redacted,
   requestCorrelation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<CurrentMarketCatalogResponse, PricingCommercialContextUnavailable>;
 
 export interface CommercialContextAssessmentRequest {
@@ -117,7 +117,11 @@ const assessCurrentMarketResponse = (
 };
 
 const makeCommercialContextAssessmentPort = (dependencies: {
-  readonly context: { readonly legalEntityId: string; readonly requestCorrelation: string };
+  readonly context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  };
   readonly execute: CurrentMarketCatalogExecutor;
   readonly issuer: CommercialContextGatewayCredentialIssuer;
 }): CommercialContextAssessmentPort =>
@@ -132,6 +136,7 @@ const makeCommercialContextAssessmentPort = (dependencies: {
       return dependencies.issuer
         .issue({
           audience: 'commerce-market-catalog',
+          compositionRevision: dependencies.context.compositionRevision,
           legalEntityId: dependencies.context.legalEntityId,
           requestCorrelation: dependencies.context.requestCorrelation,
         })
@@ -139,6 +144,7 @@ const makeCommercialContextAssessmentPort = (dependencies: {
           Effect.flatMap(({ baseUrl, credential }) =>
             dependencies.execute({ at: request.assessedAt }, credential, dependencies.context.requestCorrelation, {
               baseUrl,
+              compositionRevision: dependencies.context.compositionRevision,
             }),
           ),
           Effect.mapError((cause) =>
@@ -152,7 +158,11 @@ const makeCommercialContextAssessmentPort = (dependencies: {
   });
 
 export const commercialContextAssessmentPortFromEnvironment = (
-  context: { readonly legalEntityId: string; readonly requestCorrelation: string },
+  context: {
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+    readonly requestCorrelation: string;
+  },
   execute: CurrentMarketCatalogExecutor = executeCurrentMarketCatalog,
 ): Effect.Effect<CommercialContextAssessmentPort> =>
   Effect.serviceOption(CommercialContextGatewayCredentialService).pipe(

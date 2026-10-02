@@ -1,6 +1,7 @@
-import { Effect, Redacted } from 'effect';
+import { Effect, Redacted, Schema } from 'effect';
 
-import { issueGatewayContext } from './gateway-context.ts';
+import { DocumentCompositionRevisionError, getDocumentCompositionRevision } from './document-composition-revision.ts';
+import { GatewayContextResponseSchema, issueGatewayContext } from './gateway-context.ts';
 import type {
   GatewayContextClientError,
   GatewayContextClientOptions,
@@ -8,12 +9,13 @@ import type {
 } from './gateway-context.ts';
 
 export type OperationGatewayIssuer<Audience extends string, Failure> = (
-  payload: { readonly audience: Audience },
+  payload: { readonly audience: Audience; readonly compositionRevision: string },
   options?: GatewayContextClientOptions,
 ) => Effect.Effect<GatewayContextResponse, Failure>;
 
 export type OperationGatewayAttempt<Success, Failure> = (
   authorizationHeader: string,
+  target: Pick<GatewayContextResponse, 'apiBaseUrl' | 'compositionRevision'>,
 ) => Effect.Effect<Success, Failure>;
 
 // eslint-disable-next-line effect-native/require-context-service-for-service-interface -- This browser gateway is an audience-bound value, not an injectable application service. expires: 2027-03-31.
@@ -21,7 +23,7 @@ export interface OperationGateway<IssuerFailure> {
   readonly invoke: <Success, AttemptFailure>(
     attempt: OperationGatewayAttempt<Success, AttemptFailure>,
     options?: GatewayContextClientOptions,
-  ) => Effect.Effect<Success, IssuerFailure | AttemptFailure>;
+  ) => Effect.Effect<Success, IssuerFailure | AttemptFailure | DocumentCompositionRevisionError | Schema.SchemaError>;
 }
 
 const makeOperationGatewayWithIssuer = <Audience extends string, IssuerFailure>(
@@ -32,11 +34,25 @@ const makeOperationGatewayWithIssuer = <Audience extends string, IssuerFailure>(
     attempt: OperationGatewayAttempt<Success, AttemptFailure>,
     options: GatewayContextClientOptions = {},
   ) =>
-    Effect.suspend(() => issuer({ audience }, options)).pipe(
-      Effect.flatMap(({ token }) => {
-        const authorization = Redacted.make(`Bearer ${token}`);
-        return attempt(Redacted.value(authorization));
-      }),
+    getDocumentCompositionRevision().pipe(
+      Effect.flatMap((documentRevision) =>
+        issuer({ audience, compositionRevision: documentRevision }, options).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(GatewayContextResponseSchema, { onExcessProperty: 'error' })),
+          Effect.flatMap(
+            ({
+              apiBaseUrl,
+              compositionRevision,
+              token,
+            }): Effect.Effect<Success, AttemptFailure | DocumentCompositionRevisionError> => {
+              if (compositionRevision !== documentRevision) {
+                return Effect.fail(new DocumentCompositionRevisionError({ reason: 'revision-mismatch' }));
+              }
+              const authorization = Redacted.make(`Bearer ${token}`);
+              return attempt(Redacted.value(authorization), { apiBaseUrl, compositionRevision });
+            },
+          ),
+        ),
+      ),
     ),
 });
 

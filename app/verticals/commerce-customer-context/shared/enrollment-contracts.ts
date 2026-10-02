@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import { ApplicationCompositionSchema } from '@app/core-runtime';
 import {
   ActionInvocationIdSchema,
   PrincipalIdSchema,
@@ -26,6 +27,8 @@ export const EnrollmentPrincipalIdSchema = PrincipalIdSchema;
 export const EnrollmentTenantIdSchema = TenantIdSchema;
 export const EnrollmentLeaseTokenSchema = uuid.pipe(Schema.brand('EnrollmentLeaseToken'));
 export const EnrollmentDigestSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
+/** Release that admitted this intent; retries retain it for the life of the journal. */
+export const EnrollmentCompositionRevisionSchema = ApplicationCompositionSchema.fields.revision;
 
 /**
  * The single digest primitive every Enrollment identity is derived from: one lowercase SHA-256 of
@@ -155,6 +158,7 @@ export type EncodedEnrollmentAttemptLease = typeof EnrollmentAttemptLeaseSchema.
 
 export const EnrollmentAttemptSnapshotSchema = Schema.Struct({
   accountSubject: Schema.optionalKey(CommercePortalAccountSubjectSchema),
+  compositionRevision: EnrollmentCompositionRevisionSchema,
   createdAt: EnrollmentTimestampSchema,
   createdByPrincipalId: EnrollmentPrincipalIdSchema,
   intentDigest: EnrollmentDigestSchema,
@@ -204,6 +208,7 @@ export type EnrollmentOwnerOperationSnapshot = typeof EnrollmentOwnerOperationSn
 export const StartEnrollmentAttemptInputSchema = Schema.Struct({
   actionInvocationId: EnrollmentActionInvocationIdSchema,
   actorPrincipalId: EnrollmentPrincipalIdSchema,
+  compositionRevision: EnrollmentCompositionRevisionSchema,
   tenantId: EnrollmentTenantIdSchema,
   ...EnrollmentAttemptIntentSchema.fields,
 });

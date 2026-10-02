@@ -16,10 +16,13 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
+import type { OutboxWorkerSubscription } from '../outbox/definition.ts';
 
 export const CORE_SCHEMA_NAME = 'core';
 
 export const CORE_TABLE_INVENTORY = [
+  'application_composition_authority',
+  'application_composition_durable_work',
   'tenants',
   'legal_entities',
   'principals',
@@ -77,6 +80,69 @@ const createdAt = () => timestamp('created_at', { withTimezone: true }).defaultN
 const updatedAt = () => timestamp('updated_at', { withTimezone: true }).defaultNow().notNull();
 const occurredAt = () => timestamp('occurred_at', { withTimezone: true }).defaultNow().notNull();
 const enableCoreGovernedRls = <Table>(table: { readonly enableRLS: () => Table }): Table => table.enableRLS();
+
+/** Publication is admin-owned; application runtimes can only observe the complete approved authority. */
+export const applicationCompositionAuthority = enableCoreGovernedRls(
+  coreSchema.table(
+    'application_composition_authority',
+    {
+      authorityKey: text('authority_key').primaryKey().default('active'),
+      revision: text('revision').notNull(),
+      phase: text('phase').$type<'active' | 'draining' | 'sealed' | 'migrated'>().notNull(),
+      durableWorkAdmission: text('durable_work_admission').$type<'open' | 'closed'>().default('open').notNull(),
+      validUntil: timestamp('valid_until', { withTimezone: true }).notNull(),
+      subscriptionsJson: jsonb('subscriptions_json').$type<readonly OutboxWorkerSubscription[]>().notNull(),
+      updatedAt: updatedAt(),
+    },
+    (table) => [
+      check('core_application_composition_authority_key_ck', sql`${table.authorityKey} = 'active'`),
+      check('core_application_composition_authority_revision_ck', sql`${table.revision} ~ '^[a-f0-9]{64}$'`),
+      check(
+        'core_application_composition_authority_durable_admission_ck',
+        sql`${table.durableWorkAdmission} in ('open', 'closed')`,
+      ),
+      check(
+        'core_application_composition_authority_phase_ck',
+        sql`${table.phase} in ('active', 'draining', 'sealed', 'migrated')`,
+      ),
+      pgPolicy('core_application_composition_authority_select', {
+        for: 'select',
+        to: 'ontos_runtime',
+        using: sql`true`,
+      }),
+    ],
+  ),
+);
+
+/** Durable owner workflows participate until their trusted journal transition reaches a terminal state. */
+export const applicationCompositionDurableWork = enableCoreGovernedRls(
+  coreSchema.table(
+    'application_composition_durable_work',
+    {
+      ownerModuleKey: text('owner_module_key').notNull(),
+      originalRevision: text('original_revision').notNull(),
+      workId: text('work_id').notNull(),
+      createdAt: createdAt(),
+    },
+    (table) => [
+      primaryKey({
+        columns: [table.ownerModuleKey, table.originalRevision, table.workId],
+        name: 'core_application_composition_durable_work_pk',
+      }),
+      check(
+        'core_application_composition_durable_work_owner_ck',
+        sql`${table.ownerModuleKey} ~ '^[a-z][a-z0-9]*([.-][a-z0-9]+)*$'`,
+      ),
+      check('core_application_composition_durable_work_revision_ck', sql`${table.originalRevision} ~ '^[a-f0-9]{64}$'`),
+      check('core_application_composition_durable_work_id_ck', sql`length(${table.workId}) between 1 and 500`),
+      pgPolicy('core_application_composition_durable_work_select', {
+        for: 'select',
+        to: 'ontos_runtime',
+        using: sql`true`,
+      }),
+    ],
+  ),
+);
 
 export const tenants = coreSchema.table(
   'tenants',
@@ -943,6 +1009,8 @@ export const workerCheckpoints = coreSchema.table(
 );
 
 export const coreDatabaseSchema = {
+  applicationCompositionAuthority,
+  applicationCompositionDurableWork,
   actionInvocations,
   auditEvents,
   dataAccessEvents,
@@ -966,6 +1034,8 @@ export const coreDatabaseSchema = {
 } as const;
 
 export const CORE_TABLES = [
+  applicationCompositionAuthority,
+  applicationCompositionDurableWork,
   tenants,
   legalEntities,
   principals,

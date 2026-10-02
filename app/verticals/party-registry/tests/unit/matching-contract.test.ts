@@ -41,6 +41,7 @@ it.effect('reviewed Create records metadata-only invariant evidence and commits 
     yield* getActionHandler(resolveDuplicateCandidateCreateAction)(evidencePayload, {
       ...collector,
       actionInvocationId: '40000000-0000-4000-8000-000000000001',
+      compositionRevision: 'a'.repeat(64),
       scope: evidenceScope,
       services: {
         resolve: () =>
@@ -69,6 +70,7 @@ it.effect('reviewed duplicate confirmation records safe invariant evidence witho
     yield* getActionHandler(confirmDuplicatePartiesAction)(evidencePayload, {
       ...collector,
       actionInvocationId: '40000000-0000-4000-8000-000000000001',
+      compositionRevision: 'a'.repeat(64),
       scope: evidenceScope,
       services: {
         resolve: () =>

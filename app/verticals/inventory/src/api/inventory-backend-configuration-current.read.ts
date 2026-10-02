@@ -10,7 +10,6 @@ import type { InventoryBackendConfigurationCurrentRequest } from '../../shared/a
 import { InventoryBackendConfigurationPersistenceUnavailable } from '../../shared/domain/inventory-backend-configuration-persistence-unavailable.ts';
 import { inventoryBackendConfigurationPersistenceForScope } from '../persistence/inventory-backend-configuration-repository.ts';
 import type { InventoryBackendConfigurationService } from '../services/inventory-backend-configuration.service.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core invokes this generated transaction-scoped owner factory only after the governed Read scope gate; expires: 2027-03-31.
 import { makeInventoryBackendConfigurationService } from '../services/inventory-backend-configuration.service.ts';
 
 export type InventoryBackendConfigurationCurrentDomainError = InventoryBackendConfigurationPersistenceUnavailable;

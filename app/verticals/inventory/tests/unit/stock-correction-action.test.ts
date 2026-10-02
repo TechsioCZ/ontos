@@ -19,6 +19,8 @@ import {
 } from '../../src/actions/correct-stock-position.action.ts';
 import { mapCorrectStockPositionActionProblem } from '../../api/correct-stock-position-action-problems.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const correctionId = StockCorrectionIdSchema.make('33333333-3333-4333-8333-333333333333');
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const positionId = '55555555-5555-4555-8555-555555555555';
@@ -155,16 +157,20 @@ const runHandler = (result: ReturnType<typeof resultFor>) => {
     actionInvocationId: '13131313-1313-4131-8131-131313131313',
     addDomainEvent: collector.addDomainEvent,
     addOutboxMessage: collector.addOutboxMessage,
+    compositionRevision,
     recordAuditEvidence: collector.recordAuditEvidence,
     recordDataAccess: collector.recordDataAccess,
-    scope: trustVerifiedGatewayPrincipalContext({
-      authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-      authContextRef: 'test:stock-correction',
-      authMethod: 'api_key',
-      correlationId: 'stock-correction-test',
-      principalId: '12121212-1212-4121-8121-121212121212',
-      tenantId,
-    }),
+    scope: trustVerifiedGatewayPrincipalContext(
+      {
+        authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        authContextRef: 'test:stock-correction',
+        authMethod: 'api_key',
+        correlationId: 'stock-correction-test',
+        principalId: '12121212-1212-4121-8121-121212121212',
+        tenantId,
+      },
+      compositionRevision,
+    ),
     services,
   }).pipe(Effect.map(() => collector.snapshot()));
 };

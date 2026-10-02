@@ -37,6 +37,7 @@ import {
   externalIdentityFailure,
 } from '@app/core-runtime/auth/external-identity-admission';
 import { ExternalIdentityApi } from '@app/shared-contracts';
+import type { GatewayReloadRequiredProblemSchema } from '@app/shared-contracts';
 import type {
   ActivatePrincipalBindingRequestSchema,
   ChangePrincipalBindingStatusRequestSchema,
@@ -60,6 +61,8 @@ import { Context, Crypto, Effect, Match, Option, Predicate, Redacted, Schema } f
 import { ShellAuthenticationApi } from '../../../shared/api.ts';
 import { issueGatewayContextAssertion } from '../gateway-issuer.ts';
 import type { GatewayIssuerError } from '../gateway-issuer.ts';
+import { ShellInstalledModuleCatalog } from '../../modules/installed-module-catalog.ts';
+import { ultramodernDeliveryUnit } from '../../../shared/ultramodern-build.ts';
 import { validateAuthorizedLegalEntity } from '../legal-entity-selection.ts';
 import type {
   LegalEntitySelectionForbiddenError,
@@ -100,7 +103,8 @@ type ExternalIdentityProblem =
   | Schema.Schema.Type<typeof ExternalIdentityNotFoundProblemSchema>
   | Schema.Schema.Type<typeof ExternalIdentityThrottledProblemSchema>
   | Schema.Schema.Type<typeof ExternalIdentityUnauthorizedProblemSchema>
-  | Schema.Schema.Type<typeof ExternalIdentityUnavailableProblemSchema>;
+  | Schema.Schema.Type<typeof ExternalIdentityUnavailableProblemSchema>
+  | Schema.Schema.Type<typeof GatewayReloadRequiredProblemSchema>;
 
 const problem = <Tag extends string, Status extends number>(
   _tag: Tag,
@@ -753,10 +757,45 @@ const requireBindingWorkloadGrant = (
     Effect.catchIf(Predicate.isTagged('ExternalIdentityForbiddenProblem'), () => Effect.fail(notFoundProblem())),
   );
 
-const recoverGatewayIssuerError = (error: GatewayIssuerError): ExternalIdentityProblem =>
-  error.code === 'gateway_audience_invalid'
+const reloadRequiredProblem = (): Schema.Schema.Type<typeof GatewayReloadRequiredProblemSchema> => ({
+  ...problem(
+    'GatewayReloadRequiredProblem',
+    409,
+    'The requested release is no longer admitted. Reload to continue.',
+    'Reload required',
+    'https://ontos.dev/problems/gateway-reload-required',
+  ),
+  reloadRequired: true,
+});
+
+const captureExternalIdentityRelease = Effect.fn('ExternalIdentityHttp.captureRelease')(
+  function* captureExternalIdentityReleaseEffect(compositionRevision: string) {
+    const authority = yield* ShellInstalledModuleCatalog;
+    const catalog = yield* authority.load.pipe(
+      Effect.catchTags({
+        InstalledModuleCatalogInvalidError: () => Effect.fail(unavailableProblem()),
+        InstalledModuleCatalogUnavailableError: () => Effect.fail(unavailableProblem()),
+      }),
+    );
+    if (
+      catalog.composition.revision !== compositionRevision ||
+      catalog.composition.shell.deployment.appId !== ultramodernDeliveryUnit.appId ||
+      catalog.composition.shell.deployment.buildMarker !== ultramodernDeliveryUnit.buildMarker
+    ) {
+      return yield* Effect.fail(reloadRequiredProblem());
+    }
+    return catalog.composition.revision;
+  },
+);
+
+const recoverGatewayIssuerError = (error: GatewayIssuerError): ExternalIdentityProblem => {
+  if (error.code === 'gateway_revision_unsupported') {
+    return reloadRequiredProblem();
+  }
+  return error.code === 'gateway_audience_invalid'
     ? invalidProblem('The requested gateway audience is not available')
     : unavailableProblem('The gateway assertion issuer is unavailable');
+};
 
 interface ExternalIdentityHandlerRequest {
   readonly headers: ExternalIdentityHttpHeaders;
@@ -796,6 +835,7 @@ const reservePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.reservePr
   ({ payload, request }: ReservePrincipalBindingHandlerInput) =>
     safe(
       Effect.gen(function* reservePrincipalBindingHttp() {
+        const compositionRevision = yield* captureExternalIdentityRelease(payload.compositionRevision);
         const requestCorrelation = yield* requiredHeader(request.headers, CORRELATION_ID_HEADER);
         const idempotencyKey = yield* requiredHeader(request.headers, IDEMPOTENCY_KEY_HEADER);
         return yield* provideExternalIdentityHttpCorrelation(
@@ -810,6 +850,7 @@ const reservePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.reservePr
             const admission = yield* provideExternalIdentityHttpWorkload(
               {
                 authenticationRef: payload.authenticationRef,
+                compositionRevision,
                 operation: 'reserve',
                 principal,
                 providerSubjectId: payload.reservation.providerSubjectId,
@@ -839,6 +880,7 @@ const activatePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.activate
   ({ payload, request }: ActivatePrincipalBindingHandlerInput) =>
     safe(
       Effect.gen(function* activatePrincipalBindingHttp() {
+        const compositionRevision = yield* captureExternalIdentityRelease(payload.compositionRevision);
         const requestCorrelation = yield* requiredHeader(request.headers, CORRELATION_ID_HEADER);
         const idempotencyKey = yield* requiredHeader(request.headers, IDEMPOTENCY_KEY_HEADER);
         return yield* provideExternalIdentityHttpCorrelation(
@@ -861,6 +903,7 @@ const activatePrincipalBindingHandler = Effect.fn('ExternalIdentityHttp.activate
                   bindingRevision: binding.bindingRevision,
                   principalId: binding.principalId,
                 },
+                compositionRevision,
                 operation: 'activate',
                 principal,
                 providerSubjectId: subject.providerSubjectId,
@@ -890,6 +933,7 @@ const changePrincipalBindingStatusHandler = Effect.fn('ExternalIdentityHttp.chan
   ({ payload, request }: ChangePrincipalBindingStatusHandlerInput) =>
     safe(
       Effect.gen(function* changePrincipalBindingStatusHttp() {
+        const compositionRevision = yield* captureExternalIdentityRelease(payload.compositionRevision);
         const requestCorrelation = yield* requiredHeader(request.headers, CORRELATION_ID_HEADER);
         const idempotencyKey = yield* requiredHeader(request.headers, IDEMPOTENCY_KEY_HEADER);
         return yield* provideExternalIdentityHttpCorrelation(
@@ -918,6 +962,7 @@ const changePrincipalBindingStatusHandler = Effect.fn('ExternalIdentityHttp.chan
                     bindingRevision: binding.bindingRevision,
                     principalId: binding.principalId,
                   },
+                  compositionRevision,
                   operation: 'status',
                   principal,
                   providerSubjectId: subject.providerSubjectId,
@@ -979,6 +1024,7 @@ const resolveExternalSubjectHandler = Effect.fn('ExternalIdentityHttp.resolveExt
   ({ payload, request }: ResolveExternalSubjectHandlerInput) =>
     safe(
       Effect.gen(function* resolveExternalSubjectHttp() {
+        const compositionRevision = yield* captureExternalIdentityRelease(payload.compositionRevision);
         const requestCorrelation = yield* requiredHeader(request.headers, CORRELATION_ID_HEADER);
         return yield* provideExternalIdentityHttpCorrelation(
           requestCorrelation,
@@ -999,6 +1045,7 @@ const resolveExternalSubjectHandler = Effect.fn('ExternalIdentityHttp.resolveExt
                   bindingRevision: binding.bindingRevision,
                   principalId: binding.principalId,
                 },
+                compositionRevision,
                 operation: 'resolve',
                 principal,
                 providerSubjectId: subject.providerSubjectId,
@@ -1023,6 +1070,7 @@ const issueExternalGatewayContextHandler = Effect.fn('ExternalIdentityHttp.issue
   ({ payload, request }: IssueExternalGatewayContextHandlerInput) =>
     safe(
       Effect.gen(function* issueExternalGatewayContextHttp() {
+        const compositionRevision = yield* captureExternalIdentityRelease(payload.compositionRevision);
         const requestCorrelation = yield* requiredHeader(request.headers, CORRELATION_ID_HEADER);
         return yield* provideExternalIdentityHttpCorrelation(
           requestCorrelation,
@@ -1044,6 +1092,7 @@ const issueExternalGatewayContextHandler = Effect.fn('ExternalIdentityHttp.issue
                   bindingRevision: binding.bindingRevision,
                   principalId: binding.principalId,
                 },
+                compositionRevision,
                 operation: 'gateway-context',
                 principal,
                 providerSubjectId: subject.providerSubjectId,
@@ -1089,6 +1138,7 @@ const issueExternalGatewayContextHandler = Effect.fn('ExternalIdentityHttp.issue
             ).pipe(Effect.orDie);
             return yield* issueGatewayContextAssertion({
               audience: payload.audience,
+              compositionRevision,
               principal: validatedGatewayPrincipal,
             }).pipe(Effect.mapError(recoverGatewayIssuerError));
           }),

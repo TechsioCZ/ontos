@@ -120,6 +120,7 @@ describe('Compensate Currency Support recovery Action', () => {
         actionInvocationId: compensationActionInvocationId,
         addDomainEvent: () => Effect.die('unused'),
         addOutboxMessage: () => Effect.die('unused'),
+        compositionRevision: 'a'.repeat(64),
         recordAuditEvidence: (evidence) => {
           audit = evidence;
           return Effect.void;

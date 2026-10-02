@@ -4,9 +4,12 @@
 import { GatewayAssertionRedemptionService } from '@app/core-runtime/auth/gateway-assertion-redemption';
 import { staffAuthenticationNamespaceRegistryLayer } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeMicroverticalHttpPrincipalAuthentication } from '@app/core-runtime/http/principal-authentication';
+import { ActiveApplicationCompositionConfigLive } from '@app/core-runtime/modules/active-application-composition';
 import { GatewayPrincipalVerifierLive, bindGatewayPrincipalVerifier } from '@app/gateway-principal-verifier/server';
 import { Effect, Layer } from 'effect';
 import type { Redacted } from 'effect';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 const ACTION_GATEWAY_AUDIENCE = 'party-registry' as const;
 /**
@@ -15,12 +18,29 @@ const ACTION_GATEWAY_AUDIENCE = 'party-registry' as const;
  * principal's binding against (without it every governed route answers
  * `operation_context_unavailable`).
  */
-export const ActionPrincipalVerifierLive = Layer.mergeAll(
+export const ActionPrincipalVerifierLive: Layer.Layer<
+  Layer.Success<
+    | typeof GatewayPrincipalVerifierLive
+    | typeof ActiveApplicationCompositionConfigLive
+    | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>
+  >,
+  Layer.Error<
+    | typeof GatewayPrincipalVerifierLive
+    | typeof ActiveApplicationCompositionConfigLive
+    | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>
+  >,
+  Layer.Services<
+    | typeof GatewayPrincipalVerifierLive
+    | typeof ActiveApplicationCompositionConfigLive
+    | ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>
+  >
+> = Layer.mergeAll(
   GatewayPrincipalVerifierLive,
+  ActiveApplicationCompositionConfigLive,
   staffAuthenticationNamespaceRegistryLayer([ACTION_GATEWAY_AUDIENCE]),
 );
 
-const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE);
+const principalVerifier = bindGatewayPrincipalVerifier(ACTION_GATEWAY_AUDIENCE, ultramodernApiMarker);
 
 const verifyOperationPrincipal = (authorization: Redacted.Redacted<string | undefined>) =>
   GatewayAssertionRedemptionService.pipe(

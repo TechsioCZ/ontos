@@ -7,6 +7,7 @@ import {
   decodeTrustedPrincipalContext,
   isVerifiedGatewayPrincipalContext,
   isTrustedSupportRecoveryPrincipalContext,
+  readVerifiedGatewayCompositionRevision,
   trustVerifiedGatewayPrincipalContext,
 } from '../../src/auth/system-principal-context-provenance.ts';
 import {
@@ -182,10 +183,13 @@ it.effect('preserves resolver-issued system provenance across operational scope 
 
 it.effect('preserves verified Storefront scope through persisted tenant and legal-entity checks', () =>
   Effect.gen(function* verifiedStorefrontScope() {
-    const storefrontPrincipal = trustVerifiedGatewayPrincipalContext({
-      ...principal,
-      trustedStorefrontId: 'storefront-tenant-a-b2b',
-    });
+    const storefrontPrincipal = trustVerifiedGatewayPrincipalContext(
+      {
+        ...principal,
+        trustedStorefrontId: 'storefront-tenant-a-b2b',
+      },
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
     const resolver = makeOperationalScopeResolver({ load: () => Effect.succeed(active) }, access('allowed'));
 
     const resolved = yield* resolver.resolve({
@@ -196,6 +200,12 @@ it.effect('preserves verified Storefront scope through persisted tenant and lega
 
     expect(resolved.trustedStorefrontId).toBe('storefront-tenant-a-b2b');
     expect(isVerifiedGatewayPrincipalContext(resolved)).toBe(true);
+    expect(Object.isFrozen(storefrontPrincipal)).toBe(true);
+    expect(Object.isFrozen(resolved)).toBe(true);
+    expect(readVerifiedGatewayCompositionRevision(resolved)).toBe(
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    );
+    expect(readVerifiedGatewayCompositionRevision({ ...resolved })).toBeUndefined();
     expect(Exit.isFailure(yield* Effect.exit(decodeTrustedPrincipalContext({ ...resolved })))).toBe(true);
   }),
 );

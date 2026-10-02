@@ -13,6 +13,7 @@ import {
   canonicalizeApplicationComposition,
   validateApplicationCompositionCandidate,
 } from '../packages/core-runtime/src/index.ts';
+import type { ApplicationCompositionBackend } from '../packages/core-runtime/src/modules/application-composition.ts';
 import type {
   ActiveApplicationCompositionSnapshot,
   ApplicationComposition,
@@ -29,8 +30,8 @@ import { governedSharedSingletonPackages } from '../module-federation.shared.ts'
  * refresh cadence leaves three missed runs of headroom inside one validity window.
  */
 export const ACTIVE_APPLICATION_COMPOSITION_POLICY = Object.freeze({
-  /** Zerops project variable that carries the published snapshot to every service. */
-  projectVariable: 'ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON',
+  /** Native storage endpoint read afresh by Node consumers. */
+  sourceUrlVariable: 'ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL',
   /** Cron of the scheduled re-observation; the refresh workflow's schedule must equal it. */
   refreshCron: '17 */6 * * *',
   refreshInterval: Duration.hours(6),
@@ -49,7 +50,7 @@ export class ActiveApplicationCompositionPublicationError extends Schema.TaggedE
   {
     cause: Schema.optional(Schema.Defect()),
     message: Schema.String,
-    reason: Schema.Literals(['conflicting_revision', 'invalid_observation']),
+    reason: Schema.Literals(['conflicting_revision', 'invalid_observation', 'stale_observation', 'publication_failed']),
   },
 ) {}
 
@@ -61,6 +62,8 @@ export interface ObservedArtifact {
 
 export interface ObservedModuleDeployment {
   readonly appId: string;
+  /** Provider receipt placement, independently observed before derivation. */
+  readonly backend: ApplicationCompositionBackend;
   readonly contract: ObservedArtifact;
   /** Present exactly for browser modules; a server-only module ships no Module Federation remote. */
   readonly federationManifest?: ObservedArtifact;
@@ -106,7 +109,7 @@ const ShellRuntimeContractJsonSchema = Schema.fromJsonString(OntosShellRuntimeCo
 const SnapshotJsonSchema = Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema);
 const CompositionJsonSchema = Schema.fromJsonString(ApplicationCompositionSchema);
 
-const utf8 = new TextDecoder('utf-8', { fatal: true });
+const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
 const artifactText = (artifact: ObservedArtifact, label: string) =>
   Effect.try({
@@ -227,7 +230,9 @@ const deriveModule = Effect.fn('ActiveApplicationComposition.deriveModule')(func
   const evidence = contractEvidence(observed, contract, contractSha256);
   const common = {
     allowedContributions: evidence.contributionKeys,
+    backend: observed.backend,
     contract: { sha256: contractSha256, url: observed.contract.url },
+    contractDocument: yield* artifactText(observed.contract, 'deployment contract'),
     dependencies: [],
     deployment: contract.deployment,
     moduleId: evidence.moduleId,
@@ -294,6 +299,15 @@ export const deriveActiveApplicationCompositionSnapshot = Effect.fn('ActiveAppli
     const shell = {
       contributionAbi: shellRuntime.contributionAbi,
       coreCapabilities: shellRuntime.coreCapabilities,
+      deployment: shellRuntime.deployment,
+      federationManifest: {
+        sha256: sha256Hex(observation.shell.federationManifest.bytes),
+        url: observation.shell.federationManifest.url,
+      },
+      runtimeContract: {
+        sha256: sha256Hex(observation.shell.runtimeContract.bytes),
+        url: observation.shell.runtimeContract.url,
+      },
       sharedSingletons: yield* governedSingletons(shellManifest, observation.shell.federationManifest.url, 'host'),
     };
     const unrevised: ApplicationComposition = {
@@ -307,6 +321,7 @@ export const deriveActiveApplicationCompositionSnapshot = Effect.fn('ActiveAppli
     };
     const candidate: ApplicationComposition = { ...unrevised, revision: applicationCompositionRevision(unrevised) };
     const evidence: ApplicationCompositionCandidateEvidence = {
+      backends: Object.fromEntries(observation.modules.map(({ appId, backend }) => [appId, backend])),
       contracts: Object.fromEntries(derived.map(({ evidence: contract }) => [contract.deployment.appId, contract])),
       environment: observation.environment,
       federationManifests: Object.fromEntries(
@@ -329,13 +344,13 @@ export const deriveActiveApplicationCompositionSnapshot = Effect.fn('ActiveAppli
   },
 );
 
-/** The exact project-variable value, encoded with the snapshot codec every consumer decodes. */
+/** The exact native storage value, encoded with the snapshot codec every consumer decodes. */
 export const encodeActiveApplicationCompositionSnapshot = (snapshot: ActiveApplicationCompositionSnapshot) =>
   Schema.encodeEffect(SnapshotJsonSchema)(snapshot).pipe(
     Effect.mapError(invalidObservation('active Application Composition snapshot does not encode')),
   );
 
-/** Decodes a project-variable value exactly as consumers do, rejecting unknown fields. */
+/** Decodes a native storage value exactly as consumers do, rejecting unknown fields. */
 export const decodeActiveApplicationCompositionSnapshot = (encoded: string) =>
   Schema.decodeEffect(SnapshotJsonSchema, { onExcessProperty: 'error' })(encoded).pipe(
     Effect.mapError(invalidObservation('value does not decode as an active Application Composition snapshot')),
@@ -364,6 +379,22 @@ export const assertNoConflictingPublication = Effect.fn('ActiveApplicationCompos
     const published = Option.isSome(current)
       ? yield* Effect.option(decodeActiveApplicationCompositionSnapshot(current.value))
       : Option.none();
+    if (Option.isSome(published)) {
+      const observedOrdering =
+        DateTime.toEpochMillis(next.observedAt) - DateTime.toEpochMillis(published.value.observedAt);
+      const leaseOrdering =
+        DateTime.toEpochMillis(next.validUntil) - DateTime.toEpochMillis(published.value.validUntil);
+      if (
+        observedOrdering < 0 ||
+        (observedOrdering === 0 && (published.value.composition.revision !== revision || leaseOrdering !== 0)) ||
+        (published.value.composition.revision === revision && leaseOrdering < 0)
+      ) {
+        return yield* new ActiveApplicationCompositionPublicationError({
+          message: 'publication cannot replace a newer or ambiguously ordered observation',
+          reason: 'stale_observation',
+        });
+      }
+    }
     if (
       Option.isSome(published) &&
       published.value.composition.revision === revision &&

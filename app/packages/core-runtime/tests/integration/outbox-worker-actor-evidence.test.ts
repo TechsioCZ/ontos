@@ -3,9 +3,10 @@ import { randomUUID } from 'node:crypto';
 import { eq, inArray } from 'drizzle-orm';
 import { DateTime, Effect, Option, Schema } from 'effect';
 import { makeCoreDatabase } from '../../src/db/client.ts';
-import { loadDatabaseConfig } from '../../src/db/config.ts';
+import { loadDatabaseConnectionPair } from '../../src/db/config.ts';
 import {
   actionInvocations,
+  applicationCompositionAuthority,
   domainEvents,
   legalEntities,
   outboxAttempts,
@@ -16,7 +17,7 @@ import {
   tenants,
 } from '../../src/db/schema.ts';
 import { defineTenantModuleEntrypoint } from '../../src/modules/module-entrypoint.ts';
-import { defineOutboxWorker } from '../../src/outbox/definition.ts';
+import { defineOutboxWorker, extractOutboxWorkerSubscriptions } from '../../src/outbox/definition.ts';
 import { makeOutboxRepository } from '../../src/outbox/repository.ts';
 
 const MergeIdSchema = Schema.String.pipe(Schema.brand('OutboxWorkerActorEvidenceMergeId'));
@@ -27,9 +28,14 @@ it.live('derives worker actor evidence from the exact same-Tenant Action invocat
     const tenantId = randomUUID();
     const legalEntityId = randomUUID();
     const principalId = randomUUID();
-    const configuration = yield* loadDatabaseConfig();
-    const { executor } = yield* makeCoreDatabase(configuration);
+    const configuration = yield* loadDatabaseConnectionPair();
+    const { executor } = yield* makeCoreDatabase(configuration.runtime);
+    const { executor: adminExecutor } = yield* makeCoreDatabase(configuration.admin);
+    const compositionRevision = 'c'.repeat(64);
     const cleanup = Effect.gen(function* cleanupWorkerActorEvidence() {
+      yield* adminExecutor
+        .delete(applicationCompositionAuthority)
+        .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
       const messages = yield* executor
         .select({ messageId: outboxMessages.outboxMessageId })
         .from(outboxMessages)
@@ -158,6 +164,17 @@ it.live('derives worker actor evidence from the exact same-Tenant Action invocat
       () => Effect.void,
     );
     const repository = makeOutboxRepository(executor);
+    const authority = {
+      authorityKey: 'active',
+      phase: 'active' as const,
+      revision: compositionRevision,
+      subscriptionsJson: extractOutboxWorkerSubscriptions([registration]),
+      validUntil: DateTime.makeUnsafe(now).pipe(DateTime.add({ hours: 1 }), DateTime.toDateUtc),
+    };
+    yield* adminExecutor.insert(applicationCompositionAuthority).values(authority).onConflictDoUpdate({
+      set: authority,
+      target: applicationCompositionAuthority.authorityKey,
+    });
     yield* executor.insert(outboxDeliveries).values({
       availableAt: now,
       consumerModuleKey: registration.descriptor.consumerModuleKey,
@@ -165,7 +182,9 @@ it.live('derives worker actor evidence from the exact same-Tenant Action invocat
       workerKey: registration.descriptor.workerKey,
     });
     const claimAt = DateTime.makeUnsafe(now).pipe(DateTime.add({ milliseconds: 1000 }), DateTime.toDateUtc);
-    const claimed = Option.getOrThrow(yield* repository.claimNext([registration], 'worker-actor-evidence', claimAt));
+    const claimed = Option.getOrThrow(
+      yield* repository.claimNext([registration], 'worker-actor-evidence', claimAt, compositionRevision),
+    );
     expect(claimed.actorPrincipalId).toBe(principalId);
     expect(claimed.correlationId).toBe('merge-correlation-1');
     return yield* Effect.void;

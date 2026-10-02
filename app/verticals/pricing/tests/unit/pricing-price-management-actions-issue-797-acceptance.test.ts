@@ -247,6 +247,7 @@ const bulkIntents = snapshot.targets.map(({ target, targetId }, index) => ({
 }));
 const trustedBulk = {
   actionInvocationId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+  compositionRevision: 'a'.repeat(64),
   principalContext: {
     authBindingId: 'ffffffff-ffff-4fff-8fff-fffffffffff1',
     authContextRef: 'session:issue-797',

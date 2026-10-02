@@ -741,6 +741,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface ${type}ActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey${required ? '' : '?'}: string;
   readonly [traceIdOption]?: string;
@@ -771,7 +772,11 @@ export const execute${type} = (
   payload: ${type}Payload,
   ...[requestCorrelation, options]: OperationInvocation
 ) => operationGateway.invoke(
-  (credential) => execute${type}WithAuthorization(payload, credential, requestCorrelation, options),
+  (credential, { apiBaseUrl, compositionRevision }) => execute${type}WithAuthorization(payload, credential, requestCorrelation, {
+    ...options,
+    baseUrl: apiBaseUrl,
+    compositionRevision,
+  }),
   options.gateway,
 );
 `;

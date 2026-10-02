@@ -20,13 +20,19 @@ import {
   TenantIdSchema,
 } from '@app/core-runtime/auth/external-identity-contracts';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
-import { OperationAuthenticationRequired, OperationContextUnavailable } from '@app/core-runtime';
+import {
+  ActiveApplicationCompositionService,
+  ActiveApplicationCompositionUnavailableError,
+  OperationAuthenticationRequired,
+  OperationContextUnavailable,
+} from '@app/core-runtime';
 import { ConfigProvider, Context, DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import type { Clock } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 import { EXTERNAL_GATEWAY_ASSERTION_VERSION } from '@app/shared-contracts';
 import { makeGatewayPrincipalVerifierLayer } from '@app/gateway-principal-verifier/server';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ExternalOperationAuthenticationRequest } from '@app/core-runtime/operations/external-authentication';
 import { commercePortalAuthAdmissionAdapterLive } from '../../api/portal-auth/admission/adapter.ts';
 import { CommercePortalAuthAdmissionAdapter } from '../../api/portal-auth/admission/adapter-service.ts';
@@ -58,6 +64,7 @@ import {
   VerifyExternalAuthenticationResultSchema,
 } from '../../shared/portal-auth-contracts.ts';
 import type { VerifyExternalAuthenticationResult } from '../../shared/portal-auth-contracts.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 const now = DateTime.makeUnsafe('2026-09-17T09:00:00.000Z');
 const attesterPrincipalId = '10000000-0000-4000-8000-000000000001';
@@ -464,6 +471,10 @@ const makeWorkloadFixture = (
   impersonatedByPrincipalId?: string,
 ) =>
   Effect.gen(function* makeWorkloadFixtureEffect() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(
+      [ultramodernApiMarker.appId],
+      ultramodernApiMarker.buildMarker,
+    );
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
       ...(yield* Effect.promise(() => exportJWK(publicKey))),
@@ -485,7 +496,12 @@ const makeWorkloadFixture = (
         ? workloadPrincipalBase
         : { ...workloadPrincipalBase, impersonatedByPrincipalId };
     const token = yield* Effect.promise(() =>
-      new SignJWT({ principal: workloadPrincipal, ver: EXTERNAL_GATEWAY_ASSERTION_VERSION })
+      new SignJWT({
+        compositionRevision: snapshot.composition.revision,
+        principal: workloadPrincipal,
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
+        ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
+      })
         .setProtectedHeader({ alg: 'EdDSA', kid: 'commerce-workload-test', typ: 'JWT' })
         .setIssuer(workloadIssuer)
         .setAudience(workloadProviderEndpointAudience)
@@ -501,7 +517,7 @@ const makeWorkloadFixture = (
         keys: [publicJwk],
       }),
     };
-    return { environment, token };
+    return { environment, snapshot, token };
   });
 
 const workloadGrantConfiguration = Schema.decodeUnknownSync(CommercePortalAuthVerificationWorkloadGrantsSchema)({
@@ -555,11 +571,36 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
       subjectType: 'user',
       tenantId: workloadTenantId,
     });
-    const verifierLayer = makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(fixture.environment));
+    const verifierLayer = Layer.merge(
+      makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(fixture.environment)),
+      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(fixture.snapshot) }),
+    );
     const allowed = yield* runWorkloadAuthorization(`Bearer ${fixture.token}`, request).pipe(
       Effect.provide(verifierLayer),
     );
     expect(allowed).toBeUndefined();
+
+    const nextRelease = yield* makeApplicationCompositionSnapshotFixture(
+      [ultramodernApiMarker.appId],
+      `${ultramodernApiMarker.buildMarker}-next`,
+    );
+    const supersededRelease = yield* Effect.flip(
+      runWorkloadAuthorization(`Bearer ${fixture.token}`, request).pipe(
+        Effect.provideService(ActiveApplicationCompositionService, { load: Effect.succeed(nextRelease) }),
+        Effect.provide(makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(fixture.environment))),
+      ),
+    );
+    expect(Schema.is(CommercePortalAuthVerificationWorkloadRejected)(supersededRelease)).toBe(true);
+
+    const compositionUnavailable = yield* Effect.flip(
+      runWorkloadAuthorization(`Bearer ${fixture.token}`, request).pipe(
+        Effect.provideService(ActiveApplicationCompositionService, {
+          load: Effect.fail(new ActiveApplicationCompositionUnavailableError({ reason: 'authority unavailable' })),
+        }),
+        Effect.provide(makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(fixture.environment))),
+      ),
+    );
+    expect(Schema.is(CommercePortalAuthVerificationWorkloadUnavailable)(compositionUnavailable)).toBe(true);
 
     const replay = yield* Effect.flip(
       runWorkloadAuthorization(`Bearer ${fixture.token}`, request, workloadGrantConfiguration, {
@@ -593,8 +634,9 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
     expect(Schema.is(CommercePortalAuthVerificationWorkloadRejected)(wrongTenant)).toBe(true);
 
     const sessionFixture = yield* makeWorkloadFixture('session');
-    const sessionVerifierLayer = makeGatewayPrincipalVerifierLayer(
-      ConfigProvider.fromUnknown(sessionFixture.environment),
+    const sessionVerifierLayer = Layer.merge(
+      makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(sessionFixture.environment)),
+      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(sessionFixture.snapshot) }),
     );
     const sessionPrincipal = yield* Effect.flip(
       runWorkloadAuthorization(`Bearer ${sessionFixture.token}`, request).pipe(Effect.provide(sessionVerifierLayer)),
@@ -605,8 +647,9 @@ it.effect('authorizes only a fresh, exact api_key workload grant', () =>
       'support_impersonation',
       '10000000-0000-4000-8000-000000000015',
     );
-    const impersonationVerifierLayer = makeGatewayPrincipalVerifierLayer(
-      ConfigProvider.fromUnknown(impersonationFixture.environment),
+    const impersonationVerifierLayer = Layer.merge(
+      makeGatewayPrincipalVerifierLayer(ConfigProvider.fromUnknown(impersonationFixture.environment)),
+      Layer.succeed(ActiveApplicationCompositionService, { load: Effect.succeed(impersonationFixture.snapshot) }),
     );
     const impersonationPrincipal = yield* Effect.flip(
       runWorkloadAuthorization(`Bearer ${impersonationFixture.token}`, request).pipe(

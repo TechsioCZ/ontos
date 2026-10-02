@@ -43,9 +43,13 @@ import type {
   ReadRuntimeService,
 } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
+import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { ConfigProvider, Context, Effect, Layer, Logger, Schema, Predicate, Struct } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
+import { FetchHttpClient } from 'effect/unstable/http';
 import { SignJWT, exportJWK, generateKeyPair } from 'jose';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
@@ -64,6 +68,7 @@ import {
   PartySchema,
 } from '../../shared/domain/identity-contracts.ts';
 import { RuleKeySchema } from '../../shared/domain/matching-contracts.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { PartyMatchDecisionRecordSchema } from '../../shared/domain/matching-contracts.ts';
 import { PartyAliasWriteRejected } from '../../shared/domain/merge-alias-resolution.ts';
 import { archivePartyAction } from '../../src/actions/archive-party.action.ts';
@@ -165,6 +170,14 @@ const makeMissingDecisionReadRuntime = () => {
 };
 
 const issuer = 'https://shell.ontos.test';
+const partyCompositionSnapshot = makeApplicationCompositionSnapshotFixture(
+  [ultramodernApiMarker.appId],
+  ultramodernApiMarker.buildMarker,
+);
+const actionPrincipalVerifierTestLayer = Layer.mergeAll(
+  ActionPrincipalVerifierLive,
+  makeActiveApplicationCompositionLayer(partyCompositionSnapshot),
+).pipe(Layer.provide(ActiveApplicationCompositionSourceLive), Layer.provide(FetchHttpClient.layer));
 
 const actionSlugs = [
   'add-contact-point',
@@ -225,6 +238,7 @@ const makeAssertion = (
   options: { readonly expiresAt?: number; readonly tokenIssuer?: string } = {},
 ) =>
   Effect.gen(function* signPrincipalAssertions() {
+    const snapshot = yield* partyCompositionSnapshot;
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
       ...(yield* Effect.promise(() => exportJWK(publicKey))),
@@ -233,7 +247,12 @@ const makeAssertion = (
       use: 'sig',
     };
     const token = yield* Effect.promise(() =>
-      new SignJWT({ principal, ver: 1 })
+      new SignJWT({
+        compositionRevision: snapshot.composition.revision,
+        principal,
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
+        ver: 1,
+      })
         .setProtectedHeader({
           alg: 'EdDSA',
           kid: 'party-command-test',
@@ -249,7 +268,12 @@ const makeAssertion = (
     );
     const otherPrincipal = { ...principal, principalId: randomUUID() };
     const otherToken = yield* Effect.promise(() =>
-      new SignJWT({ principal: otherPrincipal, ver: 1 })
+      new SignJWT({
+        compositionRevision: snapshot.composition.revision,
+        principal: otherPrincipal,
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
+        ver: 1,
+      })
         .setProtectedHeader({
           alg: 'EdDSA',
           kid: 'party-command-test',
@@ -319,7 +343,7 @@ const mounted = (
     partyRegistryCommandRecoveryLive,
     partyMatchDecisionReadApiLive,
   ).pipe(
-    Layer.provide(ActionPrincipalVerifierLive),
+    Layer.provide(actionPrincipalVerifierTestLayer),
     Layer.provide(actionLayer),
     Layer.provide(readLayer),
     Layer.provide(redemptionLayer),
@@ -346,7 +370,7 @@ const mountedOrganizationEngagement = (
   const actionLayer = Layer.succeed(ActionRuntime, actionRuntime);
   const redemptionLayer = Layer.succeed(GatewayAssertionRedemptionService, nonPersistingRedemption);
   const handlers = organizationEngagementMutationsLive.pipe(
-    Layer.provide(ActionPrincipalVerifierLive),
+    Layer.provide(actionPrincipalVerifierTestLayer),
     Layer.provide(actionLayer),
     Layer.provide(redemptionLayer),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),

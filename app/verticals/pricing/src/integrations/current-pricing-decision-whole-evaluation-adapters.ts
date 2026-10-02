@@ -2403,7 +2403,7 @@ const promotionEvaluation = makePricingPromotionCurrentEvaluationService(
   },
 );
 
-const scopedAdapters = (transaction: ScopedTransaction, scope: OperationalScope) => {
+const scopedAdapters = (transaction: ScopedTransaction, scope: OperationalScope, compositionRevision: string) => {
   if (scope.legalEntityId === undefined) {
     return Effect.fail(
       new OperationContextUnavailable({
@@ -2413,6 +2413,7 @@ const scopedAdapters = (transaction: ScopedTransaction, scope: OperationalScope)
     );
   }
   const environment = {
+    compositionRevision,
     legalEntityId: scope.legalEntityId,
     requestCorrelation: scope.correlationId,
     tenantId: scope.tenantId,
@@ -2422,14 +2423,15 @@ const scopedAdapters = (transaction: ScopedTransaction, scope: OperationalScope)
       catalogEquivalence: catalogPricingPurposeEquivalencePortFromEnvironment(environment),
       catalogQuantity: catalogQuantityBasisCompatibilityPortFromEnvironment(environment),
       commercePriceGroup: commercePriceGroupResolutionPortFromEnvironment(environment),
-      currency: currencySupportPersistenceForScope(transaction, scope),
+      currency: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
       discount: contractualDiscountPersistenceForScope(transaction, scope),
-      exactPrice: exactPriceResolutionServiceForScope(transaction, scope),
+      exactPrice: exactPriceResolutionServiceForScope(transaction, scope, compositionRevision),
       externalOwnerEvidence: currentPricingDecisionExternalOwnerEvidencePortFromEnvironment(environment),
       fee: commercialFeePersistenceForScope(transaction, scope),
       floor: zeroFloorAuthorizationPersistenceForScope(transaction, scope),
       price: pricePersistenceForScope(transaction, scope),
       priceGroupCompatibility: priceGroupCompatibilityPortFromEnvironment({
+        compositionRevision,
         requestCorrelation: scope.correlationId,
         tenantId: scope.tenantId,
       }),
@@ -2481,8 +2483,9 @@ const scopedAdapters = (transaction: ScopedTransaction, scope: OperationalScope)
 export const currentPricingDecisionWholeEvaluationAdaptersForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
+  compositionRevision: string,
 ) =>
-  scopedAdapters(transaction, scope).pipe(
+  scopedAdapters(transaction, scope, compositionRevision).pipe(
     Effect.map((adapters) =>
       Layer.mergeAll(
         Layer.succeed(CurrentPricingDecisionAttemptSource, adapters.attemptSource),
@@ -2501,8 +2504,9 @@ export const currentPricingDecisionWholeEvaluationAdaptersForScope = (
 export const currentPricingDecisionWholeEvaluationForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
+  compositionRevision: string,
 ) =>
-  scopedAdapters(transaction, scope).pipe(
+  scopedAdapters(transaction, scope, compositionRevision).pipe(
     Effect.map((adapters) =>
       makeCurrentPricingDecisionWholeEvaluationService({
         attemptSource: adapters.attemptSource,

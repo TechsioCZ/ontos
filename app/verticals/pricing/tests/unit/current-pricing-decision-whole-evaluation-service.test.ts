@@ -317,14 +317,18 @@ describe('Current Pricing Decision whole evaluation source', () => {
         reasonCode: 'INVALID_CANONICAL_CONFIGURATION' as const,
         retryable: false,
       } satisfies PricingDecisionOutcome;
-      const evaluator = makeCurrentPricingDecisionEvaluationFactory(unexpected).make({
-        loadFresh: () =>
-          Effect.succeed({
-            attempt: { attempt, kind: 'KNOWN_INVALID_OR_CONFLICT', reason: 'Invalid canonical configuration' },
-            outcome: expected,
-            requiredOwnerRefs,
-          }),
-      });
+      const evaluator = makeCurrentPricingDecisionEvaluationFactory(unexpected).make(
+        {
+          loadFresh: () =>
+            Effect.succeed({
+              attempt: { attempt, kind: 'KNOWN_INVALID_OR_CONFLICT', reason: 'Invalid canonical configuration' },
+              outcome: expected,
+              requiredOwnerRefs,
+            }),
+        },
+        undefined,
+        'revision:790',
+      );
 
       const result = yield* evaluator.evaluate(request, trustedScopeFor(request));
 

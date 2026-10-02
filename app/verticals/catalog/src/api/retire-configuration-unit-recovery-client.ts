@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface RetireConfigurationUnitRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type RetireConfigurationUnitRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeRetireConfigurationUnitRecovery = (
   payload: RetireConfigurationUnitRecoveryRequest,
   ...[requestCorrelation, options = {}]: RetireConfigurationUnitRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeRetireConfigurationUnitRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeRetireConfigurationUnitRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface VariantHistoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type VariantHistoryAuthorizedInvocation = readonly [
@@ -44,6 +45,10 @@ export const executeVariantHistory = (
   payload: VariantHistoryRequest,
   ...[requestCorrelation, options = {}]: VariantHistoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeVariantHistoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeVariantHistoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

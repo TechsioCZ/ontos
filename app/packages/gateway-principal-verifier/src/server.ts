@@ -4,10 +4,15 @@ import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/princip
 import type { TrustedPrincipalContext } from '@app/core-runtime/actions/principal-context';
 import { AuthenticationNamespaceIdSchema } from '@app/core-runtime/auth/external-identity-contracts';
 import {
+  ActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '@app/core-runtime/modules/active-application-composition';
+import {
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_VERSION,
   EXTERNAL_GATEWAY_ASSERTION_VERSION,
   GatewayAudienceSchema,
+  GatewayContextClaimsSchema,
   decodeSupportedGatewayContextClaims,
   decodeGatewayContextProtectedHeader,
 } from '@app/shared-contracts';
@@ -110,6 +115,7 @@ const unavailableError = (): ActionPrincipalUnavailableError =>
   });
 const mapRedemptionUnavailable = () => Effect.fail(unavailableError());
 const mapRedemptionReplay = () => Effect.fail(invalidError());
+const mapConfigurationFailure = () => Effect.fail(configurationError());
 
 const PublicVerificationKeySchema = Schema.Struct({
   alg: Schema.Literal('EdDSA'),
@@ -240,11 +246,13 @@ export const makeGatewayPrincipalVerifierLayer = (
 ): Layer.Layer<GatewayPrincipalVerifierConfiguration> =>
   Layer.effect(
     GatewayPrincipalVerifierConfiguration,
-    Effect.cached(loadGatewayPrincipalVerificationConfiguration(provider, input)).pipe(
-      Effect.map((configuration): GatewayPrincipalVerifierService => ({
-        configuration,
-      })),
-    ),
+    Effect.gen(function* gatewayPrincipalVerifierLayer() {
+      const deploymentProvider = provider ?? (yield* ConfigProvider.ConfigProvider);
+      const configuration = yield* Effect.cached(
+        loadGatewayPrincipalVerificationConfiguration(deploymentProvider, input),
+      );
+      return { configuration } satisfies GatewayPrincipalVerifierService;
+    }),
   );
 
 export const GatewayPrincipalVerifierLive = makeGatewayPrincipalVerifierLayer();
@@ -296,21 +304,36 @@ const readBearer = (
 };
 
 interface VerifiedGatewayPrincipal {
+  readonly compositionRevision: string;
   readonly expiresAtEpochSeconds: number;
   readonly issuer: string;
   readonly jti: string;
   readonly principal: TrustedPrincipalContext;
 }
 
+const ReceivingGatewayDeploymentSchema = Schema.Struct({
+  appId: GatewayAudienceSchema,
+  buildMarker: GatewayContextClaimsSchema.fields.targetBuildMarker,
+});
+type ReceivingGatewayDeployment = typeof ReceivingGatewayDeploymentSchema.Type;
+
 const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthenticatedToken')(
   function* verifyAuthenticatedTokenEffect(
     expectedAudience: string,
+    expectedDeployment: ReceivingGatewayDeployment,
     token: string,
     options: GatewayPrincipalVerificationOptions,
-  ): Effect.fn.Return<VerifiedGatewayPrincipal, ActionPrincipalError, GatewayPrincipalVerifierConfiguration> {
+  ): Effect.fn.Return<
+    VerifiedGatewayPrincipal,
+    ActionPrincipalError,
+    GatewayPrincipalVerifierConfiguration | ActiveApplicationCompositionService
+  > {
     const audience = yield* Schema.decodeEffect(GatewayAudienceSchema)(expectedAudience).pipe(
       // oxlint-disable-next-line effect-native/no-failure-discarding-error-callback -- Schema diagnostics are deliberately sanitized at the trust boundary; remove-when: the rule supports security-boundary sanitizers.
       Effect.mapError(() => configurationError()),
+    );
+    const deployment = yield* Schema.decodeEffect(ReceivingGatewayDeploymentSchema)(expectedDeployment).pipe(
+      Effect.catchTag('SchemaError', mapConfigurationFailure),
     );
     const verifier = yield* GatewayPrincipalVerifierConfiguration;
     const configuration = yield* verifier.configuration;
@@ -358,6 +381,26 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
     if (claims.iat > now + GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS) {
       return yield* Effect.fail(invalidError());
     }
+    const compositionService = yield* ActiveApplicationCompositionService;
+    const snapshot = yield* compositionService.load.pipe(
+      Effect.flatMap(validateActiveApplicationCompositionSnapshot),
+      Effect.catchTags({ ActiveApplicationCompositionUnavailableError: mapRedemptionUnavailable }),
+    );
+    const approvedDeployment =
+      snapshot.composition.shell.deployment.appId === deployment.appId
+        ? snapshot.composition.shell.deployment
+        : snapshot.composition.modules.find((module) => module.deployment.appId === deployment.appId)?.deployment;
+    if (
+      snapshot.composition.revision !== claims.compositionRevision ||
+      claims.targetBuildMarker !== deployment.buildMarker ||
+      approvedDeployment?.buildMarker !== deployment.buildMarker
+    ) {
+      return yield* Effect.fail(
+        ActionPrincipalScopeErrorSchema.make({
+          reason: 'The Bearer assertion does not target this approved release',
+        }),
+      );
+    }
     let principalFromClaims: TrustedPrincipalContext;
     if (claims.ver === GATEWAY_ASSERTION_VERSION) {
       // Mapping occurs only after jwtVerify and claim decoding.  The mapping
@@ -394,6 +437,7 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
       return yield* Effect.fail(invalidError());
     }
     return {
+      compositionRevision: claims.compositionRevision,
       expiresAtEpochSeconds: claims.exp,
       issuer: claims.iss,
       jti: claims.jti,
@@ -402,21 +446,33 @@ const verifyAuthenticatedToken = Effect.fn('GatewayPrincipalVerifier.verifyAuthe
   },
 );
 
-export const bindGatewayPrincipalVerifier = <const Audience extends string>(expectedAudience: Audience) => {
+export const bindGatewayPrincipalVerifier = <const Audience extends string>(
+  expectedAudience: Audience,
+  expectedDeployment: ReceivingGatewayDeployment,
+) => {
+  const receivingDeployment = Object.freeze({ ...expectedDeployment });
   function verifyPrincipal(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationEnvironmentOptions,
-  ): Effect.Effect<VerifiedGatewayPrincipal, ActionPrincipalError>;
+  ): Effect.Effect<VerifiedGatewayPrincipal, ActionPrincipalError, ActiveApplicationCompositionService>;
   function verifyPrincipal(
     authorization: Redacted.Redacted<string | undefined>,
     options?: GatewayPrincipalVerificationOptions,
-  ): Effect.Effect<VerifiedGatewayPrincipal, ActionPrincipalError, GatewayPrincipalVerifierConfiguration>;
+  ): Effect.Effect<
+    VerifiedGatewayPrincipal,
+    ActionPrincipalError,
+    GatewayPrincipalVerifierConfiguration | ActiveApplicationCompositionService
+  >;
   function verifyPrincipal(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationOptions = {},
-  ): Effect.Effect<VerifiedGatewayPrincipal, ActionPrincipalError, GatewayPrincipalVerifierConfiguration> {
+  ): Effect.Effect<
+    VerifiedGatewayPrincipal,
+    ActionPrincipalError,
+    GatewayPrincipalVerifierConfiguration | ActiveApplicationCompositionService
+  > {
     const verification = readBearer(authorization).pipe(
-      Effect.flatMap((token) => verifyAuthenticatedToken(expectedAudience, token, options)),
+      Effect.flatMap((token) => verifyAuthenticatedToken(expectedAudience, receivingDeployment, token, options)),
     );
     return options.environment === undefined
       ? verification
@@ -433,30 +489,46 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(expe
   function verify(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationEnvironmentOptions,
-  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError>;
+  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError, ActiveApplicationCompositionService>;
   function verify(
     authorization: Redacted.Redacted<string | undefined>,
     options?: GatewayPrincipalVerificationOptions,
-  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError, GatewayPrincipalVerifierConfiguration>;
+  ): Effect.Effect<
+    TrustedPrincipalContext,
+    ActionPrincipalError,
+    GatewayPrincipalVerifierConfiguration | ActiveApplicationCompositionService
+  >;
   function verify(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationOptions = {},
-  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError, GatewayPrincipalVerifierConfiguration> {
+  ): Effect.Effect<
+    TrustedPrincipalContext,
+    ActionPrincipalError,
+    GatewayPrincipalVerifierConfiguration | ActiveApplicationCompositionService
+  > {
     return verifyPrincipal(authorization, options).pipe(Effect.map(({ principal }) => principal));
   }
 
   function verifyAndRedeem(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationEnvironmentWithRedemptionOptions,
-  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError>;
+  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError, ActiveApplicationCompositionService>;
   function verifyAndRedeem(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationWithRedemptionOptions,
-  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError, GatewayPrincipalVerifierConfiguration>;
+  ): Effect.Effect<
+    TrustedPrincipalContext,
+    ActionPrincipalError,
+    GatewayPrincipalVerifierConfiguration | ActiveApplicationCompositionService
+  >;
   function verifyAndRedeem(
     authorization: Redacted.Redacted<string | undefined>,
     options: GatewayPrincipalVerificationWithRedemptionOptions,
-  ): Effect.Effect<TrustedPrincipalContext, ActionPrincipalError, GatewayPrincipalVerifierConfiguration> {
+  ): Effect.Effect<
+    TrustedPrincipalContext,
+    ActionPrincipalError,
+    GatewayPrincipalVerifierConfiguration | ActiveApplicationCompositionService
+  > {
     return verifyPrincipal(authorization, options).pipe(
       Effect.tap(({ expiresAtEpochSeconds, issuer, jti }) =>
         options.redemption
@@ -473,7 +545,9 @@ export const bindGatewayPrincipalVerifier = <const Audience extends string>(expe
             }),
           ),
       ),
-      Effect.map(({ principal }) => trustVerifiedGatewayPrincipalContext(principal)),
+      Effect.map(({ compositionRevision, principal }) =>
+        trustVerifiedGatewayPrincipalContext(principal, compositionRevision),
+      ),
     );
   }
 

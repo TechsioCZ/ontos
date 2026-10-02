@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface QuotationResultLookupClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type QuotationResultLookupAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeQuotationResultLookup = (
   payload: QuotationResultLookupRequest,
   ...[requestCorrelation, options = {}]: QuotationResultLookupOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeQuotationResultLookupWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeQuotationResultLookupWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

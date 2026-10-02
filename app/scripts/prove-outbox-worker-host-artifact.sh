@@ -56,8 +56,8 @@ done
 
 # The Zerops build ships its own Node in the runtime's node/; this proof runs the start command with
 # the pinned workspace Node on PATH instead, exec'd so SIGTERM reaches the start command's own shell
-# exactly as the platform delivers it (dash does not exec the last command of `sh -c` itself). The start preflight only checks that Zerops delivered the
-# published snapshot variable; no hosted worker reads it.
+# exactly as the platform delivers it (dash does not exec the last command of `sh -c` itself).
+# Cold boot and worker readiness do not require an active composition snapshot.
 log="$artifact/outbox-worker-host.log"
 (
   cd "$artifact"
@@ -65,7 +65,6 @@ log="$artifact/outbox-worker-host.log"
     NODE_ENV=production \
     OUTBOX_WORKER_HEALTH_PORT="$port" \
     OUTBOX_WORKER_POLL_INTERVAL_MS=250 \
-    ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON="${ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON:-proof}" \
     ULTRAMODERN_ZEROPS_SERVICE="$setup" \
     sh -c "exec $start"
 ) >"$log" 2>&1 &

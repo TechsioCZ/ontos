@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CurrentPricingDecisionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CurrentPricingDecisionAuthorizedInvocation = readonly [
@@ -48,6 +49,10 @@ export const executeCurrentPricingDecision = (
   payload: CurrentPricingDecisionRequest,
   ...[requestCorrelation, options = {}]: CurrentPricingDecisionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCurrentPricingDecisionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCurrentPricingDecisionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

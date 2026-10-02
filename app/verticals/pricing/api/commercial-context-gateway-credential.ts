@@ -23,16 +23,19 @@ const httpUrl = Schema.URLFromString.check(
 
 const configuration = Config.all({
   apiKey: Config.Redacted('ONTOS_PRICING_GATEWAY_API_KEY'),
-  commerceMarketCatalogBaseUrl: Config.schema(httpUrl, 'ONTOS_COMMERCE_MARKET_CATALOG_BASE_URL'),
   shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
 });
 
 type GatewayContextIssue = (
-  payload: { readonly audience: 'commerce-market-catalog'; readonly legalEntityId: string },
+  payload: {
+    readonly audience: 'commerce-market-catalog';
+    readonly compositionRevision: string;
+    readonly legalEntityId: string;
+  },
   options: ApiKeyGatewayContextClientOptions,
 ) => Effect.Effect<GatewayContextResponse, GatewayContextClientError>;
 
-const unavailable = (reason: string, cause: unknown): PricingCommercialContextUnavailable => {
+const unavailable = (reason: string, cause?: unknown): PricingCommercialContextUnavailable => {
   const failure = new PricingCommercialContextUnavailable({
     code: 'pricing_commercial_context_unavailable',
     reason,
@@ -42,7 +45,7 @@ const unavailable = (reason: string, cause: unknown): PricingCommercialContextUn
   return failure;
 };
 
-const unavailableConfigurationIssuer = (cause: unknown): CommercialContextGatewayCredentialIssuer =>
+const unavailableConfigurationIssuer = (cause?: unknown): CommercialContextGatewayCredentialIssuer =>
   Object.freeze({
     issue: () => Effect.fail(unavailable('Commerce Market Catalog gateway configuration is unavailable', cause)),
   });
@@ -50,7 +53,6 @@ const unavailableConfigurationIssuer = (cause: unknown): CommercialContextGatewa
 export const makeCommercialContextGatewayCredentialIssuer = (
   configured: {
     readonly apiKey: Redacted.Redacted;
-    readonly commerceMarketCatalogBaseUrl: URL;
     readonly shellBaseUrl: URL;
   },
   issue: GatewayContextIssue = issueApiKeyGatewayContext,
@@ -58,11 +60,16 @@ export const makeCommercialContextGatewayCredentialIssuer = (
   Object.freeze({
     issue: Effect.fn('CommercialContextGatewayCredentialIssuer.issue')(function* issueCredential(input: {
       readonly audience: 'commerce-market-catalog';
+      readonly compositionRevision: string;
       readonly legalEntityId: string;
       readonly requestCorrelation: string;
     }) {
       const response = yield* issue(
-        { audience: input.audience, legalEntityId: input.legalEntityId },
+        {
+          audience: input.audience,
+          compositionRevision: input.compositionRevision,
+          legalEntityId: input.legalEntityId,
+        },
         {
           apiKey: configured.apiKey,
           baseUrl: configured.shellBaseUrl,
@@ -73,8 +80,11 @@ export const makeCommercialContextGatewayCredentialIssuer = (
           unavailable('The Commerce Market Catalog gateway credential could not be issued', cause),
         ),
       );
+      if (response.compositionRevision !== input.compositionRevision) {
+        return yield* unavailable('Commerce Market gateway returned a credential for a different composition revision');
+      }
       return {
-        baseUrl: configured.commerceMarketCatalogBaseUrl,
+        baseUrl: new URL(response.apiBaseUrl, configured.shellBaseUrl),
         credential: Redacted.make(`Bearer ${response.token}`),
       };
     }),

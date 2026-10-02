@@ -5,11 +5,11 @@ import type {
   OntosShellContributions,
   TenantModuleStateServiceContract,
 } from '@app/core-runtime';
-import { decideModuleStateAccess } from '@app/core-runtime';
+import { decideModuleStateAccess, isReservedShellRouteRoot } from '@app/core-runtime';
 import { Context, Effect, Layer, Schema } from 'effect';
 
 import { ShellCompositionSchema, ShellNavigationItemSchema } from '../../shared/api.ts';
-import type { InstalledModuleCatalogError } from './installed-module-catalog.ts';
+import type { InstalledModuleCatalogError, ShellInstalledCatalog } from './installed-module-catalog.ts';
 
 const withOptionalProperty = <Base extends object, Key extends PropertyKey, Value, Trailing extends object>(
   base: Base,
@@ -42,7 +42,7 @@ export interface ShellCompositionContext {
 }
 
 export interface ShellCompositionSources {
-  readonly catalog: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>;
+  readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError>;
   readonly contextAccess: Pick<ContextAccessService, 'modules'>;
   readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
 }
@@ -51,7 +51,7 @@ const isVisibleState = Schema.is(ShellNavigationItemSchema.fields.state);
 
 const loadCatalog = (
   sources: ShellCompositionSources,
-): Effect.Effect<InstalledModuleCatalog, ShellCompositionUnavailableError> =>
+): Effect.Effect<ShellInstalledCatalog, ShellCompositionUnavailableError> =>
   sources.catalog.pipe(Effect.mapError((cause) => new ShellCompositionUnavailableErrorConstructor({ cause })));
 
 const loadStates = (sources: ShellCompositionSources, context: ShellCompositionContext, moduleIds: readonly string[]) =>
@@ -80,6 +80,141 @@ const resolveContributionPage = (
   return landing === undefined
     ? undefined
     : pages.find(({ contributionKey }) => String(contributionKey) === String(landing.pageKey));
+};
+
+const hasControlCharacter = (value: string): boolean => {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.codePointAt(index);
+    if (code !== undefined && (code < 32 || code === 127)) {
+      return true;
+    }
+  }
+  return false;
+};
+
+export interface ShellModuleTargetSelector {
+  readonly canonicalPath?: string;
+  readonly compositionRevision?: string;
+  readonly entrypointKey?: string;
+  readonly moduleId?: string;
+}
+
+/** Canonical paths are untrusted selectors, never identity or transport configuration. */
+const canonicalSegments = (path: string, template = false): readonly string[] | undefined => {
+  if (
+    path.length === 0 ||
+    path.length > (template ? 200 : 40_000) ||
+    !path.startsWith('/') ||
+    /[?#\\]/u.test(path) ||
+    path.includes('//') ||
+    (path !== '/' && path.endsWith('/'))
+  ) {
+    return undefined;
+  }
+  const encoded = path.slice(1).split('/');
+  if (encoded.length > 64) {
+    return undefined;
+  }
+  const segments: string[] = [];
+  for (const segment of encoded) {
+    let decoded: string;
+    try {
+      decoded = decodeURIComponent(segment);
+    } catch {
+      return undefined;
+    }
+    if (
+      decoded === '.' ||
+      decoded === '..' ||
+      decoded.length > 200 ||
+      decoded.includes('/') ||
+      decoded.includes('\\') ||
+      hasControlCharacter(decoded)
+    ) {
+      return undefined;
+    }
+    segments.push(decoded);
+  }
+  return segments;
+};
+
+const matchCanonicalPage = (
+  routePath: string,
+  requested: readonly string[],
+): Readonly<Record<string, string>> | undefined => {
+  const template = canonicalSegments(routePath, true);
+  if (template === undefined || template.length !== requested.length || template.length > 64) {
+    return undefined;
+  }
+  const parameters: Record<string, string> = {};
+  for (const [index, segment] of template.entries()) {
+    const value = requested[index];
+    if (value === undefined || value.length === 0) {
+      return undefined;
+    }
+    if (segment.startsWith(':')) {
+      const name = segment.slice(1);
+      if (
+        !/^[a-zA-Z][a-zA-Z0-9_]*$/u.test(name) ||
+        Object.hasOwn(parameters, name) ||
+        name === 'constructor' ||
+        name === 'prototype' ||
+        name === '__proto__'
+      ) {
+        return undefined;
+      }
+      parameters[name] = value;
+    } else if (segment !== value) {
+      return undefined;
+    }
+  }
+  return Object.freeze(parameters);
+};
+
+const compareCanonicalRoutes = (left: ShellPageContribution, right: ShellPageContribution): number => {
+  const leftSegments = left.routePath.split('/');
+  const rightSegments = right.routePath.split('/');
+  for (const [index, segment] of leftSegments.entries()) {
+    const difference = Number(!(rightSegments[index] ?? ':').startsWith(':')) - Number(!segment.startsWith(':'));
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return 0;
+};
+
+const resolvePageSelection = (catalog: InstalledModuleCatalog, input: ShellModuleTargetSelector) => {
+  if (input.canonicalPath === undefined) {
+    if (input.moduleId === undefined) {
+      return null;
+    }
+    const contract = catalog.getByModuleId(input.moduleId);
+    const page =
+      contract === undefined
+        ? undefined
+        : resolveContributionPage(contract.manifest.publicSurface.shellContributions, {
+            ...input,
+            moduleId: input.moduleId,
+          });
+    return contract === undefined || page === undefined ? null : { contract, page, routeParameters: {} };
+  }
+  if (input.moduleId !== undefined || input.entrypointKey !== undefined) {
+    return null;
+  }
+  const segments = canonicalSegments(input.canonicalPath);
+  if (segments === undefined || isReservedShellRouteRoot(segments[0])) {
+    return null;
+  }
+  const matches = catalog.contracts.flatMap((contract) =>
+    contract.manifest.publicSurface.shellContributions.pages.flatMap((page) => {
+      const routeParameters = matchCanonicalPage(page.routePath, segments);
+      return routeParameters === undefined ? [] : [{ contract, page, routeParameters }];
+    }),
+  );
+  const [selected, next] = matches.toSorted((left, right) => compareCanonicalRoutes(left.page, right.page));
+  return selected === undefined || (next !== undefined && compareCanonicalRoutes(selected.page, next.page) === 0)
+    ? null
+    : selected;
 };
 
 const resolveTargetPermission = Effect.fn('ShellComposition.resolveTargetPermission')(function* resolveTargetPermission(
@@ -160,6 +295,7 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
       });
     });
     const composition = yield* Schema.decodeEffect(ShellCompositionSchema)({
+      compositionRevision: catalog.composition.revision,
       navigation: navigation.toSorted(
         (left, right) =>
           left.order - right.order ||
@@ -193,25 +329,39 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     context: ShellCompositionContext,
     input: {
       readonly access?: ModuleEntrypointAccess;
+      readonly canonicalPath?: string;
+      readonly compositionRevision?: string;
       readonly entrypointKey?: string;
-      readonly moduleId: string;
+      readonly moduleId?: string;
     },
   ) {
     if (context.legalEntityId === undefined) {
       return { outcome: 'selection_required' } as const;
     }
     const catalog = yield* loadCatalog(sources);
-    const contract = catalog.getByModuleId(input.moduleId);
-    if (contract === undefined) {
+    if (input.compositionRevision !== undefined && input.compositionRevision !== catalog.composition.revision) {
+      return { outcome: 'reload_required' } as const;
+    }
+    const selected = resolvePageSelection(catalog, input);
+    if (selected === null) {
       return { outcome: 'not_found' } as const;
     }
-    const page = resolveContributionPage(contract.manifest.publicSurface.shellContributions, input);
-    if (page === undefined) {
-      return { outcome: 'not_found' } as const;
+    const { contract, page, routeParameters } = selected;
+    const moduleId = contract.manifest.module.id;
+    const approvedModule = catalog.composition.modules.find((module) => module.moduleId === moduleId);
+    const component = contract.manifest.publicSurface.components.find(({ key }) => key === page.componentKey);
+    if (
+      approvedModule?.federation.execution !== 'browser' ||
+      component === undefined ||
+      !approvedModule.federation.exposes.includes(page.expose) ||
+      page.expose !== component.expose ||
+      approvedModule.federation.remoteName !== component.mfBoundaryId
+    ) {
+      return { outcome: 'unavailable' } as const;
     }
-    const records = yield* loadStates(sources, context, [input.moduleId]);
+    const records = yield* loadStates(sources, context, [moduleId]);
     const [record] = records;
-    const state = record?.moduleKey === input.moduleId ? record.state : undefined;
+    const state = record?.moduleKey === moduleId ? record.state : undefined;
     if (state === undefined) {
       return { outcome: 'not_found' } as const;
     }
@@ -221,7 +371,7 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     }
     const permission = yield* resolveTargetPermission(sources, {
       legalEntityId: context.legalEntityId,
-      moduleId: input.moduleId,
+      moduleId,
       principalId: context.principalId,
       tenantId: context.tenantId,
     });
@@ -230,9 +380,16 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     }
     return {
       appId: contract.deployment.appId,
-      moduleId: input.moduleId,
+      compositionRevision: catalog.composition.revision,
+      federation: {
+        expose: page.expose,
+        manifest: approvedModule.federation.manifest,
+        remoteName: approvedModule.federation.remoteName,
+      },
+      moduleId,
       outcome: 'resolved',
       page,
+      routeParameters,
       writable: state === 'active',
     } as const;
   });

@@ -3,8 +3,10 @@ import type {
   CurrentStorefrontApplicationRequest,
   CurrentStorefrontApplicationResponse,
 } from '@app/storefront-registry-contracts';
-import { executeCurrentStorefrontApplication } from '@app/storefront-registry-contracts/current-storefront-application/client';
-import { Effect, Schema } from 'effect';
+import { executeCurrentStorefrontApplicationWithAuthorization } from '@app/storefront-registry-contracts/current-storefront-application/client';
+import { GatewayContextResponseSchema } from '@app/shared-contracts';
+import { issueApiKeyGatewayContext } from '@app/shared-contracts/server/gateway-context-api-key';
+import { Config, Effect, Schema } from 'effect';
 
 import { StorefrontApplicationEvidenceStale } from '../actions/storefront-application-evidence-stale.ts';
 import { StorefrontApplicationNotCurrent } from '../actions/storefront-application-not-current.ts';
@@ -33,7 +35,31 @@ export interface CurrentStorefrontApplicationAuthority {
   ) => Effect.Effect<CurrentStorefrontApplicationEvidence, StorefrontApplicationValidationFailure>;
 }
 
-type ExecuteCurrentStorefrontApplication = typeof executeCurrentStorefrontApplication;
+type ExecuteCurrentStorefrontApplication = (
+  input: CurrentStorefrontApplicationRequest,
+  requestCorrelation: string,
+) => Effect.Effect<
+  CurrentStorefrontApplicationResponse,
+  | Effect.Error<ReturnType<typeof executeCurrentStorefrontApplicationWithAuthorization>>
+  | StorefrontApplicationValidationUnavailable
+>;
+
+const httpUrl = Schema.URLFromString.check(
+  Schema.makeFilter((url) =>
+    (url.protocol === 'http:' || url.protocol === 'https:') &&
+    url.username.length === 0 &&
+    url.password.length === 0 &&
+    url.search.length === 0 &&
+    url.hash.length === 0
+      ? undefined
+      : 'Service URL must be an HTTP(S) URL without credentials, query, or fragment',
+  ),
+);
+
+const configuration = Config.all({
+  apiKey: Config.Redacted('ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY'),
+  shellBaseUrl: Config.schema(httpUrl, 'ONTOS_SHELL_GATEWAY_BASE_URL'),
+});
 
 const unavailable = (reason: string, cause?: unknown): StorefrontApplicationValidationUnavailable => {
   const failure = new StorefrontApplicationValidationUnavailable({
@@ -103,7 +129,7 @@ const validateResponse = (
 };
 
 export const makeCurrentStorefrontApplicationAuthority = (
-  execute: ExecuteCurrentStorefrontApplication = executeCurrentStorefrontApplication,
+  execute: ExecuteCurrentStorefrontApplication,
 ): CurrentStorefrontApplicationAuthority => ({
   validateCurrent: (input, requestCorrelation) =>
     execute(input, requestCorrelation).pipe(
@@ -122,4 +148,43 @@ export const makeCurrentStorefrontApplicationAuthority = (
     ),
 });
 
-export const currentStorefrontApplicationAuthority = makeCurrentStorefrontApplicationAuthority();
+export const makeServerCurrentStorefrontApplicationAuthority = ({
+  compositionRevision,
+  legalEntityId,
+}: {
+  readonly compositionRevision: string;
+  readonly legalEntityId: string | undefined;
+}): CurrentStorefrontApplicationAuthority =>
+  makeCurrentStorefrontApplicationAuthority(
+    Effect.fn('CurrentStorefrontApplicationAuthority.executeStorefrontOwnerRead')(
+      function* executeStorefrontOwnerRead(payload: CurrentStorefrontApplicationRequest, requestCorrelation: string) {
+        const configured = yield* configuration;
+        const issued = yield* issueApiKeyGatewayContext(
+          legalEntityId === undefined
+            ? { audience: 'storefront-registry', compositionRevision }
+            : {
+                audience: 'storefront-registry',
+                compositionRevision,
+                legalEntityId,
+              },
+          { apiKey: configured.apiKey, baseUrl: configured.shellBaseUrl, requestCorrelation },
+        );
+        const admitted = yield* Schema.decodeEffect(GatewayContextResponseSchema)(issued);
+        if (admitted.compositionRevision !== compositionRevision) {
+          return yield* unavailable('Storefront Registry gateway returned a different composition revision');
+        }
+        return yield* executeCurrentStorefrontApplicationWithAuthorization(
+          payload,
+          `Bearer ${admitted.token}`,
+          requestCorrelation,
+          {
+            baseUrl: new URL(admitted.apiBaseUrl, configured.shellBaseUrl),
+            compositionRevision,
+          },
+        );
+      },
+      Effect.mapError((cause) =>
+        unavailable('The Storefront Registry Current application authority is unavailable', cause),
+      ),
+    ),
+  );

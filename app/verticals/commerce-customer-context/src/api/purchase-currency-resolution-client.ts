@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PurchaseCurrencyResolutionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PurchaseCurrencyResolutionAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executePurchaseCurrencyResolution = (
   payload: PurchaseCurrencyResolutionRequest,
   ...[requestCorrelation, options = {}]: PurchaseCurrencyResolutionOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePurchaseCurrencyResolutionWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePurchaseCurrencyResolutionWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

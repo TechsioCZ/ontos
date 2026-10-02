@@ -341,7 +341,13 @@ export const purchaseCurrencyResolutionRead = defineRead(
   },
   handlePurchaseCurrencyResolution,
   Effect.fn('PurchaseCurrencyResolutionRead.serviceFactory')(
-    function* purchaseCurrencyResolutionServiceFactory(transaction, scope) {
+    function* purchaseCurrencyResolutionServiceFactory(transaction, scope, compositionRevision) {
+      if (compositionRevision === undefined) {
+        return yield* new OperationContextUnavailable({
+          code: 'operation_context_unavailable',
+          reason: 'Cross-owner Read credentials require a verified composition revision',
+        });
+      }
       if (scope.legalEntityId === undefined) {
         return yield* new OperationContextUnavailable({
           code: 'operation_context_unavailable',
@@ -358,6 +364,7 @@ export const purchaseCurrencyResolutionRead = defineRead(
       const repository = yield* customerCommercePolicyRepositoryForScope(transaction, scope);
       const contextPort = yield* PurchaseCurrencyPurchasingContextPort;
       const pricingPort = yield* purchaseCurrencyPricingPortFromEnvironment({
+        compositionRevision,
         legalEntityId: scope.legalEntityId,
         requestCorrelation: scope.correlationId,
       });

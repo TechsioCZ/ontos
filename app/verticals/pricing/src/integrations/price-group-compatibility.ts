@@ -23,7 +23,7 @@ type CompatibilityExecutor = (
   payload: ValidatePriceGroupCompatibilityRequest,
   credential: Redacted.Redacted,
   requestCorrelation: string,
-  options: { readonly baseUrl: URL },
+  options: { readonly baseUrl: URL; readonly compositionRevision: string },
 ) => Effect.Effect<PriceGroupCompatibilityDecision, CompatibilityClientFailure>;
 
 const executeAuthorizedCompatibility: CompatibilityExecutor = (payload, credential, requestCorrelation, options) =>
@@ -77,7 +77,11 @@ const responseBindsRequest = (
 };
 
 const makeCompatibilityPort = (dependencies: {
-  readonly context: { readonly requestCorrelation: string; readonly tenantId: string };
+  readonly context: {
+    readonly compositionRevision: string;
+    readonly requestCorrelation: string;
+    readonly tenantId: string;
+  };
   readonly execute: CompatibilityExecutor;
   readonly issuer: PriceGroupCompatibilityGatewayCredentialIssuer;
 }): PriceGroupCompatibilityPort => ({
@@ -91,6 +95,7 @@ const makeCompatibilityPort = (dependencies: {
     const { baseUrl, credential } = yield* dependencies.issuer
       .issue({
         audience: 'price-group-catalog',
+        compositionRevision: dependencies.context.compositionRevision,
         requestCorrelation: dependencies.context.requestCorrelation,
       })
       .pipe(
@@ -99,7 +104,10 @@ const makeCompatibilityPort = (dependencies: {
         ),
       );
     const ownerResponse = yield* dependencies
-      .execute(payload, credential, dependencies.context.requestCorrelation, { baseUrl })
+      .execute(payload, credential, dependencies.context.requestCorrelation, {
+        baseUrl,
+        compositionRevision: dependencies.context.compositionRevision,
+      })
       .pipe(
         Effect.mapError((cause) =>
           failure('UNAVAILABLE', 'Price Group Catalog compatibility validation is unavailable', cause),
@@ -118,7 +126,7 @@ const makeCompatibilityPort = (dependencies: {
 });
 
 export const priceGroupCompatibilityPortFromEnvironment = (
-  context: { readonly requestCorrelation: string; readonly tenantId: string },
+  context: { readonly compositionRevision: string; readonly requestCorrelation: string; readonly tenantId: string },
   execute: CompatibilityExecutor = executeAuthorizedCompatibility,
 ): Effect.Effect<PriceGroupCompatibilityPort> =>
   Effect.serviceOption(PriceGroupCompatibilityGatewayCredentialService).pipe(

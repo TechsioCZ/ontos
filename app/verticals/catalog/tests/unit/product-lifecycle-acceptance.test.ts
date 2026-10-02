@@ -1,11 +1,13 @@
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Match, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { catalogReadiness, productActivationBlockers, ProductSchema } from '../../shared/domain/product.ts';
 import type { CatalogSelectionEvidenceReader } from '../../shared/domain/catalog-open-selection-population.ts';
 import { CatalogSelectionEvidenceSchema } from '../../shared/domain/catalog-selection-evidence.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { CatalogSelection } from '../../shared/domain/catalog-selection-evidence.ts';
 import {
   ProductLifecycleConflict,
@@ -275,42 +277,54 @@ const persistenceFor = (
   );
 };
 
-const executableContextFor = (
-  services: CatalogPersistence,
-): ActionHandlerContext<typeof reactivateProductAction.descriptor.domainEvents, CatalogPersistence> => ({
-  actionInvocationId: invocationId,
-  addDomainEvent: () => Effect.succeed(Object.create(null)),
-  addOutboxMessage: () => Effect.void,
-  recordAuditEvidence: () => Effect.void,
-  recordDataAccess: () => Effect.void,
-  scope,
-  services,
-});
+const executableContextFor = (services: CatalogPersistence) =>
+  makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker).pipe(
+    Effect.map(
+      ({ composition }) =>
+        ({
+          actionInvocationId: invocationId,
+          addDomainEvent: () => Effect.succeed(Object.create(null)),
+          addOutboxMessage: () => Effect.void,
+          compositionRevision: composition.revision,
+          recordAuditEvidence: () => Effect.void,
+          recordDataAccess: () => Effect.void,
+          scope,
+          services,
+        }) satisfies ActionHandlerContext<typeof reactivateProductAction.descriptor.domainEvents, CatalogPersistence>,
+    ),
+  );
 
 const contextFor = <Events extends DomainEventContractMap>(
   _domainEvents: Events,
   services: Partial<CatalogPersistence>,
-): ActionHandlerContext<Events, CatalogPersistence> => ({
-  actionInvocationId: invocationId,
-  addDomainEvent: () => Effect.die('Unused'),
-  addOutboxMessage: () => Effect.die('Unused'),
-  recordAuditEvidence: () => Effect.void,
-  recordDataAccess: () => Effect.void,
-  scope,
-  services: {
-    correct: () => Effect.die('Unused'),
-    create: () => Effect.die('Unused'),
-    getCreatedByInvocation: () => Effect.die('Unused'),
-    getCurrent: () => Effect.die('Unused'),
-    getHistory: () => Effect.die('Unused'),
-    reactivate: () => Effect.die('Unused'),
-    recoverCreateProduct: () => Effect.die('Unused'),
-    recoverUpdateProduct: () => Effect.die('Unused'),
-    retire: () => Effect.die('Unused'),
-    update: () => Effect.die('Unused'),
-    ...services,
-  },
-});
+) =>
+  makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker).pipe(
+    Effect.map(
+      ({ composition }) =>
+        ({
+          actionInvocationId: invocationId,
+          addDomainEvent: () => Effect.die('Unused'),
+          addOutboxMessage: () => Effect.die('Unused'),
+          compositionRevision: composition.revision,
+          recordAuditEvidence: () => Effect.void,
+          recordDataAccess: () => Effect.void,
+          scope,
+          services: {
+            correct: () => Effect.die('Unused'),
+            create: () => Effect.die('Unused'),
+            getCreatedByInvocation: () => Effect.die('Unused'),
+            getCurrent: () => Effect.die('Unused'),
+            getHistory: () => Effect.die('Unused'),
+            reactivate: () => Effect.die('Unused'),
+            recoverCreateProduct: () => Effect.die('Unused'),
+            recoverUpdateProduct: () => Effect.die('Unused'),
+            retire: () => Effect.die('Unused'),
+            update: () => Effect.die('Unused'),
+            ...services,
+          },
+        }) satisfies ActionHandlerContext<Events, CatalogPersistence>,
+    ),
+  );
 
 describe('Product lifecycle acceptance (#414)', () => {
   it.effect(
@@ -618,7 +632,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       );
       const result = yield* handleReactivateProduct(
         { expectedRevision: 3, productRef, reason: 'Product verified through Current evidence' },
-        executableContextFor(persistence),
+        yield* executableContextFor(persistence),
       );
       expect(result.product).toMatchObject({ catalogReady: true, lifecycle: 'ACTIVE', productRef, revision: 4 });
       expect(state.product.lifecycleState).toBe('ACTIVE');
@@ -639,7 +653,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       );
       const error = yield* handleReactivateProduct(
         { expectedRevision: 3, productRef, reason: 'Product cannot be verified' },
-        executableContextFor(persistence),
+        yield* executableContextFor(persistence),
       ).pipe(Effect.flip);
       expect(Schema.is(ProductNotCatalogReady)(error)).toBe(true);
       expect(state.product.lifecycleState).toBe('RETIRED');
@@ -732,7 +746,7 @@ describe('Product lifecycle acceptance (#414)', () => {
 
   it.effect('maps stale, cross-tenant, missing, and illegal lifecycle edits to typed failures', () =>
     Effect.gen(function* typedFailures() {
-      const stale = contextFor(updateProductAction.descriptor.domainEvents, {
+      const stale = yield* contextFor(updateProductAction.descriptor.domainEvents, {
         update: () => Effect.succeed({ _tag: 'revision_conflict', actualRevision: 5 }),
       });
       const revisionError = yield* handleUpdateProduct(
@@ -741,14 +755,14 @@ describe('Product lifecycle acceptance (#414)', () => {
       ).pipe(Effect.flip);
       expect(Schema.is(ProductRevisionConflict)(revisionError)).toBe(true);
 
-      const foreign = contextFor(updateProductAction.descriptor.domainEvents, {});
+      const foreign = yield* contextFor(updateProductAction.descriptor.domainEvents, {});
       const foreignError = yield* handleUpdateProduct(
         { expectedRevision: 1, productRef: { ...productRef, tenantId: foreignTenantId }, reason: 'Foreign edit' },
         foreign,
       ).pipe(Effect.flip);
       expect(Schema.is(ProductNotFound)(foreignError)).toBe(true);
 
-      const missing = contextFor(retireProductAction.descriptor.domainEvents, {
+      const missing = yield* contextFor(retireProductAction.descriptor.domainEvents, {
         retire: () => Effect.succeed({ _tag: 'not_found' }),
       });
       const missingError = yield* handleRetireProduct(
@@ -757,7 +771,7 @@ describe('Product lifecycle acceptance (#414)', () => {
       ).pipe(Effect.flip);
       expect(Schema.is(ProductNotFound)(missingError)).toBe(true);
 
-      const notRetired = contextFor(reactivateProductAction.descriptor.domainEvents, {
+      const notRetired = yield* contextFor(reactivateProductAction.descriptor.domainEvents, {
         reactivate: () =>
           Effect.succeed({ _tag: 'lifecycle_conflict', product: productAggregate('ACTIVE', ['ACTIVE'], 2) }),
       });

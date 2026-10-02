@@ -620,6 +620,25 @@ it.live('replans every placed unit when the edge deploy workflow changes', () =>
   }),
 );
 
+it.live('keeps an unchanged Shell and infrastructure out of a reviewed composition selection change', () =>
+  Effect.gen(function* preservesShellForPublicationInput() {
+    yield* withFixture(
+      (root) =>
+        Effect.gen(function* preservesShellForPublicationInputInFixture() {
+          const plan = yield* planDeploymentImpact({
+            changedPaths: ['topology/application-release-intent.json'],
+            rootDirectory: root,
+          });
+          expect(plan.units.cloudflare).toEqual([]);
+          expect(plan.phases).toEqual([]);
+          expect(plan.units.migrator).toBe(false);
+          expect(plan.units.spicedb).toBe(false);
+        }),
+      { cloudflarePlacement: [SHELL_ID, 'contacts'] },
+    );
+  }),
+);
+
 it.live('replans every unit, on Zerops and the edge, when the planner itself changes', () =>
   Effect.gen(function* replansEverythingForPlannerChanges() {
     yield* withFixture(

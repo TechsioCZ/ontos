@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PriceResultLookupClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PriceResultLookupAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executePriceResultLookup = (
   payload: PriceResultLookupRequest,
   ...[requestCorrelation, options = {}]: PriceResultLookupOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePriceResultLookupWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePriceResultLookupWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

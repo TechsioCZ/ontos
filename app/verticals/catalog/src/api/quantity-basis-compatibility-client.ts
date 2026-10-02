@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface QuantityBasisCompatibilityClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type QuantityBasisCompatibilityAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeQuantityBasisCompatibility = (
   payload: QuantityBasisCompatibilityRequest,
   ...[requestCorrelation, options = {}]: QuantityBasisCompatibilityOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeQuantityBasisCompatibilityWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeQuantityBasisCompatibilityWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

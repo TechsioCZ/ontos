@@ -18,11 +18,6 @@ export const Issue738TraceabilityOwnerSchema = Schema.Literals([
 ]);
 export type Issue738TraceabilityOwner = typeof Issue738TraceabilityOwnerSchema.Type;
 
-export const ISSUE_738_PRICING_OWNED_PATH_PREFIXES = [
-  'app/packages/pricing-contracts/',
-  'app/verticals/pricing/',
-] as const;
-
 export const ISSUE_738_OUT_OF_SCOPE_PATH_PREFIXES = ['app/packages/promotion-contracts/'] as const;
 /**
  * SHA-256 fingerprints of each non-Pricing path from
@@ -128,6 +123,119 @@ export const ISSUE_738_REVIEWED_NON_PRICING_PATH_HASHES = [
   '5053b9a992ac15cba24939339e3a802d4ccf763205176d7149c1aa03bae83e43',
 ] as const;
 
+/**
+ * SHA-256 path fingerprints independently derived from the accepted #738 remediation range:
+ * `af9f652ab6cc6099c558a031f559356d026b5461..a6741ac119c28ec5b174711b92b233eed29a37e1`.
+ *
+ * Only the two Pricing-owned prefixes above are excluded from `git diff --name-only`.
+ * This accepted historical scope is independent of later branches and untracked worktree files.
+ */
+export const ISSUE_738_ACCEPTED_NON_PRICING_PATH_HASHES = [
+  '30c5b46524a9cb45da135257f5e011d084a81b13112025be93f2e7b0de71aebc',
+  '6d7925fdf8f2ad35add5e7719c22364faf3b7c3431817ca8b5788fea5724bc70',
+  'da7271992005519bd518476d2f6806f2941b0767f7c2ce5fd2b33a40406151f9',
+  '4b9d6abc4f5a6844fd77e9d6253d0b67e6683631811745709e446af2793e9b9a',
+  '8a50259203a5e6c92f1eed24c54e1e920fd82e24b3d2041b792a05482dfbeebe',
+  '012b982f97a0d326aeec58dd3b789484b05a944d609afe1b8ed5e299fc485f61',
+  '42bd1302395546f2f3564cb795bd1d642e6c4e372154611b320e5de5ccb2d70c',
+  '395cb9727b3e33a80f27d2aa0128ef3bd483b3939a3169fee0b787f41fe49e77',
+  'b8852c9797f089a95bc54cf90e47cdcac81127f3374a369d783870cf5fb5afcb',
+  '7410f7fccd1cf111528ecf0af6ad350d5c98c5755429a653bb26035c4edd6d8b',
+  '38a104b76d9a6ecd3332835eba1799ecc1b02d7fef856c9e9bb30b9dbe8b39eb',
+  'a1508b266ef1d729e8df4ac4930ed4dd0cb8a2e7f1ef815721254d0b3c228b9e',
+  'f6907bad3bb64825c3fe466ae6e6138c2dca568b5bfd875717bd5466e3069b1b',
+  '9b01ab80cf6020da5d25dd5cc414b791b20da78104799f88a1a9d29bf083f2d3',
+  '29873f53bef9fcd16be33c84f66b647530d080c327eac873d80fedaa1c5ca701',
+  '5d5a300baf6b5383055a7762060aba00b0aaa92a668d0f8fee529a19ceb43385',
+  '79dae129ab6187585da7ed947ac3e4c83d2b95ef9cfda4f79657cfd5d4f07c1f',
+  '4084f4cf3ed0f4f29277acb421beb85df45714b66d0491d257e72bd3380c6e2a',
+  'd54e7520d82ede8432b4b206b1a04cf3bb0e43a14d4e923f1522fb8ef78f88c5',
+  '8297593d25181794ce58e5416aae3e5b7a7d61e7d608c24926ccf7ecdf73e0c4',
+  '4dd88c558aa73a54a0b9edd8c43c44ebebb860ece89b76c9a42c69b68e9feaee',
+  '9ef93c1f67dcd26c2dd7b34a6c4e1e3b2a844d85466ddf56b5c992962af9f745',
+  '8e94439d8f0bf8fccbd64f4e9ed00b4359b4bbfe21b24474a42384464bc98306',
+  '7c9c7c3a3444417e7a7b97d142de1331846e1c2659f424407eb9732202c3e553',
+  'decc8fc8d1c374e0a67cbbcdde536c133324bfe209a798cff5bbaa51f98aebd3',
+  '02e0c95a0049a65b3639ce5d5784c10e948e9dbb00834d2e67a70ef4443e76d8',
+  'a53183af5e5c637bc4e64968cd4f93bf5c39785eceb1d50aa03f498d4b633812',
+  '16823423729d741b1d11c855907f8b8f0a5132f1fce2733b1f0e30b5c9b3cfbb',
+  'c877bd46e10e6c5bed92d699177d9cba821175c21dbd074b8752a284d09a2df9',
+  '1917a6590696de33aed62e26dc9d2a2fb196141a8766dfce90c73233466e4eb8',
+  '88a6299b5496ba3bb63cf8b9a0d28974fb3aa4e00c2f42af12888c4bec804047',
+  '6f60fb025d298b6477c2a6b7c93e4dac04a5bc3ade88e71005f4635d97c198fc',
+  'aec7f9867e9fe0b35ea816a034341cd9fbf29bb31624847d9d30aa7db27a0d4b',
+  '4fb2681bc96c9fd956b98c2be7c04528caccf328cb2f0d859ae2af6276e97566',
+  '5138db3b4daccc7cc7c42a55df937949b4e04f8c1cd9db7840033f61a135d319',
+  '0439c2ef6a29728de0970ecdb1cf0958dd6b27becb93e3c078fca7c469773478',
+  '11eaf8818a793b1bab549cf07e7b755f1f7a8571dc58a7848e218b674a76e0db',
+  '9fa00fae20b6fe732d315756173fb7e176103d1411448ddbc718cb5e3b1bbf7a',
+  'bbc4add0a06038bc977bfc11eccc4c7495778a616034533557876ccbdf797c74',
+  'afe8179f43c09f0e30f7b388bd15400ad2dac9b29fb359c4f691de110fe10b9e',
+  'b144b7614598bd112fc5bbf0a4b4db7cb05bd9639bc5ccbe8a09325a6a7004cb',
+  '847de7d0d1a73762d58d74054b075157aa19e9b97222f3ec5707f60b8154d7ff',
+  'c4ba260afda72fb1a00734f2bccf582db81dc7215826700ac1880b0ff22529c7',
+  '446ddc4f0cfd1630702060d6b4c1cc12dec72bc7588a4aaa506a4a4e4c21d811',
+  '7e4491155d91e1792792fe78344f0f7865cb2d360afd6c358d5ea30a82ee6dec',
+  'e9488f05a13cc2d04052c188772c2b541d23d48f1271d9785030f40900fc3dd4',
+  'd9fec913129bd17160a0a338106a589a24acb366da19702d98a4e30cdc50924a',
+  'e17ed0e840bd92a1c9cfdbac54243551dc6d913b42de74503f089a33b7f5efc6',
+  'af39f61dfc2f65a5580adf70876f9eca369a48dc119f1ba79c0c6b7c2290141d',
+  '209d5ab135b8912200443ecce7a49f49b8ab9cacd247cef9cab8ec1844fedbc5',
+  '46c569d3b9eda4960618fc7317a4b5fd1983874fbccd26f90ef47a5771bbf681',
+  '905d3dcd9bc8a3005a0d09d41c9f925375b20562b9da3a485f6d4e4416d7421a',
+  '49cb184a920224a93ccf0b4633d8aacf5a876a7785f18cd93c647f98e4b653c7',
+  '0a315d1037352ac06e8d895832e136377bcbf875e8f7e0b426124b2c2f317a56',
+  '44ea7d818a3dd087d1a87172977929b167943ca4e9dce88a34c60be4287c56a6',
+  'b9b87236d679ce0908c4a80e4a5cd74fc3935b2d6bddfb6e3da4c486de3bf5f7',
+  '65379bdba04a2b0b66f78917a2554e9c389ed4385a3f901a7f7d225e5936360e',
+  'e07266f3d6b4e25e9d0ed32e89142c9d85feaefe96a6abbc8ab2cacac1ab5c8b',
+  '56dee1782b515a284f631c1925cc15cb95432ac9616b65f3d7ea5ecc904d5b29',
+  '5673874fcab96d7bf287ddc1faa68c8bea84823e9f5318e9e550a2c32349999f',
+  'f8f182f9e2509493e75c9191b86cbf85c3bae29fc311ac94490000eada0cd3a0',
+  '95b0299eddc71c0e70e882a4c279faef489fae095e58354b74b2972871471a37',
+  'ab75e75034bd1694f3db9bf4c7b1236490e52f12b2b08b764dd78d985179ada5',
+  '1a2412f5e535992fdf41df5da53fa0d047673f492a8cc3d0fce78d7b14ed9bf4',
+  'c29735d546cfa86461e7111d7d2564e991c40d57051f397a6d889d051844818f',
+  '4da88774919fc180ed7130775de5e1d142c7f5516540d5e11f0a639c22d638d7',
+  '03d3f93efaf4066a6262d3fcb713d2c137542ae75297285b5bc5bd4826729d96',
+  'b11952c007665c4258b1dc69f4b56f3d946db7185732eeae771f87e14f0a44ec',
+  '3410776914372a96602044fb01e08bbcb66d5c29aea840ffaef72ca12c4d8dea',
+  '0f4073aceb2b5ebd0bd1a72b893e57eb60d63b29273f7008d2f43652b917bcae',
+  'e739042c094fe36c17859e19b9916a9160e3369f3920cae583bb8f53d92e0bc9',
+  'f10c93149200e7768b25196d4ed5f3691e0083547a1670180a32e8ac1617c187',
+  '68776f645469d5cd064d3857d5c103389c49a5715116123011c01d5c6664501f',
+  '735a474797ccf8a2ed58fab11e4443b08241a134cedef04fd6ba275090d7348e',
+  '424fe3ed1c01c19ed7f32ea04f21008d7c85eb3a5f5654d7e60927294bb5b9b5',
+  '8a8bd15f5a7691750963b9ed721b1d9d583c94df3fc5adebb32cc4400bbd1636',
+  '487426895bbb12f6c44f4a0690cef950243f5c397bb8d9c9e0fd9e8a04272722',
+  '6159b46d5d107435cc8a7bfedbcc80395cd7bd4148289eebd725a3a3f104a6f0',
+  '4cdb354a728e51c038b513be86e90b3daebdc0f1063908e7915ad9c05063e21b',
+  'd0389b8c5765e0593f6693d49dbfa6eef16764235f89f1af8322de10511e88c3',
+  '20c3921f50c4bd051f6bc07195951f4efa879e7c9b9efb0dfab18bea06ee403b',
+  '5d5e3de914d1f8bebff8af21521a9108eb1f4f6b0150c4e4df476138678e6d0f',
+  '014c77d0a5266aac49424a17ab24ca60cec1aa861232bd0fedf90c438eb1ff9a',
+  '2f9053a1d340b2a6554b45b0da7f162c43acb2f02cc28c393fa9081fdab492ec',
+  '86aa8491021eb7920cbbac0425cdb2b6a3782db0eb096a13bc8219a23850e381',
+  '3f70b3270875cca782370be1aff9051bb6e1d80e986a8ee71157fa62958865b6',
+  '00f71fa893f91b699d08a6cf0c821e4fd4b150abd9b3d95fe562e9a85280928b',
+  'df33b36601714a4953a6724b9833c60747f58b01cd0b655bf57f99c80a3ffdce',
+  'fd93c0719f0b8715cab6425af8085b8c17e4b95ec4679ff6002ebd7dff3750f7',
+  '466e24e040e2a354855206a9d6a47d8447d74f660d71e6f189a02b2feea3b536',
+  'a0a0062bebe2d611e1bd2eb7dc02f0add2b84d26d189343b61a4a80d96634d3e',
+  '3c3b9734c155356f11431b145fbe414305af6ae7828a59d599c9085f26cafd70',
+  'b8a07addf0801f4198ca0838e3e1324554afcace983fb337c74e0885b8cbe9ba',
+  'd52378222ff3880394cd184563be4128ebf7058cb2afc504f0bec7303e31e2df',
+  'd014b676905ee54597fa13b7032139e77f3f9cb2665df6929291889992ae7c8a',
+  '23f661b4fda329341ad5c11b3d9c9ce46fb6d15a4081398b859b54f6902c30a8',
+  'e0fde971e293969cd6ee219a7a0a63ebf9d451f0f072dc06cf03221360c3273c',
+  'bbf3b544b4ae8390c52ed4904a6afaa7b5bf88f806eb106f2635223d462e3fba',
+  'a4fbf6db6cb7e74e963ef85adb3fd4ec9132cd28c04cb80f2b92005178f1d5c3',
+  '8124cc631451755c7ce9bb6f4c521b583e13af38d269653c28732df206990754',
+  '09edb94db4ecf7c8910832d1f71af9d19bf4f07425bb07eaf3096040f41a9f8b',
+  '4dc9766bb6e679a1cf00bd76702790b4d38f0850e632f22462b43aaededda7dc',
+  '5053b9a992ac15cba24939339e3a802d4ccf763205176d7149c1aa03bae83e43',
+] as const;
+
 export const Issue738NonPricingDispositionSchema = Schema.Literals(['keep', 'remove', 'split']);
 export type Issue738NonPricingDisposition = typeof Issue738NonPricingDispositionSchema.Type;
 
@@ -152,8 +260,8 @@ export type Issue738NonPricingScopeLedgerRow = Omit<Issue738NonPricingDispositio
 
 /**
  * Exhaustive disposition for every path outside Pricing and pricing-contracts in the union of the
- * immutable fixed-base-to-reviewed-head diff and the live worktree diff. The validator rejects an
- * uncovered or duplicated path and separately checks its accepted disposition in the live worktree.
+ * immutable reviewed baseline and the immutable accepted remediation. The validator rejects an
+ * uncovered or duplicated path and separately checks the complete accepted disposition.
  * Foreign-owner rows are kept only under the explicit HITL direction recorded for #738; no
  * PARK/LATER owner is activated.
  */
@@ -497,7 +605,7 @@ export const ISSUE_738_NON_PRICING_DISPOSITIONS = [
   },
 ] as const satisfies readonly Issue738NonPricingDispositionGroup[];
 
-/** One machine-reviewable row per non-Pricing path in the reviewed baseline or live worktree diff. */
+/** One machine-reviewable row per non-Pricing path in the reviewed or accepted remediation. */
 export const ISSUE_738_NON_PRICING_SCOPE_LEDGER = ISSUE_738_NON_PRICING_DISPOSITIONS.flatMap(
   ({ id, paths, ...evidence }) => paths.map((path) => ({ ...evidence, groupId: id, path })),
 ) satisfies readonly Issue738NonPricingScopeLedgerRow[];

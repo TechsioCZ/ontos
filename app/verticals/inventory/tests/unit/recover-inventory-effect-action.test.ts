@@ -27,6 +27,8 @@ import {
   recoverInventoryEffectAction,
 } from '../../src/actions/recover-inventory-effect.action.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const effectId = '88888888-8888-4888-8888-888888888888';
@@ -93,15 +95,18 @@ const original = Schema.decodeUnknownSync(InventoryEffectLedgerRecordSchema)({
   updatedAt: '2026-09-25T08:02:00.000Z',
 });
 
-const actionScope = trustVerifiedGatewayPrincipalContext({
-  authBindingId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
-  authContextRef: 'test:recover-inventory-effect',
-  authMethod: 'api_key',
-  correlationId: 'recover-inventory-effect-test',
-  legalEntityId,
-  principalId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
-  tenantId,
-});
+const actionScope = trustVerifiedGatewayPrincipalContext(
+  {
+    authBindingId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    authContextRef: 'test:recover-inventory-effect',
+    authMethod: 'api_key',
+    correlationId: 'recover-inventory-effect-test',
+    legalEntityId,
+    principalId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    tenantId,
+  },
+  compositionRevision,
+);
 
 const recoveredReservationRecord = () => {
   const selection = Schema.decodeUnknownSync(CatalogSelectionSchema)({
@@ -326,6 +331,7 @@ describe('Recover Inventory Effect Action', () => {
         actionInvocationId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope: actionScope,
@@ -380,6 +386,7 @@ describe('Recover Inventory Effect Action', () => {
           actionInvocationId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
           addDomainEvent: collector.addDomainEvent,
           addOutboxMessage: collector.addOutboxMessage,
+          compositionRevision,
           recordAuditEvidence: collector.recordAuditEvidence,
           recordDataAccess: collector.recordDataAccess,
           scope: actionScope,

@@ -491,6 +491,7 @@ describe('Revise Price Action', () => {
         actionInvocationId,
         addDomainEvent: () => Effect.die('not used'),
         addOutboxMessage: () => Effect.die('not used'),
+        compositionRevision: 'a'.repeat(64),
         recordAuditEvidence: () => {
           auditCount += 1;
           return Effect.void;

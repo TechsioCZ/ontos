@@ -175,7 +175,16 @@ const customerPriceGroupResolutionEntrypoint = defineTenantModuleEntrypoint({
 export const customerPriceGroupResolutionServicesForTransaction = (
   transaction: PriceGroupRoutineInvoker,
   scope: OperationalScope,
+  compositionRevision: string | undefined,
 ): Effect.Effect<CustomerPriceGroupResolutionServices, OperationContextUnavailable> => {
+  if (compositionRevision === undefined) {
+    return Effect.fail(
+      new OperationContextUnavailable({
+        code: 'operation_context_unavailable',
+        reason: 'Cross-owner Read credentials require a verified composition revision',
+      }),
+    );
+  }
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
     return Effect.fail(
@@ -188,6 +197,7 @@ export const customerPriceGroupResolutionServicesForTransaction = (
   const trustedScope = { ...scope, legalEntityId };
   return Effect.gen(function* makeCustomerPriceGroupResolutionServices() {
     const catalog = yield* priceGroupCatalogPortFromEnvironment({
+      compositionRevision,
       requestCorrelation: scope.correlationId,
     });
     return {

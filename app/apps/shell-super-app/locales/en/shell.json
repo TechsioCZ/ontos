@@ -123,6 +123,7 @@
       "incompatible": "The deployed module entrypoint is incompatible.",
       "loading": "Loading module…",
       "not_found": "This module is not available in the current context.",
+      "reload_required": "A new application release is available. Reload this page to continue.",
       "selection_required": "Select a legal entity before opening a module.",
       "seoDescription": "An authorized OntOS module workspace.",
       "title": "Module",

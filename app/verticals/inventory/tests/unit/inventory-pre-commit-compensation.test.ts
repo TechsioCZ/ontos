@@ -37,6 +37,8 @@ import {
 } from '../../src/services/inventory-effect-ledger.service.ts';
 import { makeInMemoryInventoryEffectLedger } from '../support/inventory-effect-ledger.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const timestamp = '2026-09-24T10:00:00.000Z';
@@ -295,15 +297,18 @@ const makeHarness = (
 
 describe('Inventory pre-commit compensation', () => {
   it('requires Inventory Recovery permission for the exact Reservation target', () => {
-    const scope = trustVerifiedGatewayPrincipalContext({
-      authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3',
-      authContextRef: 'test:inventory-pre-commit-compensation',
-      authMethod: 'api_key',
-      correlationId: 'inventory-pre-commit-compensation',
-      legalEntityId,
-      principalId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
-      tenantId,
-    });
+    const scope = trustVerifiedGatewayPrincipalContext(
+      {
+        authBindingId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa3',
+        authContextRef: 'test:inventory-pre-commit-compensation',
+        authMethod: 'api_key',
+        correlationId: 'inventory-pre-commit-compensation',
+        legalEntityId,
+        principalId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa4',
+        tenantId,
+      },
+      compositionRevision,
+    );
 
     expect(getActionBusinessPermissionTargetResolver(compensateInventoryPreCommitAction)?.(payload, scope)).toEqual({
       permission: 'inventory.recovery.execute',

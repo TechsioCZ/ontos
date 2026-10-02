@@ -10,6 +10,8 @@ import { DatabaseConfigLive } from '../src/db/config.ts';
 import {
   CORE_SCHEMA_NAME,
   actionInvocations,
+  applicationCompositionAuthority,
+  applicationCompositionDurableWork,
   auditEvents,
   dataAccessEvents,
   domainEvents,
@@ -143,6 +145,119 @@ const verifySearchIsolation = Effect.gen(function* verifySearchIsolationEffect()
         reason: 'Core Search must enforce forced tenant RLS with complete owner-operation policies',
       });
     }
+  }
+  return yield* Effect.void;
+});
+
+const verifyApplicationCompositionAuthority = (
+  table: typeof applicationCompositionAuthority | typeof applicationCompositionDurableWork,
+) =>
+  Effect.gen(function* verifyApplicationCompositionAuthorityEffect() {
+    const database = yield* CoreDatabase;
+    const rows = yield* database.executor
+      .execute<{
+        can_assume_owner: boolean;
+        policy_count: number;
+        relrowsecurity: boolean;
+        select_policy_count: number;
+        select_privilege: boolean;
+        write_privilege: boolean;
+      }>(
+        sql`
+        select
+          relation.relrowsecurity,
+          (
+            pg_has_role(current_user, relation.relowner, 'USAGE')
+            or pg_has_role(current_user, relation.relowner, 'SET')
+          ) as can_assume_owner,
+          has_table_privilege(current_user, relation.oid, 'SELECT') as select_privilege,
+          (
+            has_table_privilege(current_user, relation.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER,MAINTAIN')
+            or has_any_column_privilege(current_user, relation.oid, 'INSERT,UPDATE,REFERENCES')
+          ) as write_privilege,
+          count(policy.policyname)::integer as policy_count,
+          count(policy.policyname) filter (
+            where policy.policyname = ${`core_${getTableName(table)}_select`}
+              and policy.cmd = 'SELECT'
+              and policy.permissive = 'PERMISSIVE'
+              and policy.roles = array['ontos_runtime']::name[]
+              and policy.qual = 'true'
+              and policy.with_check is null
+          )::integer as select_policy_count
+        from pg_catalog.pg_class as relation
+        inner join pg_catalog.pg_namespace as namespace on namespace.oid = relation.relnamespace
+        left join pg_catalog.pg_policies as policy
+          on policy.schemaname = namespace.nspname and policy.tablename = relation.relname
+        where namespace.nspname = ${CORE_SCHEMA_NAME}
+          and relation.relname = ${getTableName(table)}
+        group by relation.oid, relation.relrowsecurity, relation.relowner
+      `,
+        'objects',
+      )
+      .pipe(
+        Effect.mapError(
+          () =>
+            new DatabaseVerificationError({
+              reason: 'Unable to verify Application Composition publication authority',
+            }),
+        ),
+      );
+    const [authority] = rows;
+    if (
+      authority === undefined ||
+      authority.can_assume_owner ||
+      !authority.relrowsecurity ||
+      !authority.select_privilege ||
+      authority.write_privilege ||
+      authority.policy_count !== 1 ||
+      authority.select_policy_count !== 1
+    ) {
+      return yield* new DatabaseVerificationError({
+        reason: 'Application runtimes must only read the admin-owned Application Composition authority',
+      });
+    }
+    return yield* Effect.void;
+  });
+
+const verifyDurableWorkRoutine = Effect.gen(function* verifyDurableWorkRoutineEffect() {
+  const database = yield* CoreDatabase;
+  const rows = yield* database.executor
+    .execute<{
+      can_assume_owner: boolean;
+      can_execute: boolean;
+      fixed_search_path: boolean;
+      security_definer: boolean;
+    }>(
+      sql`
+    select routine.prosecdef as security_definer,
+      routine.proconfig = array['search_path=pg_catalog, core']::text[] as fixed_search_path,
+      has_function_privilege(current_user, routine.oid, 'EXECUTE') as can_execute,
+      (pg_has_role(current_user, routine.proowner, 'USAGE') or pg_has_role(current_user, routine.proowner, 'SET')) as can_assume_owner
+    from pg_catalog.pg_proc as routine
+    where routine.oid = to_regprocedure('core.track_application_composition_durable_work(text,text,text,boolean)')
+  `,
+      'objects',
+    )
+    .pipe(
+      Effect.mapError(
+        () =>
+          new DatabaseVerificationError({
+            reason: 'Unable to verify Application Composition durable work tracking routine',
+          }),
+      ),
+    );
+  const [routine] = rows;
+  if (
+    routine === undefined ||
+    routine.can_execute ||
+    routine.can_assume_owner ||
+    routine.security_definer ||
+    !routine.fixed_search_path
+  ) {
+    return yield* new DatabaseVerificationError({
+      reason:
+        'Application Composition durable work tracking must only be callable by trusted administrator-owned triggers',
+    });
   }
   return yield* Effect.void;
 });
@@ -509,11 +624,16 @@ const verifyAuthBindingIndexes = Effect.gen(function* verifyAuthBindingIndexesEf
 const verifyDatabase = Effect.gen(function* verifyDatabaseEffect() {
   const database = yield* CoreDatabase;
   yield* verifyRuntimeRole;
+  yield* verifyApplicationCompositionAuthority(applicationCompositionAuthority);
+  yield* verifyApplicationCompositionAuthority(applicationCompositionDurableWork);
+  yield* verifyDurableWorkRoutine;
   yield* verifySearchIsolation;
   yield* verifyCoreConstraints;
   yield* verifyAuthBindingColumns;
   yield* verifyAuthBindingIndexes;
   const typedQueries = [
+    applicationCompositionAuthority,
+    applicationCompositionDurableWork,
     tenants,
     legalEntities,
     principals,

@@ -8,12 +8,22 @@ import {
   Logger,
   ManagedRuntime,
   Option,
+  Order,
   Random,
   References,
   Schema,
   Tracer,
 } from 'effect';
 import type { Layer } from 'effect';
+
+import {
+  ActiveApplicationCompositionService,
+  validateActiveApplicationCompositionSnapshot,
+} from '../modules/active-application-composition.ts';
+import { buildApplicationCompositionCatalog } from '../modules/application-composition-catalog.ts';
+import { OntosOutboxSubscriptionContractSchema } from '../modules/manifest.ts';
+import { OutboxWorkerDescriptorError } from './errors.ts';
+import { ActiveApplicationCompositionUnavailableError } from '../modules/active-application-composition-errors.ts';
 
 import type { AnyOutboxWorkerRegistration, OutboxWorkerRequirements, OutboxWorkerSubscription } from './definition.ts';
 import type {
@@ -26,12 +36,25 @@ import { parseOutboxPollingConfig, runOutboxPollingLoop } from './poller.ts';
 import type { OutboxPollingConfig, RunOutboxPollingLoopInput } from './poller.ts';
 import type { OutboxRuntime } from './runtime.ts';
 
+const sameSubscriptions = Schema.toEquivalence(Schema.Array(OntosOutboxSubscriptionContractSchema));
+const subscriptionOrder = Order.mapInput(Order.String, ({ workerKey }: { readonly workerKey: string }) => workerKey);
+const unavailableSubscriptionCatalog = (cause: unknown) =>
+  new ActiveApplicationCompositionUnavailableError({
+    cause,
+    reason: 'The complete Application Composition subscription catalog is unavailable',
+  });
+
 const ShutdownSignalSchema = Schema.Literals(['SIGINT', 'SIGTERM']);
 export type ShutdownSignal = typeof ShutdownSignalSchema.Type;
 
 export interface DefineOutboxWorkerEntryInput<Registration extends AnyOutboxWorkerRegistration, LayerError> {
   readonly claimOwnerPrefix: string;
-  readonly layer: Layer.Layer<OutboxRuntime | OutboxWorkerRequirements<Registration>, LayerError>;
+  /** Identity compiled into this owner artifact, independent of mutable process configuration. */
+  readonly expectedDeployment: Readonly<{ appId: string; buildMarker: string }>;
+  readonly layer: Layer.Layer<
+    OutboxRuntime | ActiveApplicationCompositionService | OutboxWorkerRequirements<Registration>,
+    LayerError
+  >;
   readonly registrations: readonly Registration[];
   readonly subscriptions: readonly OutboxWorkerSubscription[];
 }
@@ -58,17 +81,89 @@ export interface RunOutboxWorkerHostInput<LayerError> {
 
 export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegistration, LayerError>(
   input: DefineOutboxWorkerEntryInput<Registration, LayerError>,
-): OutboxWorkerEntry<LayerError> =>
-  Object.freeze({
+): OutboxWorkerEntry<LayerError | ActiveApplicationCompositionUnavailableError | OutboxWorkerDescriptorError> => {
+  const expectedDeployment = Object.freeze({ ...input.expectedDeployment });
+  const registrations = Object.freeze([...input.registrations]);
+  const compiledSubscriptions = Object.freeze(
+    input.subscriptions.map((subscription) => Object.freeze({ ...subscription })),
+  );
+  return Object.freeze({
     claimOwnerPrefix: input.claimOwnerPrefix,
-    registrations: input.registrations.length,
+    registrations: registrations.length,
     runLoop: ({ config, health }: OutboxWorkerLoopInput) => {
-      const pollingInput: RunOutboxPollingLoopInput<Registration> = {
-        config,
-        registrations: input.registrations,
-        subscriptions: input.subscriptions,
-      };
-      const loop = runOutboxPollingLoop(health === undefined ? pollingInput : { ...pollingInput, health });
+      const loop = Effect.gen(function* runCompiledOutboxWorkerLoop() {
+        const authority = yield* ActiveApplicationCompositionService;
+        const suppliedSubscriptions = yield* Schema.decodeUnknownEffect(
+          Schema.Array(OntosOutboxSubscriptionContractSchema),
+          { onExcessProperty: 'error' },
+        )(compiledSubscriptions).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ActiveApplicationCompositionUnavailableError({
+                cause,
+                reason: 'The compiled Outbox Worker subscription contract is invalid',
+              }),
+          ),
+          Effect.map((subscriptions) => subscriptions.toSorted(subscriptionOrder)),
+        );
+        const admitComposition = Effect.gen(function* admitWorkerComposition() {
+          const snapshot = yield* authority.load.pipe(Effect.flatMap(validateActiveApplicationCompositionSnapshot));
+          const modulesById = new Map<string, (typeof snapshot.composition.modules)[number]>();
+          for (const module of snapshot.composition.modules) {
+            modulesById.set(module.moduleId, module);
+          }
+          for (const registration of registrations) {
+            const approved = modulesById.get(registration.descriptor.consumerModuleKey);
+            if (
+              approved === undefined ||
+              approved.deployment.appId !== expectedDeployment.appId ||
+              approved.deployment.buildMarker !== expectedDeployment.buildMarker
+            ) {
+              return yield* new OutboxWorkerDescriptorError({
+                code: 'outbox_worker_descriptor_invalid',
+                reason: 'The compiled Outbox Worker owner artifact is not approved by this Application Composition',
+              });
+            }
+          }
+          const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition).pipe(
+            Effect.mapError(unavailableSubscriptionCatalog),
+          );
+          const ownerModules = new Set<string>();
+          for (const { deployment, moduleId } of snapshot.composition.modules) {
+            if (
+              deployment.appId === expectedDeployment.appId &&
+              deployment.buildMarker === expectedDeployment.buildMarker
+            ) {
+              ownerModules.add(moduleId);
+            }
+          }
+          const approvedSubscriptions: (typeof OntosOutboxSubscriptionContractSchema.Type)[] = [];
+          for (const { runtime } of catalog.contracts) {
+            for (const subscription of runtime.outboxSubscriptions) {
+              if (ownerModules.has(subscription.consumerModuleKey)) {
+                approvedSubscriptions.push(subscription);
+              }
+            }
+          }
+          approvedSubscriptions.sort(subscriptionOrder);
+          if (!sameSubscriptions(approvedSubscriptions, suppliedSubscriptions)) {
+            return yield* new OutboxWorkerDescriptorError({
+              code: 'outbox_worker_descriptor_invalid',
+              reason: 'The compiled Outbox Worker subscriptions differ from the complete approved owner contract',
+            });
+          }
+          return snapshot.composition.revision;
+        });
+        const pollingInput: RunOutboxPollingLoopInput<Registration> = {
+          admitComposition,
+          config,
+          registrations,
+          subscriptions: compiledSubscriptions,
+        };
+        // The compiled owner and ABI stay fixed. Each new cycle captures one approved revision;
+        // existing claimed handler contexts retain their original revision in owner transactions.
+        return yield* runOutboxPollingLoop(health === undefined ? pollingInput : { ...pollingInput, health });
+      });
       return Effect.acquireUseRelease(
         Effect.sync(() => ManagedRuntime.make(input.layer)),
         (runtime) => runtime.contextEffect.pipe(Effect.flatMap((context) => Effect.provideContext(loop, context))),
@@ -76,6 +171,7 @@ export const defineOutboxWorkerEntry = <Registration extends AnyOutboxWorkerRegi
       );
     },
   });
+};
 
 const waitForShutdownSignal = Effect.callback<ShutdownSignal>((resume) => {
   const onSignal = (signal: ShutdownSignal) => (): void => resume(Effect.succeed(signal));

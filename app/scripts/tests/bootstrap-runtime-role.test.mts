@@ -233,3 +233,28 @@ it('revokes broad Pricing access before applying the exact table and routine pla
   expect(bootstrap).not.toMatch(/all tables in schema pricing/u);
   expect(bootstrap).not.toMatch(/default privileges in schema pricing/u);
 });
+
+it('restores read-only Application Composition authority privileges after blanket Core grants', () => {
+  const bootstrap = readFileSync(new URL('../postgres/bootstrap-runtime-role.mts', import.meta.url), 'utf-8');
+  const broadGrant = bootstrap.indexOf('grant select, insert, update, delete on all tables in schema');
+  const authorityRevoke = bootstrap.indexOf(
+    'revoke all on table core.application_composition_authority from public, ontos_runtime',
+  );
+  const authorityGrant = bootstrap.indexOf(
+    'grant select on table core.application_composition_authority to ontos_runtime',
+  );
+  expect(broadGrant).toBeGreaterThan(-1);
+  expect(authorityRevoke).toBeGreaterThan(broadGrant);
+  expect(authorityGrant).toBeGreaterThan(authorityRevoke);
+  const durableRevoke = bootstrap.indexOf(
+    'revoke all on table core.application_composition_durable_work from public, ontos_runtime',
+  );
+  const durableGrant = bootstrap.indexOf(
+    'grant select on table core.application_composition_durable_work to ontos_runtime',
+  );
+  expect(durableRevoke).toBeGreaterThan(broadGrant);
+  expect(durableGrant).toBeGreaterThan(durableRevoke);
+  expect(bootstrap).toContain(
+    'revoke all on function core.track_application_composition_durable_work(text,text,text,boolean) from public, ontos_runtime',
+  );
+});

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PricingPurposeEquivalenceClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PricingPurposeEquivalenceAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executePricingPurposeEquivalence = (
   payload: PricingPurposeEquivalenceRequest,
   ...[requestCorrelation, options = {}]: PricingPurposeEquivalenceOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePricingPurposeEquivalenceWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePricingPurposeEquivalenceWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

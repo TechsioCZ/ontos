@@ -538,6 +538,7 @@ export const commercePortalAuthEnrollmentClaimInvitation = Effect.fn(
     CommerceEnrollmentOwnerTransitionSchema,
   )({
     actorPrincipalId,
+    compositionRevision: attempt.compositionRevision,
     correlationId: claimCorrelation,
     expectedRevision: attempt.revision,
     ownerInvocationId: retailSelfEnrollmentEvidenceReference([

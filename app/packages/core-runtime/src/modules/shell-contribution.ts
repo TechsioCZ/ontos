@@ -16,6 +16,10 @@ const pageKey = stableKey.pipe(Schema.brand('PageKey'));
 const reportKey = stableKey.pipe(Schema.brand('ReportKey'));
 const searchKey = stableKey.pipe(Schema.brand('SearchKey'));
 const order = Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: 10_000, minimum: 0 }));
+const expose = Schema.String.check(
+  Schema.isMaxLength(200),
+  Schema.isPattern(/^\.\/[A-Za-z][A-Za-z0-9._-]*(?:\/[A-Za-z][A-Za-z0-9._-]*)*$/u),
+);
 const routeParameterPattern = /^:(?<name>[a-z][A-Za-z0-9]*)$/u;
 const routeLocalePrefixPattern = /^[a-z]{2}(?:-[a-z]{2})?$/u;
 const routePath = Schema.String.check(
@@ -35,12 +39,63 @@ const routePath = Schema.String.check(
         const name = routeParameterPattern.exec(segment)?.groups?.['name'];
         return name === undefined ? [] : [name];
       });
+      if (parameterNames.some((name) => name === 'constructor' || name === 'prototype')) {
+        return 'page contribution routePath must not use reserved parameter names';
+      }
       return new Set(parameterNames).size === parameterNames.length
         ? undefined
         : 'page contribution routePath must not repeat a parameter name';
     }),
   ),
 );
+
+/** Native Shell screens and ingress prefixes are never installable module page roots. */
+const reservedShellRouteRoots = new Set([
+  '',
+  '.well-known',
+  'api',
+  'assets',
+  'bundles',
+  'locales',
+  'login',
+  'module-api',
+  'modules',
+  'resources',
+  'search',
+  'settings',
+  'shell-super-app-api',
+  'sign-in',
+  'sign-out',
+  'static',
+]);
+
+/** A parameter root intersects reserved Shell prefixes; an empty root selects the home screen. */
+export const isReservedShellRouteRoot = (root: string | undefined): boolean =>
+  root === undefined || root.startsWith(':') || reservedShellRouteRoots.has(root);
+
+/** Validated templates have equal native precedence and intersect exactly when these keys agree. */
+const pageRouteIdentity = (path: string): string =>
+  path
+    .split('/')
+    .map((segment) => (segment.startsWith(':') ? ':parameter' : segment))
+    .join('/');
+
+/** Linear validation across the complete approved inventory, independent of request-time matching. */
+export const shellPageRouteCatalogIssue = (pages: readonly { readonly routePath: string }[]): string | undefined => {
+  const claimed = new Map<string, string>();
+  for (const { routePath: path } of pages) {
+    if (isReservedShellRouteRoot(path.slice(1).split('/')[0])) {
+      return `page contribution ${path} intersects a reserved Shell route`;
+    }
+    const identity = pageRouteIdentity(path);
+    const previous = claimed.get(identity);
+    if (previous !== undefined) {
+      return `ambiguous Shell page routes ${previous} and ${path}`;
+    }
+    claimed.set(identity, path);
+  }
+  return undefined;
+};
 
 const allowsRead = (access: string): boolean => access === 'read' || access === 'historical_read';
 
@@ -111,6 +166,7 @@ export const ShellPageContributionSchema = Schema.Struct({
   componentKey,
   contributionKey,
   entrypoint: pageEntrypoint,
+  expose,
   routePath,
 });
 
@@ -118,6 +174,7 @@ export const ShellPublicComponentContributionSchema = Schema.Struct({
   componentKey,
   contributionKey,
   entrypoint: componentEntrypoint,
+  expose,
 });
 
 export const ShellSearchContributionSchema = Schema.Struct({

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
+import type { PgInsertValue } from 'drizzle-orm/pg-core';
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -11,6 +12,7 @@ import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import {
   actionInvocations,
+  applicationCompositionAuthority,
   auditEvents,
   coreRelations,
   dataAccessEvents,
@@ -20,6 +22,7 @@ import {
   principals,
   tenants,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { lockApplicationCompositionPublication } from '../../../../packages/core-runtime/src/modules/application-composition-authority.ts';
 import type { ContextAccessService } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { toBusinessPermissionAccessKey } from '../../../../packages/core-runtime/src/permissions/context-access.ts';
 import { allowOwnerAuthorizationOverlay } from '../../../../packages/core-runtime/src/permissions/owner-authorization-overlay.ts';
@@ -77,6 +80,8 @@ import {
   buildInventoryOwnerAcceptanceBindingCorrectionLineage,
   inventoryOwnerAcceptanceBindingCorrectionFixture,
 } from '../support/inventory-owner-acceptance-binding-correction.ts';
+
+const compositionRevision = 'a'.repeat(64);
 
 const fixture = inventoryOwnerAcceptanceBindingCorrectionFixture;
 const { tenantId } = fixture.originalBinding.bindingRef;
@@ -328,6 +333,44 @@ it.live(
         const admin = yield* makeTestDatabaseFromClient(adminClient, inventoryRelations);
         const coreAdmin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
         const runtimeDatabase = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+        yield* Effect.acquireRelease(
+          coreAdmin.transaction((transaction) =>
+            Effect.gen(function* admitFixtureComposition() {
+              yield* lockApplicationCompositionPublication(transaction);
+              const [previous] = yield* transaction
+                .select()
+                .from(applicationCompositionAuthority)
+                .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+              const admitted: PgInsertValue<typeof applicationCompositionAuthority> = {
+                authorityKey: 'active',
+                durableWorkAdmission: 'open',
+                phase: 'active',
+                revision: compositionRevision,
+                subscriptionsJson: [],
+                validUntil: sql`clock_timestamp() + interval '1 hour'`,
+              };
+              yield* transaction.insert(applicationCompositionAuthority).values(admitted).onConflictDoUpdate({
+                set: admitted,
+                target: applicationCompositionAuthority.authorityKey,
+              });
+              return previous;
+            }),
+          ),
+          (previous) =>
+            coreAdmin
+              .transaction((transaction) =>
+                Effect.gen(function* restoreFixtureComposition() {
+                  yield* lockApplicationCompositionPublication(transaction);
+                  yield* transaction
+                    .delete(applicationCompositionAuthority)
+                    .where(eq(applicationCompositionAuthority.revision, compositionRevision));
+                  if (previous !== undefined) {
+                    yield* transaction.insert(applicationCompositionAuthority).values(previous);
+                  }
+                }),
+              )
+              .pipe(Effect.orDie),
+        );
         yield* cleanupTenant(admin, tenantId);
         yield* cleanupTenant(admin, otherTenantId);
         yield* cleanupCoreTenant(coreAdmin);
@@ -653,16 +696,20 @@ it.live(
               actionInvocationId: randomUUID(),
               addDomainEvent: collector.addDomainEvent,
               addOutboxMessage: collector.addOutboxMessage,
+              compositionRevision,
               recordAuditEvidence: collector.recordAuditEvidence,
               recordDataAccess: collector.recordDataAccess,
-              scope: trustVerifiedGatewayPrincipalContext({
-                authBindingId: randomUUID(),
-                authContextRef: 'test:binding-correction-production-postgres',
-                authMethod: 'api_key',
-                correlationId: 'binding-correction-production-postgres',
-                principalId,
-                tenantId,
-              }),
+              scope: trustVerifiedGatewayPrincipalContext(
+                {
+                  authBindingId: randomUUID(),
+                  authContextRef: 'test:binding-correction-production-postgres',
+                  authMethod: 'api_key',
+                  correlationId: 'binding-correction-production-postgres',
+                  principalId,
+                  tenantId,
+                },
+                compositionRevision,
+              ),
               services,
             });
           }),

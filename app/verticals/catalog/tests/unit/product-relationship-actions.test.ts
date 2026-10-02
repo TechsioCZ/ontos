@@ -1,8 +1,10 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { ActionTransactionError, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
   ChangeProductRelationshipPayloadSchema,
   CreateProductRelationshipPayloadSchema,
@@ -63,6 +65,7 @@ const scope = {
 };
 const unexpected = () => Effect.die('Unexpected persistence call');
 const context = <Events extends DomainEventContractMap>(
+  compositionRevision: string,
   overrides: Partial<ProductRelationshipPersistence>,
   domainEvents: Events,
 ) => {
@@ -91,6 +94,7 @@ const context = <Events extends DomainEventContractMap>(
       Effect.sync(() => {
         outbox.push({ event, message });
       }),
+    compositionRevision,
     recordAuditEvidence: () => Effect.void,
     recordDataAccess: (access) =>
       Effect.sync(() => {
@@ -101,12 +105,12 @@ const context = <Events extends DomainEventContractMap>(
   };
   return { events, outbox, reads, value };
 };
-const createContext = (overrides: Partial<ProductRelationshipPersistence>) =>
-  context(overrides, createProductRelationshipAction.descriptor.domainEvents);
-const changeContext = (overrides: Partial<ProductRelationshipPersistence>) =>
-  context(overrides, changeProductRelationshipAction.descriptor.domainEvents);
-const removeContext = (overrides: Partial<ProductRelationshipPersistence>) =>
-  context(overrides, removeProductRelationshipAction.descriptor.domainEvents);
+const createContext = (compositionRevision: string, overrides: Partial<ProductRelationshipPersistence>) =>
+  context(compositionRevision, overrides, createProductRelationshipAction.descriptor.domainEvents);
+const changeContext = (compositionRevision: string, overrides: Partial<ProductRelationshipPersistence>) =>
+  context(compositionRevision, overrides, changeProductRelationshipAction.descriptor.domainEvents);
+const removeContext = (compositionRevision: string, overrides: Partial<ProductRelationshipPersistence>) =>
+  context(compositionRevision, overrides, removeProductRelationshipAction.descriptor.domainEvents);
 
 describe('Product relationship Action contracts and handlers', () => {
   it.effect(
@@ -241,7 +245,11 @@ describe('Product relationship Action contracts and handlers', () => {
 
   it.effect('creates a directed relationship and records both governed endpoint reads', () =>
     Effect.gen(function* relationshipCreateTest() {
-      const run = createContext({
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const run = createContext(compositionSnapshot.composition.revision, {
         create: (input) =>
           Effect.sync(() => {
             expect(input.principalId).toBe(scope.principalId);
@@ -276,7 +284,11 @@ describe('Product relationship Action contracts and handlers', () => {
 
   it.effect('rejects cross-Tenant endpoint before persistence', () =>
     Effect.gen(function* relationshipCrossTenantTest() {
-      const run = createContext({});
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const run = createContext(compositionSnapshot.composition.revision, {});
       const error = yield* handleCreateProductRelationship(
         {
           relationship: { ...relationship, target: { ...target, tenantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' } },
@@ -292,7 +304,11 @@ describe('Product relationship Action contracts and handlers', () => {
 
   it.effect('rejects material change without erasing prior truth', () =>
     Effect.gen(function* relationshipMaterialTest() {
-      const run = changeContext({});
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const run = changeContext(compositionSnapshot.composition.revision, {});
       const error = yield* handleChangeProductRelationship(
         { classification: 'MATERIAL_CHANGE', expectedRevision: 1, relationship, relationshipId },
         run.value,
@@ -303,10 +319,14 @@ describe('Product relationship Action contracts and handlers', () => {
 
   it.effect('maps stale correction and removal to typed conflicts', () =>
     Effect.gen(function* relationshipConflictTest() {
-      const changeRun = changeContext({
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const changeRun = changeContext(compositionSnapshot.composition.revision, {
         change: () => Effect.succeed({ _tag: 'revision_conflict', actualRevision: 2 }),
       });
-      const removeRun = removeContext({
+      const removeRun = removeContext(compositionSnapshot.composition.revision, {
         remove: () => Effect.succeed({ _tag: 'revision_conflict', actualRevision: 2 }),
       });
       const changeError = yield* handleChangeProductRelationship(
@@ -334,11 +354,15 @@ describe('Product relationship Action contracts and handlers', () => {
 
   it.effect('announces a committed correction at its resulting revision', () =>
     Effect.gen(function* relationshipCorrectionEventTest() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const corrected = {
         ...relationship,
         target: { ...target, resourceId: '44444444-4444-4444-8444-444444444444' },
       } as const;
-      const run = changeContext({
+      const run = changeContext(compositionSnapshot.composition.revision, {
         change: () => Effect.succeed({ _tag: 'changed', relationship: corrected, relationshipId, revision: 2 }),
       });
       yield* handleChangeProductRelationship(
@@ -354,8 +378,12 @@ describe('Product relationship Action contracts and handlers', () => {
 
   it.effect('closes by effective end without changing endpoint lifecycle', () =>
     Effect.gen(function* relationshipRemoveTest() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const ended = { ...relationship, effectivePeriod: { effectiveTo: '2026-09-17T00:00:00.000Z' } } as const;
-      const run = removeContext({
+      const run = removeContext(compositionSnapshot.composition.revision, {
         remove: (input) =>
           Effect.sync(() => {
             expect(input.effectiveTo).toBe('2026-09-17T00:00:00.000Z');
@@ -384,7 +412,13 @@ describe('Product relationship Action contracts and handlers', () => {
 
   it.effect('maps exact directed duplicate to typed conflict', () =>
     Effect.gen(function* relationshipDuplicateTest() {
-      const run = createContext({ create: () => Effect.succeed({ _tag: 'duplicate' }) });
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const run = createContext(compositionSnapshot.composition.revision, {
+        create: () => Effect.succeed({ _tag: 'duplicate' }),
+      });
       const error = yield* handleCreateProductRelationship({ relationship, relationshipId }, run.value).pipe(
         Effect.flip,
       );

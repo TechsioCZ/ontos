@@ -1,0 +1,1 @@
+ALTER TABLE "core"."application_composition_authority" DROP CONSTRAINT "core_application_composition_authority_phase_ck", ADD CONSTRAINT "core_application_composition_authority_phase_ck" CHECK ("phase" in ('active', 'draining', 'sealed', 'migrated'));

@@ -141,6 +141,7 @@ it.effect('opens exactly one owner transaction for the claim phase and never rea
 );
 
 const observedAttempt = (overrides: Partial<EnrollmentAttemptSnapshot> = {}): EnrollmentAttemptSnapshot => ({
+  compositionRevision: 'c'.repeat(64),
   createdAt: DateTime.makeUnsafe('2026-09-16T10:00:00.000Z'),
   createdByPrincipalId: actorPrincipalId,
   intentDigest: 'a'.repeat(64),

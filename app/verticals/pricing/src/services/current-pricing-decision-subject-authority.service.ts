@@ -79,6 +79,7 @@ export type CurrentPricingDecisionCustomerContextGatewayUnavailableError = Insta
 export interface CurrentPricingDecisionCustomerContextGatewayIssuerService {
   readonly issue: (input: {
     readonly audience: 'commerce-customer-context';
+    readonly compositionRevision: string;
     readonly principal: TrustedPrincipalContext;
     readonly requestCorrelation: string;
   }) => Effect.Effect<

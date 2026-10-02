@@ -73,6 +73,7 @@ export const pricingCurrentMarketEvidenceRead = defineRead(
     schemaVersion: '1',
   },
   handlePricingCurrentMarketEvidence,
-  (transaction, scope) => pricingCurrentMarketEvidencePersistenceForScope(transaction, scope),
+  (transaction, scope, compositionRevision) =>
+    pricingCurrentMarketEvidencePersistenceForScope(transaction, scope, compositionRevision),
   () => ({ kind: 'module', moduleId: commerceMarketCatalogModuleKey }),
 );

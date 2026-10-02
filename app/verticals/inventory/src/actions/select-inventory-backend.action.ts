@@ -12,13 +12,11 @@ import {
 import type { SelectInventoryBackendPayload } from '../../shared/actions/select-inventory-backend.ts';
 import { SelectInventoryBackendErrorSchema } from '../../shared/domain/inventory-backend-configuration.ts';
 import type { InventoryBackendConfigurationService } from '../services/inventory-backend-configuration.service.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core invokes this generated transaction-scoped owner factory only after the Action scope gate; expires: 2027-03-31.
 import { makeInventoryBackendConfigurationService } from '../services/inventory-backend-configuration.service.ts';
 import { inventoryBackendConfigurationPersistenceForScope } from '../persistence/inventory-backend-configuration-repository.ts';
 import { inventorySourceAssertionPersistenceForScope } from '../persistence/inventory-source-assertion-repository.ts';
 import { inventorySourceConflictPersistenceForScope } from '../persistence/inventory-source-conflict-repository.ts';
 import { stockPositionPersistenceForScope } from '../persistence/stock-position-repository.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This Action composes the owner-local conflict registrar in the same transaction so the declared non-success result commits its evidence; expires: 2027-03-31.
 import { makeInventorySourceConflictService } from '../services/inventory-source-conflict.service.ts';
 
 type Services = InventoryBackendConfigurationService;

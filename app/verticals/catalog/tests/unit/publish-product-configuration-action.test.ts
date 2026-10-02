@@ -1,8 +1,10 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionTransactionError, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
   getActionDecodedSuccessHook,
   getActionServiceFactory,
@@ -57,6 +59,7 @@ const scope = {
   correlationId: 'configuration-test',
 };
 const context = (
+  compositionRevision: string,
   services: ProductConfigurationPersistence,
 ): ActionHandlerContext<
   { 'commerce.catalog.product-configuration-published.v1': typeof OutboxPayloadSchema },
@@ -65,6 +68,7 @@ const context = (
   actionInvocationId: '33333333-3333-4333-8333-333333333333',
   addDomainEvent: () => Effect.succeed(Object.create(null)),
   addOutboxMessage: () => Effect.void,
+  compositionRevision,
   recordAuditEvidence: () => Effect.void,
   recordDataAccess: () => Effect.void,
   scope,
@@ -197,6 +201,10 @@ describe('Product Configuration publication Action', () => {
 
   it.effect('passes trusted principal, invocation, and exact CAS basis to persistence', () =>
     Effect.gen(function* verifyTrustedPublication() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const services: ProductConfigurationPersistence = {
         publish: (input) =>
           Effect.sync(() => {
@@ -208,7 +216,9 @@ describe('Product Configuration publication Action', () => {
           }),
         readCurrent: () => Effect.die('unexpected read'),
       };
-      expect(yield* handlePublishProductConfiguration(payload, context(services))).toEqual({
+      expect(
+        yield* handlePublishProductConfiguration(payload, context(compositionSnapshot.composition.revision, services)),
+      ).toEqual({
         definitionId: 'definition-1',
         revision: 1,
       });

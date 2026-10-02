@@ -5,7 +5,7 @@ import {
   PriceGroupRefSchema,
 } from '@app/price-group-catalog-contracts';
 import type { ValidatePriceGroupCompatibilityRequest } from '@app/price-group-catalog-contracts/validate-price-group-compatibility';
-import { ConfigProvider, Effect, Layer, Match, Redacted, Schema } from 'effect';
+import { Effect, Layer, Match, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { CustomerPriceGroupCatalogUnavailable } from '../../shared/domain/price-group-errors.ts';
@@ -267,11 +267,13 @@ it.effect('obtains a fresh server-owned assertion for every provider attempt', (
     }[] = [];
     const authorizations: string[] = [];
     const destinations: (string | URL | undefined)[] = [];
+    const selectedRevisions: (string | undefined)[] = [];
     const port = yield* priceGroupCatalogPortFromEnvironment(
-      { requestCorrelation: 'price-group-correlation' },
+      { compositionRevision: 'a'.repeat(64), requestCorrelation: 'price-group-correlation' },
       (_payload, credential, _correlation, options) => {
         authorizations.push(Redacted.value(credential));
         destinations.push(options.baseUrl);
+        selectedRevisions.push(options.compositionRevision);
         return Effect.succeed(decision({ evidence: compatibility, kind: 'USABLE' }));
       },
     ).pipe(
@@ -280,17 +282,12 @@ it.effect('obtains a fresh server-owned assertion for every provider attempt', (
           issue: (input) =>
             Effect.sync(() => {
               issuanceRequests.push(input);
-              return Redacted.make(`Bearer fresh-price-group-assertion-${issuanceRequests.length}`);
+              return {
+                baseUrl: new URL('https://shell.example.test/owner-api'),
+                credential: Redacted.make(`Bearer fresh-price-group-assertion-${issuanceRequests.length}`),
+              };
             }),
         }),
-      ),
-      Effect.provide(
-        ConfigProvider.layer(
-          ConfigProvider.fromUnknown(
-            { ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'https://price-groups.example.test/price-group-catalog-api' },
-            { preserveEmptyStrings: true },
-          ),
-        ),
       ),
     );
 
@@ -298,40 +295,50 @@ it.effect('obtains a fresh server-owned assertion for every provider attempt', (
     yield* port.resolveCurrent(priceGroupRef, CUSTOMER_PRICE_GROUP_COMPATIBILITY_CONTRACT, trustedOperationAt);
 
     expect(authorizations).toEqual(['Bearer fresh-price-group-assertion-1', 'Bearer fresh-price-group-assertion-2']);
+    expect(selectedRevisions).toEqual(['a'.repeat(64), 'a'.repeat(64)]);
     expect(destinations.map(String)).toEqual([
-      'https://price-groups.example.test/price-group-catalog-api',
-      'https://price-groups.example.test/price-group-catalog-api',
+      'https://shell.example.test/owner-api',
+      'https://shell.example.test/owner-api',
     ]);
     expect(issuanceRequests).toEqual([
       {
         audience: 'price-group-catalog',
+        compositionRevision: 'a'.repeat(64),
         requestCorrelation: 'price-group-correlation',
       },
       {
         audience: 'price-group-catalog',
+        compositionRevision: 'a'.repeat(64),
         requestCorrelation: 'price-group-correlation',
       },
     ]);
   }),
 );
 
-it.effect('fails closed before credential issuance when the provider destination is absent', () =>
+it.effect('fails closed before provider execution when the selected connection cannot be issued', () =>
   Effect.gen(function* missingProviderDestination() {
     let executionCount = 0;
     let issuanceCount = 0;
-    const port = yield* priceGroupCatalogPortFromEnvironment({ requestCorrelation: 'price-group-correlation' }, () => {
-      executionCount += 1;
-      return Effect.succeed(decision({ evidence: compatibility, kind: 'USABLE' }));
-    }).pipe(
+    const port = yield* priceGroupCatalogPortFromEnvironment(
+      { compositionRevision: 'a'.repeat(64), requestCorrelation: 'price-group-correlation' },
+      () => {
+        executionCount += 1;
+        return Effect.succeed(decision({ evidence: compatibility, kind: 'USABLE' }));
+      },
+    ).pipe(
       Effect.provide(
         Layer.succeed(PriceGroupCatalogGatewayCredentialService, {
           issue: () => {
             issuanceCount += 1;
-            return Effect.succeed(Redacted.make('Bearer must-not-be-issued'));
+            return Effect.fail(
+              new CustomerPriceGroupCatalogUnavailable({
+                code: 'customer_price_group_catalog_unavailable',
+                reason: 'Selected release credential unavailable',
+              }),
+            );
           },
         }),
       ),
-      Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}, { preserveEmptyStrings: true }))),
     );
 
     const failure = yield* Effect.flip(
@@ -341,6 +348,6 @@ it.effect('fails closed before credential issuance when the provider destination
     expect(Schema.is(CustomerPriceGroupCatalogUnavailable)(failure)).toBe(true);
     expect(failure.reason).toBe('The Price Group Catalog compatibility decision could not be resolved');
     expect(executionCount).toBe(0);
-    expect(issuanceCount).toBe(0);
+    expect(issuanceCount).toBe(1);
   }),
 );

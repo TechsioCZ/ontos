@@ -28,6 +28,7 @@ import {
 import type { PriceGroupDefinitionRevision } from '../../shared/domain/price-group.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
+const compositionRevision = 'b'.repeat(64);
 const principalId = '22222222-2222-4222-8222-222222222222';
 const actionInvocationId = '33333333-3333-4333-8333-333333333333';
 const priceGroupId = '44444444-4444-4444-8444-444444444444';
@@ -170,6 +171,7 @@ describe('Create Price Group Action', () => {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,
@@ -255,6 +257,7 @@ describe('Create Price Group Action', () => {
         actionInvocationId,
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,

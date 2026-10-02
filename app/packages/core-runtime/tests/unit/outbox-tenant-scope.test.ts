@@ -10,6 +10,7 @@ const tenantId = '10000000-0000-4000-8000-000000000001';
 const context = {
   attemptNumber: 1,
   claimId: 'claim-1',
+  compositionRevision: 'a'.repeat(64),
   consumerModuleKey: 'pricing.price-group-catalog',
   deliveryId: 'delivery-1',
   domainEventId: 'event-1',

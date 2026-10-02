@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CommerceQuantityPolicyCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CommerceQuantityPolicyCurrentAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCommerceQuantityPolicyCurrent = (
   payload: CommerceQuantityPolicyCurrentRequest,
   ...[requestCorrelation, options = {}]: CommerceQuantityPolicyCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCommerceQuantityPolicyCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCommerceQuantityPolicyCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

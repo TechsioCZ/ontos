@@ -30,7 +30,8 @@ const reservationToken = '88888888-8888-4888-8888-888888888888';
 const effectiveAt = '2026-12-01T00:00:00.000Z';
 const observedAt = '2026-11-30T23:59:59.000Z';
 const nextApplicabilityBoundary = '2027-01-01T00:00:00.000Z';
-const customerContextBaseUrl = 'https://customer-context.example.test/commerce-customer-context-api';
+const compositionRevision = '9'.repeat(64);
+const admittedApiBaseUrl = '/module-api/commerce.customer-context/release-a';
 const shellGatewayBaseUrl = 'https://shell.example.test/shell-super-app-api';
 const marketRef = {
   moduleId: 'commerce.market-catalog',
@@ -171,11 +172,12 @@ type RetireMarketCollector = ActionCollector<typeof retireMarketAction.descripto
 const productionRetirementProgram = (transaction: ProductionRetirementTransaction, collector: RetireMarketCollector) =>
   Effect.gen(function* productionRetirement() {
     // @ts-expect-error Focused transaction mock implements only the Market lifecycle routine.
-    const services = yield* getActionServiceFactory(retireMarketAction)(transaction, scope);
+    const services = yield* getActionServiceFactory(retireMarketAction)(transaction, scope, compositionRevision);
     return yield* getActionHandler(retireMarketAction)(payload, {
       actionInvocationId,
       addDomainEvent: collector.addDomainEvent,
       addOutboxMessage: collector.addOutboxMessage,
+      compositionRevision,
       recordAuditEvidence: collector.recordAuditEvidence,
       recordDataAccess: collector.recordDataAccess,
       scope,
@@ -183,10 +185,16 @@ const productionRetirementProgram = (transaction: ProductionRetirementTransactio
     });
   });
 
-const runProductionRetirement = (assessmentResponses: readonly MarketAffectedUseAssessmentResponse[]) => {
+const runProductionRetirement = (
+  assessmentResponses: readonly MarketAffectedUseAssessmentResponse[],
+  responseCompositionRevision = compositionRevision,
+) => {
   const assessmentAuthorizationHeaders: string[] = [];
   const assessmentRequests: string[] = [];
   const gatewayRequests: string[] = [];
+  const gatewayCompositionRevisions: unknown[] = [];
+  const gatewayApiKeys: string[] = [];
+  const ownerCompositionRevisions: string[] = [];
   const persistenceQueries: LifecycleTransition[] = [];
   const reservationAuthorizationHeaders: string[] = [];
   const reservationIdempotencyKeys: string[] = [];
@@ -197,12 +205,20 @@ const runProductionRetirement = (assessmentResponses: readonly MarketAffectedUse
   const fetch: typeof globalThis.fetch = async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
-    if (url.pathname.endsWith('/auth/gateway-context')) {
+    if (url.pathname.endsWith('/auth/api-key/gateway-context')) {
       gatewayRequests.push(url.toString());
-      return Response.json({ expiresAt: 2_000_000_000, token: 'production-gateway-token' });
+      gatewayCompositionRevisions.push(await request.json());
+      gatewayApiKeys.push(request.headers.get('x-api-key') ?? '');
+      return Response.json({
+        apiBaseUrl: admittedApiBaseUrl,
+        compositionRevision: responseCompositionRevision,
+        expiresAt: 2_000_000_000,
+        token: 'production-gateway-token',
+      });
     }
     if (url.pathname.endsWith('/reads/market-affected-use-assessment')) {
       assessmentRequests.push(url.toString());
+      ownerCompositionRevisions.push(request.headers.get('x-ontos-composition-revision') ?? '');
       assessmentAuthorizationHeaders.push(request.headers.get('authorization') ?? '');
       const response = assessmentResponses[Math.min(assessmentResponseIndex, assessmentResponses.length - 1)];
       assessmentResponseIndex += 1;
@@ -210,6 +226,7 @@ const runProductionRetirement = (assessmentResponses: readonly MarketAffectedUse
     }
     if (url.pathname.endsWith('/commerce-customer-context/actions/reserve-market-retirement')) {
       reservationAuthorizationHeaders.push(request.headers.get('authorization') ?? '');
+      ownerCompositionRevisions.push(request.headers.get('x-ontos-composition-revision') ?? '');
       reservationIdempotencyKeys.push(request.headers.get('idempotency-key') ?? '');
       const reservationPayload = Schema.decodeUnknownSync(ReserveMarketRetirementPayloadSchema)(await request.json());
       reservationRequests.push(reservationPayload);
@@ -257,7 +274,7 @@ const runProductionRetirement = (assessmentResponses: readonly MarketAffectedUse
     Effect.provide(
       ConfigProvider.layer(
         ConfigProvider.fromUnknown({
-          ONTOS_COMMERCE_CUSTOMER_CONTEXT_BASE_URL: customerContextBaseUrl,
+          ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: 'market-owner-api-key',
           ONTOS_SHELL_GATEWAY_BASE_URL: shellGatewayBaseUrl,
         }),
       ),
@@ -268,7 +285,10 @@ const runProductionRetirement = (assessmentResponses: readonly MarketAffectedUse
     assessmentAuthorizationHeaders,
     assessmentRequests,
     collector,
+    gatewayApiKeys,
+    gatewayCompositionRevisions,
     gatewayRequests,
+    ownerCompositionRevisions,
     persistenceQueries,
     program,
     reservationAuthorizationHeaders,
@@ -287,6 +307,21 @@ describe('Market retirement deployed production composition', () => {
         const result = yield* execution.program;
         expect(result).toMatchObject({ changed: true, lifecycle: 'RETIRED', revision: 4 });
         expect(execution.gatewayRequests).toHaveLength(4);
+        expect(execution.gatewayCompositionRevisions).toEqual(
+          Array.from({ length: 4 }, () => ({
+            audience: 'commerce-customer-context',
+            compositionRevision,
+            legalEntityId: sellerId,
+          })),
+        );
+        expect(execution.gatewayApiKeys).toEqual(Array.from({ length: 4 }, () => 'market-owner-api-key'));
+        expect(execution.ownerCompositionRevisions).toEqual(Array.from({ length: 4 }, () => compositionRevision));
+        expect(execution.assessmentRequests).toEqual(
+          Array.from(
+            { length: 2 },
+            () => `${new URL(admittedApiBaseUrl, shellGatewayBaseUrl)}/reads/market-affected-use-assessment`,
+          ),
+        );
         expect(execution.assessmentRequests).toHaveLength(2);
         expect(execution.assessmentAuthorizationHeaders).toEqual([
           'Bearer production-gateway-token',
@@ -341,6 +376,20 @@ describe('Market retirement deployed production composition', () => {
       });
     },
   );
+
+  it.effect('rejects a gateway response for a different revision before contacting the owner', () => {
+    const execution = runProductionRetirement([verified('a'.repeat(64))], '8'.repeat(64));
+    return Effect.gen(function* mismatchedGatewayRevision() {
+      const failure = yield* execution.program.pipe(Effect.flip);
+      expect(Predicate.isTagged(failure, 'MarketRetirementImpactAssessmentUnavailable')).toBe(true);
+      expect(execution.gatewayCompositionRevisions).toEqual([
+        { audience: 'commerce-customer-context', compositionRevision, legalEntityId: sellerId },
+      ]);
+      expect(execution.assessmentRequests).toHaveLength(0);
+      expect(execution.reservationRequests).toHaveLength(0);
+      expect(execution.persistenceQueries).toHaveLength(0);
+    });
+  });
 
   it.effect('rejects a live bootstrap reference before reserving or persisting', () => {
     const execution = runProductionRetirement([verified('b'.repeat(64), { bootstrap: true })]);

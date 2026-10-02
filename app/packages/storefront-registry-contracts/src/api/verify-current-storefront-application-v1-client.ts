@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface VerifyCurrentStorefrontApplicationV1ClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type VerifyCurrentStorefrontApplicationV1AuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeVerifyCurrentStorefrontApplicationV1 = (
   payload: VerifyCurrentStorefrontApplicationV1Request,
   ...[requestCorrelation, options = {}]: VerifyCurrentStorefrontApplicationV1OperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeVerifyCurrentStorefrontApplicationV1WithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeVerifyCurrentStorefrontApplicationV1WithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

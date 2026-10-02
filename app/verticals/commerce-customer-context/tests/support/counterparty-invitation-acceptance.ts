@@ -4,7 +4,12 @@ import { v1 } from '@authzed/authzed-node';
 import { sql } from 'drizzle-orm';
 import { Context, Effect, Layer, Schema } from 'effect';
 
-import { scopedRoutineInvokerFromTransaction } from '@app/core-runtime';
+import {
+  ActionInvocationPersistenceError,
+  ActionRuntime,
+  scopedRoutineInvokerFromTransaction,
+} from '@app/core-runtime';
+import type { ActionRuntimeService } from '@app/core-runtime';
 
 import { TrustedPrincipalContextSchema } from '../../../../packages/core-runtime/src/actions/principal-context.ts';
 import { layerTestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
@@ -26,6 +31,7 @@ import type { PrincipalEligibilityService } from '../../../../packages/core-runt
 import { toSpiceDbActionObjectId } from '../../../../packages/core-runtime/src/permissions/service.ts';
 import { commercePortalAuthPlatformCryptoLive } from '../../api/portal-auth/deployment.ts';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
+import { ClaimCounterpartyAccessInvitationResultSchema } from '../../shared/actions/claim-counterparty-access-invitation.ts';
 import { AccessInstantSchema, CounterpartyRefSchema, PrincipalRefSchema } from '../../shared/domain/access-contract.ts';
 import { counterpartyAccessPortForScopedTransaction } from '../../src/persistence/access-persistence.ts';
 import type { CounterpartyAccessScopedRoutineInvoker } from '../../src/persistence/access-persistence.ts';
@@ -526,54 +532,49 @@ export const readCounterpartyInvitationClaimProof = (
       Effect.orDie,
     );
 
+const claimAnswerLoss = function* claimAnswerLoss(droppedAnswers: string[]) {
+  const runtime = yield* ActionRuntime;
+  let loseNextClaimAnswer = true;
+  const runAction: ActionRuntimeService['runAction'] = (input) =>
+    runtime.runAction(input).pipe(
+      Effect.flatMap((result) => {
+        if (
+          loseNextClaimAnswer &&
+          input.registration.descriptor.actionKey === 'commerce.customer-context.claim-counterparty-access-invitation'
+        ) {
+          if (
+            !Schema.is(ClaimCounterpartyAccessInvitationResultSchema)(result) ||
+            result.outcome === 'ALREADY_CLAIMED' ||
+            result.invitation.state !== result.outcome
+          ) {
+            return Effect.die('The lost-answer fixture requires a committed claimed invitation');
+          }
+          loseNextClaimAnswer = false;
+          droppedAnswers.push(result.attestation.attestationReference);
+          return Effect.fail(
+            new ActionInvocationPersistenceError({
+              code: 'action_invocation_persistence_failed',
+              reason: 'The committed invitation claim answer was lost',
+            }),
+          );
+        }
+        return Effect.succeed(result);
+      }),
+    );
+  return { resolveActionCommit: runtime.resolveActionCommit, runAction };
+};
+
 /**
- * Rewrites one owner transition back into the durable state a lost answer leaves behind: dispatched
- * under a worker lease that has since lapsed, with no outcome ever recorded.
- *
- * Everything the owner itself committed — the consumed proof, the claimed invitation, the staged
- * grants — is deliberately left exactly as the claim wrote it. That difference is the whole point:
- * only a read of the invitation can tell this apart from a claim that never ran.
+ * Drops one claim answer after the real governed Action has committed, before the enrollment
+ * driver can record its outcome. The real pending Attempt and owner lease remain untouched.
  */
 export const loseCounterpartyInvitationClaimAnswer = (
-  fixture: EnrollmentAcceptanceFixture,
-  realm: CounterpartyInvitationRealm,
-  portalEnrollmentAttemptId: string,
-  transitionKey: string,
-): Effect.Effect<void> =>
-  fixture.admin
-    .transaction((transaction) =>
-      Effect.gen(function* rewriteClaimTransition() {
-        yield* transaction.execute(
-          sql`
-            update commerce_customer_context.portal_enrollment_owner_operations
-               set status = 'IN_PROGRESS', revision = revision + 1,
-                   result_reference = null, reconciliation_ref = null, result_digest = null,
-                   outcome_code = null, failure_code = null, failure_reason = null,
-                   lease_owner = ${`commerce.customer-context.invitation-claim:${portalEnrollmentAttemptId}`},
-                   lease_token = gen_random_uuid(),
-                   lease_expires_at = statement_timestamp() - interval '1 minute',
-                   completed_at = null, updated_at = statement_timestamp()
-             where tenant_id = ${realm.tenantId}::uuid
-               and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
-               and transition_key = ${transitionKey}
-          `,
-          'objects',
-        );
-        yield* transaction.execute(
-          sql`
-            update commerce_customer_context.portal_enrollment_attempts
-               set state = 'IN_PROGRESS', revision = revision + 1,
-                   lease_owner = null, lease_token = null, lease_expires_at = null,
-                   last_failure_code = null, last_failure_reason = null,
-                   updated_at = statement_timestamp()
-             where tenant_id = ${realm.tenantId}::uuid
-               and portal_enrollment_attempt_id = ${portalEnrollmentAttemptId}::uuid
-          `,
-          'objects',
-        );
-      }),
-    )
-    .pipe(Effect.asVoid, Effect.orDie);
+  droppedAnswers: string[],
+): Layer.Layer<ActionRuntime, never, ActionRuntime> =>
+  Layer.effect(
+    ActionRuntime,
+    Effect.gen(() => claimAnswerLoss(droppedAnswers)),
+  );
 
 interface ClaimMutationRow extends Record<string, unknown> {
   readonly claims: string;

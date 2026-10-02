@@ -1,0 +1,2068 @@
+diff --git a/dist/cjs/microvertical-api-boundary.cjs b/dist/cjs/microvertical-api-boundary.cjs
+index 301a68e5510b254216ef413e5a371f344decb530..6138c56942c1e6bc4f86fccda0145f5a92d07d75 100644
+--- a/dist/cjs/microvertical-api-boundary.cjs
++++ b/dist/cjs/microvertical-api-boundary.cjs
+@@ -77,6 +77,7 @@ function configuredApps(root, supplied) {
+     ] : void 0;
+     const source = supplied ?? entries?.map((entry)=>{
+         if (!entry || 'string' != typeof entry.path || !entry.path || external_node_path_default().isAbsolute(entry.path) || entry.path.split(/[\\/]/u).includes('..')) throw new Error('topology/reference-topology.json: each app must have an explicit workspace path');
++        if ('string' != typeof entry.kind) throw new Error(`${entry.path}: invalid kind`);
+         const packageFile = external_node_path_default().join(root, entry.path, 'package.json');
+         const manifest = JSON.parse(external_node_fs_default().readFileSync(packageFile, 'utf8'));
+         if ('string' != typeof manifest.name || !manifest.name || void 0 !== entry.package && entry.package !== manifest.name) throw new Error(`${entry.path}/package.json: package name must match topology`);
+@@ -129,7 +130,7 @@ function configuredApps(root, supplied) {
+         };
+         for (const field of Object.keys(allowedFields)){
+             const value = app[field];
+-            if (void 0 !== value && !allowedFields[field].includes(value)) throw new Error(`${key}: invalid ${field}`);
++            if ((void 0 !== value || 'kind' === field) && ('string' != typeof value || !allowedFields[field].includes(value))) throw new Error(`${key}: invalid ${field}`);
+         }
+         if (void 0 !== app.api) {
+             if (!app.api || 'object' != typeof app.api || Array.isArray(app.api)) throw new Error(`${key}: api must be an object`);
+@@ -211,12 +212,20 @@ function check(options, topology) {
+         const resolveRelative = (fromFile, specifier)=>{
+             if (!/^\.\.?\//u.test(specifier)) return;
+             const base = external_node_path_default().posix.join(external_node_path_default().posix.dirname(fromFile), specifier).replace(/\.(?:[cm]?[jt]sx?)$/u, '');
+-            return [
++            const candidate = [
+                 `${base}.ts`,
+                 `${base}.tsx`,
+                 `${base}/index.ts`,
+                 `${base}/index.tsx`
+             ].find((candidate)=>exists(candidate));
++            return void 0 === candidate ? void 0 : normalize(external_node_path_default().relative(external_node_fs_default().realpathSync(root), external_node_fs_default().realpathSync(absolute(candidate))));
++        };
++        const graphBinding = (graph, module, expression, seen = new Set())=>{
++            if (seen.has(expression) || seen.size >= 128) return;
++            seen.add(expression);
++            let binding;
++            if (types_namespaceObject.isIdentifier(expression) || types_namespaceObject.isMemberExpression(expression)) binding = graph.resolveReference(module, expression);
++            return binding?.kind === 'declaration' && (types_namespaceObject.isIdentifier(binding.expression) || types_namespaceObject.isMemberExpression(binding.expression)) ? graphBinding(graph, binding.module, binding.expression, seen) : binding;
+         };
+         const clientExportFile = (appPath, exported)=>{
+             if ('string' != typeof exported || !exported.startsWith('./') || exported.split(/[\\/]/u).includes('..') || !/\.[cm]?[jt]sx?$/u.test(exported)) return;
+@@ -232,26 +241,73 @@ function check(options, topology) {
+             }
+             return normalize(external_node_path_default().relative(root, candidate));
+         };
++        const publicApis = new Map();
++        for (const app of apps){
++            const manifest = JSON.parse(read(`${app.path}/package.json`));
++            const file = clientExportFile(app.path, manifest.exports?.['./api']);
++            if (file) publicApis.set(`${manifest.name}/api`, file);
++        }
+         const composedModules = (file, appPath)=>{
+             const order = [];
+-            const seen = new Set();
++            const owner = external_node_fs_default().realpathSync(absolute(appPath));
++            const entryPath = external_node_fs_default().realpathSync(absolute(file));
++            if (!entryPath.startsWith(`${owner}${external_node_path_default().sep}`)) throw new Error(`consumer module closure escapes its owner: ${file}`);
++            const entry = normalize(external_node_path_default().relative(external_node_fs_default().realpathSync(root), entryPath));
++            const discovered = new Set([
++                entry
++            ]);
+             const queue = [
+-                file
++                {
++                    file: entry,
++                    depth: 0
++                }
+             ];
+-            const owner = external_node_fs_default().realpathSync(absolute(appPath));
+-            while(queue.length > 0 && order.length < 128){
+-                const current = queue.shift();
+-                if (seen.has(current)) continue;
+-                seen.add(current);
++            const loaderGraph = (0, external_module_graph_cjs_namespaceObject.createModuleGraph)();
++            for(let cursor = 0; cursor < queue.length; cursor += 1){
++                const { file: current, depth } = queue[cursor];
+                 order.push(current);
+                 const ast = parseFile(current);
+                 if (!ast) continue;
+-                for (const statement of ast.program.body){
+-                    const source = (types_namespaceObject.isImportDeclaration(statement) || types_namespaceObject.isExportNamedDeclaration(statement) || types_namespaceObject.isExportAllDeclaration(statement)) && statement.source ? statement.source.value : void 0;
+-                    const resolved = void 0 === source ? void 0 : resolveRelative(current, source);
+-                    if (void 0 !== resolved && !seen.has(resolved)) {
+-                        const real = external_node_fs_default().realpathSync(absolute(resolved));
+-                        if (real.startsWith(`${owner}${external_node_path_default().sep}`)) queue.push(resolved);
++                const sources = [];
++                for (const statement of ast.program.body)if (types_namespaceObject.isImportDeclaration(statement) && 'type' !== statement.importKind && 'typeof' !== statement.importKind) sources.push(statement.source.value);
++                else if (types_namespaceObject.isExportNamedDeclaration(statement) && 'type' !== statement.exportKind && statement.source) sources.push(statement.source.value);
++                else if (types_namespaceObject.isExportAllDeclaration(statement) && 'type' !== statement.exportKind) sources.push(statement.source.value);
++                let hasRequire = false;
++                types_namespaceObject.traverseFast(ast, (node)=>{
++                    if (types_namespaceObject.isImportExpression(node)) {
++                        if (!types_namespaceObject.isStringLiteral(node.source)) throw new Error('consumer module closure has nonliteral runtime dependency');
++                        sources.push(node.source.value);
++                    }
++                    if ((types_namespaceObject.isCallExpression(node) || types_namespaceObject.isOptionalCallExpression(node)) && types_namespaceObject.isIdentifier((0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(node.callee, true), {
++                        name: 'require'
++                    })) hasRequire = true;
++                });
++                if (hasRequire) {
++                    const module = loaderGraph.module(absolute(current));
++                    types_namespaceObject.traverseFast(module.file, (node)=>{
++                        if (!types_namespaceObject.isCallExpression(node) && !types_namespaceObject.isOptionalCallExpression(node)) return;
++                        const callee = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(node.callee, true);
++                        if (!types_namespaceObject.isIdentifier(callee, {
++                            name: 'require'
++                        }) || !loaderGraph.isUnboundReference(module, callee)) return;
++                        if (1 !== node.arguments.length || !types_namespaceObject.isStringLiteral(node.arguments[0])) throw new Error('consumer module closure has nonliteral runtime dependency');
++                        sources.push(node.arguments[0].value);
++                    });
++                }
++                for (const source of sources){
++                    if (!/^\.\.?\//u.test(source)) continue;
++                    const resolved = resolveRelative(current, source);
++                    if (void 0 === resolved) throw new Error(`consumer module closure has unresolved relative dependency: ${current} -> ${source}`);
++                    const real = external_node_fs_default().realpathSync(absolute(resolved));
++                    if (!real.startsWith(`${owner}${external_node_path_default().sep}`)) throw new Error(`consumer module closure escapes its owner: ${current} -> ${source}`);
++                    if (!discovered.has(resolved)) {
++                        if (depth + 1 >= 128) throw new Error('consumer module closure exceeds 128 import-depth analysis budget');
++                        if (discovered.size >= 2048) throw new Error('consumer module closure exceeds 2048-module analysis budget');
++                        discovered.add(resolved);
++                        queue.push({
++                            file: resolved,
++                            depth: depth + 1
++                        });
+                     }
+                 }
+             }
+@@ -472,6 +528,154 @@ function check(options, topology) {
+                 ], [
+                     rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'
+                 ], [], void 0, appPath);
++                if (exists(contract)) {
++                    const graph = (0, external_module_graph_cjs_namespaceObject.createModuleGraph)();
++                    const contractModule = graph.module(absolute(contract));
++                    const exportStem = stem.replaceAll(/-([a-z0-9])/gu, (_match, letter)=>letter.toUpperCase());
++                    const ownApi = graph.resolve(contractModule, rpc ? `${exportStem.slice(0, 1).toUpperCase()}${exportStem.slice(1)}RpcGroup` : `${exportStem}Api`, 'export');
++                    const identityPipe = (module, node)=>{
++                        if (!types_namespaceObject.isCallExpression(node) || !types_namespaceObject.isMemberExpression(node.callee) || node.callee.computed || !types_namespaceObject.isIdentifier(node.callee.property, {
++                            name: 'pipe'
++                        }) || 1 !== node.arguments.length) return false;
++                        const values = graph.evaluate(module, node.arguments[0]);
++                        return values.length > 0 && values.every((value)=>'external' === value.kind && 'effect' === value.specifier && 'identity' === value.name && 0 === value.members.length);
++                    };
++                    const withoutIdentity = (module, value)=>{
++                        let node = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(value, true);
++                        let pipes = 0;
++                        while(identityPipe(module, node)){
++                            if (++pipes > 128) return value;
++                            if (!types_namespaceObject.isCallExpression(node) || !types_namespaceObject.isMemberExpression(node.callee)) break;
++                            node = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(node.callee.object, true);
++                        }
++                        return node;
++                    };
++                    const normalizedApi = (initial)=>{
++                        let binding = initial;
++                        const seen = new Set();
++                        for(let hops = 0; hops < 128; hops += 1){
++                            const expression = withoutIdentity(binding.module, binding.expression);
++                            if (seen.has(expression)) break;
++                            seen.add(expression);
++                            if (!types_namespaceObject.isIdentifier(expression) && !types_namespaceObject.isMemberExpression(expression)) return {
++                                ...binding,
++                                expression
++                            };
++                            const next = graphBinding(graph, binding.module, expression);
++                            if (next?.kind !== 'declaration') break;
++                            binding = next;
++                        }
++                    };
++                    const apiBinding = (module, value)=>{
++                        const binding = graphBinding(graph, module, withoutIdentity(module, value));
++                        return binding?.kind === 'declaration' ? normalizedApi(binding) : void 0;
++                    };
++                    const ownedApis = new Map();
++                    const provenApis = new Set();
++                    const activeApis = new Set();
++                    const activeBuilders = new Set();
++                    let apiVisits = 0;
++                    const collectApi = (binding)=>{
++                        const { module, expression } = binding;
++                        if (provenApis.has(expression)) return true;
++                        if (activeApis.has(expression)) return false;
++                        activeApis.add(expression);
++                        const builder = (value, source)=>{
++                            const initial = withoutIdentity(source, value);
++                            if (activeBuilders.has(initial) || activeBuilders.size >= 128) return false;
++                            activeBuilders.add(initial);
++                            try {
++                                const seenNodes = new Set();
++                                const children = [];
++                                let node = initial;
++                                while(true){
++                                    if (seenNodes.has(node) || node !== initial && activeBuilders.has(node) || ++apiVisits > 2048) return false;
++                                    seenNodes.add(node);
++                                    if (types_namespaceObject.isIdentifier(node) || types_namespaceObject.isMemberExpression(node)) {
++                                        const receiver = apiBinding(source, node);
++                                        if (void 0 === receiver || !builder(receiver.expression, receiver.module)) return false;
++                                        break;
++                                    }
++                                    if (!types_namespaceObject.isCallExpression(node)) return false;
++                                    const callee = graph.evaluate(source, node.callee);
++                                    if (callee.length > 0 && callee.every((value)=>'external' === value.kind && [
++                                            effect,
++                                            'effect/unstable/httpapi'
++                                        ].includes(value.specifier) && 'HttpApi' === value.name && 1 === value.members.length && 'make' === value.members[0])) {
++                                        if (1 !== node.arguments.length || !types_namespaceObject.isStringLiteral(node.arguments[0])) return false;
++                                        break;
++                                    }
++                                    if (!types_namespaceObject.isMemberExpression(node.callee) || node.callee.computed || !types_namespaceObject.isIdentifier(node.callee.property)) return false;
++                                    const method = node.callee.property.name;
++                                    if ('addHttpApi' === method && 1 === node.arguments.length) children.push(node.arguments[0]);
++                                    else if (!('add' === method && node.arguments.length > 0 || 'annotate' === method && 2 === node.arguments.length || [
++                                        'annotateMerge',
++                                        'middleware'
++                                    ].includes(method) && 1 === node.arguments.length || 'prefix' === method && 1 === node.arguments.length && types_namespaceObject.isStringLiteral(node.arguments[0]) && node.arguments[0].value.startsWith('/'))) return false;
++                                    node = withoutIdentity(source, node.callee.object);
++                                }
++                                for (const argument of children.reverse()){
++                                    const child = apiBinding(source, argument);
++                                    if (void 0 === child || !collectApi(child)) return false;
++                                }
++                                return true;
++                            } finally{
++                                activeBuilders.delete(initial);
++                            }
++                        };
++                        const valid = builder(expression, module);
++                        activeApis.delete(expression);
++                        if (valid) provenApis.add(expression);
++                        if (valid && module.boundary === contractModule.boundary) {
++                            const identities = ownedApis.get(module.path) ?? new Set();
++                            identities.add(expression);
++                            ownedApis.set(module.path, identities);
++                        }
++                        return valid;
++                    };
++                    if (!rpc && ownApi?.kind === 'declaration') {
++                        const rootApi = normalizedApi(ownApi);
++                        if (rootApi && collectApi(rootApi)) {
++                            const identities = ownedApis.get(rootApi.module.path) ?? new Set();
++                            identities.add(rootApi.expression);
++                            ownedApis.set(rootApi.module.path, identities);
++                        } else ownedApis.clear();
++                    }
++                    const immutablePipeAliases = (module, target)=>{
++                        if (0 === module.mutations.length) return true;
++                        let valid = true;
++                        types_namespaceObject.traverseFast(module.file, (node)=>{
++                            if (!types_namespaceObject.isVariableDeclarator(node) || !types_namespaceObject.isIdentifier(node.id) || !node.init) return;
++                            let initializer = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(node.init, true);
++                            if (!types_namespaceObject.isCallExpression(initializer) || !types_namespaceObject.isMemberExpression(initializer.callee) || initializer.callee.computed || !types_namespaceObject.isIdentifier(initializer.callee.property, {
++                                name: 'pipe'
++                            })) return;
++                            let identityOnly = true;
++                            while(types_namespaceObject.isCallExpression(initializer) && types_namespaceObject.isMemberExpression(initializer.callee) && !initializer.callee.computed && types_namespaceObject.isIdentifier(initializer.callee.property, {
++                                name: 'pipe'
++                            })){
++                                identityOnly &&= identityPipe(module, initializer);
++                                initializer = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(initializer.callee.object, true);
++                            }
++                            const receiver = apiBinding(module, initializer);
++                            if (!receiver || receiver.module.path !== target.module.path || receiver.expression !== target.expression) return;
++                            const alias = graph.resolveReference(module, node.id);
++                            if (!identityOnly || alias?.kind !== 'declaration') valid = false;
++                        });
++                        return valid;
++                    };
++                    for (const source of composedModules(client, appPath)){
++                        const module = graph.module(absolute(source));
++                        types_namespaceObject.traverseFast(module.file, (node)=>{
++                            if (!types_namespaceObject.isCallExpression(node) && !types_namespaceObject.isOptionalCallExpression(node)) return;
++                            const factory = graph.evaluate(module, node.callee);
++                            if (!factory.some((value)=>'external' === value.kind && value.specifier === effect && value.name === (rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'))) return;
++                            const argument = node.arguments[0];
++                            const binding = argument ? rpc ? graphBinding(graph, module, argument) : apiBinding(module, argument) : void 0;
++                            assert(binding?.kind === 'declaration' && (rpc ? ownApi?.kind === 'declaration' && binding.module.path === ownApi.module.path && binding.expression === ownApi.expression : ownedApis.get(binding.module.path)?.has(binding.expression) && immutablePipeAliases(module, binding)), `${source}: must construct the client from its own API contract`);
++                        });
++                    }
++                }
+             }
+             moduleShape(`${appPath}/api/effect-api.ts`, [], [], [
+                 [
+@@ -515,8 +719,8 @@ function check(options, topology) {
+             ]);
+         });
+         const sourceRules = options.sourceRules ?? [];
+-        const graph = (0, external_module_graph_cjs_namespaceObject.createModuleGraph)();
+         for (const file of sourceRules.length ? sourceFiles : [])if (/\.[cm]?[jt]sx?$/u.test(file)) guarded(file, ()=>{
++            const graph = (0, external_module_graph_cjs_namespaceObject.createModuleGraph)();
+             let module;
+             try {
+                 module = graph.module(absolute(file));
+@@ -535,20 +739,173 @@ function check(options, topology) {
+                 for (const message of messages)diagnostics.push(`${file}: ${message}`);
+             }
+         });
+-        const shell = 'apps/shell-super-app';
+-        const verticals = apps.filter((app)=>app.path.startsWith('verticals/') && apiApp(app));
+-        if (exists(shell) && verticals.length) {
+-            const file = `${shell}/src/api/vertical-clients.ts`;
+-            assert(exists(file), `${file}: must aggregate vertical API clients`);
+-            if (exists(file)) guarded(file, ()=>{
+-                const ast = parseFile(file);
+-                for (const app of verticals){
+-                    const specifier = `${app.package}/api/${app.api?.protocol === 'rpc' ? 'rpc-client' : 'client'}`;
+-                    assert(ast?.program.body.some((item)=>types_namespaceObject.isExportNamedDeclaration(item) && item.source?.value === specifier), `${file}: must re-export ${specifier}`);
+-                }
+-            });
++        const ownerClients = new Map();
++        for (const app of apps){
++            const manifest = JSON.parse(read(`${app.path}/package.json`));
++            for (const key of [
++                './api/client',
++                './api/rpc-client'
++            ]){
++                const file = clientExportFile(app.path, manifest.exports?.[key]);
++                if (file) ownerClients.set(`${manifest.name}${key.slice(1)}`, file);
++            }
+         }
+-        if (exists(`${shell}/package.json`)) guarded(`${shell}/package.json`, ()=>assert(JSON.parse(read(`${shell}/package.json`)).exports?.['./api/clients'] === './src/api/vertical-clients.ts', `${shell}/package.json: must export ./api/clients`));
++        for (const shell of apps.filter((app)=>'shell' === app.kind))guarded(shell.path, ()=>{
++            const shellPath = normalize(shell.path);
++            const packageFile = `${shellPath}/package.json`;
++            const manifest = JSON.parse(read(packageFile));
++            noPath(`${shellPath}/src/api/vertical-clients.ts`, 'compiled Shell client registries are forbidden');
++            assert(!Object.hasOwn(manifest.exports ?? {}, './api/clients'), `${packageFile}: public Shell ./api/clients exports are forbidden`);
++            const targets = (exported)=>'string' == typeof exported ? [
++                    exported
++                ] : exported && 'object' == typeof exported ? Object.values(exported).flatMap(targets) : [];
++            const owner = external_node_fs_default().realpathSync(absolute(shellPath));
++            const wildcardFiles = (directory, seen = new Set())=>{
++                const real = external_node_fs_default().realpathSync(absolute(directory));
++                if (real !== owner && !real.startsWith(`${owner}${external_node_path_default().sep}`)) {
++                    assert(false, `${packageFile}: invalid Shell public source export`);
++                    return [];
++                }
++                if (seen.has(real)) return [];
++                seen.add(real);
++                return external_node_fs_default().readdirSync(absolute(directory), {
++                    withFileTypes: true
++                }).flatMap((entry)=>{
++                    if (ignored.has(entry.name)) return [];
++                    const file = `${directory}/${entry.name}`;
++                    const stat = external_node_fs_default().statSync(absolute(file));
++                    return stat.isDirectory() ? wildcardFiles(file, seen) : stat.isFile() ? [
++                        file
++                    ] : [];
++                });
++            };
++            for (const target of targets(manifest.exports)){
++                if (!/\.[cm]?[jt]sx?$/u.test(target)) continue;
++                if (!target.startsWith('./') || target.split(/[\\/]/u).includes('..')) {
++                    assert(false, `${packageFile}: invalid Shell public source export`);
++                    continue;
++                }
++                const files = target.includes('*') ? (()=>{
++                    const prefix = target.slice(0, target.indexOf('*'));
++                    const directory = `${shellPath}/${prefix.slice(2, prefix.lastIndexOf('/'))}`;
++                    const pattern = new RegExp(`^${target.split('*').map((part)=>part.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('.*')}$`, 'u');
++                    return wildcardFiles(directory).filter((file)=>pattern.test(`./${external_node_path_default().posix.relative(shellPath, file)}`));
++                })() : [
++                    `${shellPath}/${target.slice(2)}`
++                ];
++                for (const candidate of files){
++                    const file = clientExportFile(shellPath, `./${external_node_path_default().posix.relative(shellPath, candidate)}`);
++                    assert(file, `${packageFile}: invalid Shell public source export`);
++                    if (!file) continue;
++                    const graph = (0, external_module_graph_cjs_namespaceObject.createModuleGraph)();
++                    const seenValues = new Set();
++                    const foreignSpecifier = (specifier)=>/\/api\/(?:rpc-)?client$/u.test(specifier) && !specifier.startsWith(`${manifest.name}/api/`);
++                    const returnExpressions = (node)=>{
++                        if (types_namespaceObject.isReturnStatement(node)) return node.argument ? [
++                            node.argument
++                        ] : [];
++                        if (types_namespaceObject.isFunction(node)) return [];
++                        return (types_namespaceObject.VISITOR_KEYS[node.type] ?? []).flatMap((key)=>{
++                            const value = Reflect.get(node, key);
++                            const children = Array.isArray(value) ? value : [
++                                value
++                            ];
++                            return children.flatMap((child)=>types_namespaceObject.isNode(child) ? returnExpressions(child) : []);
++                        });
++                    };
++                    const foreignValue = (value, from)=>{
++                        if ('external' === value.kind) {
++                            const source = reexportSource(normalize(external_node_path_default().relative(root, from.path)), value.specifier);
++                            if (!source) return foreignSpecifier(value.specifier);
++                            return '*' === value.name ? inspect(source) : exportedValue(source, value.name);
++                        }
++                        if ('unresolved' === value.kind && types_namespaceObject.isImportDeclaration(value.node) && value.node.specifiers.some((specifier)=>types_namespaceObject.isImportNamespaceSpecifier(specifier))) {
++                            const source = reexportSource(normalize(external_node_path_default().relative(root, value.module.path)), value.node.source.value);
++                            return source ? inspect(source) : foreignSpecifier(value.node.source.value);
++                        }
++                        if ('node' !== value.kind || seenValues.has(value.node)) return false;
++                        seenValues.add(value.node);
++                        const { node, module } = value;
++                        if ((types_namespaceObject.isCallExpression(node) || types_namespaceObject.isOptionalCallExpression(node)) && graph.evaluate(module, node.callee).some((callee)=>'external' === callee.kind && callee.specifier === effect && [
++                                'makeEffectHttpApiClient',
++                                'makeEffectRpcClient'
++                            ].includes(callee.name))) {
++                            const argument = node.arguments[0];
++                            const binding = argument ? graphBinding(graph, module, argument) : void 0;
++                            if (module.boundary !== owner || binding?.kind !== 'declaration' || binding.module.boundary !== owner) return true;
++                        }
++                        const nested = types_namespaceObject.isObjectExpression(node) ? node.properties.flatMap((property)=>types_namespaceObject.isObjectProperty(property) ? [
++                                property.value
++                            ] : types_namespaceObject.isObjectMethod(property) ? returnExpressions(property.body) : types_namespaceObject.isSpreadElement(property) ? [
++                                property.argument
++                            ] : []) : types_namespaceObject.isArrayExpression(node) ? node.elements.filter((element)=>null !== element) : types_namespaceObject.isFunction(node) ? types_namespaceObject.isBlockStatement(node.body) ? returnExpressions(node.body) : [
++                            node.body
++                        ] : [];
++                        return nested.some((expression)=>graph.evaluate(module, expression).some((value)=>foreignValue(value, module)));
++                    };
++                    const reexportSource = (from, specifier)=>resolveRelative(from, specifier) ?? ownerClients.get(specifier);
++                    const names = (source, visited = new Set())=>{
++                        if (visited.has(source)) return [];
++                        visited.add(source);
++                        const module = graph.module(absolute(source));
++                        return module.file.program.body.flatMap((statement)=>{
++                            if (types_namespaceObject.isExportDefaultDeclaration(statement)) return [
++                                'default'
++                            ];
++                            if (!types_namespaceObject.isExportNamedDeclaration(statement) && !types_namespaceObject.isExportAllDeclaration(statement)) return [];
++                            if ('type' === statement.exportKind) return [];
++                            if (types_namespaceObject.isExportAllDeclaration(statement)) {
++                                const relative = reexportSource(source, statement.source.value);
++                                return relative ? names(relative, visited).filter((name)=>'default' !== name) : [];
++                            }
++                            return statement.declaration ? Object.keys(types_namespaceObject.getOuterBindingIdentifiers(statement.declaration)) : statement.specifiers.flatMap((specifier)=>types_namespaceObject.isExportSpecifier(specifier) && 'type' === specifier.exportKind ? [] : [
++                                    types_namespaceObject.isIdentifier(specifier.exported) ? specifier.exported.name : specifier.exported.value
++                                ]);
++                        });
++                    };
++                    const seenExports = new Map();
++                    const exportedValue = (source, name)=>{
++                        const visited = seenExports.get(source) ?? new Set();
++                        if (visited.has(name)) return false;
++                        visited.add(name);
++                        seenExports.set(source, visited);
++                        const module = graph.module(absolute(source));
++                        const binding = graph.resolve(module, name, 'export');
++                        if (binding?.kind === 'external') return foreignValue({
++                            ...binding,
++                            members: []
++                        }, module);
++                        if (binding?.kind === 'declaration') return graph.evaluate(binding.module, binding.expression).some((value)=>foreignValue(value, binding.module));
++                        for (const statement of module.file.program.body){
++                            if (types_namespaceObject.isExportDefaultDeclaration(statement) && 'default' === name) return graph.evaluate(module, statement.declaration).some((value)=>foreignValue(value, module));
++                            if (!types_namespaceObject.isExportNamedDeclaration(statement) || 'type' === statement.exportKind) continue;
++                            if (statement.declaration && types_namespaceObject.isFunctionDeclaration(statement.declaration) && statement.declaration.id?.name === name) return graph.evaluate(module, statement.declaration).some((value)=>foreignValue(value, module));
++                            const specifier = statement.specifiers.find((item)=>(types_namespaceObject.isIdentifier(item.exported) ? item.exported.name : item.exported.value) === name);
++                            if (specifier) {
++                                if (types_namespaceObject.isExportSpecifier(specifier) && 'type' === specifier.exportKind) return false;
++                                if (!statement.source && types_namespaceObject.isExportSpecifier(specifier)) return graph.evaluate(module, specifier.local).some((value)=>foreignValue(value, module));
++                                if (statement.source) {
++                                    const relative = reexportSource(source, statement.source.value);
++                                    if (!relative) return foreignSpecifier(statement.source.value);
++                                    if (types_namespaceObject.isExportNamespaceSpecifier(specifier)) return inspect(relative);
++                                    if (types_namespaceObject.isExportSpecifier(specifier)) return exportedValue(relative, types_namespaceObject.isIdentifier(specifier.local) ? specifier.local.name : specifier.local.value);
++                                }
++                            }
++                        }
++                        for (const statement of module.file.program.body){
++                            if (!types_namespaceObject.isExportAllDeclaration(statement) || 'type' === statement.exportKind) continue;
++                            const relative = reexportSource(source, statement.source.value);
++                            if (relative && names(relative).includes(name) && exportedValue(relative, name)) return true;
++                        }
++                        return false;
++                    };
++                    const inspect = (source)=>[
++                            ...new Set(names(source))
++                        ].some((name)=>exportedValue(source, name));
++                    assert(!inspect(file), `${file}: Shell public exports must not expose another owner's API client`);
++                }
++            }
++        });
+         if (exists('topology/reference-topology.json')) guarded('topology/reference-topology.json', ()=>{
+             for (const vertical of JSON.parse(read('topology/reference-topology.json')).verticals ?? []){
+                 if (vertical.api?.runtime === 'effect') {
+diff --git a/dist/cjs/module-graph.cjs b/dist/cjs/module-graph.cjs
+index 44a43b977a8a0f597031b0df98842e5802fc5d59..c6a9f5019da5e8f55edf1ac200b106d5d393aa9b 100644
+--- a/dist/cjs/module-graph.cjs
++++ b/dist/cjs/module-graph.cjs
+@@ -232,6 +232,7 @@ function parseModule(filePath, workspace) {
+     const file = (0, external_source_analysis_cjs_namespaceObject.parseSource)(external_node_fs_default().readFileSync(filePath, 'utf8'), filePath);
+     let scope;
+     const references = new Map();
++    const declarations = new Map();
+     const returns = new Map();
+     const bareReturns = new Set();
+     const functionScopes = new Map();
+@@ -342,6 +343,11 @@ function parseModule(filePath, workspace) {
+         ReferencedIdentifier (p) {
+             references.set(p.node, p.scope.getBinding(p.node.name));
+         },
++        BindingIdentifier (p) {
++            if (!types_namespaceObject.isIdentifier(p.node)) return;
++            const binding = p.scope.getBinding(p.node.name);
++            if (binding?.identifier === p.node) declarations.set(p.node, binding);
++        },
+         Function (p) {
+             functionScopes.set(p.node, p.scope);
+         },
+@@ -407,6 +413,7 @@ function parseModule(filePath, workspace) {
+         scope,
+         workspace,
+         references,
++        declarations,
+         returns,
+         bareReturns,
+         functionScopes,
+@@ -1142,7 +1149,7 @@ function createModuleGraph() {
+         }
+     };
+     const mutated = (module, binding)=>binding.constantViolations.length > 0 || factsOf(module).merged.has(binding.identifier.name) || (aliasesOf(binding, factsOf(module).writes)?.some((alias)=>factsOf(module).writes.has(alias.binding)) ?? true);
+-    const resolveBinding = (module, name, scope, chain, seen)=>{
++    const resolveBinding = (module, name, scope, chain, seen, lexical)=>{
+         const key = `${scope}:${module.path}#${name}`;
+         if (seen.has(key) || seen.size >= MAX_LOOKUPS) return;
+         seen.add(key);
+@@ -1165,7 +1172,7 @@ function createModuleGraph() {
+             return void 0 === next ? void 0 : resolveBinding(next, imported, 'export', hops, seen);
+         };
+         if ('local' === scope) {
+-            const binding = factsOf(module).scope.getBinding(name);
++            const binding = lexical ?? factsOf(module).scope.getBinding(name);
+             if (!binding || mutated(module, binding)) return;
+             if ('module' === binding.kind) {
+                 const imported = importOf(binding);
+@@ -1194,6 +1201,38 @@ function createModuleGraph() {
+             if (void 0 !== resolved) return resolved;
+         }
+     };
++    const resolveReference = (module, expression)=>{
++        const node = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(expression, true);
++        const facts = factsOf(module);
++        const bindingAt = (identifier)=>facts.references.get(identifier) ?? facts.declarations.get(identifier);
++        if (types_namespaceObject.isIdentifier(node)) {
++            const binding = bindingAt(node);
++            return binding ? resolveBinding(module, node.name, 'local', [], new Set(), binding) : void 0;
++        }
++        if (!types_namespaceObject.isMemberExpression(node) || node.computed || !types_namespaceObject.isIdentifier(node.object) || !types_namespaceObject.isIdentifier(node.property)) return;
++        const binding = bindingAt(node.object);
++        if (!binding || 'module' !== binding.kind || mutated(module, binding)) return;
++        const imported = importOf(binding);
++        if (imported?.name !== '*') return;
++        const target = follow(module, imported.specifier);
++        const chain = [
++            {
++                path: module.path,
++                name: node.object.name
++            }
++        ];
++        return 'external' === target ? {
++            kind: 'external',
++            specifier: imported.specifier,
++            name: node.property.name,
++            chain
++        } : target ? resolveBinding(target, node.property.name, 'export', chain, new Set()) : void 0;
++    };
++    const isUnboundReference = (module, reference)=>{
++        const node = (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(reference, true);
++        const references = factsOf(module).references;
++        return types_namespaceObject.isIdentifier(node) && references.has(node) && void 0 === references.get(node);
++    };
+     const evaluation = (walking)=>{
+         const active = new Set();
+         let frames = 0;
+@@ -1801,6 +1840,8 @@ function createModuleGraph() {
+     return {
+         module: (filePath)=>load(filePath),
+         resolve: (module, name, scope)=>resolveBinding(module, name, scope, [], new Set()),
++        resolveReference,
++        isUnboundReference,
+         evaluate: (module, expression)=>evaluation(false).values(module, expression, []),
+         reachable: (module, expression)=>evaluation(true).reachable(module, expression)
+     };
+diff --git a/dist/cjs/strict-effect-runtime.cjs b/dist/cjs/strict-effect-runtime.cjs
+index bab266098100decb3b25f0c36051ac0f81d3b9d6..343309e3d3e738a4099c651165fc59d77ab77e4f 100644
+--- a/dist/cjs/strict-effect-runtime.cjs
++++ b/dist/cjs/strict-effect-runtime.cjs
+@@ -99,8 +99,17 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+                     let target = nodePath.isAssignmentExpression() ? nodePath.node.left : nodePath.node.argument;
+                     while(types_namespaceObject.isMemberExpression(target))target = target.object;
+                     if (types_namespaceObject.isIdentifier(target)) {
+-                        const binding = nodePath.scope.getBinding(target.name);
+-                        if (binding) mutated.add(binding);
++                        let binding = nodePath.scope.getBinding(target.name);
++                        const seen = new Set();
++                        while(binding && !seen.has(binding)){
++                            seen.add(binding);
++                            mutated.add(binding);
++                            const declaration = binding.path.node;
++                            const init = types_namespaceObject.isVariableDeclarator(declaration) ? declaration.init : void 0;
++                            const alias = init ? (0, external_source_analysis_cjs_namespaceObject.unwrapExpression)(init, true) : void 0;
++                            if ('const' !== binding.kind || !types_namespaceObject.isIdentifier(alias)) break;
++                            binding = binding.path.scope.getBinding(alias.name);
++                        }
+                     }
+                 }
+                 if (nodePath.isTSModuleDeclaration() && types_namespaceObject.isIdentifier(nodePath.node.id)) {
+@@ -275,11 +284,63 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+                 if (method(node.callee, 'Layer', 'mergeAll', layerSources)) return node.arguments.length > 0 && node.arguments.every((argument)=>handlers(argument, api));
+                 return method(node.callee, 'HttpApiBuilder', 'group') && 3 === node.arguments.length && apiIdentity(node.arguments[0]) === api && handled(node.arguments[2]);
+             });
+-        const transport = (node)=>guarded(node, (node)=>{
++        const effectSources = [
++            edge,
++            'effect',
++            'effect/Effect'
++        ];
++        const routeHandler = (node)=>{
++            node = unwrap(node);
++            if (!types_namespaceObject.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') || 3 !== node.arguments.length) return;
++            const [verb, path, handler] = node.arguments;
++            return types_namespaceObject.isStringLiteral(verb) && [
++                '*',
++                'GET',
++                'POST',
++                'PUT',
++                'PATCH',
++                'DELETE',
++                'HEAD',
++                'OPTIONS',
++                'TRACE',
++                'CONNECT',
++                'QUERY'
++            ].includes(verb.value) && types_namespaceObject.isStringLiteral(path) && (path.value.startsWith('/') || '*' === path.value) && (types_namespaceObject.isArrowFunctionExpression(handler) || types_namespaceObject.isFunctionExpression(handler)) ? handler : void 0;
++        };
++        const effectReference = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+-                if (init) return transport(init);
++                if (init) return types_namespaceObject.isIdentifier(unwrap(init)) && effectReference(init);
++                const value = imported(node);
++                return !!value && !value.namespace;
++            });
++        const capturedRouteFactory = (node)=>guarded(node, (node)=>{
++                const init = initialized(node) ?? externalValue(node);
++                if (init) return capturedRouteFactory(init);
++                if (!types_namespaceObject.isArrowFunctionExpression(node) || node.async || 1 !== node.params.length || !types_namespaceObject.isIdentifier(node.params[0]) || types_namespaceObject.isBlockStatement(node.body)) return false;
++                const handler = routeHandler(node.body);
++                const parameter = binding(node.params[0]);
++                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>{
++                    for(let ancestor = reference; ancestor; ancestor = ancestor.parentPath)if (ancestor.node === handler) return true;
++                    return false;
++                });
++            });
++        const capturedTransport = (node)=>guarded(node, (node)=>{
++                const init = initialized(node);
++                if (init) return capturedTransport(init);
++                if (!types_namespaceObject.isCallExpression(node)) return false;
++                if (method(node.callee, 'Effect', 'map', effectSources)) return 2 === node.arguments.length && effectReference(node.arguments[0]) && capturedRouteFactory(node.arguments[1]);
++                if (!types_namespaceObject.isMemberExpression(node.callee) || node.callee.computed || !types_namespaceObject.isIdentifier(node.callee.property, {
++                    name: 'pipe'
++                }) || 1 !== node.arguments.length || !effectReference(node.callee.object)) return false;
++                const map = unwrap(node.arguments[0]);
++                return types_namespaceObject.isCallExpression(map) && method(map.callee, 'Effect', 'map', effectSources) && 1 === map.arguments.length && capturedRouteFactory(map.arguments[0]);
++            });
++        const transport = (node, provided = false)=>guarded(node, (node)=>{
++                const init = initialized(node) ?? externalValue(node);
++                if (init) return transport(init, provided);
+                 if (!types_namespaceObject.isCallExpression(node)) return method(node, 'Layer', 'empty', layerSources);
+-                return pipe(node, transport) || method(node.callee, 'HttpRouter', 'cors') || method(node.callee, 'Layer', 'mergeAll', layerSources) && node.arguments.length > 0 && node.arguments.every(transport);
++                const explicitlyProvided = provided || node.arguments.some((argument)=>types_namespaceObject.isCallExpression(argument) && method(argument.callee, 'Layer', 'provide', layerSources) && 1 === argument.arguments.length);
++                return pipe(node, (value)=>transport(value, explicitlyProvided)) || !!routeHandler(node) || provided && method(node.callee, 'Layer', 'unwrap', layerSources) && 1 === node.arguments.length && capturedTransport(node.arguments[0]) || method(node.callee, 'HttpRouter', 'cors') || method(node.callee, 'Layer', 'mergeAll', layerSources) && node.arguments.length > 0 && node.arguments.every((argument)=>transport(argument, provided));
+             });
+         const directLayer = (node, api)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+diff --git a/dist/esm/microvertical-api-boundary.js b/dist/esm/microvertical-api-boundary.js
+index 980e7be914bcba8d7b418eec76acea2163bff7b3..68376ec09d3ad55ff05bdf07fbd9b1a21b2567b0 100644
+--- a/dist/esm/microvertical-api-boundary.js
++++ b/dist/esm/microvertical-api-boundary.js
+@@ -4,7 +4,7 @@ import { parse } from "@babel/parser";
+ import { configuredMicroVerticalApiStem, microVerticalApiBaselineViolation } from "./microvertical-api-baseline.js";
+ import { baselinePackage, resolveBaselinePackageDirectory } from "./microvertical-api-owner.js";
+ import { createModuleGraph } from "./module-graph.js";
+-import { SourceSyntaxError, consumerParserPlugins } from "./source-analysis.js";
++import { SourceSyntaxError, consumerParserPlugins, unwrapExpression } from "./source-analysis.js";
+ import { createEffectApiImportResolver, strictEffectRuntimeTopologyViolation } from "./strict-effect-runtime.js";
+ import * as __rspack_external__babel_types_6e8337dd from "@babel/types";
+ const ignored = new Set([
+@@ -30,6 +30,7 @@ function configuredApps(root, supplied) {
+     ] : void 0;
+     const source = supplied ?? entries?.map((entry)=>{
+         if (!entry || 'string' != typeof entry.path || !entry.path || node_path.isAbsolute(entry.path) || entry.path.split(/[\\/]/u).includes('..')) throw new Error('topology/reference-topology.json: each app must have an explicit workspace path');
++        if ('string' != typeof entry.kind) throw new Error(`${entry.path}: invalid kind`);
+         const packageFile = node_path.join(root, entry.path, 'package.json');
+         const manifest = JSON.parse(node_fs.readFileSync(packageFile, 'utf8'));
+         if ('string' != typeof manifest.name || !manifest.name || void 0 !== entry.package && entry.package !== manifest.name) throw new Error(`${entry.path}/package.json: package name must match topology`);
+@@ -82,7 +83,7 @@ function configuredApps(root, supplied) {
+         };
+         for (const field of Object.keys(allowedFields)){
+             const value = app[field];
+-            if (void 0 !== value && !allowedFields[field].includes(value)) throw new Error(`${key}: invalid ${field}`);
++            if ((void 0 !== value || 'kind' === field) && ('string' != typeof value || !allowedFields[field].includes(value))) throw new Error(`${key}: invalid ${field}`);
+         }
+         if (void 0 !== app.api) {
+             if (!app.api || 'object' != typeof app.api || Array.isArray(app.api)) throw new Error(`${key}: api must be an object`);
+@@ -164,12 +165,20 @@ function check(options, topology) {
+         const resolveRelative = (fromFile, specifier)=>{
+             if (!/^\.\.?\//u.test(specifier)) return;
+             const base = node_path.posix.join(node_path.posix.dirname(fromFile), specifier).replace(/\.(?:[cm]?[jt]sx?)$/u, '');
+-            return [
++            const candidate = [
+                 `${base}.ts`,
+                 `${base}.tsx`,
+                 `${base}/index.ts`,
+                 `${base}/index.tsx`
+             ].find((candidate)=>exists(candidate));
++            return void 0 === candidate ? void 0 : normalize(node_path.relative(node_fs.realpathSync(root), node_fs.realpathSync(absolute(candidate))));
++        };
++        const graphBinding = (graph, module, expression, seen = new Set())=>{
++            if (seen.has(expression) || seen.size >= 128) return;
++            seen.add(expression);
++            let binding;
++            if (__rspack_external__babel_types_6e8337dd.isIdentifier(expression) || __rspack_external__babel_types_6e8337dd.isMemberExpression(expression)) binding = graph.resolveReference(module, expression);
++            return binding?.kind === 'declaration' && (__rspack_external__babel_types_6e8337dd.isIdentifier(binding.expression) || __rspack_external__babel_types_6e8337dd.isMemberExpression(binding.expression)) ? graphBinding(graph, binding.module, binding.expression, seen) : binding;
+         };
+         const clientExportFile = (appPath, exported)=>{
+             if ('string' != typeof exported || !exported.startsWith('./') || exported.split(/[\\/]/u).includes('..') || !/\.[cm]?[jt]sx?$/u.test(exported)) return;
+@@ -185,26 +194,73 @@ function check(options, topology) {
+             }
+             return normalize(node_path.relative(root, candidate));
+         };
++        const publicApis = new Map();
++        for (const app of apps){
++            const manifest = JSON.parse(read(`${app.path}/package.json`));
++            const file = clientExportFile(app.path, manifest.exports?.['./api']);
++            if (file) publicApis.set(`${manifest.name}/api`, file);
++        }
+         const composedModules = (file, appPath)=>{
+             const order = [];
+-            const seen = new Set();
++            const owner = node_fs.realpathSync(absolute(appPath));
++            const entryPath = node_fs.realpathSync(absolute(file));
++            if (!entryPath.startsWith(`${owner}${node_path.sep}`)) throw new Error(`consumer module closure escapes its owner: ${file}`);
++            const entry = normalize(node_path.relative(node_fs.realpathSync(root), entryPath));
++            const discovered = new Set([
++                entry
++            ]);
+             const queue = [
+-                file
++                {
++                    file: entry,
++                    depth: 0
++                }
+             ];
+-            const owner = node_fs.realpathSync(absolute(appPath));
+-            while(queue.length > 0 && order.length < 128){
+-                const current = queue.shift();
+-                if (seen.has(current)) continue;
+-                seen.add(current);
++            const loaderGraph = createModuleGraph();
++            for(let cursor = 0; cursor < queue.length; cursor += 1){
++                const { file: current, depth } = queue[cursor];
+                 order.push(current);
+                 const ast = parseFile(current);
+                 if (!ast) continue;
+-                for (const statement of ast.program.body){
+-                    const source = (__rspack_external__babel_types_6e8337dd.isImportDeclaration(statement) || __rspack_external__babel_types_6e8337dd.isExportNamedDeclaration(statement) || __rspack_external__babel_types_6e8337dd.isExportAllDeclaration(statement)) && statement.source ? statement.source.value : void 0;
+-                    const resolved = void 0 === source ? void 0 : resolveRelative(current, source);
+-                    if (void 0 !== resolved && !seen.has(resolved)) {
+-                        const real = node_fs.realpathSync(absolute(resolved));
+-                        if (real.startsWith(`${owner}${node_path.sep}`)) queue.push(resolved);
++                const sources = [];
++                for (const statement of ast.program.body)if (__rspack_external__babel_types_6e8337dd.isImportDeclaration(statement) && 'type' !== statement.importKind && 'typeof' !== statement.importKind) sources.push(statement.source.value);
++                else if (__rspack_external__babel_types_6e8337dd.isExportNamedDeclaration(statement) && 'type' !== statement.exportKind && statement.source) sources.push(statement.source.value);
++                else if (__rspack_external__babel_types_6e8337dd.isExportAllDeclaration(statement) && 'type' !== statement.exportKind) sources.push(statement.source.value);
++                let hasRequire = false;
++                __rspack_external__babel_types_6e8337dd.traverseFast(ast, (node)=>{
++                    if (__rspack_external__babel_types_6e8337dd.isImportExpression(node)) {
++                        if (!__rspack_external__babel_types_6e8337dd.isStringLiteral(node.source)) throw new Error('consumer module closure has nonliteral runtime dependency');
++                        sources.push(node.source.value);
++                    }
++                    if ((__rspack_external__babel_types_6e8337dd.isCallExpression(node) || __rspack_external__babel_types_6e8337dd.isOptionalCallExpression(node)) && __rspack_external__babel_types_6e8337dd.isIdentifier(unwrapExpression(node.callee, true), {
++                        name: 'require'
++                    })) hasRequire = true;
++                });
++                if (hasRequire) {
++                    const module = loaderGraph.module(absolute(current));
++                    __rspack_external__babel_types_6e8337dd.traverseFast(module.file, (node)=>{
++                        if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) && !__rspack_external__babel_types_6e8337dd.isOptionalCallExpression(node)) return;
++                        const callee = unwrapExpression(node.callee, true);
++                        if (!__rspack_external__babel_types_6e8337dd.isIdentifier(callee, {
++                            name: 'require'
++                        }) || !loaderGraph.isUnboundReference(module, callee)) return;
++                        if (1 !== node.arguments.length || !__rspack_external__babel_types_6e8337dd.isStringLiteral(node.arguments[0])) throw new Error('consumer module closure has nonliteral runtime dependency');
++                        sources.push(node.arguments[0].value);
++                    });
++                }
++                for (const source of sources){
++                    if (!/^\.\.?\//u.test(source)) continue;
++                    const resolved = resolveRelative(current, source);
++                    if (void 0 === resolved) throw new Error(`consumer module closure has unresolved relative dependency: ${current} -> ${source}`);
++                    const real = node_fs.realpathSync(absolute(resolved));
++                    if (!real.startsWith(`${owner}${node_path.sep}`)) throw new Error(`consumer module closure escapes its owner: ${current} -> ${source}`);
++                    if (!discovered.has(resolved)) {
++                        if (depth + 1 >= 128) throw new Error('consumer module closure exceeds 128 import-depth analysis budget');
++                        if (discovered.size >= 2048) throw new Error('consumer module closure exceeds 2048-module analysis budget');
++                        discovered.add(resolved);
++                        queue.push({
++                            file: resolved,
++                            depth: depth + 1
++                        });
+                     }
+                 }
+             }
+@@ -425,6 +481,154 @@ function check(options, topology) {
+                 ], [
+                     rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'
+                 ], [], void 0, appPath);
++                if (exists(contract)) {
++                    const graph = createModuleGraph();
++                    const contractModule = graph.module(absolute(contract));
++                    const exportStem = stem.replaceAll(/-([a-z0-9])/gu, (_match, letter)=>letter.toUpperCase());
++                    const ownApi = graph.resolve(contractModule, rpc ? `${exportStem.slice(0, 1).toUpperCase()}${exportStem.slice(1)}RpcGroup` : `${exportStem}Api`, 'export');
++                    const identityPipe = (module, node)=>{
++                        if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !__rspack_external__babel_types_6e8337dd.isMemberExpression(node.callee) || node.callee.computed || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.callee.property, {
++                            name: 'pipe'
++                        }) || 1 !== node.arguments.length) return false;
++                        const values = graph.evaluate(module, node.arguments[0]);
++                        return values.length > 0 && values.every((value)=>'external' === value.kind && 'effect' === value.specifier && 'identity' === value.name && 0 === value.members.length);
++                    };
++                    const withoutIdentity = (module, value)=>{
++                        let node = unwrapExpression(value, true);
++                        let pipes = 0;
++                        while(identityPipe(module, node)){
++                            if (++pipes > 128) return value;
++                            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !__rspack_external__babel_types_6e8337dd.isMemberExpression(node.callee)) break;
++                            node = unwrapExpression(node.callee.object, true);
++                        }
++                        return node;
++                    };
++                    const normalizedApi = (initial)=>{
++                        let binding = initial;
++                        const seen = new Set();
++                        for(let hops = 0; hops < 128; hops += 1){
++                            const expression = withoutIdentity(binding.module, binding.expression);
++                            if (seen.has(expression)) break;
++                            seen.add(expression);
++                            if (!__rspack_external__babel_types_6e8337dd.isIdentifier(expression) && !__rspack_external__babel_types_6e8337dd.isMemberExpression(expression)) return {
++                                ...binding,
++                                expression
++                            };
++                            const next = graphBinding(graph, binding.module, expression);
++                            if (next?.kind !== 'declaration') break;
++                            binding = next;
++                        }
++                    };
++                    const apiBinding = (module, value)=>{
++                        const binding = graphBinding(graph, module, withoutIdentity(module, value));
++                        return binding?.kind === 'declaration' ? normalizedApi(binding) : void 0;
++                    };
++                    const ownedApis = new Map();
++                    const provenApis = new Set();
++                    const activeApis = new Set();
++                    const activeBuilders = new Set();
++                    let apiVisits = 0;
++                    const collectApi = (binding)=>{
++                        const { module, expression } = binding;
++                        if (provenApis.has(expression)) return true;
++                        if (activeApis.has(expression)) return false;
++                        activeApis.add(expression);
++                        const builder = (value, source)=>{
++                            const initial = withoutIdentity(source, value);
++                            if (activeBuilders.has(initial) || activeBuilders.size >= 128) return false;
++                            activeBuilders.add(initial);
++                            try {
++                                const seenNodes = new Set();
++                                const children = [];
++                                let node = initial;
++                                while(true){
++                                    if (seenNodes.has(node) || node !== initial && activeBuilders.has(node) || ++apiVisits > 2048) return false;
++                                    seenNodes.add(node);
++                                    if (__rspack_external__babel_types_6e8337dd.isIdentifier(node) || __rspack_external__babel_types_6e8337dd.isMemberExpression(node)) {
++                                        const receiver = apiBinding(source, node);
++                                        if (void 0 === receiver || !builder(receiver.expression, receiver.module)) return false;
++                                        break;
++                                    }
++                                    if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node)) return false;
++                                    const callee = graph.evaluate(source, node.callee);
++                                    if (callee.length > 0 && callee.every((value)=>'external' === value.kind && [
++                                            effect,
++                                            'effect/unstable/httpapi'
++                                        ].includes(value.specifier) && 'HttpApi' === value.name && 1 === value.members.length && 'make' === value.members[0])) {
++                                        if (1 !== node.arguments.length || !__rspack_external__babel_types_6e8337dd.isStringLiteral(node.arguments[0])) return false;
++                                        break;
++                                    }
++                                    if (!__rspack_external__babel_types_6e8337dd.isMemberExpression(node.callee) || node.callee.computed || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.callee.property)) return false;
++                                    const method = node.callee.property.name;
++                                    if ('addHttpApi' === method && 1 === node.arguments.length) children.push(node.arguments[0]);
++                                    else if (!('add' === method && node.arguments.length > 0 || 'annotate' === method && 2 === node.arguments.length || [
++                                        'annotateMerge',
++                                        'middleware'
++                                    ].includes(method) && 1 === node.arguments.length || 'prefix' === method && 1 === node.arguments.length && __rspack_external__babel_types_6e8337dd.isStringLiteral(node.arguments[0]) && node.arguments[0].value.startsWith('/'))) return false;
++                                    node = withoutIdentity(source, node.callee.object);
++                                }
++                                for (const argument of children.reverse()){
++                                    const child = apiBinding(source, argument);
++                                    if (void 0 === child || !collectApi(child)) return false;
++                                }
++                                return true;
++                            } finally{
++                                activeBuilders.delete(initial);
++                            }
++                        };
++                        const valid = builder(expression, module);
++                        activeApis.delete(expression);
++                        if (valid) provenApis.add(expression);
++                        if (valid && module.boundary === contractModule.boundary) {
++                            const identities = ownedApis.get(module.path) ?? new Set();
++                            identities.add(expression);
++                            ownedApis.set(module.path, identities);
++                        }
++                        return valid;
++                    };
++                    if (!rpc && ownApi?.kind === 'declaration') {
++                        const rootApi = normalizedApi(ownApi);
++                        if (rootApi && collectApi(rootApi)) {
++                            const identities = ownedApis.get(rootApi.module.path) ?? new Set();
++                            identities.add(rootApi.expression);
++                            ownedApis.set(rootApi.module.path, identities);
++                        } else ownedApis.clear();
++                    }
++                    const immutablePipeAliases = (module, target)=>{
++                        if (0 === module.mutations.length) return true;
++                        let valid = true;
++                        __rspack_external__babel_types_6e8337dd.traverseFast(module.file, (node)=>{
++                            if (!__rspack_external__babel_types_6e8337dd.isVariableDeclarator(node) || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.id) || !node.init) return;
++                            let initializer = unwrapExpression(node.init, true);
++                            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(initializer) || !__rspack_external__babel_types_6e8337dd.isMemberExpression(initializer.callee) || initializer.callee.computed || !__rspack_external__babel_types_6e8337dd.isIdentifier(initializer.callee.property, {
++                                name: 'pipe'
++                            })) return;
++                            let identityOnly = true;
++                            while(__rspack_external__babel_types_6e8337dd.isCallExpression(initializer) && __rspack_external__babel_types_6e8337dd.isMemberExpression(initializer.callee) && !initializer.callee.computed && __rspack_external__babel_types_6e8337dd.isIdentifier(initializer.callee.property, {
++                                name: 'pipe'
++                            })){
++                                identityOnly &&= identityPipe(module, initializer);
++                                initializer = unwrapExpression(initializer.callee.object, true);
++                            }
++                            const receiver = apiBinding(module, initializer);
++                            if (!receiver || receiver.module.path !== target.module.path || receiver.expression !== target.expression) return;
++                            const alias = graph.resolveReference(module, node.id);
++                            if (!identityOnly || alias?.kind !== 'declaration') valid = false;
++                        });
++                        return valid;
++                    };
++                    for (const source of composedModules(client, appPath)){
++                        const module = graph.module(absolute(source));
++                        __rspack_external__babel_types_6e8337dd.traverseFast(module.file, (node)=>{
++                            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) && !__rspack_external__babel_types_6e8337dd.isOptionalCallExpression(node)) return;
++                            const factory = graph.evaluate(module, node.callee);
++                            if (!factory.some((value)=>'external' === value.kind && value.specifier === effect && value.name === (rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'))) return;
++                            const argument = node.arguments[0];
++                            const binding = argument ? rpc ? graphBinding(graph, module, argument) : apiBinding(module, argument) : void 0;
++                            assert(binding?.kind === 'declaration' && (rpc ? ownApi?.kind === 'declaration' && binding.module.path === ownApi.module.path && binding.expression === ownApi.expression : ownedApis.get(binding.module.path)?.has(binding.expression) && immutablePipeAliases(module, binding)), `${source}: must construct the client from its own API contract`);
++                        });
++                    }
++                }
+             }
+             moduleShape(`${appPath}/api/effect-api.ts`, [], [], [
+                 [
+@@ -468,8 +672,8 @@ function check(options, topology) {
+             ]);
+         });
+         const sourceRules = options.sourceRules ?? [];
+-        const graph = createModuleGraph();
+         for (const file of sourceRules.length ? sourceFiles : [])if (/\.[cm]?[jt]sx?$/u.test(file)) guarded(file, ()=>{
++            const graph = createModuleGraph();
+             let module;
+             try {
+                 module = graph.module(absolute(file));
+@@ -488,20 +692,173 @@ function check(options, topology) {
+                 for (const message of messages)diagnostics.push(`${file}: ${message}`);
+             }
+         });
+-        const shell = 'apps/shell-super-app';
+-        const verticals = apps.filter((app)=>app.path.startsWith('verticals/') && apiApp(app));
+-        if (exists(shell) && verticals.length) {
+-            const file = `${shell}/src/api/vertical-clients.ts`;
+-            assert(exists(file), `${file}: must aggregate vertical API clients`);
+-            if (exists(file)) guarded(file, ()=>{
+-                const ast = parseFile(file);
+-                for (const app of verticals){
+-                    const specifier = `${app.package}/api/${app.api?.protocol === 'rpc' ? 'rpc-client' : 'client'}`;
+-                    assert(ast?.program.body.some((item)=>__rspack_external__babel_types_6e8337dd.isExportNamedDeclaration(item) && item.source?.value === specifier), `${file}: must re-export ${specifier}`);
+-                }
+-            });
++        const ownerClients = new Map();
++        for (const app of apps){
++            const manifest = JSON.parse(read(`${app.path}/package.json`));
++            for (const key of [
++                './api/client',
++                './api/rpc-client'
++            ]){
++                const file = clientExportFile(app.path, manifest.exports?.[key]);
++                if (file) ownerClients.set(`${manifest.name}${key.slice(1)}`, file);
++            }
+         }
+-        if (exists(`${shell}/package.json`)) guarded(`${shell}/package.json`, ()=>assert(JSON.parse(read(`${shell}/package.json`)).exports?.['./api/clients'] === './src/api/vertical-clients.ts', `${shell}/package.json: must export ./api/clients`));
++        for (const shell of apps.filter((app)=>'shell' === app.kind))guarded(shell.path, ()=>{
++            const shellPath = normalize(shell.path);
++            const packageFile = `${shellPath}/package.json`;
++            const manifest = JSON.parse(read(packageFile));
++            noPath(`${shellPath}/src/api/vertical-clients.ts`, 'compiled Shell client registries are forbidden');
++            assert(!Object.hasOwn(manifest.exports ?? {}, './api/clients'), `${packageFile}: public Shell ./api/clients exports are forbidden`);
++            const targets = (exported)=>'string' == typeof exported ? [
++                    exported
++                ] : exported && 'object' == typeof exported ? Object.values(exported).flatMap(targets) : [];
++            const owner = node_fs.realpathSync(absolute(shellPath));
++            const wildcardFiles = (directory, seen = new Set())=>{
++                const real = node_fs.realpathSync(absolute(directory));
++                if (real !== owner && !real.startsWith(`${owner}${node_path.sep}`)) {
++                    assert(false, `${packageFile}: invalid Shell public source export`);
++                    return [];
++                }
++                if (seen.has(real)) return [];
++                seen.add(real);
++                return node_fs.readdirSync(absolute(directory), {
++                    withFileTypes: true
++                }).flatMap((entry)=>{
++                    if (ignored.has(entry.name)) return [];
++                    const file = `${directory}/${entry.name}`;
++                    const stat = node_fs.statSync(absolute(file));
++                    return stat.isDirectory() ? wildcardFiles(file, seen) : stat.isFile() ? [
++                        file
++                    ] : [];
++                });
++            };
++            for (const target of targets(manifest.exports)){
++                if (!/\.[cm]?[jt]sx?$/u.test(target)) continue;
++                if (!target.startsWith('./') || target.split(/[\\/]/u).includes('..')) {
++                    assert(false, `${packageFile}: invalid Shell public source export`);
++                    continue;
++                }
++                const files = target.includes('*') ? (()=>{
++                    const prefix = target.slice(0, target.indexOf('*'));
++                    const directory = `${shellPath}/${prefix.slice(2, prefix.lastIndexOf('/'))}`;
++                    const pattern = new RegExp(`^${target.split('*').map((part)=>part.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('.*')}$`, 'u');
++                    return wildcardFiles(directory).filter((file)=>pattern.test(`./${node_path.posix.relative(shellPath, file)}`));
++                })() : [
++                    `${shellPath}/${target.slice(2)}`
++                ];
++                for (const candidate of files){
++                    const file = clientExportFile(shellPath, `./${node_path.posix.relative(shellPath, candidate)}`);
++                    assert(file, `${packageFile}: invalid Shell public source export`);
++                    if (!file) continue;
++                    const graph = createModuleGraph();
++                    const seenValues = new Set();
++                    const foreignSpecifier = (specifier)=>/\/api\/(?:rpc-)?client$/u.test(specifier) && !specifier.startsWith(`${manifest.name}/api/`);
++                    const returnExpressions = (node)=>{
++                        if (__rspack_external__babel_types_6e8337dd.isReturnStatement(node)) return node.argument ? [
++                            node.argument
++                        ] : [];
++                        if (__rspack_external__babel_types_6e8337dd.isFunction(node)) return [];
++                        return (__rspack_external__babel_types_6e8337dd.VISITOR_KEYS[node.type] ?? []).flatMap((key)=>{
++                            const value = Reflect.get(node, key);
++                            const children = Array.isArray(value) ? value : [
++                                value
++                            ];
++                            return children.flatMap((child)=>__rspack_external__babel_types_6e8337dd.isNode(child) ? returnExpressions(child) : []);
++                        });
++                    };
++                    const foreignValue = (value, from)=>{
++                        if ('external' === value.kind) {
++                            const source = reexportSource(normalize(node_path.relative(root, from.path)), value.specifier);
++                            if (!source) return foreignSpecifier(value.specifier);
++                            return '*' === value.name ? inspect(source) : exportedValue(source, value.name);
++                        }
++                        if ('unresolved' === value.kind && __rspack_external__babel_types_6e8337dd.isImportDeclaration(value.node) && value.node.specifiers.some((specifier)=>__rspack_external__babel_types_6e8337dd.isImportNamespaceSpecifier(specifier))) {
++                            const source = reexportSource(normalize(node_path.relative(root, value.module.path)), value.node.source.value);
++                            return source ? inspect(source) : foreignSpecifier(value.node.source.value);
++                        }
++                        if ('node' !== value.kind || seenValues.has(value.node)) return false;
++                        seenValues.add(value.node);
++                        const { node, module } = value;
++                        if ((__rspack_external__babel_types_6e8337dd.isCallExpression(node) || __rspack_external__babel_types_6e8337dd.isOptionalCallExpression(node)) && graph.evaluate(module, node.callee).some((callee)=>'external' === callee.kind && callee.specifier === effect && [
++                                'makeEffectHttpApiClient',
++                                'makeEffectRpcClient'
++                            ].includes(callee.name))) {
++                            const argument = node.arguments[0];
++                            const binding = argument ? graphBinding(graph, module, argument) : void 0;
++                            if (module.boundary !== owner || binding?.kind !== 'declaration' || binding.module.boundary !== owner) return true;
++                        }
++                        const nested = __rspack_external__babel_types_6e8337dd.isObjectExpression(node) ? node.properties.flatMap((property)=>__rspack_external__babel_types_6e8337dd.isObjectProperty(property) ? [
++                                property.value
++                            ] : __rspack_external__babel_types_6e8337dd.isObjectMethod(property) ? returnExpressions(property.body) : __rspack_external__babel_types_6e8337dd.isSpreadElement(property) ? [
++                                property.argument
++                            ] : []) : __rspack_external__babel_types_6e8337dd.isArrayExpression(node) ? node.elements.filter((element)=>null !== element) : __rspack_external__babel_types_6e8337dd.isFunction(node) ? __rspack_external__babel_types_6e8337dd.isBlockStatement(node.body) ? returnExpressions(node.body) : [
++                            node.body
++                        ] : [];
++                        return nested.some((expression)=>graph.evaluate(module, expression).some((value)=>foreignValue(value, module)));
++                    };
++                    const reexportSource = (from, specifier)=>resolveRelative(from, specifier) ?? ownerClients.get(specifier);
++                    const names = (source, visited = new Set())=>{
++                        if (visited.has(source)) return [];
++                        visited.add(source);
++                        const module = graph.module(absolute(source));
++                        return module.file.program.body.flatMap((statement)=>{
++                            if (__rspack_external__babel_types_6e8337dd.isExportDefaultDeclaration(statement)) return [
++                                'default'
++                            ];
++                            if (!__rspack_external__babel_types_6e8337dd.isExportNamedDeclaration(statement) && !__rspack_external__babel_types_6e8337dd.isExportAllDeclaration(statement)) return [];
++                            if ('type' === statement.exportKind) return [];
++                            if (__rspack_external__babel_types_6e8337dd.isExportAllDeclaration(statement)) {
++                                const relative = reexportSource(source, statement.source.value);
++                                return relative ? names(relative, visited).filter((name)=>'default' !== name) : [];
++                            }
++                            return statement.declaration ? Object.keys(__rspack_external__babel_types_6e8337dd.getOuterBindingIdentifiers(statement.declaration)) : statement.specifiers.flatMap((specifier)=>__rspack_external__babel_types_6e8337dd.isExportSpecifier(specifier) && 'type' === specifier.exportKind ? [] : [
++                                    __rspack_external__babel_types_6e8337dd.isIdentifier(specifier.exported) ? specifier.exported.name : specifier.exported.value
++                                ]);
++                        });
++                    };
++                    const seenExports = new Map();
++                    const exportedValue = (source, name)=>{
++                        const visited = seenExports.get(source) ?? new Set();
++                        if (visited.has(name)) return false;
++                        visited.add(name);
++                        seenExports.set(source, visited);
++                        const module = graph.module(absolute(source));
++                        const binding = graph.resolve(module, name, 'export');
++                        if (binding?.kind === 'external') return foreignValue({
++                            ...binding,
++                            members: []
++                        }, module);
++                        if (binding?.kind === 'declaration') return graph.evaluate(binding.module, binding.expression).some((value)=>foreignValue(value, binding.module));
++                        for (const statement of module.file.program.body){
++                            if (__rspack_external__babel_types_6e8337dd.isExportDefaultDeclaration(statement) && 'default' === name) return graph.evaluate(module, statement.declaration).some((value)=>foreignValue(value, module));
++                            if (!__rspack_external__babel_types_6e8337dd.isExportNamedDeclaration(statement) || 'type' === statement.exportKind) continue;
++                            if (statement.declaration && __rspack_external__babel_types_6e8337dd.isFunctionDeclaration(statement.declaration) && statement.declaration.id?.name === name) return graph.evaluate(module, statement.declaration).some((value)=>foreignValue(value, module));
++                            const specifier = statement.specifiers.find((item)=>(__rspack_external__babel_types_6e8337dd.isIdentifier(item.exported) ? item.exported.name : item.exported.value) === name);
++                            if (specifier) {
++                                if (__rspack_external__babel_types_6e8337dd.isExportSpecifier(specifier) && 'type' === specifier.exportKind) return false;
++                                if (!statement.source && __rspack_external__babel_types_6e8337dd.isExportSpecifier(specifier)) return graph.evaluate(module, specifier.local).some((value)=>foreignValue(value, module));
++                                if (statement.source) {
++                                    const relative = reexportSource(source, statement.source.value);
++                                    if (!relative) return foreignSpecifier(statement.source.value);
++                                    if (__rspack_external__babel_types_6e8337dd.isExportNamespaceSpecifier(specifier)) return inspect(relative);
++                                    if (__rspack_external__babel_types_6e8337dd.isExportSpecifier(specifier)) return exportedValue(relative, __rspack_external__babel_types_6e8337dd.isIdentifier(specifier.local) ? specifier.local.name : specifier.local.value);
++                                }
++                            }
++                        }
++                        for (const statement of module.file.program.body){
++                            if (!__rspack_external__babel_types_6e8337dd.isExportAllDeclaration(statement) || 'type' === statement.exportKind) continue;
++                            const relative = reexportSource(source, statement.source.value);
++                            if (relative && names(relative).includes(name) && exportedValue(relative, name)) return true;
++                        }
++                        return false;
++                    };
++                    const inspect = (source)=>[
++                            ...new Set(names(source))
++                        ].some((name)=>exportedValue(source, name));
++                    assert(!inspect(file), `${file}: Shell public exports must not expose another owner's API client`);
++                }
++            }
++        });
+         if (exists('topology/reference-topology.json')) guarded('topology/reference-topology.json', ()=>{
+             for (const vertical of JSON.parse(read('topology/reference-topology.json')).verticals ?? []){
+                 if (vertical.api?.runtime === 'effect') {
+diff --git a/dist/esm/module-graph.js b/dist/esm/module-graph.js
+index 33fe042e6e1535075a2546836e593709ad851003..ccc72d1602af7b9bfe8cc17c5b5fcbd9a4cc2430 100644
+--- a/dist/esm/module-graph.js
++++ b/dist/esm/module-graph.js
+@@ -186,6 +186,7 @@ function parseModule(filePath, workspace) {
+     const file = parseSource(node_fs.readFileSync(filePath, 'utf8'), filePath);
+     let scope;
+     const references = new Map();
++    const declarations = new Map();
+     const returns = new Map();
+     const bareReturns = new Set();
+     const functionScopes = new Map();
+@@ -296,6 +297,11 @@ function parseModule(filePath, workspace) {
+         ReferencedIdentifier (p) {
+             references.set(p.node, p.scope.getBinding(p.node.name));
+         },
++        BindingIdentifier (p) {
++            if (!__rspack_external__babel_types_6e8337dd.isIdentifier(p.node)) return;
++            const binding = p.scope.getBinding(p.node.name);
++            if (binding?.identifier === p.node) declarations.set(p.node, binding);
++        },
+         Function (p) {
+             functionScopes.set(p.node, p.scope);
+         },
+@@ -361,6 +367,7 @@ function parseModule(filePath, workspace) {
+         scope,
+         workspace,
+         references,
++        declarations,
+         returns,
+         bareReturns,
+         functionScopes,
+@@ -1096,7 +1103,7 @@ function createModuleGraph() {
+         }
+     };
+     const mutated = (module, binding)=>binding.constantViolations.length > 0 || factsOf(module).merged.has(binding.identifier.name) || (aliasesOf(binding, factsOf(module).writes)?.some((alias)=>factsOf(module).writes.has(alias.binding)) ?? true);
+-    const resolveBinding = (module, name, scope, chain, seen)=>{
++    const resolveBinding = (module, name, scope, chain, seen, lexical)=>{
+         const key = `${scope}:${module.path}#${name}`;
+         if (seen.has(key) || seen.size >= MAX_LOOKUPS) return;
+         seen.add(key);
+@@ -1119,7 +1126,7 @@ function createModuleGraph() {
+             return void 0 === next ? void 0 : resolveBinding(next, imported, 'export', hops, seen);
+         };
+         if ('local' === scope) {
+-            const binding = factsOf(module).scope.getBinding(name);
++            const binding = lexical ?? factsOf(module).scope.getBinding(name);
+             if (!binding || mutated(module, binding)) return;
+             if ('module' === binding.kind) {
+                 const imported = importOf(binding);
+@@ -1148,6 +1155,38 @@ function createModuleGraph() {
+             if (void 0 !== resolved) return resolved;
+         }
+     };
++    const resolveReference = (module, expression)=>{
++        const node = unwrapExpression(expression, true);
++        const facts = factsOf(module);
++        const bindingAt = (identifier)=>facts.references.get(identifier) ?? facts.declarations.get(identifier);
++        if (__rspack_external__babel_types_6e8337dd.isIdentifier(node)) {
++            const binding = bindingAt(node);
++            return binding ? resolveBinding(module, node.name, 'local', [], new Set(), binding) : void 0;
++        }
++        if (!__rspack_external__babel_types_6e8337dd.isMemberExpression(node) || node.computed || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.object) || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.property)) return;
++        const binding = bindingAt(node.object);
++        if (!binding || 'module' !== binding.kind || mutated(module, binding)) return;
++        const imported = importOf(binding);
++        if (imported?.name !== '*') return;
++        const target = follow(module, imported.specifier);
++        const chain = [
++            {
++                path: module.path,
++                name: node.object.name
++            }
++        ];
++        return 'external' === target ? {
++            kind: 'external',
++            specifier: imported.specifier,
++            name: node.property.name,
++            chain
++        } : target ? resolveBinding(target, node.property.name, 'export', chain, new Set()) : void 0;
++    };
++    const isUnboundReference = (module, reference)=>{
++        const node = unwrapExpression(reference, true);
++        const references = factsOf(module).references;
++        return __rspack_external__babel_types_6e8337dd.isIdentifier(node) && references.has(node) && void 0 === references.get(node);
++    };
+     const evaluation = (walking)=>{
+         const active = new Set();
+         let frames = 0;
+@@ -1755,6 +1794,8 @@ function createModuleGraph() {
+     return {
+         module: (filePath)=>load(filePath),
+         resolve: (module, name, scope)=>resolveBinding(module, name, scope, [], new Set()),
++        resolveReference,
++        isUnboundReference,
+         evaluate: (module, expression)=>evaluation(false).values(module, expression, []),
+         reachable: (module, expression)=>evaluation(true).reachable(module, expression)
+     };
+diff --git a/dist/esm/strict-effect-runtime.js b/dist/esm/strict-effect-runtime.js
+index 48fd6f43ebb2a7bee1c213486694096922533c7d..c71b53b7e3740c306cdc48bef81dd57f348e4cbe 100644
+--- a/dist/esm/strict-effect-runtime.js
++++ b/dist/esm/strict-effect-runtime.js
+@@ -55,8 +55,17 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+                     let target = nodePath.isAssignmentExpression() ? nodePath.node.left : nodePath.node.argument;
+                     while(__rspack_external__babel_types_6e8337dd.isMemberExpression(target))target = target.object;
+                     if (__rspack_external__babel_types_6e8337dd.isIdentifier(target)) {
+-                        const binding = nodePath.scope.getBinding(target.name);
+-                        if (binding) mutated.add(binding);
++                        let binding = nodePath.scope.getBinding(target.name);
++                        const seen = new Set();
++                        while(binding && !seen.has(binding)){
++                            seen.add(binding);
++                            mutated.add(binding);
++                            const declaration = binding.path.node;
++                            const init = __rspack_external__babel_types_6e8337dd.isVariableDeclarator(declaration) ? declaration.init : void 0;
++                            const alias = init ? unwrapExpression(init, true) : void 0;
++                            if ('const' !== binding.kind || !__rspack_external__babel_types_6e8337dd.isIdentifier(alias)) break;
++                            binding = binding.path.scope.getBinding(alias.name);
++                        }
+                     }
+                 }
+                 if (nodePath.isTSModuleDeclaration() && __rspack_external__babel_types_6e8337dd.isIdentifier(nodePath.node.id)) {
+@@ -231,11 +240,63 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+                 if (method(node.callee, 'Layer', 'mergeAll', layerSources)) return node.arguments.length > 0 && node.arguments.every((argument)=>handlers(argument, api));
+                 return method(node.callee, 'HttpApiBuilder', 'group') && 3 === node.arguments.length && apiIdentity(node.arguments[0]) === api && handled(node.arguments[2]);
+             });
+-        const transport = (node)=>guarded(node, (node)=>{
++        const effectSources = [
++            edge,
++            'effect',
++            'effect/Effect'
++        ];
++        const routeHandler = (node)=>{
++            node = unwrap(node);
++            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') || 3 !== node.arguments.length) return;
++            const [verb, path, handler] = node.arguments;
++            return __rspack_external__babel_types_6e8337dd.isStringLiteral(verb) && [
++                '*',
++                'GET',
++                'POST',
++                'PUT',
++                'PATCH',
++                'DELETE',
++                'HEAD',
++                'OPTIONS',
++                'TRACE',
++                'CONNECT',
++                'QUERY'
++            ].includes(verb.value) && __rspack_external__babel_types_6e8337dd.isStringLiteral(path) && (path.value.startsWith('/') || '*' === path.value) && (__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(handler) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(handler)) ? handler : void 0;
++        };
++        const effectReference = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+-                if (init) return transport(init);
++                if (init) return __rspack_external__babel_types_6e8337dd.isIdentifier(unwrap(init)) && effectReference(init);
++                const value = imported(node);
++                return !!value && !value.namespace;
++            });
++        const capturedRouteFactory = (node)=>guarded(node, (node)=>{
++                const init = initialized(node) ?? externalValue(node);
++                if (init) return capturedRouteFactory(init);
++                if (!__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(node) || node.async || 1 !== node.params.length || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.params[0]) || __rspack_external__babel_types_6e8337dd.isBlockStatement(node.body)) return false;
++                const handler = routeHandler(node.body);
++                const parameter = binding(node.params[0]);
++                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>{
++                    for(let ancestor = reference; ancestor; ancestor = ancestor.parentPath)if (ancestor.node === handler) return true;
++                    return false;
++                });
++            });
++        const capturedTransport = (node)=>guarded(node, (node)=>{
++                const init = initialized(node);
++                if (init) return capturedTransport(init);
++                if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node)) return false;
++                if (method(node.callee, 'Effect', 'map', effectSources)) return 2 === node.arguments.length && effectReference(node.arguments[0]) && capturedRouteFactory(node.arguments[1]);
++                if (!__rspack_external__babel_types_6e8337dd.isMemberExpression(node.callee) || node.callee.computed || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.callee.property, {
++                    name: 'pipe'
++                }) || 1 !== node.arguments.length || !effectReference(node.callee.object)) return false;
++                const map = unwrap(node.arguments[0]);
++                return __rspack_external__babel_types_6e8337dd.isCallExpression(map) && method(map.callee, 'Effect', 'map', effectSources) && 1 === map.arguments.length && capturedRouteFactory(map.arguments[0]);
++            });
++        const transport = (node, provided = false)=>guarded(node, (node)=>{
++                const init = initialized(node) ?? externalValue(node);
++                if (init) return transport(init, provided);
+                 if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node)) return method(node, 'Layer', 'empty', layerSources);
+-                return pipe(node, transport) || method(node.callee, 'HttpRouter', 'cors') || method(node.callee, 'Layer', 'mergeAll', layerSources) && node.arguments.length > 0 && node.arguments.every(transport);
++                const explicitlyProvided = provided || node.arguments.some((argument)=>__rspack_external__babel_types_6e8337dd.isCallExpression(argument) && method(argument.callee, 'Layer', 'provide', layerSources) && 1 === argument.arguments.length);
++                return pipe(node, (value)=>transport(value, explicitlyProvided)) || !!routeHandler(node) || provided && method(node.callee, 'Layer', 'unwrap', layerSources) && 1 === node.arguments.length && capturedTransport(node.arguments[0]) || method(node.callee, 'HttpRouter', 'cors') || method(node.callee, 'Layer', 'mergeAll', layerSources) && node.arguments.length > 0 && node.arguments.every((argument)=>transport(argument, provided));
+             });
+         const directLayer = (node, api)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+diff --git a/dist/esm-node/microvertical-api-boundary.js b/dist/esm-node/microvertical-api-boundary.js
+index 5c443ce530c8bec5c6576b1d25e3cb2072a63f2c..bfdeaac78d3d6b5a8a8422fcb7587bb181d1204c 100644
+--- a/dist/esm-node/microvertical-api-boundary.js
++++ b/dist/esm-node/microvertical-api-boundary.js
+@@ -5,7 +5,7 @@ import { parse } from "@babel/parser";
+ import { configuredMicroVerticalApiStem, microVerticalApiBaselineViolation } from "./microvertical-api-baseline.js";
+ import { baselinePackage, resolveBaselinePackageDirectory } from "./microvertical-api-owner.js";
+ import { createModuleGraph } from "./module-graph.js";
+-import { SourceSyntaxError, consumerParserPlugins } from "./source-analysis.js";
++import { SourceSyntaxError, consumerParserPlugins, unwrapExpression } from "./source-analysis.js";
+ import { createEffectApiImportResolver, strictEffectRuntimeTopologyViolation } from "./strict-effect-runtime.js";
+ import * as __rspack_external__babel_types_6e8337dd from "@babel/types";
+ const ignored = new Set([
+@@ -31,6 +31,7 @@ function configuredApps(root, supplied) {
+     ] : void 0;
+     const source = supplied ?? entries?.map((entry)=>{
+         if (!entry || 'string' != typeof entry.path || !entry.path || node_path.isAbsolute(entry.path) || entry.path.split(/[\\/]/u).includes('..')) throw new Error('topology/reference-topology.json: each app must have an explicit workspace path');
++        if ('string' != typeof entry.kind) throw new Error(`${entry.path}: invalid kind`);
+         const packageFile = node_path.join(root, entry.path, 'package.json');
+         const manifest = JSON.parse(node_fs.readFileSync(packageFile, 'utf8'));
+         if ('string' != typeof manifest.name || !manifest.name || void 0 !== entry.package && entry.package !== manifest.name) throw new Error(`${entry.path}/package.json: package name must match topology`);
+@@ -83,7 +84,7 @@ function configuredApps(root, supplied) {
+         };
+         for (const field of Object.keys(allowedFields)){
+             const value = app[field];
+-            if (void 0 !== value && !allowedFields[field].includes(value)) throw new Error(`${key}: invalid ${field}`);
++            if ((void 0 !== value || 'kind' === field) && ('string' != typeof value || !allowedFields[field].includes(value))) throw new Error(`${key}: invalid ${field}`);
+         }
+         if (void 0 !== app.api) {
+             if (!app.api || 'object' != typeof app.api || Array.isArray(app.api)) throw new Error(`${key}: api must be an object`);
+@@ -165,12 +166,20 @@ function check(options, topology) {
+         const resolveRelative = (fromFile, specifier)=>{
+             if (!/^\.\.?\//u.test(specifier)) return;
+             const base = node_path.posix.join(node_path.posix.dirname(fromFile), specifier).replace(/\.(?:[cm]?[jt]sx?)$/u, '');
+-            return [
++            const candidate = [
+                 `${base}.ts`,
+                 `${base}.tsx`,
+                 `${base}/index.ts`,
+                 `${base}/index.tsx`
+             ].find((candidate)=>exists(candidate));
++            return void 0 === candidate ? void 0 : normalize(node_path.relative(node_fs.realpathSync(root), node_fs.realpathSync(absolute(candidate))));
++        };
++        const graphBinding = (graph, module, expression, seen = new Set())=>{
++            if (seen.has(expression) || seen.size >= 128) return;
++            seen.add(expression);
++            let binding;
++            if (__rspack_external__babel_types_6e8337dd.isIdentifier(expression) || __rspack_external__babel_types_6e8337dd.isMemberExpression(expression)) binding = graph.resolveReference(module, expression);
++            return binding?.kind === 'declaration' && (__rspack_external__babel_types_6e8337dd.isIdentifier(binding.expression) || __rspack_external__babel_types_6e8337dd.isMemberExpression(binding.expression)) ? graphBinding(graph, binding.module, binding.expression, seen) : binding;
+         };
+         const clientExportFile = (appPath, exported)=>{
+             if ('string' != typeof exported || !exported.startsWith('./') || exported.split(/[\\/]/u).includes('..') || !/\.[cm]?[jt]sx?$/u.test(exported)) return;
+@@ -186,26 +195,73 @@ function check(options, topology) {
+             }
+             return normalize(node_path.relative(root, candidate));
+         };
++        const publicApis = new Map();
++        for (const app of apps){
++            const manifest = JSON.parse(read(`${app.path}/package.json`));
++            const file = clientExportFile(app.path, manifest.exports?.['./api']);
++            if (file) publicApis.set(`${manifest.name}/api`, file);
++        }
+         const composedModules = (file, appPath)=>{
+             const order = [];
+-            const seen = new Set();
++            const owner = node_fs.realpathSync(absolute(appPath));
++            const entryPath = node_fs.realpathSync(absolute(file));
++            if (!entryPath.startsWith(`${owner}${node_path.sep}`)) throw new Error(`consumer module closure escapes its owner: ${file}`);
++            const entry = normalize(node_path.relative(node_fs.realpathSync(root), entryPath));
++            const discovered = new Set([
++                entry
++            ]);
+             const queue = [
+-                file
++                {
++                    file: entry,
++                    depth: 0
++                }
+             ];
+-            const owner = node_fs.realpathSync(absolute(appPath));
+-            while(queue.length > 0 && order.length < 128){
+-                const current = queue.shift();
+-                if (seen.has(current)) continue;
+-                seen.add(current);
++            const loaderGraph = createModuleGraph();
++            for(let cursor = 0; cursor < queue.length; cursor += 1){
++                const { file: current, depth } = queue[cursor];
+                 order.push(current);
+                 const ast = parseFile(current);
+                 if (!ast) continue;
+-                for (const statement of ast.program.body){
+-                    const source = (__rspack_external__babel_types_6e8337dd.isImportDeclaration(statement) || __rspack_external__babel_types_6e8337dd.isExportNamedDeclaration(statement) || __rspack_external__babel_types_6e8337dd.isExportAllDeclaration(statement)) && statement.source ? statement.source.value : void 0;
+-                    const resolved = void 0 === source ? void 0 : resolveRelative(current, source);
+-                    if (void 0 !== resolved && !seen.has(resolved)) {
+-                        const real = node_fs.realpathSync(absolute(resolved));
+-                        if (real.startsWith(`${owner}${node_path.sep}`)) queue.push(resolved);
++                const sources = [];
++                for (const statement of ast.program.body)if (__rspack_external__babel_types_6e8337dd.isImportDeclaration(statement) && 'type' !== statement.importKind && 'typeof' !== statement.importKind) sources.push(statement.source.value);
++                else if (__rspack_external__babel_types_6e8337dd.isExportNamedDeclaration(statement) && 'type' !== statement.exportKind && statement.source) sources.push(statement.source.value);
++                else if (__rspack_external__babel_types_6e8337dd.isExportAllDeclaration(statement) && 'type' !== statement.exportKind) sources.push(statement.source.value);
++                let hasRequire = false;
++                __rspack_external__babel_types_6e8337dd.traverseFast(ast, (node)=>{
++                    if (__rspack_external__babel_types_6e8337dd.isImportExpression(node)) {
++                        if (!__rspack_external__babel_types_6e8337dd.isStringLiteral(node.source)) throw new Error('consumer module closure has nonliteral runtime dependency');
++                        sources.push(node.source.value);
++                    }
++                    if ((__rspack_external__babel_types_6e8337dd.isCallExpression(node) || __rspack_external__babel_types_6e8337dd.isOptionalCallExpression(node)) && __rspack_external__babel_types_6e8337dd.isIdentifier(unwrapExpression(node.callee, true), {
++                        name: 'require'
++                    })) hasRequire = true;
++                });
++                if (hasRequire) {
++                    const module = loaderGraph.module(absolute(current));
++                    __rspack_external__babel_types_6e8337dd.traverseFast(module.file, (node)=>{
++                        if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) && !__rspack_external__babel_types_6e8337dd.isOptionalCallExpression(node)) return;
++                        const callee = unwrapExpression(node.callee, true);
++                        if (!__rspack_external__babel_types_6e8337dd.isIdentifier(callee, {
++                            name: 'require'
++                        }) || !loaderGraph.isUnboundReference(module, callee)) return;
++                        if (1 !== node.arguments.length || !__rspack_external__babel_types_6e8337dd.isStringLiteral(node.arguments[0])) throw new Error('consumer module closure has nonliteral runtime dependency');
++                        sources.push(node.arguments[0].value);
++                    });
++                }
++                for (const source of sources){
++                    if (!/^\.\.?\//u.test(source)) continue;
++                    const resolved = resolveRelative(current, source);
++                    if (void 0 === resolved) throw new Error(`consumer module closure has unresolved relative dependency: ${current} -> ${source}`);
++                    const real = node_fs.realpathSync(absolute(resolved));
++                    if (!real.startsWith(`${owner}${node_path.sep}`)) throw new Error(`consumer module closure escapes its owner: ${current} -> ${source}`);
++                    if (!discovered.has(resolved)) {
++                        if (depth + 1 >= 128) throw new Error('consumer module closure exceeds 128 import-depth analysis budget');
++                        if (discovered.size >= 2048) throw new Error('consumer module closure exceeds 2048-module analysis budget');
++                        discovered.add(resolved);
++                        queue.push({
++                            file: resolved,
++                            depth: depth + 1
++                        });
+                     }
+                 }
+             }
+@@ -426,6 +482,154 @@ function check(options, topology) {
+                 ], [
+                     rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'
+                 ], [], void 0, appPath);
++                if (exists(contract)) {
++                    const graph = createModuleGraph();
++                    const contractModule = graph.module(absolute(contract));
++                    const exportStem = stem.replaceAll(/-([a-z0-9])/gu, (_match, letter)=>letter.toUpperCase());
++                    const ownApi = graph.resolve(contractModule, rpc ? `${exportStem.slice(0, 1).toUpperCase()}${exportStem.slice(1)}RpcGroup` : `${exportStem}Api`, 'export');
++                    const identityPipe = (module, node)=>{
++                        if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !__rspack_external__babel_types_6e8337dd.isMemberExpression(node.callee) || node.callee.computed || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.callee.property, {
++                            name: 'pipe'
++                        }) || 1 !== node.arguments.length) return false;
++                        const values = graph.evaluate(module, node.arguments[0]);
++                        return values.length > 0 && values.every((value)=>'external' === value.kind && 'effect' === value.specifier && 'identity' === value.name && 0 === value.members.length);
++                    };
++                    const withoutIdentity = (module, value)=>{
++                        let node = unwrapExpression(value, true);
++                        let pipes = 0;
++                        while(identityPipe(module, node)){
++                            if (++pipes > 128) return value;
++                            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !__rspack_external__babel_types_6e8337dd.isMemberExpression(node.callee)) break;
++                            node = unwrapExpression(node.callee.object, true);
++                        }
++                        return node;
++                    };
++                    const normalizedApi = (initial)=>{
++                        let binding = initial;
++                        const seen = new Set();
++                        for(let hops = 0; hops < 128; hops += 1){
++                            const expression = withoutIdentity(binding.module, binding.expression);
++                            if (seen.has(expression)) break;
++                            seen.add(expression);
++                            if (!__rspack_external__babel_types_6e8337dd.isIdentifier(expression) && !__rspack_external__babel_types_6e8337dd.isMemberExpression(expression)) return {
++                                ...binding,
++                                expression
++                            };
++                            const next = graphBinding(graph, binding.module, expression);
++                            if (next?.kind !== 'declaration') break;
++                            binding = next;
++                        }
++                    };
++                    const apiBinding = (module, value)=>{
++                        const binding = graphBinding(graph, module, withoutIdentity(module, value));
++                        return binding?.kind === 'declaration' ? normalizedApi(binding) : void 0;
++                    };
++                    const ownedApis = new Map();
++                    const provenApis = new Set();
++                    const activeApis = new Set();
++                    const activeBuilders = new Set();
++                    let apiVisits = 0;
++                    const collectApi = (binding)=>{
++                        const { module, expression } = binding;
++                        if (provenApis.has(expression)) return true;
++                        if (activeApis.has(expression)) return false;
++                        activeApis.add(expression);
++                        const builder = (value, source)=>{
++                            const initial = withoutIdentity(source, value);
++                            if (activeBuilders.has(initial) || activeBuilders.size >= 128) return false;
++                            activeBuilders.add(initial);
++                            try {
++                                const seenNodes = new Set();
++                                const children = [];
++                                let node = initial;
++                                while(true){
++                                    if (seenNodes.has(node) || node !== initial && activeBuilders.has(node) || ++apiVisits > 2048) return false;
++                                    seenNodes.add(node);
++                                    if (__rspack_external__babel_types_6e8337dd.isIdentifier(node) || __rspack_external__babel_types_6e8337dd.isMemberExpression(node)) {
++                                        const receiver = apiBinding(source, node);
++                                        if (void 0 === receiver || !builder(receiver.expression, receiver.module)) return false;
++                                        break;
++                                    }
++                                    if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node)) return false;
++                                    const callee = graph.evaluate(source, node.callee);
++                                    if (callee.length > 0 && callee.every((value)=>'external' === value.kind && [
++                                            effect,
++                                            'effect/unstable/httpapi'
++                                        ].includes(value.specifier) && 'HttpApi' === value.name && 1 === value.members.length && 'make' === value.members[0])) {
++                                        if (1 !== node.arguments.length || !__rspack_external__babel_types_6e8337dd.isStringLiteral(node.arguments[0])) return false;
++                                        break;
++                                    }
++                                    if (!__rspack_external__babel_types_6e8337dd.isMemberExpression(node.callee) || node.callee.computed || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.callee.property)) return false;
++                                    const method = node.callee.property.name;
++                                    if ('addHttpApi' === method && 1 === node.arguments.length) children.push(node.arguments[0]);
++                                    else if (!('add' === method && node.arguments.length > 0 || 'annotate' === method && 2 === node.arguments.length || [
++                                        'annotateMerge',
++                                        'middleware'
++                                    ].includes(method) && 1 === node.arguments.length || 'prefix' === method && 1 === node.arguments.length && __rspack_external__babel_types_6e8337dd.isStringLiteral(node.arguments[0]) && node.arguments[0].value.startsWith('/'))) return false;
++                                    node = withoutIdentity(source, node.callee.object);
++                                }
++                                for (const argument of children.reverse()){
++                                    const child = apiBinding(source, argument);
++                                    if (void 0 === child || !collectApi(child)) return false;
++                                }
++                                return true;
++                            } finally{
++                                activeBuilders.delete(initial);
++                            }
++                        };
++                        const valid = builder(expression, module);
++                        activeApis.delete(expression);
++                        if (valid) provenApis.add(expression);
++                        if (valid && module.boundary === contractModule.boundary) {
++                            const identities = ownedApis.get(module.path) ?? new Set();
++                            identities.add(expression);
++                            ownedApis.set(module.path, identities);
++                        }
++                        return valid;
++                    };
++                    if (!rpc && ownApi?.kind === 'declaration') {
++                        const rootApi = normalizedApi(ownApi);
++                        if (rootApi && collectApi(rootApi)) {
++                            const identities = ownedApis.get(rootApi.module.path) ?? new Set();
++                            identities.add(rootApi.expression);
++                            ownedApis.set(rootApi.module.path, identities);
++                        } else ownedApis.clear();
++                    }
++                    const immutablePipeAliases = (module, target)=>{
++                        if (0 === module.mutations.length) return true;
++                        let valid = true;
++                        __rspack_external__babel_types_6e8337dd.traverseFast(module.file, (node)=>{
++                            if (!__rspack_external__babel_types_6e8337dd.isVariableDeclarator(node) || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.id) || !node.init) return;
++                            let initializer = unwrapExpression(node.init, true);
++                            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(initializer) || !__rspack_external__babel_types_6e8337dd.isMemberExpression(initializer.callee) || initializer.callee.computed || !__rspack_external__babel_types_6e8337dd.isIdentifier(initializer.callee.property, {
++                                name: 'pipe'
++                            })) return;
++                            let identityOnly = true;
++                            while(__rspack_external__babel_types_6e8337dd.isCallExpression(initializer) && __rspack_external__babel_types_6e8337dd.isMemberExpression(initializer.callee) && !initializer.callee.computed && __rspack_external__babel_types_6e8337dd.isIdentifier(initializer.callee.property, {
++                                name: 'pipe'
++                            })){
++                                identityOnly &&= identityPipe(module, initializer);
++                                initializer = unwrapExpression(initializer.callee.object, true);
++                            }
++                            const receiver = apiBinding(module, initializer);
++                            if (!receiver || receiver.module.path !== target.module.path || receiver.expression !== target.expression) return;
++                            const alias = graph.resolveReference(module, node.id);
++                            if (!identityOnly || alias?.kind !== 'declaration') valid = false;
++                        });
++                        return valid;
++                    };
++                    for (const source of composedModules(client, appPath)){
++                        const module = graph.module(absolute(source));
++                        __rspack_external__babel_types_6e8337dd.traverseFast(module.file, (node)=>{
++                            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) && !__rspack_external__babel_types_6e8337dd.isOptionalCallExpression(node)) return;
++                            const factory = graph.evaluate(module, node.callee);
++                            if (!factory.some((value)=>'external' === value.kind && value.specifier === effect && value.name === (rpc ? 'makeEffectRpcClient' : 'makeEffectHttpApiClient'))) return;
++                            const argument = node.arguments[0];
++                            const binding = argument ? rpc ? graphBinding(graph, module, argument) : apiBinding(module, argument) : void 0;
++                            assert(binding?.kind === 'declaration' && (rpc ? ownApi?.kind === 'declaration' && binding.module.path === ownApi.module.path && binding.expression === ownApi.expression : ownedApis.get(binding.module.path)?.has(binding.expression) && immutablePipeAliases(module, binding)), `${source}: must construct the client from its own API contract`);
++                        });
++                    }
++                }
+             }
+             moduleShape(`${appPath}/api/effect-api.ts`, [], [], [
+                 [
+@@ -469,8 +673,8 @@ function check(options, topology) {
+             ]);
+         });
+         const sourceRules = options.sourceRules ?? [];
+-        const graph = createModuleGraph();
+         for (const file of sourceRules.length ? sourceFiles : [])if (/\.[cm]?[jt]sx?$/u.test(file)) guarded(file, ()=>{
++            const graph = createModuleGraph();
+             let module;
+             try {
+                 module = graph.module(absolute(file));
+@@ -489,20 +693,173 @@ function check(options, topology) {
+                 for (const message of messages)diagnostics.push(`${file}: ${message}`);
+             }
+         });
+-        const shell = 'apps/shell-super-app';
+-        const verticals = apps.filter((app)=>app.path.startsWith('verticals/') && apiApp(app));
+-        if (exists(shell) && verticals.length) {
+-            const file = `${shell}/src/api/vertical-clients.ts`;
+-            assert(exists(file), `${file}: must aggregate vertical API clients`);
+-            if (exists(file)) guarded(file, ()=>{
+-                const ast = parseFile(file);
+-                for (const app of verticals){
+-                    const specifier = `${app.package}/api/${app.api?.protocol === 'rpc' ? 'rpc-client' : 'client'}`;
+-                    assert(ast?.program.body.some((item)=>__rspack_external__babel_types_6e8337dd.isExportNamedDeclaration(item) && item.source?.value === specifier), `${file}: must re-export ${specifier}`);
+-                }
+-            });
++        const ownerClients = new Map();
++        for (const app of apps){
++            const manifest = JSON.parse(read(`${app.path}/package.json`));
++            for (const key of [
++                './api/client',
++                './api/rpc-client'
++            ]){
++                const file = clientExportFile(app.path, manifest.exports?.[key]);
++                if (file) ownerClients.set(`${manifest.name}${key.slice(1)}`, file);
++            }
+         }
+-        if (exists(`${shell}/package.json`)) guarded(`${shell}/package.json`, ()=>assert(JSON.parse(read(`${shell}/package.json`)).exports?.['./api/clients'] === './src/api/vertical-clients.ts', `${shell}/package.json: must export ./api/clients`));
++        for (const shell of apps.filter((app)=>'shell' === app.kind))guarded(shell.path, ()=>{
++            const shellPath = normalize(shell.path);
++            const packageFile = `${shellPath}/package.json`;
++            const manifest = JSON.parse(read(packageFile));
++            noPath(`${shellPath}/src/api/vertical-clients.ts`, 'compiled Shell client registries are forbidden');
++            assert(!Object.hasOwn(manifest.exports ?? {}, './api/clients'), `${packageFile}: public Shell ./api/clients exports are forbidden`);
++            const targets = (exported)=>'string' == typeof exported ? [
++                    exported
++                ] : exported && 'object' == typeof exported ? Object.values(exported).flatMap(targets) : [];
++            const owner = node_fs.realpathSync(absolute(shellPath));
++            const wildcardFiles = (directory, seen = new Set())=>{
++                const real = node_fs.realpathSync(absolute(directory));
++                if (real !== owner && !real.startsWith(`${owner}${node_path.sep}`)) {
++                    assert(false, `${packageFile}: invalid Shell public source export`);
++                    return [];
++                }
++                if (seen.has(real)) return [];
++                seen.add(real);
++                return node_fs.readdirSync(absolute(directory), {
++                    withFileTypes: true
++                }).flatMap((entry)=>{
++                    if (ignored.has(entry.name)) return [];
++                    const file = `${directory}/${entry.name}`;
++                    const stat = node_fs.statSync(absolute(file));
++                    return stat.isDirectory() ? wildcardFiles(file, seen) : stat.isFile() ? [
++                        file
++                    ] : [];
++                });
++            };
++            for (const target of targets(manifest.exports)){
++                if (!/\.[cm]?[jt]sx?$/u.test(target)) continue;
++                if (!target.startsWith('./') || target.split(/[\\/]/u).includes('..')) {
++                    assert(false, `${packageFile}: invalid Shell public source export`);
++                    continue;
++                }
++                const files = target.includes('*') ? (()=>{
++                    const prefix = target.slice(0, target.indexOf('*'));
++                    const directory = `${shellPath}/${prefix.slice(2, prefix.lastIndexOf('/'))}`;
++                    const pattern = new RegExp(`^${target.split('*').map((part)=>part.replaceAll(/[.*+?^${}()|[\]\\]/gu, '\\$&')).join('.*')}$`, 'u');
++                    return wildcardFiles(directory).filter((file)=>pattern.test(`./${node_path.posix.relative(shellPath, file)}`));
++                })() : [
++                    `${shellPath}/${target.slice(2)}`
++                ];
++                for (const candidate of files){
++                    const file = clientExportFile(shellPath, `./${node_path.posix.relative(shellPath, candidate)}`);
++                    assert(file, `${packageFile}: invalid Shell public source export`);
++                    if (!file) continue;
++                    const graph = createModuleGraph();
++                    const seenValues = new Set();
++                    const foreignSpecifier = (specifier)=>/\/api\/(?:rpc-)?client$/u.test(specifier) && !specifier.startsWith(`${manifest.name}/api/`);
++                    const returnExpressions = (node)=>{
++                        if (__rspack_external__babel_types_6e8337dd.isReturnStatement(node)) return node.argument ? [
++                            node.argument
++                        ] : [];
++                        if (__rspack_external__babel_types_6e8337dd.isFunction(node)) return [];
++                        return (__rspack_external__babel_types_6e8337dd.VISITOR_KEYS[node.type] ?? []).flatMap((key)=>{
++                            const value = Reflect.get(node, key);
++                            const children = Array.isArray(value) ? value : [
++                                value
++                            ];
++                            return children.flatMap((child)=>__rspack_external__babel_types_6e8337dd.isNode(child) ? returnExpressions(child) : []);
++                        });
++                    };
++                    const foreignValue = (value, from)=>{
++                        if ('external' === value.kind) {
++                            const source = reexportSource(normalize(node_path.relative(root, from.path)), value.specifier);
++                            if (!source) return foreignSpecifier(value.specifier);
++                            return '*' === value.name ? inspect(source) : exportedValue(source, value.name);
++                        }
++                        if ('unresolved' === value.kind && __rspack_external__babel_types_6e8337dd.isImportDeclaration(value.node) && value.node.specifiers.some((specifier)=>__rspack_external__babel_types_6e8337dd.isImportNamespaceSpecifier(specifier))) {
++                            const source = reexportSource(normalize(node_path.relative(root, value.module.path)), value.node.source.value);
++                            return source ? inspect(source) : foreignSpecifier(value.node.source.value);
++                        }
++                        if ('node' !== value.kind || seenValues.has(value.node)) return false;
++                        seenValues.add(value.node);
++                        const { node, module } = value;
++                        if ((__rspack_external__babel_types_6e8337dd.isCallExpression(node) || __rspack_external__babel_types_6e8337dd.isOptionalCallExpression(node)) && graph.evaluate(module, node.callee).some((callee)=>'external' === callee.kind && callee.specifier === effect && [
++                                'makeEffectHttpApiClient',
++                                'makeEffectRpcClient'
++                            ].includes(callee.name))) {
++                            const argument = node.arguments[0];
++                            const binding = argument ? graphBinding(graph, module, argument) : void 0;
++                            if (module.boundary !== owner || binding?.kind !== 'declaration' || binding.module.boundary !== owner) return true;
++                        }
++                        const nested = __rspack_external__babel_types_6e8337dd.isObjectExpression(node) ? node.properties.flatMap((property)=>__rspack_external__babel_types_6e8337dd.isObjectProperty(property) ? [
++                                property.value
++                            ] : __rspack_external__babel_types_6e8337dd.isObjectMethod(property) ? returnExpressions(property.body) : __rspack_external__babel_types_6e8337dd.isSpreadElement(property) ? [
++                                property.argument
++                            ] : []) : __rspack_external__babel_types_6e8337dd.isArrayExpression(node) ? node.elements.filter((element)=>null !== element) : __rspack_external__babel_types_6e8337dd.isFunction(node) ? __rspack_external__babel_types_6e8337dd.isBlockStatement(node.body) ? returnExpressions(node.body) : [
++                            node.body
++                        ] : [];
++                        return nested.some((expression)=>graph.evaluate(module, expression).some((value)=>foreignValue(value, module)));
++                    };
++                    const reexportSource = (from, specifier)=>resolveRelative(from, specifier) ?? ownerClients.get(specifier);
++                    const names = (source, visited = new Set())=>{
++                        if (visited.has(source)) return [];
++                        visited.add(source);
++                        const module = graph.module(absolute(source));
++                        return module.file.program.body.flatMap((statement)=>{
++                            if (__rspack_external__babel_types_6e8337dd.isExportDefaultDeclaration(statement)) return [
++                                'default'
++                            ];
++                            if (!__rspack_external__babel_types_6e8337dd.isExportNamedDeclaration(statement) && !__rspack_external__babel_types_6e8337dd.isExportAllDeclaration(statement)) return [];
++                            if ('type' === statement.exportKind) return [];
++                            if (__rspack_external__babel_types_6e8337dd.isExportAllDeclaration(statement)) {
++                                const relative = reexportSource(source, statement.source.value);
++                                return relative ? names(relative, visited).filter((name)=>'default' !== name) : [];
++                            }
++                            return statement.declaration ? Object.keys(__rspack_external__babel_types_6e8337dd.getOuterBindingIdentifiers(statement.declaration)) : statement.specifiers.flatMap((specifier)=>__rspack_external__babel_types_6e8337dd.isExportSpecifier(specifier) && 'type' === specifier.exportKind ? [] : [
++                                    __rspack_external__babel_types_6e8337dd.isIdentifier(specifier.exported) ? specifier.exported.name : specifier.exported.value
++                                ]);
++                        });
++                    };
++                    const seenExports = new Map();
++                    const exportedValue = (source, name)=>{
++                        const visited = seenExports.get(source) ?? new Set();
++                        if (visited.has(name)) return false;
++                        visited.add(name);
++                        seenExports.set(source, visited);
++                        const module = graph.module(absolute(source));
++                        const binding = graph.resolve(module, name, 'export');
++                        if (binding?.kind === 'external') return foreignValue({
++                            ...binding,
++                            members: []
++                        }, module);
++                        if (binding?.kind === 'declaration') return graph.evaluate(binding.module, binding.expression).some((value)=>foreignValue(value, binding.module));
++                        for (const statement of module.file.program.body){
++                            if (__rspack_external__babel_types_6e8337dd.isExportDefaultDeclaration(statement) && 'default' === name) return graph.evaluate(module, statement.declaration).some((value)=>foreignValue(value, module));
++                            if (!__rspack_external__babel_types_6e8337dd.isExportNamedDeclaration(statement) || 'type' === statement.exportKind) continue;
++                            if (statement.declaration && __rspack_external__babel_types_6e8337dd.isFunctionDeclaration(statement.declaration) && statement.declaration.id?.name === name) return graph.evaluate(module, statement.declaration).some((value)=>foreignValue(value, module));
++                            const specifier = statement.specifiers.find((item)=>(__rspack_external__babel_types_6e8337dd.isIdentifier(item.exported) ? item.exported.name : item.exported.value) === name);
++                            if (specifier) {
++                                if (__rspack_external__babel_types_6e8337dd.isExportSpecifier(specifier) && 'type' === specifier.exportKind) return false;
++                                if (!statement.source && __rspack_external__babel_types_6e8337dd.isExportSpecifier(specifier)) return graph.evaluate(module, specifier.local).some((value)=>foreignValue(value, module));
++                                if (statement.source) {
++                                    const relative = reexportSource(source, statement.source.value);
++                                    if (!relative) return foreignSpecifier(statement.source.value);
++                                    if (__rspack_external__babel_types_6e8337dd.isExportNamespaceSpecifier(specifier)) return inspect(relative);
++                                    if (__rspack_external__babel_types_6e8337dd.isExportSpecifier(specifier)) return exportedValue(relative, __rspack_external__babel_types_6e8337dd.isIdentifier(specifier.local) ? specifier.local.name : specifier.local.value);
++                                }
++                            }
++                        }
++                        for (const statement of module.file.program.body){
++                            if (!__rspack_external__babel_types_6e8337dd.isExportAllDeclaration(statement) || 'type' === statement.exportKind) continue;
++                            const relative = reexportSource(source, statement.source.value);
++                            if (relative && names(relative).includes(name) && exportedValue(relative, name)) return true;
++                        }
++                        return false;
++                    };
++                    const inspect = (source)=>[
++                            ...new Set(names(source))
++                        ].some((name)=>exportedValue(source, name));
++                    assert(!inspect(file), `${file}: Shell public exports must not expose another owner's API client`);
++                }
++            }
++        });
+         if (exists('topology/reference-topology.json')) guarded('topology/reference-topology.json', ()=>{
+             for (const vertical of JSON.parse(read('topology/reference-topology.json')).verticals ?? []){
+                 if (vertical.api?.runtime === 'effect') {
+diff --git a/dist/esm-node/module-graph.js b/dist/esm-node/module-graph.js
+index 86a8253dbb028e7fab256ac0591bbec35e7f6345..b6876ae75d352c25a38fdc0cb09b70b2e50ff5b8 100644
+--- a/dist/esm-node/module-graph.js
++++ b/dist/esm-node/module-graph.js
+@@ -187,6 +187,7 @@ function parseModule(filePath, workspace) {
+     const file = parseSource(node_fs.readFileSync(filePath, 'utf8'), filePath);
+     let scope;
+     const references = new Map();
++    const declarations = new Map();
+     const returns = new Map();
+     const bareReturns = new Set();
+     const functionScopes = new Map();
+@@ -297,6 +298,11 @@ function parseModule(filePath, workspace) {
+         ReferencedIdentifier (p) {
+             references.set(p.node, p.scope.getBinding(p.node.name));
+         },
++        BindingIdentifier (p) {
++            if (!__rspack_external__babel_types_6e8337dd.isIdentifier(p.node)) return;
++            const binding = p.scope.getBinding(p.node.name);
++            if (binding?.identifier === p.node) declarations.set(p.node, binding);
++        },
+         Function (p) {
+             functionScopes.set(p.node, p.scope);
+         },
+@@ -362,6 +368,7 @@ function parseModule(filePath, workspace) {
+         scope,
+         workspace,
+         references,
++        declarations,
+         returns,
+         bareReturns,
+         functionScopes,
+@@ -1097,7 +1104,7 @@ function createModuleGraph() {
+         }
+     };
+     const mutated = (module, binding)=>binding.constantViolations.length > 0 || factsOf(module).merged.has(binding.identifier.name) || (aliasesOf(binding, factsOf(module).writes)?.some((alias)=>factsOf(module).writes.has(alias.binding)) ?? true);
+-    const resolveBinding = (module, name, scope, chain, seen)=>{
++    const resolveBinding = (module, name, scope, chain, seen, lexical)=>{
+         const key = `${scope}:${module.path}#${name}`;
+         if (seen.has(key) || seen.size >= MAX_LOOKUPS) return;
+         seen.add(key);
+@@ -1120,7 +1127,7 @@ function createModuleGraph() {
+             return void 0 === next ? void 0 : resolveBinding(next, imported, 'export', hops, seen);
+         };
+         if ('local' === scope) {
+-            const binding = factsOf(module).scope.getBinding(name);
++            const binding = lexical ?? factsOf(module).scope.getBinding(name);
+             if (!binding || mutated(module, binding)) return;
+             if ('module' === binding.kind) {
+                 const imported = importOf(binding);
+@@ -1149,6 +1156,38 @@ function createModuleGraph() {
+             if (void 0 !== resolved) return resolved;
+         }
+     };
++    const resolveReference = (module, expression)=>{
++        const node = unwrapExpression(expression, true);
++        const facts = factsOf(module);
++        const bindingAt = (identifier)=>facts.references.get(identifier) ?? facts.declarations.get(identifier);
++        if (__rspack_external__babel_types_6e8337dd.isIdentifier(node)) {
++            const binding = bindingAt(node);
++            return binding ? resolveBinding(module, node.name, 'local', [], new Set(), binding) : void 0;
++        }
++        if (!__rspack_external__babel_types_6e8337dd.isMemberExpression(node) || node.computed || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.object) || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.property)) return;
++        const binding = bindingAt(node.object);
++        if (!binding || 'module' !== binding.kind || mutated(module, binding)) return;
++        const imported = importOf(binding);
++        if (imported?.name !== '*') return;
++        const target = follow(module, imported.specifier);
++        const chain = [
++            {
++                path: module.path,
++                name: node.object.name
++            }
++        ];
++        return 'external' === target ? {
++            kind: 'external',
++            specifier: imported.specifier,
++            name: node.property.name,
++            chain
++        } : target ? resolveBinding(target, node.property.name, 'export', chain, new Set()) : void 0;
++    };
++    const isUnboundReference = (module, reference)=>{
++        const node = unwrapExpression(reference, true);
++        const references = factsOf(module).references;
++        return __rspack_external__babel_types_6e8337dd.isIdentifier(node) && references.has(node) && void 0 === references.get(node);
++    };
+     const evaluation = (walking)=>{
+         const active = new Set();
+         let frames = 0;
+@@ -1756,6 +1795,8 @@ function createModuleGraph() {
+     return {
+         module: (filePath)=>load(filePath),
+         resolve: (module, name, scope)=>resolveBinding(module, name, scope, [], new Set()),
++        resolveReference,
++        isUnboundReference,
+         evaluate: (module, expression)=>evaluation(false).values(module, expression, []),
+         reachable: (module, expression)=>evaluation(true).reachable(module, expression)
+     };
+diff --git a/dist/esm-node/strict-effect-runtime.js b/dist/esm-node/strict-effect-runtime.js
+index 2aa04a4ee4564679ccb72f256b02f70f993697f3..882207b4c3d6f95c88104c9682461a7ee538c6fe 100644
+--- a/dist/esm-node/strict-effect-runtime.js
++++ b/dist/esm-node/strict-effect-runtime.js
+@@ -56,8 +56,17 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+                     let target = nodePath.isAssignmentExpression() ? nodePath.node.left : nodePath.node.argument;
+                     while(__rspack_external__babel_types_6e8337dd.isMemberExpression(target))target = target.object;
+                     if (__rspack_external__babel_types_6e8337dd.isIdentifier(target)) {
+-                        const binding = nodePath.scope.getBinding(target.name);
+-                        if (binding) mutated.add(binding);
++                        let binding = nodePath.scope.getBinding(target.name);
++                        const seen = new Set();
++                        while(binding && !seen.has(binding)){
++                            seen.add(binding);
++                            mutated.add(binding);
++                            const declaration = binding.path.node;
++                            const init = __rspack_external__babel_types_6e8337dd.isVariableDeclarator(declaration) ? declaration.init : void 0;
++                            const alias = init ? unwrapExpression(init, true) : void 0;
++                            if ('const' !== binding.kind || !__rspack_external__babel_types_6e8337dd.isIdentifier(alias)) break;
++                            binding = binding.path.scope.getBinding(alias.name);
++                        }
+                     }
+                 }
+                 if (nodePath.isTSModuleDeclaration() && __rspack_external__babel_types_6e8337dd.isIdentifier(nodePath.node.id)) {
+@@ -232,11 +241,63 @@ function strictEffectRuntimeTopologyViolation(source, resolveImport) {
+                 if (method(node.callee, 'Layer', 'mergeAll', layerSources)) return node.arguments.length > 0 && node.arguments.every((argument)=>handlers(argument, api));
+                 return method(node.callee, 'HttpApiBuilder', 'group') && 3 === node.arguments.length && apiIdentity(node.arguments[0]) === api && handled(node.arguments[2]);
+             });
+-        const transport = (node)=>guarded(node, (node)=>{
++        const effectSources = [
++            edge,
++            'effect',
++            'effect/Effect'
++        ];
++        const routeHandler = (node)=>{
++            node = unwrap(node);
++            if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node) || !method(node.callee, 'HttpRouter', 'add') || 3 !== node.arguments.length) return;
++            const [verb, path, handler] = node.arguments;
++            return __rspack_external__babel_types_6e8337dd.isStringLiteral(verb) && [
++                '*',
++                'GET',
++                'POST',
++                'PUT',
++                'PATCH',
++                'DELETE',
++                'HEAD',
++                'OPTIONS',
++                'TRACE',
++                'CONNECT',
++                'QUERY'
++            ].includes(verb.value) && __rspack_external__babel_types_6e8337dd.isStringLiteral(path) && (path.value.startsWith('/') || '*' === path.value) && (__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(handler) || __rspack_external__babel_types_6e8337dd.isFunctionExpression(handler)) ? handler : void 0;
++        };
++        const effectReference = (node)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+-                if (init) return transport(init);
++                if (init) return __rspack_external__babel_types_6e8337dd.isIdentifier(unwrap(init)) && effectReference(init);
++                const value = imported(node);
++                return !!value && !value.namespace;
++            });
++        const capturedRouteFactory = (node)=>guarded(node, (node)=>{
++                const init = initialized(node) ?? externalValue(node);
++                if (init) return capturedRouteFactory(init);
++                if (!__rspack_external__babel_types_6e8337dd.isArrowFunctionExpression(node) || node.async || 1 !== node.params.length || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.params[0]) || __rspack_external__babel_types_6e8337dd.isBlockStatement(node.body)) return false;
++                const handler = routeHandler(node.body);
++                const parameter = binding(node.params[0]);
++                return !!handler && !!parameter && parameter.referencePaths.some((reference)=>{
++                    for(let ancestor = reference; ancestor; ancestor = ancestor.parentPath)if (ancestor.node === handler) return true;
++                    return false;
++                });
++            });
++        const capturedTransport = (node)=>guarded(node, (node)=>{
++                const init = initialized(node);
++                if (init) return capturedTransport(init);
++                if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node)) return false;
++                if (method(node.callee, 'Effect', 'map', effectSources)) return 2 === node.arguments.length && effectReference(node.arguments[0]) && capturedRouteFactory(node.arguments[1]);
++                if (!__rspack_external__babel_types_6e8337dd.isMemberExpression(node.callee) || node.callee.computed || !__rspack_external__babel_types_6e8337dd.isIdentifier(node.callee.property, {
++                    name: 'pipe'
++                }) || 1 !== node.arguments.length || !effectReference(node.callee.object)) return false;
++                const map = unwrap(node.arguments[0]);
++                return __rspack_external__babel_types_6e8337dd.isCallExpression(map) && method(map.callee, 'Effect', 'map', effectSources) && 1 === map.arguments.length && capturedRouteFactory(map.arguments[0]);
++            });
++        const transport = (node, provided = false)=>guarded(node, (node)=>{
++                const init = initialized(node) ?? externalValue(node);
++                if (init) return transport(init, provided);
+                 if (!__rspack_external__babel_types_6e8337dd.isCallExpression(node)) return method(node, 'Layer', 'empty', layerSources);
+-                return pipe(node, transport) || method(node.callee, 'HttpRouter', 'cors') || method(node.callee, 'Layer', 'mergeAll', layerSources) && node.arguments.length > 0 && node.arguments.every(transport);
++                const explicitlyProvided = provided || node.arguments.some((argument)=>__rspack_external__babel_types_6e8337dd.isCallExpression(argument) && method(argument.callee, 'Layer', 'provide', layerSources) && 1 === argument.arguments.length);
++                return pipe(node, (value)=>transport(value, explicitlyProvided)) || !!routeHandler(node) || provided && method(node.callee, 'Layer', 'unwrap', layerSources) && 1 === node.arguments.length && capturedTransport(node.arguments[0]) || method(node.callee, 'HttpRouter', 'cors') || method(node.callee, 'Layer', 'mergeAll', layerSources) && node.arguments.length > 0 && node.arguments.every((argument)=>transport(argument, provided));
+             });
+         const directLayer = (node, api)=>guarded(node, (node)=>{
+                 const init = initialized(node);
+diff --git a/dist/types/microvertical-api-boundary.d.ts b/dist/types/microvertical-api-boundary.d.ts
+index 6618ee094c063d797294586c842fb66449f352a1..590de0e21c75d2976c486d6fdc2208991a3b3497 100644
+--- a/dist/types/microvertical-api-boundary.d.ts
++++ b/dist/types/microvertical-api-boundary.d.ts
+@@ -6,7 +6,7 @@ export { createModuleGraph } from './module-graph.js';
+ export interface MicroVerticalConfiguredApp {
+     readonly path: string;
+     readonly id?: string;
+-    readonly kind?: string;
++    readonly kind: string;
+     readonly package?: string;
+     readonly surfaceProfile?: string;
+     readonly deliveryUnitKind?: string;
+@@ -22,7 +22,7 @@ export interface MicroVerticalApiSourceRuleContext {
+     /** Workspace-relative path of `module`. */
+     readonly file: string;
+     readonly module: SourceModule;
+-    /** One graph per check, shared by every rule and source file. */
++    /** One graph per source file, shared by every rule for that file. */
+     readonly graph: ModuleGraph;
+ }
+ /** A consumer-owned source rule; each returned message is a violation. */
+diff --git a/dist/types/module-graph.d.ts b/dist/types/module-graph.d.ts
+index a2aed8c172832eabeb26984030e4e433e98f22b1..cd10f3985f7be2a9f398c8f65127565b8173a712 100644
+--- a/dist/types/module-graph.d.ts
++++ b/dist/types/module-graph.d.ts
+@@ -67,6 +67,10 @@ export interface ModuleGraph {
+      * over-budget bindings return undefined so callers fail closed.
+      */
+     resolve(module: SourceModule, name: string, scope: 'export' | 'local'): ResolvedBinding | undefined;
++    /** Resolve an exact lexical reference or binding identifier using the graph's original mutation facts. */
++    resolveReference(module: SourceModule, reference: t.Node): ResolvedBinding | undefined;
++    /** True only for an original indexed lexical reference with no binding. */
++    isUnboundReference(module: SourceModule, reference: t.Node): boolean;
+     /**
+      * Every value `expression` (a node of `module`) can evaluate to, following
+      * any binding kind, destructuring, member access into object literals,

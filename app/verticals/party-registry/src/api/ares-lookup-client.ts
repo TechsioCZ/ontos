@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface AresLookupClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type AresLookupAuthorizedInvocation = readonly [
@@ -45,6 +46,10 @@ export const executeAresLookup = (
   payload: AresLookupRequest,
   ...[requestCorrelation, options = {}]: AresLookupOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeAresLookupWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeAresLookupWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

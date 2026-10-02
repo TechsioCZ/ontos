@@ -86,12 +86,15 @@ it('binds the SpiceDB datastore password, never a URL, into the migrator and Spi
   expect(zeropsYaml).not.toContain('SPICEDB_DATABASE_URL');
 });
 
-it('requires the inherited active composition snapshot for Customer Context without shadowing it', () => {
+it('inherits a stable composition source without coupling service startup to publication', () => {
   const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
   const customerContext = serviceBlock(zeropsYaml, commerceCustomerContextSetup);
 
-  expect(customerContext).toContain('test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON"');
-  expect(customerContext).not.toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON:');
+  expect(zeropsYaml).toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL');
+  expect(zeropsYaml).toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN');
+  expect(customerContext).toContain("start: sh -c 'cd app/.zerops/runtime/commerce-customer-context");
+  expect(zeropsYaml).not.toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON');
+  expect(customerContext).not.toContain('test -n');
 });
 
 it('binds Commerce to the independently deployed Price Group Catalog API base', () => {
@@ -143,11 +146,9 @@ it("stops the other Outbox Worker mode's workers after this mode's workers deplo
   const plan = deployPlan.steps.find((step) => step.name === 'Generate topology-driven deployment impact plan');
   expect(plan?.run).toContain('plan_arguments+=(--reconcile-workers)');
   const deploySteps = deployZerops.steps.map((step) => step.name);
-  expect(
-    deploySteps.indexOf('Publish the complete active Application Composition and restart its consumers'),
-  ).toBeGreaterThanOrEqual(0);
+  expect(deploySteps.indexOf('Publish the complete active Application Composition')).toBeGreaterThanOrEqual(0);
   expect(deploySteps.indexOf("Stop the other Outbox Worker mode's workers")).toBeGreaterThan(
-    deploySteps.indexOf('Publish the complete active Application Composition and restart its consumers'),
+    deploySteps.indexOf('Publish the complete active Application Composition'),
   );
 });
 
@@ -184,7 +185,7 @@ it('runs every owner worker in one Outbox Worker host service beside the dedicat
   expect(host).toContain(runtimeDatabaseUrl);
   // Commerce's worker reaches Price Group Catalog, so the host carries its binding too.
   expect(host).toContain(`ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'`);
-  expect(host).toContain(`test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON"`);
+  expect(host).toContain("start: sh -c 'cd app/.zerops/runtime/outbox-worker-host");
   expect(host.match(/path: '\/ready'/gu)).toHaveLength(2);
   // The dedicated Outbox Worker mode keeps deploying each owner's own worker.
   for (const worker of ['party-registry-worker', 'commerce-customer-context-worker', 'price-group-catalog-worker']) {
@@ -303,28 +304,11 @@ it('lets stage deploy failures fail the job, tolerating only best-effort log col
   }
 });
 
-it('binds every browser MicroVertical origin into the Shell build from its Zerops subdomain', () => {
-  const zeropsYaml = readFileSync(zeropsYamlPath, 'utf-8');
-  const shellBlock = serviceBlock(zeropsYaml, 'shellsuperapp');
+it('keeps module origins out of the Shell build so new approved modules require no Shell deployment', () => {
+  const shellBlock = serviceBlock(readFileSync(zeropsYamlPath, 'utf-8'), 'shellsuperapp');
   const shellBuild = shellBlock.slice(0, shellBlock.indexOf('\n    deploy:'));
-  const topology = Schema.decodeUnknownSync(
-    Schema.fromJsonString(
-      Schema.Struct({
-        verticals: Schema.Array(
-          Schema.Struct({
-            cloudflare: Schema.Struct({ publicUrlEnv: Schema.String }),
-            id: Schema.String,
-            surfaceProfile: Schema.optional(Schema.String),
-          }),
-        ),
-      }),
-    ),
-  )(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8'));
-  const browserVerticals = topology.verticals.filter(({ surfaceProfile }) => surfaceProfile !== 'api-only');
-  expect(browserVerticals.length).toBeGreaterThan(0);
-  for (const { cloudflare, id } of browserVerticals) {
-    expect(shellBuild).toContain(`${cloudflare.publicUrlEnv}: \${${id.replaceAll('-', '')}_zeropsSubdomain}`);
-  }
+  expect(shellBuild).not.toContain('ULTRAMODERN_PUBLIC_URL_');
+  expect(shellBuild).not.toContain('_zeropsSubdomain');
 });
 
 it.effect('pushes every Zerops setup with the deploying environment named in its builds and runtimes', () =>

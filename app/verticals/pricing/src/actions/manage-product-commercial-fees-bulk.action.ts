@@ -115,6 +115,7 @@ export const handleManageProductCommercialFeesBulk = Effect.fn('ManageProductCom
   ) {
     const trusted = {
       actionInvocationId: context.actionInvocationId,
+      compositionRevision: context.compositionRevision,
       principalContext: context.scope,
       requestCorrelationId: context.scope.correlationId,
       trustedOperationAt: yield* DateTime.nowAsDate,

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface AssortmentProductClassificationV1ClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type AssortmentProductClassificationV1AuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeAssortmentProductClassificationV1 = (
   payload: AssortmentProductClassificationV1Request,
   ...[requestCorrelation, options = {}]: AssortmentProductClassificationV1OperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeAssortmentProductClassificationV1WithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeAssortmentProductClassificationV1WithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

@@ -88,6 +88,7 @@ for (const change of changes) {
         },
         {
           actionInvocationId: '50000000-0000-4000-8000-000000000001',
+          compositionRevision: 'a'.repeat(64),
           addDomainEvent: collector.addDomainEvent,
           addOutboxMessage: collector.addOutboxMessage,
           recordAuditEvidence: collector.recordAuditEvidence,
@@ -152,6 +153,7 @@ it.effect('rejected identifier updates publish neither Domain Event nor outbox m
       },
       {
         actionInvocationId: '50000000-0000-4000-8000-000000000001',
+        compositionRevision: 'a'.repeat(64),
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
         recordAuditEvidence: collector.recordAuditEvidence,

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ColorCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ColorCurrentAuthorizedInvocation = readonly [
@@ -44,6 +45,10 @@ export const executeColorCurrent = (
   payload: ColorCurrentRequest,
   ...[requestCorrelation, options = {}]: ColorCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeColorCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeColorCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

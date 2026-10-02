@@ -31,11 +31,12 @@ registerHooks({
 });
 
 describe('module-federation-i18n-runtime', () => {
-  it.effect('registers the Inventory widget remote from the generated topology contract', () =>
-    Effect.gen(function* registersInventoryRemote() {
+  it.effect('builds the Shell without a deployment-specific remote registry', () =>
+    Effect.gen(function* omitsCompileTimeRemotes() {
       const { default: shellConfig } = yield* Effect.promise(() => import(shellConfigUrl.href));
 
-      expect(shellConfig.remotes?.inventory).toBe('verticalInventory@http://localhost:4110/mf-manifest.json');
+      expect(shellConfig.remotes).toEqual({});
+      expect(shellConfig.dts?.consumeTypes).toBe(false);
     }),
   );
 
@@ -58,6 +59,11 @@ describe('module-federation-i18n-runtime', () => {
 
       expect(shellConfig.shared?.['@modern-js/plugin-i18n/runtime']).toEqual(expectedSharedRuntime);
       expect(partyRegistryConfig.shared?.['@modern-js/plugin-i18n/runtime']).toEqual(expectedSharedRuntime);
+      for (const config of [shellConfig, partyRegistryConfig]) {
+        for (const shared of Object.values(config.shared ?? {})) {
+          expect(shared).toMatchObject({ singleton: true, strictVersion: true, treeShaking: false });
+        }
+      }
     }),
   );
 });

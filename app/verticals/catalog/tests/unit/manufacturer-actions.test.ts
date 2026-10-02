@@ -1,9 +1,11 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { ActionTransactionError, ReadRuntime, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { describe, expect, it } from 'effect-rstest';
 
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import {
   ChangeProductManufacturerPayloadSchema,
   RemoveProductManufacturerPayloadSchema,
@@ -76,11 +78,13 @@ const unavailable = () =>
     }),
   );
 const context = (
+  compositionRevision: string,
   overrides: Partial<ManufacturerPersistence> = {},
 ): ActionHandlerContext<Readonly<Record<string, never>>, ManufacturerPersistence> => ({
   actionInvocationId: '88888888-8888-4888-8888-888888888888',
   addDomainEvent: () => Effect.succeed(Object.create(null)),
   addOutboxMessage: () => Effect.void,
+  compositionRevision,
   recordAuditEvidence: () => Effect.void,
   recordDataAccess: () => Effect.void,
   scope,
@@ -201,34 +205,47 @@ describe('manufacturer Action contracts', () => {
 
   it.effect('preserves definite owner forbidden separately from unavailable', () =>
     Effect.gen(function* verifyForbidden() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       expect(setProductManufacturerAction.descriptor.idempotency).toBe('required');
       const forbidden = yield* handleSetProductManufacturer(
         setPayload,
-        context({
+        context(compositionSnapshot.composition.revision, {
           set: () => Effect.fail(new ManufacturerTargetForbidden()),
         }),
       ).pipe(Effect.flip);
       expect(Schema.is(ManufacturerTargetForbidden)(forbidden)).toBe(true);
-      const failed = yield* handleSetProductManufacturer(setPayload, context()).pipe(Effect.flip);
+      const failed = yield* handleSetProductManufacturer(
+        setPayload,
+        context(compositionSnapshot.composition.revision),
+      ).pipe(Effect.flip);
       expect(Schema.is(ManufacturerPersistenceUnavailable)(failed)).toBe(true);
     }),
   );
 
   it.effect('maps missing, invalid, and conflicting mutations without writing evidence', () =>
     Effect.gen(function* verifyOutcomes() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const missing = yield* handleSetProductManufacturer(
         setPayload,
-        context({ set: () => Effect.succeed({ _tag: 'not_found' }) }),
+        context(compositionSnapshot.composition.revision, { set: () => Effect.succeed({ _tag: 'not_found' }) }),
       ).pipe(Effect.flip);
       expect(missing).toMatchObject({ code: 'manufacturer_not_found' });
       const conflict = yield* handleChangeProductManufacturer(
         changePayload,
-        context({ change: () => Effect.succeed({ _tag: 'identity_conflict' }) }),
+        context(compositionSnapshot.composition.revision, {
+          change: () => Effect.succeed({ _tag: 'identity_conflict' }),
+        }),
       ).pipe(Effect.flip);
       expect(conflict).toMatchObject({ code: 'manufacturer_conflict' });
       const removed = yield* handleRemoveProductManufacturer(
         removePayload,
-        context({
+        context(compositionSnapshot.composition.revision, {
           remove: () => Effect.succeed({ _tag: 'applied', relationId: removePayload.relationId, revision: 2 }),
         }),
       );

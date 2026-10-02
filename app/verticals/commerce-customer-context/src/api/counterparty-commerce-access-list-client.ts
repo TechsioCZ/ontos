@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CounterpartyCommerceAccessListClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CounterpartyCommerceAccessListAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCounterpartyCommerceAccessList = (
   payload: CounterpartyCommerceAccessListRequest,
   ...[requestCorrelation, options = {}]: CounterpartyCommerceAccessListOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCounterpartyCommerceAccessListWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCounterpartyCommerceAccessListWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

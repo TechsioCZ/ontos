@@ -1,7 +1,10 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import { ReviseSetCompositionPayloadSchema } from '../../shared/actions/revise-set-composition.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/commerce-catalog-set-composition-revised-v1.ts';
@@ -62,40 +65,45 @@ const scope = {
   correlationId: 'set-composition-event-test',
 };
 
-const testContext = (publish: SetCompositionPersistence['publish']) => {
-  const events: unknown[] = [];
-  const messages: unknown[] = [];
-  const context: ActionHandlerContext<
-    typeof reviseSetCompositionAction.descriptor.domainEvents,
-    SetCompositionPersistence & { captureResult: () => Effect.Effect<void> }
-  > = {
-    actionInvocationId,
-    addDomainEvent: (event) =>
-      Effect.sync(() => {
-        events.push(event);
-        return Object.create(null);
-      }),
-    addOutboxMessage: (_event, message) =>
-      Effect.sync(() => {
-        messages.push(message);
-      }),
-    recordAuditEvidence: () => Effect.void,
-    recordDataAccess: () => Effect.void,
-    scope,
-    services: {
-      captureResult: () => Effect.void,
-      publish,
-      readCurrent: () => Effect.die('Unexpected readCurrent'),
-      readRevision: () => Effect.die('Unexpected readRevision'),
-    },
-  };
-  return { context, events, messages };
-};
+const testContext = (publish: SetCompositionPersistence['publish']) =>
+  Effect.gen(function* makeTestContext() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const events: unknown[] = [];
+    const messages: unknown[] = [];
+    const context: ActionHandlerContext<
+      typeof reviseSetCompositionAction.descriptor.domainEvents,
+      SetCompositionPersistence & { captureResult: () => Effect.Effect<void> }
+    > = {
+      actionInvocationId,
+      addDomainEvent: (event) =>
+        Effect.sync(() => {
+          events.push(event);
+          return Object.create(null);
+        }),
+      addOutboxMessage: (_event, message) =>
+        Effect.sync(() => {
+          messages.push(message);
+        }),
+      compositionRevision: snapshot.composition.revision,
+      recordAuditEvidence: () => Effect.void,
+      recordDataAccess: () => Effect.void,
+      scope,
+      services: {
+        captureResult: () => Effect.void,
+        publish,
+        readCurrent: () => Effect.die('Unexpected readCurrent'),
+        readRevision: () => Effect.die('Unexpected readRevision'),
+      },
+    };
+    return { context, events, messages };
+  });
 
 describe('Set composition revision event', () => {
   it.effect('publishes exact changed Set revision and one linked outbox message after a successful write', () =>
     Effect.gen(function* published() {
-      const { context, events, messages } = testContext(() => Effect.succeed({ _tag: 'published', revision: 2 }));
+      const { context, events, messages } = yield* testContext(() =>
+        Effect.succeed({ _tag: 'published', revision: 2 }),
+      );
       const result = yield* handleReviseSetComposition(payload, context);
       expect(result).toEqual({ revision: payload.revision.reference });
       expect(events).toHaveLength(1);
@@ -129,7 +137,7 @@ describe('Set composition revision event', () => {
         { _tag: 'stale', actualRevision: 3 } as const,
         { _tag: 'invalid', reason: 'Component Current basis is invalid' } as const,
       ]) {
-        const { context, events, messages } = testContext(() => Effect.succeed(outcome));
+        const { context, events, messages } = yield* testContext(() => Effect.succeed(outcome));
         yield* handleReviseSetComposition(payload, context).pipe(Effect.flip);
         expect(events).toHaveLength(0);
         expect(messages).toHaveLength(0);

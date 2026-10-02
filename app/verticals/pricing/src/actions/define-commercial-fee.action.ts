@@ -256,7 +256,7 @@ export const defineCommercialFeeAction = defineAction(
     schemaVersion: '1',
   },
   handleDefineCommercialFee,
-  (transaction, scope) => {
+  (transaction, scope, compositionRevision) => {
     const { legalEntityId } = scope;
     if (legalEntityId === undefined) {
       return Effect.fail(
@@ -270,10 +270,11 @@ export const defineCommercialFeeAction = defineAction(
       const { catalogTarget, currencySupport, persistence } = yield* Effect.all(
         {
           catalogTarget: commercialFeeCatalogTargetAssessmentPortFromEnvironment({
+            compositionRevision,
             legalEntityId,
             requestCorrelation: scope.correlationId,
           }),
-          currencySupport: currencySupportPersistenceForScope(transaction, scope),
+          currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
           persistence: commercialFeePersistenceForScope(transaction, scope),
         },
         { concurrency: 3 },

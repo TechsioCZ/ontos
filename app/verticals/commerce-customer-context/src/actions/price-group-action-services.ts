@@ -23,6 +23,7 @@ export interface PriceGroupActionServices {
 export const priceGroupActionServicesForTransaction = (
   invoker: PriceGroupRoutineInvoker,
   scope: OperationalScope,
+  compositionRevision: string,
 ): Effect.Effect<PriceGroupActionServices, OperationContextUnavailable> => {
   const { legalEntityId } = scope;
   if (legalEntityId === undefined) {
@@ -36,6 +37,7 @@ export const priceGroupActionServicesForTransaction = (
   const trustedScope = { ...scope, legalEntityId };
   return Effect.gen(function* makePriceGroupActionServices() {
     const catalog = yield* priceGroupCatalogPortFromEnvironment({
+      compositionRevision,
       requestCorrelation: scope.correlationId,
     });
     return {

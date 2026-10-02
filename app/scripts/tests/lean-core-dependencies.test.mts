@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import { Effect } from 'effect';
+import type { Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { checkLeanCoreDependencies } from '../check-lean-core-dependencies.mts';
@@ -173,3 +174,299 @@ it.live('passes on a tree with only allowed dependencies and documented seams', 
     expect(violations).toEqual([]);
   }),
 );
+
+const nodeDriverSource = [
+  "import { Readable } from 'node:stream';",
+  "import { ReadableStream } from 'node:stream/web';",
+  "import { request } from '@effect/platform-node/Undici';",
+  'export const driver = [Readable, ReadableStream, request];',
+].join('\n');
+const nodeAdapterPath = './src/transport.adapter.ts';
+const workerAdapterPath = './src/transport.worker.ts';
+const driverReExportSource = "export { driver } from './driver.ts';";
+const bootstrapImportSource = "import './bootstrap.cjs';";
+const hostImports = {
+  '#transport': Object.fromEntries([
+    ['workerd', workerAdapterPath],
+    ['node', nodeAdapterPath],
+  ]),
+};
+const hostExports = { '.': './src/index.ts', './transport': './src/transport.ts' };
+const hostSources = {
+  'src/driver.ts': nodeDriverSource,
+  'src/index.ts': "export { Effect } from 'effect';",
+  'src/transport.adapter.ts': driverReExportSource,
+  'src/transport.ts': "export { driver } from '#transport';",
+  'src/transport.worker.ts': "export const driver = 'native worker';",
+};
+
+interface HostGraphControl {
+  readonly exports?: Schema.Json;
+  readonly imports?: Schema.Json;
+  readonly name: string;
+  readonly rejected: boolean;
+  readonly sources?: Readonly<Record<string, string>>;
+}
+
+const hostGraphControls: readonly HostGraphControl[] = [
+  { name: 'allows a consumed native Node conditional entry and its runtime descendants', rejected: false },
+  {
+    name: 'does not treat a type-only worker reference as a runtime Node dependency',
+    rejected: false,
+    sources: { 'src/transport.worker.ts': "import type { driver } from './driver.ts'; export const value = 'worker';" },
+  },
+  {
+    imports: {
+      '#transport': Object.fromEntries([
+        ['workerd', workerAdapterPath],
+        ['default', nodeAdapterPath],
+      ]),
+    },
+    name: 'rejects a default Node adapter without an explicit Node condition',
+    rejected: true,
+  },
+  {
+    imports: {},
+    name: 'rejects an orphan renamed Node adapter',
+    rejected: true,
+    sources: { 'src/merely-renamed.node.ts': nodeDriverSource },
+  },
+  {
+    name: 'rejects a shared direct import into the Node-only descendant',
+    rejected: true,
+    sources: { 'src/shared.ts': "import { driver } from './driver.ts';" },
+  },
+  {
+    name: 'rejects a shared dynamic import into the Node-only descendant',
+    rejected: true,
+    sources: { 'src/shared.ts': "const driver = import('./driver.ts');" },
+  },
+  {
+    name: 'rejects a shared re-export of the Node-only descendant',
+    rejected: true,
+    sources: { 'src/shared.ts': "export * from './driver.ts';" },
+  },
+  {
+    name: 'rejects a shared side-effect import of the Node-only descendant',
+    rejected: true,
+    sources: { 'src/shared.ts': "import './driver.ts';" },
+  },
+  {
+    name: 'rejects a shared static template dynamic import of the Node-only descendant',
+    rejected: true,
+    sources: { 'src/shared.ts': 'const driver = import(`./driver.ts`);' },
+  },
+  {
+    name: 'rejects a transitive shared bridge into the Node-only descendant',
+    rejected: true,
+    sources: {
+      'src/shared-bridge.ts': driverReExportSource,
+      'src/shared.ts': "export { driver } from './shared-bridge.ts';",
+    },
+  },
+  {
+    name: 'rejects a Workerd branch that reaches the Node-only descendant',
+    rejected: true,
+    sources: { 'src/transport.worker.ts': driverReExportSource },
+  },
+  {
+    exports: { ...hostExports, './browser': { browser: nodeAdapterPath } },
+    name: 'rejects a browser export that reaches the Node-only adapter',
+    rejected: true,
+  },
+  {
+    imports: {
+      '#transport': Object.fromEntries([
+        ['custom-host', workerAdapterPath],
+        ['workerd', workerAdapterPath],
+        ['node', nodeAdapterPath],
+      ]),
+    },
+    name: 'rejects unsupported conditional host evidence',
+    rejected: true,
+  },
+  {
+    imports: {
+      '#transport': Object.fromEntries([
+        ['workerd', nodeAdapterPath],
+        ['node', nodeAdapterPath],
+      ]),
+    },
+    name: 'rejects a Node entry also selected by Workerd',
+    rejected: true,
+  },
+  {
+    imports: { '#transport': { default: nodeAdapterPath, node: nodeAdapterPath } },
+    name: 'rejects an earlier default that shadows the explicit Node condition',
+    rejected: true,
+  },
+  {
+    imports: {
+      '#transport': Object.fromEntries([
+        ['workerd', workerAdapterPath],
+        ['node', nodeAdapterPath],
+        ['default', nodeAdapterPath],
+      ]),
+    },
+    name: 'rejects a default browser fallback into the Node adapter',
+    rejected: true,
+  },
+  {
+    name: 'rejects a Node conditional mapping without a consuming runtime entry',
+    rejected: true,
+    sources: { 'src/transport.ts': "export const driver = 'unrelated';" },
+  },
+  {
+    name: 'keeps unpinned Node adapter dependencies forbidden',
+    rejected: true,
+    sources: { 'src/driver.ts': "import { driver } from 'unapproved-node-driver';" },
+  },
+  {
+    name: 'keeps unrelated Node builtins outside the existing specifier policy',
+    rejected: true,
+    sources: { 'src/driver.ts': "import { readFile } from 'node:fs';" },
+  },
+  {
+    name: 'rejects nonliteral dynamic imports inside the purported Node boundary',
+    rejected: true,
+    sources: { 'src/driver.ts': `${nodeDriverSource}\nconst target = './unknown.ts'; void import(target);` },
+  },
+  {
+    name: 'rejects nonliteral dynamic imports from the shared graph',
+    rejected: true,
+    sources: { 'src/shared.ts': "const target = './driver.ts'; void import(target);" },
+  },
+  {
+    name: 'rejects an unresolved relative edge inside the purported Node boundary',
+    rejected: true,
+    sources: { 'src/transport.adapter.ts': "export { driver } from './driver.ts'; import './missing.ts';" },
+  },
+  {
+    name: 'rejects an ambiguous relative edge inside the purported Node boundary',
+    rejected: true,
+    sources: {
+      'src/driver.tsx': 'export const driver = true;',
+      'src/transport.adapter.ts': "export { driver } from './driver';",
+    },
+  },
+  {
+    exports: { ...hostExports, './*': './src/*.ts' },
+    name: 'rejects wildcard public paths that cannot prove host isolation',
+    rejected: true,
+  },
+  {
+    exports: { ...hostExports, './ambiguous': './src/driver' },
+    name: 'rejects an ambiguous public path that cannot prove host isolation',
+    rejected: true,
+    sources: { 'src/driver.tsx': 'export const driver = true;' },
+  },
+  {
+    imports: {
+      '#transport': Object.fromEntries([
+        ['workerd', workerAdapterPath],
+        ['node', './src/transport.adapter.mjs'],
+      ]),
+    },
+    name: 'rejects a nonexistent manifest target with an incompatible emitted extension',
+    rejected: true,
+  },
+  {
+    name: 'proves actual terminal CJS source instead of treating it as an unresolved edge',
+    rejected: false,
+    sources: {
+      'src/bootstrap.cjs': 'module.exports = { ready: true };',
+      'src/shared.ts': bootstrapImportSource,
+    },
+  },
+  {
+    name: 'rejects a CJS require path that cannot prove host isolation',
+    rejected: true,
+    sources: {
+      'src/bootstrap.cjs': "module.exports = require('./driver.ts');",
+      'src/shared.ts': bootstrapImportSource,
+    },
+  },
+  {
+    name: 'rejects an aliased CJS require that cannot prove host isolation',
+    rejected: true,
+    sources: {
+      'src/bootstrap.cjs': "const load = require; module.exports = load('./driver.ts');",
+      'src/shared.ts': bootstrapImportSource,
+    },
+  },
+  {
+    name: 'rejects computed CJS require that cannot prove host isolation',
+    rejected: true,
+    sources: {
+      'src/bootstrap.cjs': "module.exports = module['require']('./driver.ts');",
+      'src/shared.ts': bootstrapImportSource,
+    },
+  },
+  {
+    name: 'rejects static template CJS require that cannot prove host isolation',
+    rejected: true,
+    sources: {
+      'src/bootstrap.cjs': 'module.exports = module[`require`]("./driver.ts");',
+      'src/shared.ts': bootstrapImportSource,
+    },
+  },
+  {
+    name: 'rejects native CJS createRequire loading that cannot prove host isolation',
+    rejected: true,
+    sources: {
+      'src/bootstrap.cjs':
+        "const { createRequire } = process.getBuiltinModule('module'); const load = createRequire(__filename); module.exports = load('./driver.ts');",
+      'src/shared.ts': bootstrapImportSource,
+    },
+  },
+  {
+    name: 'rejects runtime TypeScript import-equals that cannot prove host isolation',
+    rejected: true,
+    sources: { 'src/shared.ts': "import driver = require('./driver.ts'); void driver;" },
+  },
+  {
+    name: 'preserves erased type-only TypeScript import-equals',
+    rejected: false,
+    sources: {
+      'src/shared.ts': "import type driver = require('./driver.ts'); export type NativeDriver = typeof driver;",
+    },
+  },
+];
+
+for (const control of hostGraphControls) {
+  it.live(control.name, () =>
+    Effect.gen(function* proveNativeHostDependency() {
+      const root = yield* Effect.acquireRelease(
+        Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-lean-core-host-'))),
+        (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+      );
+      const manifest = {
+        dependencies: { '@effect/platform-node': '4.0.0-rc.117', effect: '4.0.0-rc.117' },
+        exports: control.exports ?? hostExports,
+        imports: control.imports ?? hostImports,
+      };
+      const sources = { ...hostSources, ...control.sources };
+      const files = {
+        'package.json': JSON.stringify(manifest),
+        ...sources,
+      };
+      yield* Effect.all(
+        Object.entries(files).map(([relative, source]) =>
+          Effect.gen(function* writeHostFixture() {
+            const file = path.join(root, 'packages/core-runtime', relative);
+            yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+            yield* Effect.tryPromise(() => writeFile(file, source));
+          }),
+        ),
+      );
+      const violations = yield* checkLeanCoreDependencies(root).pipe(Effect.provide(NodeServices.layer));
+      if (control.rejected) {
+        expect(violations.some(({ reason }) => reason.includes('outside the pinned external specifier set'))).toBe(
+          true,
+        );
+      } else {
+        expect(violations).toEqual([]);
+      }
+    }),
+  );
+}

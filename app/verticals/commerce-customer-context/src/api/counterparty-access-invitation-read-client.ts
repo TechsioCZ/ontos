@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CounterpartyAccessInvitationReadClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CounterpartyAccessInvitationReadAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCounterpartyAccessInvitationRead = (
   payload: CounterpartyAccessInvitationReadRequest,
   ...[requestCorrelation, options = {}]: CounterpartyAccessInvitationReadOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCounterpartyAccessInvitationReadWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCounterpartyAccessInvitationReadWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

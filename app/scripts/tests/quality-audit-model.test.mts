@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -28,6 +29,13 @@ const rstestConfigFile = 'rstest.config.ts';
 const auditConsumersFile = '.audit/consumers.mts';
 const rstestEnvironmentReason = 'Rstest testEnvironment consumer';
 const appRoot = path.resolve(import.meta.dirname, '../..');
+const nativeRoutesWorkspace = 'apps/native-routes';
+const nativeRoutesRoot = `${nativeRoutesWorkspace}/src/routes/[lang]`;
+const nodeExecutableExpression = 'process.execPath';
+const nativeSubprocessReason = 'Native Node subprocess';
+const scriptArgument = (name: string) => `paths.resolve('../../scripts/${name}.fixture.mts')`;
+const nativeInvocation = (name: string, executable = nodeExecutableExpression, options = '{}') =>
+  `execute(${executable}, ['--experimental-strip-types', ${scriptArgument(name)}], ${options});`;
 const Names = Schema.Array(Schema.Struct({ name: Schema.String }));
 const ReportSchema = Schema.Struct({
   issues: Schema.Array(
@@ -289,6 +297,273 @@ const fixture = () =>
     );
     return root;
   });
+
+it.live(
+  'native Modern route generation proves paired client loaders and splat defaults without hiding neighbors',
+  Effect.fn(function* nativeModernRouteConsumers() {
+    const root = yield* fixture();
+    const packagePath = `${nativeRoutesWorkspace}/package.json`;
+    const manifest = '{"name":"@fixture/native-routes","dependencies":{"@modern-js/runtime":"*"}}';
+    write(root, packagePath, manifest);
+    const configPath = `${nativeRoutesWorkspace}/modern.config.ts`;
+    const configSource = "import { defineConfig } from '@modern-js/app-tools'; export default defineConfig({});";
+    write(root, configPath, configSource);
+    for (const component of ['page', 'layout', '$']) {
+      write(
+        root,
+        `${nativeRoutesRoot}/${component}.tsx`,
+        'export default function Page() { return null; } export const unusedComponentNeighbor = 1;',
+      );
+      write(root, `${nativeRoutesRoot}/${component}.data.ts`, 'export const loader = () => 1;');
+      write(
+        root,
+        `${nativeRoutesRoot}/${component}.data.client.ts`,
+        'export const loader = () => 1; export const unusedLoaderNeighbor = 1;',
+      );
+    }
+    const invalidFiles = [
+      `${nativeRoutesRoot}/orphan/page.data.client.ts`,
+      `${nativeRoutesRoot}/not-page.data.client.ts`,
+      `${nativeRoutesRoot}/page.data.clients.ts`,
+      `${nativeRoutesWorkspace}/src/components/page.data.client.ts`,
+    ];
+    for (const file of invalidFiles) {
+      write(root, file, 'export const loader = () => 1;');
+    }
+    const nativeGenerator = path.join(
+      appRoot,
+      'apps/shell-super-app/node_modules/@modern-js/runtime/dist/cjs/router/cli/code/nestedRoutes.js',
+    );
+    const generated = spawnSync(
+      process.execPath,
+      [
+        '-e',
+        `const { walk } = require(process.argv[1]);
+walk({ dirname: process.argv[2], rootDir: process.argv[2], entryName: 'index', isMainEntry: true }).then((route) => {
+  const pending = Array.isArray(route) ? [...route] : [route];
+  const components = [];
+  const clients = [];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current.component) components.push(current.component);
+    if (current.clientData) clients.push(current.clientData);
+    pending.push(...(current.children || []));
+  }
+  process.stdout.write(JSON.stringify({ components, clients }));
+}, (error) => { process.stderr.write(String(error)); process.exitCode = 1; });`,
+        nativeGenerator,
+        path.join(root, nativeRoutesRoot),
+      ],
+      { encoding: 'utf-8', timeout: 30_000 },
+    );
+    expect(generated.status, generated.stderr).toBe(0);
+    const native = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.Struct({ clients: Schema.Array(Schema.String), components: Schema.Array(Schema.String) }),
+      ),
+    )(generated.stdout);
+    expect(native.components).toContain(path.join(root, `${nativeRoutesRoot}/$.tsx`));
+    for (const component of ['page', 'layout', '$']) {
+      expect(native.clients).toContain(path.join(root, `${nativeRoutesRoot}/${component}.data.client`));
+    }
+    const consumerPath = path.join(root, auditConsumersFile);
+    const base = {
+      workspaces: {
+        '.': { entry: [], node: false, project: [] },
+        'apps/*': {
+          entry: ['modern.config.ts', 'src/routes/**/{page,layout}.tsx', 'src/routes/**/*.data.ts'],
+          node: false,
+          project: ['**/*.{ts,tsx}'],
+        },
+      },
+    };
+    const model = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.status, run.stderr).toBe(1);
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    const unusedFiles = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
+    for (const file of invalidFiles) {
+      expect(unusedFiles).toContain(file);
+    }
+    for (const component of ['page', 'layout', '$']) {
+      const clientFile = `${nativeRoutesRoot}/${component}.data.client.ts`;
+      expect(unusedFiles).not.toContain(clientFile);
+      const exports = report.issues.find((issue) => issue.file === clientFile)?.exports.map((finding) => finding.name);
+      expect(exports).toContain('unusedLoaderNeighbor');
+      expect(exports).not.toContain('loader');
+    }
+    const splatExports = report.issues
+      .find((issue) => issue.file === `${nativeRoutesRoot}/$.tsx`)
+      ?.exports.map((finding) => finding.name);
+    expect(splatExports).toContain('unusedComponentNeighbor');
+    expect(splatExports).not.toContain('default');
+    for (const source of [
+      `/* ${configSource} */ export default {};`,
+      "import { defineConfig } from '@modern-js/app-tools'; void defineConfig; export default {};",
+      configSource,
+    ]) {
+      write(root, configPath, source);
+      if (source === configSource) {
+        write(root, packagePath, '{"name":"@fixture/native-routes"}');
+      }
+      const disconnected = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+      expect(disconnected.evidence.some((fact) => fact.reason.startsWith('Modern native'))).toBe(false);
+    }
+  }),
+);
+
+it.live(
+  'native subprocess consumers prove working directories and called parameter values without hiding neighbors',
+  Effect.fn(function* nativeSubprocessConsumers() {
+    const root = yield* fixture();
+    write(root, packageFile, '{"name":"process-controls","type":"module","workspaces":["apps/*","packages/*"]}');
+    const shell = 'apps/process-shell';
+    const core = 'packages/process-core';
+    write(root, `${shell}/package.json`, '{"name":"@fixture/process-shell","type":"module"}');
+    write(
+      root,
+      `${core}/package.json`,
+      '{"name":"@fixture/process-core","type":"module","dependencies":{"effect":"*"}}',
+    );
+    const nativeFixture = 'scripts/native.fixture.mts';
+    const coreFixture = `${core}/tests/fixtures/worker.fixture.ts`;
+    const overrideFixture = `${core}/tests/fixtures/override.fixture.ts`;
+    for (const file of [nativeFixture, coreFixture, overrideFixture]) {
+      write(root, file, 'export const unusedNativeNeighbor = 1;');
+    }
+    const invalidFiles = [
+      'data',
+      'local-driver',
+      'shadow-driver',
+      'destructured-driver',
+      'foreign-executable',
+      'eval',
+      'fake-path',
+      'mutable-path',
+      'unknown-cwd',
+      'spread-options',
+      'factory-options',
+      'dynamic-member',
+      'duplicate-cwd',
+      'getter-cwd',
+      'mutated-driver',
+      'unused-default',
+      'overridden-default',
+    ].map((name) => `scripts/${name}.fixture.mts`);
+    for (const file of invalidFiles) {
+      write(root, file, 'export const unusedControl = 1;');
+    }
+    write(
+      root,
+      `${shell}/tests/consumer.ts`,
+      [
+        "import { spawn as execute } from 'node:child_process';",
+        "import * as child from 'node:child_process';",
+        "import paths from 'node:path';",
+        "execute(process.execPath, ['--experimental-strip-types', paths.resolve('../../scripts/native.fixture.mts'), paths.resolve('../../scripts/data.fixture.mts')], { stdio: 'pipe' });",
+        `{ const execute = () => {}; ${nativeInvocation('local-driver')} }`,
+        `function shadow(execute) { ${nativeInvocation('shadow-driver')} } shadow(() => {});`,
+        `function destructured({ execute }) { ${nativeInvocation('destructured-driver')} } destructured({ execute: () => {} });`,
+        nativeInvocation('foreign-executable', "'/usr/bin/printf'"),
+        `execute(process.execPath, ['-e', ${scriptArgument('eval')}]);`,
+        `{ const paths = { resolve: (value) => value }; ${nativeInvocation('fake-path')} }`,
+        "{ let target = '../../scripts/mutable-path.fixture.mts'; const alias = target; target = 'elsewhere.mts'; execute(process.execPath, [paths.resolve(alias)]); }",
+        nativeInvocation('unknown-cwd', nodeExecutableExpression, '{ cwd: unknownDirectory }'),
+        nativeInvocation('spread-options', nodeExecutableExpression, '{ ...unknownOptions }'),
+        nativeInvocation('factory-options', nodeExecutableExpression, 'unknownFactory({})'),
+        `{ const method = 'spawn'; child[method](process.execPath, [${scriptArgument('dynamic-member')}]); }`,
+        nativeInvocation('duplicate-cwd', nodeExecutableExpression, "{ cwd: '.', cwd: '/different' }"),
+        nativeInvocation('getter-cwd', nodeExecutableExpression, "{ get cwd() { return '.'; } }"),
+        `const driver = execute; driver.custom = true; driver(process.execPath, [${scriptArgument('mutated-driver')}]);`,
+        `const unused = (file = '../../scripts/unused-default.fixture.mts') => execute(process.execPath, [file]);`,
+        `const overridden = (file = '../../scripts/overridden-default.fixture.mts') => execute(process.execPath, [file]); overridden('../../scripts/native.fixture.mts');`,
+      ].join('\n'),
+    );
+    write(
+      root,
+      `${core}/tests/unit/consumer.test.ts`,
+      [
+        "import { ChildProcess as Process } from 'effect/unstable/process';",
+        "const start = (signal, file = 'tests/fixtures/worker.fixture.ts') => (() => Process.make(process.execPath, ['--experimental-strip-types', file], { cwd: new URL('../..', import.meta.url).pathname }))();",
+        "const assertStopped = (signal, file = 'tests/fixtures/worker.fixture.ts') => start(signal, file);",
+        "assertStopped('SIGTERM'); assertStopped('SIGINT', 'tests/fixtures/override.fixture.ts');",
+      ].join('\n'),
+    );
+    const consumerPath = path.join(root, auditConsumersFile);
+    const model = yield* buildKnipModel(
+      root,
+      {
+        workspaces: {
+          '.': { entry: [], node: false, project: ['scripts/**/*.mts'] },
+          'apps/*': { entry: ['tests/consumer.ts'], node: false, project: ['**/*.ts'] },
+          'packages/*': { entry: ['tests/unit/consumer.test.ts'], node: false, project: ['**/*.ts'] },
+        },
+      },
+      consumerPath,
+    ).pipe(Effect.provide(NodeServices.layer));
+    const subprocesses = model.evidence.filter((fact) => fact.reason.startsWith(nativeSubprocessReason));
+    expect(
+      subprocesses.some((fact) => fact.workspace === shell && fact.target === '../../scripts/native.fixture.mts'),
+    ).toBe(true);
+    expect(
+      subprocesses.some((fact) => fact.workspace === core && fact.target === 'tests/fixtures/worker.fixture.ts'),
+    ).toBe(true);
+    expect(
+      subprocesses.some((fact) => fact.workspace === core && fact.target === 'tests/fixtures/override.fixture.ts'),
+    ).toBe(true);
+    for (const file of invalidFiles) {
+      expect(subprocesses.some((fact) => fact.target.endsWith(path.basename(file)))).toBe(false);
+    }
+    const run = yield* runPinnedKnip(root, consumerPath, model).pipe(Effect.provide(NodeServices.layer));
+    expect(run.status, run.stderr).toBe(1);
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    const unusedFiles = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
+    for (const file of invalidFiles) {
+      expect(unusedFiles).toContain(file);
+    }
+    for (const file of [nativeFixture, coreFixture, overrideFixture]) {
+      expect(unusedFiles).not.toContain(file);
+      expect(report.issues.find((issue) => issue.file === file)?.exports.map((finding) => finding.name)).toContain(
+        'unusedNativeNeighbor',
+      );
+    }
+    const actualShellConsumer = 'apps/shell-super-app/tests/integration/module-api-node-process.test.ts';
+    const actualCoreConsumer = 'packages/core-runtime/tests/unit/outbox-process.test.ts';
+    const shellSource = `${shell}/tests/integration/module-api-node-process.test.ts`;
+    const coreSource = `${core}/tests/unit/outbox-process.test.ts`;
+    write(root, shellSource, readFileSync(path.join(appRoot, actualShellConsumer), 'utf-8'));
+    write(root, coreSource, readFileSync(path.join(appRoot, actualCoreConsumer), 'utf-8'));
+    write(root, 'scripts/integration/fixtures/native-owner-process.mts', 'export const unusedNeighbor = 1;');
+    write(root, `${core}/tests/fixtures/outbox-worker-process.fixture.ts`, 'export const unusedNeighbor = 1;');
+    const actual = yield* buildKnipModel(
+      root,
+      {
+        workspaces: {
+          '.': { entry: [], node: false, project: ['scripts/**/*.mts'] },
+          'apps/*': { entry: ['tests/integration/module-api-node-process.test.ts'], node: false, project: ['**/*.ts'] },
+          'packages/*': { entry: ['tests/unit/outbox-process.test.ts'], node: false, project: ['**/*.ts'] },
+        },
+      },
+      consumerPath,
+    ).pipe(Effect.provide(NodeServices.layer));
+    expect(
+      actual.evidence.some(
+        (fact) =>
+          fact.source === shellSource &&
+          fact.reason.startsWith(nativeSubprocessReason) &&
+          fact.target === '../../scripts/integration/fixtures/native-owner-process.mts',
+      ),
+    ).toBe(true);
+    expect(
+      actual.evidence.some(
+        (fact) =>
+          fact.source === coreSource &&
+          fact.reason.startsWith(nativeSubprocessReason) &&
+          fact.target === 'tests/fixtures/outbox-worker-process.fixture.ts',
+      ),
+    ).toBe(true);
+  }),
+);
 
 it.live(
   'real pinned Knip models exact consumers and preserves neighboring findings',

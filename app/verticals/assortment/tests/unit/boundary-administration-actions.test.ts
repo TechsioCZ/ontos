@@ -171,6 +171,7 @@ const boundaryActionContext = (services: BoundaryAdministrationService) => {
         outbox.push(message);
         return Effect.void;
       },
+      compositionRevision: 'a'.repeat(64),
       recordAuditEvidence: (_evidence: Readonly<Record<string, Schema.Json>>) => Effect.void,
       recordDataAccess: () => Effect.void,
       scope,

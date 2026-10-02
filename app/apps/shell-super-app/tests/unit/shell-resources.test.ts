@@ -1,13 +1,10 @@
-import { buildInstalledModuleCatalog } from '@app/core-runtime';
-import type {
-  ContextAccessDecision,
-  ContextAccessService,
-  InstalledModuleCatalog,
-  TenantModuleState,
-} from '@app/core-runtime';
-import { DateTime, Effect, Schema } from 'effect';
+import type { ContextAccessDecision, ContextAccessService, TenantModuleState } from '@app/core-runtime';
+import { DateTime, Duration, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
+import { TestClock } from 'effect/testing';
 
+import { makeCompositionSnapshot } from '../fixtures/application-composition.ts';
+import { makeInstalledModuleCatalogLoader } from '../../api/modules/installed-module-catalog.ts';
 import {
   attachShellMedia,
   makeShellResourceDetail,
@@ -16,6 +13,7 @@ import {
   ShellProviderUnavailableError,
   ShellTimelineEntrySchema,
 } from '../../api/modules/shell-resources.ts';
+import type { ShellProviderAssertionIssuer } from '../../api/modules/shell-resources.ts';
 
 const moduleId = 'property.registry';
 const resourceType = 'property.registry.unit';
@@ -52,125 +50,121 @@ const entrypoint = (role: 'api' | 'search', access: 'read' | 'write' = 'read') =
   scope: 'tenant' as const,
 });
 
-const catalog = (): InstalledModuleCatalog =>
-  buildInstalledModuleCatalog([
-    {
-      contract: {
-        deployment: { appId: 'property-registry', buildMarker: 'test' },
-        manifest: {
-          activation: {
-            defaultState: 'inactive',
-            preservesHistoryWhenInactive: true,
-            scope: 'tenant',
-            supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
-          },
-          module: {
-            description: 'Property capability.',
-            displayName: 'Property',
-            id: moduleId,
-            implementedAs: 'ultramodern_microvertical',
-            kind: 'business_module',
-          },
-          publicSurface: {
-            actions: [
-              {
-                actionKey: 'property.registry.attach-media',
-                auditProfile: 'standard',
-                entrypoint: {
-                  access: 'write',
-                  authorization: {
-                    kind: 'action_execution',
-                    provisioning: 'tenant_membership_default',
-                  },
-                  entrypointKey: 'property.registry.attach-media',
-                  moduleKey: moduleId,
-                  role: 'action',
-                  scope: 'tenant',
-                },
-                idempotency: 'required',
-                legalEntityScope: 'required',
-                owningModuleId: moduleId,
-                schemaVersion: '1',
-              },
-            ],
-            api: [
-              {
-                key: 'property.registry.resource-api',
-                operationKeys: ['detail'],
-              },
-            ],
-            components: [],
-            events: [],
-            reports: [],
-            resourceTypes: [
-              {
-                capabilities: {
-                  graphVisible: false,
-                  linkable: true,
-                  mediaAttachable: true,
-                  searchable: true,
-                  timelineVisible: true,
-                },
-                description: 'A unit.',
-                key: resourceType,
-                label: 'Unit',
-                owningModuleId: moduleId,
-              },
-            ],
-            search: [
-              {
-                accessFiltering: 'resource_permission',
-                key: 'property.registry.unit-search',
-                owningModuleId: moduleId,
-                resourceType,
-              },
-            ],
-            shellContributions: {
-              mediaAttachments: [
-                {
-                  actionKey: 'property.registry.attach-media',
-                  apiKey: 'property.registry.resource-api',
-                  contributionKey: 'property.registry.media.unit',
-                  entrypoint: entrypoint('api', 'write'),
-                  resourceType,
-                },
-              ],
-              navigation: [],
-              pages: [],
-              publicComponents: [],
-              reports: [],
-              resourceDetails: [
-                {
-                  apiKey: 'property.registry.resource-api',
-                  contributionKey: 'property.registry.resource.unit',
-                  entrypoint: entrypoint('api'),
-                  resourceType,
-                },
-              ],
-              search: [
-                {
-                  contributionKey: 'property.registry.search.unit',
-                  entrypoint: entrypoint('search'),
-                  searchKey: 'property.registry.unit-search',
-                },
-              ],
-              timelines: [
-                {
-                  apiKey: 'property.registry.resource-api',
-                  contributionKey: 'property.registry.timeline.unit',
-                  entrypoint: entrypoint('api'),
-                  resourceType,
-                },
-              ],
-            },
-          },
-        },
-        runtime: { outboxSubscriptions: [] },
-        schemaVersion: '2',
-      },
-      expectedAppId: 'property-registry',
+const propertyContract = {
+  deployment: { appId: 'property-registry', buildMarker: 'test' },
+  manifest: {
+    activation: {
+      defaultState: 'inactive',
+      preservesHistoryWhenInactive: true,
+      scope: 'tenant',
+      supportedStates: ['inactive', 'active', 'read_only', 'suspended', 'quarantined', 'deprecated', 'archived'],
     },
-  ]);
+    module: {
+      description: 'Property capability.',
+      displayName: 'Property',
+      id: moduleId,
+      implementedAs: 'ultramodern_microvertical',
+      kind: 'business_module',
+    },
+    publicSurface: {
+      actions: [
+        {
+          actionKey: 'property.registry.attach-media',
+          auditProfile: 'standard',
+          entrypoint: {
+            access: 'write',
+            authorization: {
+              kind: 'action_execution',
+              provisioning: 'tenant_membership_default',
+            },
+            entrypointKey: 'property.registry.attach-media',
+            moduleKey: moduleId,
+            role: 'action',
+            scope: 'tenant',
+          },
+          idempotency: 'required',
+          legalEntityScope: 'required',
+          owningModuleId: moduleId,
+          schemaVersion: '1',
+        },
+      ],
+      api: [
+        {
+          key: 'property.registry.resource-api',
+          operationKeys: ['detail'],
+        },
+      ],
+      components: [],
+      events: [],
+      reports: [],
+      resourceTypes: [
+        {
+          capabilities: {
+            graphVisible: false,
+            linkable: true,
+            mediaAttachable: true,
+            searchable: true,
+            timelineVisible: true,
+          },
+          description: 'A unit.',
+          key: resourceType,
+          label: 'Unit',
+          owningModuleId: moduleId,
+        },
+      ],
+      search: [
+        {
+          accessFiltering: 'resource_permission',
+          key: 'property.registry.unit-search',
+          owningModuleId: moduleId,
+          resourceType,
+        },
+      ],
+      shellContributions: {
+        mediaAttachments: [
+          {
+            actionKey: 'property.registry.attach-media',
+            apiKey: 'property.registry.resource-api',
+            contributionKey: 'property.registry.media.unit',
+            entrypoint: entrypoint('api', 'write'),
+            resourceType,
+          },
+        ],
+        navigation: [],
+        pages: [],
+        publicComponents: [],
+        reports: [],
+        resourceDetails: [
+          {
+            apiKey: 'property.registry.resource-api',
+            contributionKey: 'property.registry.resource.unit',
+            entrypoint: entrypoint('api'),
+            resourceType,
+          },
+        ],
+        search: [
+          {
+            contributionKey: 'property.registry.search.unit',
+            entrypoint: entrypoint('search'),
+            searchKey: 'property.registry.unit-search',
+          },
+        ],
+        timelines: [
+          {
+            apiKey: 'property.registry.resource-api',
+            contributionKey: 'property.registry.timeline.unit',
+            entrypoint: entrypoint('api'),
+            resourceType,
+          },
+        ],
+      },
+    },
+  },
+  runtime: { outboxSubscriptions: [] },
+  schemaVersion: '2',
+};
+
+const catalog = () => makeInstalledModuleCatalogLoader(makeCompositionSnapshot([propertyContract]));
 
 const access = (
   moduleDecision: ContextAccessDecision = 'allowed',
@@ -197,7 +191,7 @@ const dependencies = (
 ) => {
   let assertion = 0;
   return {
-    catalog: Effect.succeed(catalog()),
+    catalog: catalog(),
     contextAccess: access(moduleDecision, resourceDecision, resourceWriteDecision),
     issueAssertion: () => {
       const authorization = `Bearer test-${assertion}`;
@@ -252,15 +246,15 @@ it.effect('search filters resource denials and reports partial provider failure'
     }).search(context, ' unit ');
     expect(result).toEqual({ partial: false, results: [] });
 
-    const installed = catalog();
+    const installed = yield* catalog();
     const [contract] = installed.contracts;
     if (contract === undefined) {
       throw new TypeError('The search fixture must install its module contract');
     }
     const backupSearchKey = 'property.registry.backup-unit-search';
-    const catalogWithBackupSearch = buildInstalledModuleCatalog([
-      {
-        contract: {
+    const catalogWithBackupSearch = yield* makeInstalledModuleCatalogLoader(
+      makeCompositionSnapshot([
+        {
           ...contract,
           manifest: {
             ...contract.manifest,
@@ -292,9 +286,8 @@ it.effect('search filters resource denials and reports partial provider failure'
             },
           },
         },
-        expectedAppId: 'property-registry',
-      },
-    ]);
+      ]),
+    );
     const partial = makeShellSearch(
       {
         ...dependencies(),
@@ -318,7 +311,7 @@ it.effect(
   'tenant-scoped Party search needs no Legal Entity, forwards declared filters and preserves identity metadata',
   () =>
     Effect.gen(function* tenantScopedPartySearchNeedsNo() {
-      const installed = catalog();
+      const installed = yield* catalog();
       const [contract] = installed.contracts;
       if (contract === undefined) {
         throw new Error('The test catalog must include one installed contract');
@@ -386,7 +379,7 @@ it.effect(
           },
         },
       };
-      const partyCatalog = buildInstalledModuleCatalog([{ contract: partyContract, expectedAppId: 'party-registry' }]);
+      const partyCatalog = yield* makeInstalledModuleCatalogLoader(makeCompositionSnapshot([partyContract]));
       const calls: unknown[] = [];
       const baseline = dependencies();
       const result = yield* makeShellSearch(
@@ -464,13 +457,13 @@ it.effect('search fails only when every eligible provider fails', () =>
 
 it.effect('Counterparty search preserves both identities, selected scope, roles and collision metadata', () =>
   Effect.gen(function* CounterpartySearchPreservesBothIdentitiesSelected() {
-    const [contract] = catalog().contracts;
+    const [contract] = (yield* catalog()).contracts;
     if (contract === undefined) {
       throw new Error('The test catalog must include one installed contract');
     }
-    const filteredCatalog = buildInstalledModuleCatalog([
-      {
-        contract: {
+    const filteredCatalog = yield* makeInstalledModuleCatalogLoader(
+      makeCompositionSnapshot([
+        {
           ...contract,
           manifest: {
             ...contract.manifest,
@@ -483,9 +476,8 @@ it.effect('Counterparty search preserves both identities, selected scope, roles 
             },
           },
         },
-        expectedAppId: 'property-registry',
-      },
-    ]);
+      ]),
+    );
     const counterpartyRef = { ...ref, tenantId };
     const canonicalPartyRef = {
       ...ref,
@@ -615,6 +607,37 @@ it.effect('search fails closed for module or resource authorization uncertainty'
   }),
 );
 
+it.effect('expired composition authority blocks search and resource providers despite granted permissions', () =>
+  Effect.gen(function* expiredAuthorityBlocksProviders() {
+    const snapshot = yield* makeCompositionSnapshot([propertyContract], 1);
+    const expiredDependencies = {
+      ...dependencies(),
+      catalog: makeInstalledModuleCatalogLoader(Effect.succeed(snapshot)),
+    };
+    let providerCalls = 0;
+    yield* TestClock.adjust(Duration.millis(2));
+    const search = makeShellSearch(expiredDependencies, {
+      search: () => {
+        providerCalls += 1;
+        return Effect.succeed([{ ref, title: 'Unit 1' }]);
+      },
+    });
+    expect(Schema.is(ShellProviderUnavailableError)(yield* Effect.flip(search.search(context, 'unit')))).toBe(true);
+    const detail = makeShellResourceDetail(expiredDependencies, {
+      detail: () => {
+        providerCalls += 1;
+        return Effect.succeed({ fields: [], title: 'Unit 1' });
+      },
+      timeline: () => {
+        providerCalls += 1;
+        return Effect.succeed({ entries: [], projectionLagging: false });
+      },
+    });
+    expect(yield* detail.resolve(context, ref)).toEqual({ outcome: 'unavailable' });
+    expect(providerCalls).toBe(0);
+  }),
+);
+
 it.effect('resource detail applies catalog, state, module and resource gates before providers', () =>
   Effect.gen(function* resourceDetailAppliesCatalogStateModule() {
     let calls = 0;
@@ -727,7 +750,22 @@ it.effect('media endpoint cannot invoke a provider mutation', () =>
 it.effect('acquires a fresh audience-scoped assertion for each provider attempt', () =>
   Effect.gen(function* acquiresAFreshAudienceScopedAssertion() {
     const authorizations: string[] = [];
-    const result = yield* makeShellResourceDetail(dependencies(), {
+    const assertions: Parameters<ShellProviderAssertionIssuer['issueAssertion']>[0][] = [];
+    const approved = yield* catalog();
+    const baseline = dependencies();
+    let catalogLoads = 0;
+    const capturedDependencies = {
+      ...baseline,
+      catalog: Effect.sync(() => {
+        catalogLoads += 1;
+        return approved;
+      }),
+      issueAssertion: (input: Parameters<ShellProviderAssertionIssuer['issueAssertion']>[0]) => {
+        assertions.push(input);
+        return baseline.issueAssertion();
+      },
+    };
+    const result = yield* makeShellResourceDetail(capturedDependencies, {
       detail: ({ authorization }) => {
         authorizations.push(authorization);
         return Effect.succeed({ fields: [], title: 'Unit 1' });
@@ -739,5 +777,38 @@ it.effect('acquires a fresh audience-scoped assertion for each provider attempt'
     }).resolve(context, ref);
     expect(result.outcome).toBe('resolved');
     expect(authorizations).toEqual(['Bearer test-0', 'Bearer test-1']);
+    expect(catalogLoads).toBe(1);
+    expect(assertions).toEqual([
+      { appId: 'property-registry', compositionRevision: approved.composition.revision, context },
+      { appId: 'property-registry', compositionRevision: approved.composition.revision, context },
+    ]);
+  }),
+);
+
+it.effect('search issues assertions for the release captured by its single catalog load', () =>
+  Effect.gen(function* searchCapturesApprovedRelease() {
+    const approved = yield* catalog();
+    const assertions: Parameters<ShellProviderAssertionIssuer['issueAssertion']>[0][] = [];
+    const baseline = dependencies();
+    let catalogLoads = 0;
+    const result = yield* makeShellSearch(
+      {
+        ...baseline,
+        catalog: Effect.sync(() => {
+          catalogLoads += 1;
+          return approved;
+        }),
+        issueAssertion: (input) => {
+          assertions.push(input);
+          return baseline.issueAssertion();
+        },
+      },
+      { search: () => Effect.succeed([{ ref, title: 'Unit 1' }]) },
+    ).search(context, 'unit');
+    expect(result).toEqual({ partial: false, results: [{ kind: 'resource', ref, title: 'Unit 1' }] });
+    expect(catalogLoads).toBe(1);
+    expect(assertions).toEqual([
+      { appId: 'property-registry', compositionRevision: approved.composition.revision, context },
+    ]);
   }),
 );

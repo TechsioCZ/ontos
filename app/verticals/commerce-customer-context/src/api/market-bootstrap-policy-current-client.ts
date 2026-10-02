@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface MarketBootstrapPolicyCurrentClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type MarketBootstrapPolicyCurrentAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeMarketBootstrapPolicyCurrent = (
   payload: MarketBootstrapPolicyCurrentRequest,
   ...[requestCorrelation, options = {}]: MarketBootstrapPolicyCurrentOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeMarketBootstrapPolicyCurrentWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeMarketBootstrapPolicyCurrentWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

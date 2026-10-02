@@ -25,13 +25,6 @@ export const OUTBOX_WORKER_HOST = Object.freeze({
 });
 
 /**
- * Where the deploying environment runs its delivery units: Zerops services on `zerops`, Cloudflare
- * Workers on `cloudflare`. The Outbox Workers stay on Zerops for both; their mode chooses how.
- */
-export const DeployTargetSchema = Schema.Literals(['cloudflare', 'zerops']);
-/** @typedef {typeof DeployTargetSchema.Type} DeployTarget */
-
-/**
  * How the deploying environment runs its Outbox Workers on Zerops, whatever its deploy target:
  * `dedicated` gives every owner its own `<owner>-worker` service (independent, highly available);
  * `host` runs every owner's worker entry in the one Outbox Worker host service (one cheap process).

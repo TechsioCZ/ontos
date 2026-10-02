@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CreateProductRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CreateProductRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCreateProductRecovery = (
   payload: CreateProductRecoveryRequest,
   ...[requestCorrelation, options = {}]: CreateProductRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCreateProductRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCreateProductRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

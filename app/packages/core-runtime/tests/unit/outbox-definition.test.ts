@@ -76,6 +76,7 @@ it.effect('defines an exact immutable registration while keeping the handler opa
     yield* getOutboxWorkerHandler(worker)(payload, {
       attemptNumber: 1,
       claimId: 'claim-1',
+      compositionRevision: 'a'.repeat(64),
       deliveryId: 'delivery-1',
       domainEventId: 'event-1',
       messageId: 'message-1',

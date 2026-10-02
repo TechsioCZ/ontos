@@ -30,7 +30,7 @@ import { commerceMarketCatalogRelations } from '../../src/database/schema.ts';
 import { MarketRetirementImpactAuthorityLive } from '../../src/integrations/market-retirement-impact.ts';
 
 const RETIRE_ACTION_KEY = 'commerce.market-catalog.retire-market';
-const CUSTOMER_CONTEXT_BASE_URL = 'https://customer-context.example.test';
+const FIXTURE_COMPOSITION_REVISION = 'a'.repeat(64);
 const SHELL_GATEWAY_BASE_URL = 'https://shell.example.test';
 const RESERVATION_TOKEN = '8c9bed83-a49d-4f21-b1e8-12efb2526174';
 const OWNER_RESOURCE_ID = '4f5cba1e-f3d1-42d6-b1bd-9923d93033a2';
@@ -242,10 +242,12 @@ const makeTransport = (
   const fetch: typeof globalThis.fetch = (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
-    if (url.pathname.endsWith('/auth/gateway-context')) {
+    if (url.pathname.endsWith('/auth/api-key/gateway-context')) {
       return Promise.resolve(
         Response.json(
           Schema.encodeSync(GatewayContextResponseSchema)({
+            apiBaseUrl: '/module-api/commerce.customer-context/release-a',
+            compositionRevision: FIXTURE_COMPOSITION_REVISION,
             expiresAt: gatewayExpiresAt,
             token: 'market-retirement-production-token',
           }),
@@ -295,10 +297,11 @@ it.live(
   () =>
     Effect.scoped(
       Effect.gen(function* productionRetirement() {
-        const connections = yield* loadDatabaseConnectionPair();
+        const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [RETIRE_ACTION_KEY],
           authenticationNamespaceId: 'market-retirement-production-postgres',
+          compositionRevision: FIXTURE_COMPOSITION_REVISION,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
@@ -376,7 +379,7 @@ it.live(
             Effect.provide(
               ConfigProvider.layer(
                 ConfigProvider.fromUnknown({
-                  ONTOS_COMMERCE_CUSTOMER_CONTEXT_BASE_URL: CUSTOMER_CONTEXT_BASE_URL,
+                  ONTOS_COMMERCE_MARKET_CATALOG_GATEWAY_API_KEY: 'market-owner-api-key',
                   ONTOS_SHELL_GATEWAY_BASE_URL: SHELL_GATEWAY_BASE_URL,
                 }),
               ),

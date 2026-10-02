@@ -88,7 +88,7 @@ export class InstalledModuleCatalogService extends Context.Service<
 >()('@app/core-runtime/modules/catalog/InstalledModuleCatalogService') {}
 
 const invalid = (reason: string): OntosModuleCatalogValidationError =>
-  new OntosModuleCatalogValidationError({
+  new OntosModuleCatalogValidationErrorValue({
     code: 'ontos_module_catalog_invalid',
     reason,
   });

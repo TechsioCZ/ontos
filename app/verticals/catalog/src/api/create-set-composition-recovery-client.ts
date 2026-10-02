@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CreateSetCompositionRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CreateSetCompositionRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeCreateSetCompositionRecovery = (
   payload: CreateSetCompositionRecoveryRequest,
   ...[requestCorrelation, options = {}]: CreateSetCompositionRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCreateSetCompositionRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCreateSetCompositionRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

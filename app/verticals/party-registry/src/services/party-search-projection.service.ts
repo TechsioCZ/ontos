@@ -214,13 +214,16 @@ export const makePartySearchProjector = (
         ['party.registry.party', 'party.registry.counterparty'],
         (resourceType) =>
           store
-            .replace({
-              documents: documents.filter((document) => document.ref.resourceType === resourceType),
-              moduleId: 'party.registry',
-              rebuildVersion: snapshot.projectionVersion,
-              resourceType,
-              tenantId: snapshot.tenantId,
-            })
+            .replace(
+              {
+                documents: documents.filter((document) => document.ref.resourceType === resourceType),
+                moduleId: 'party.registry',
+                rebuildVersion: snapshot.projectionVersion,
+                resourceType,
+                tenantId: snapshot.tenantId,
+              },
+              context,
+            )
             .pipe(Effect.mapError(unavailable)),
         { concurrency: 1, discard: true },
       );
@@ -228,15 +231,18 @@ export const makePartySearchProjector = (
     }
     const observe = (mutation: CoreSearchProjectionMutation) =>
       ingestion
-        .ingest({
-          consumerModuleKey: 'party.registry',
-          mutation,
-          producerModuleKey: context.producerModuleKey,
-          projectionVersion: snapshot.projectionVersion,
-          tenantId: context.tenantId,
-          topic: context.topic,
-          workerKey: context.workerKey,
-        })
+        .ingest(
+          {
+            consumerModuleKey: 'party.registry',
+            mutation,
+            producerModuleKey: context.producerModuleKey,
+            projectionVersion: snapshot.projectionVersion,
+            tenantId: context.tenantId,
+            topic: context.topic,
+            workerKey: context.workerKey,
+          },
+          context,
+        )
         .pipe(Effect.mapError(unavailable));
     yield* Effect.forEach(documents, (document) => observe({ document, kind: 'upsert' }), {
       concurrency: 1,

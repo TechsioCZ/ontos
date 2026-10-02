@@ -45,6 +45,7 @@ import {
   EnrollmentTransitionKeySchema,
 } from '../../shared/enrollment-contracts.ts';
 import type { EnrollmentAttemptSnapshot, EnrollmentOwnerOperationSnapshot } from '../../shared/enrollment-contracts.ts';
+import { ENROLLMENT_TEST_COMPOSITION_REVISION } from '../support/enrollment-composition-authority.ts';
 
 /**
  * Reconciling the two Commerce-owned Retail self-enrollment transitions after their Action response
@@ -161,6 +162,7 @@ const operation = (
 });
 
 const attemptFor = (identities: Scenario): EnrollmentAttemptSnapshot => ({
+  compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
   createdAt: at,
   createdByPrincipalId: Schema.decodeSync(EnrollmentPrincipalIdSchema)(identities.actorPrincipalId),
   intentDigest: INTENT_DIGEST,
@@ -211,6 +213,7 @@ const contextFor = (
 const reconciliationFor = (identities: Scenario, transition: JourneyTransitionSpec, ownerInvocationId: string) => ({
   ...Schema.decodeUnknownSync(CommerceEnrollmentOwnerTransitionSchema)({
     actorPrincipalId: identities.actorPrincipalId,
+    compositionRevision: ENROLLMENT_TEST_COMPOSITION_REVISION,
     correlationId: `enrollment-profile-reconciliation-${identities.attemptId}`,
     expectedRevision: 5,
     ownerInvocationId,

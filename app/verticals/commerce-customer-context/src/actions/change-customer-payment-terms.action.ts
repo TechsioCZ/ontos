@@ -268,7 +268,7 @@ export const changeCustomerPaymentTermsAction = defineAction(
     schemaVersion: '1',
   },
   handleChangeCustomerPaymentTerms,
-  (transaction, scope) => {
+  (transaction, scope, compositionRevision) => {
     const { legalEntityId } = scope;
     if (legalEntityId === undefined) {
       return Effect.fail(
@@ -280,6 +280,7 @@ export const changeCustomerPaymentTermsAction = defineAction(
     }
     return Effect.gen(function* makeChangePaymentTermServices() {
       const catalog = yield* paymentTermCatalogPortFromEnvironment({
+        compositionRevision,
         legalEntityId,
         requestCorrelation: scope.correlationId,
       });

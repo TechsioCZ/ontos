@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface PriceScheduleClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type PriceScheduleAuthorizedInvocation = readonly [
@@ -44,6 +45,10 @@ export const executePriceSchedule = (
   payload: PriceScheduleRequest,
   ...[requestCorrelation, options = {}]: PriceScheduleOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executePriceScheduleWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executePriceScheduleWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

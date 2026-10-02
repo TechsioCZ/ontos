@@ -126,3 +126,24 @@ it.effect('reads a deleted service as absent and any other failed read as an err
     expect(forbidden.message).toBe('Zerops service read failed with HTTP 403');
   }),
 );
+
+it.effect('does not accept a service-not-found payload on authentication or server errors as deletion', () =>
+  Effect.gen(function* rejectsAmbiguousDeletion() {
+    for (const status of [401, 403, 404, 500]) {
+      const client = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(request, Response.json({ error: { code: 'serviceStackNotFound' } }, { status })),
+        ),
+      );
+      const layer = Layer.merge(
+        ZeropsPublicApiLive.pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, client))),
+        ConfigProvider.layer(ConfigProvider.fromUnknown({ ZEROPS_TOKEN: TEST_TOKEN })),
+      );
+      const error = yield* Effect.gen(function* readOldService() {
+        const api = yield* ZeropsPublicApi;
+        return yield* api.findServiceStack('deleted');
+      }).pipe(Effect.provide(layer), Effect.flip);
+      expect(error.message).toBe(`Zerops service read failed with HTTP ${String(status)}`);
+    }
+  }),
+);

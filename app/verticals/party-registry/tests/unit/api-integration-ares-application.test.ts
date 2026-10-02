@@ -1,3 +1,6 @@
+// @rstest-environment-options {"url":"https://shell.ontos.test"}
+// @rstest-environment happy-dom
+import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { DateTime, Effect, Layer, Match, Option, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -126,6 +129,8 @@ const request: AresApplyRequest = {
   ],
   userConfirmed: true,
 };
+const compositionRevision = 'a'.repeat(64);
+const apiBaseUrl = '/module-api/party-registry/build-approved/party-registry-api';
 class TestFailure extends Schema.TaggedError<TestFailure>()('TestFailure', {
   action: Schema.String,
 }) {}
@@ -136,8 +141,10 @@ const makeInvoker = (calls: string[], failAction?: string): PartyRegistryStandar
   };
   return {
     addContactPoint: () => Effect.never,
-    addPartyOfficialIdentifier: (_payload, authorization) =>
-      complete(`add-party-official-identifier|${authorization}`, {
+    addPartyOfficialIdentifier: (_payload, authorization, options) => {
+      expect(options.baseUrl).toBe(apiBaseUrl);
+      expect(options.compositionRevision).toBe(compositionRevision);
+      return complete(`add-party-official-identifier|${authorization}`, {
         officialIdentifierRef: {
           moduleId: 'party.registry' as const,
           resourceId: '40000000-0000-4000-8000-000000000001',
@@ -145,9 +152,12 @@ const makeInvoker = (calls: string[], failAction?: string): PartyRegistryStandar
           tenantId: partyRef.tenantId,
         },
         partyRef,
-      }),
-    updateParty: (_payload, authorization) =>
-      complete(`update-party|${authorization}`, {
+      });
+    },
+    updateParty: (_payload, authorization, options) => {
+      expect(options.baseUrl).toBe(apiBaseUrl);
+      expect(options.compositionRevision).toBe(compositionRevision);
+      return complete(`update-party|${authorization}`, {
         archivedAt: Option.none(),
         createdAt: partyCreatedAt,
         displayName: Option.some('Example s.r.o.'),
@@ -155,10 +165,14 @@ const makeInvoker = (calls: string[], failAction?: string): PartyRegistryStandar
         partyType: 'ORGANIZATION' as const,
         revision: 2,
         updatedAt: partyUpdatedAt,
-      }),
+      });
+    },
   };
 };
-const gateway = makeOperationGateway(() => Effect.succeed({ expiresAt: 1_788_430_000, token: 'signed-gateway-token' }));
+const gateway = makeOperationGateway(({ compositionRevision: requestedRevision }) => {
+  expect(requestedRevision).toBe(compositionRevision);
+  return Effect.succeed({ apiBaseUrl, compositionRevision, expiresAt: 1_788_430_000, token: 'signed-gateway-token' });
+});
 const makeReads = (displayName: string | null = null): AresApplyReads => ({
   contactPoints: () => Effect.succeed({ items: [] }),
   identifiers: () => Effect.succeed({ items: [] }),
@@ -184,7 +198,12 @@ const makeReads = (displayName: string | null = null): AresApplyReads => ({
       },
     }),
 });
-it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES application', (aresIt) => {
+it.layer(
+  Layer.mergeAll(
+    Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)),
+    Layer.effectDiscard(pinDocumentCompositionRevision(compositionRevision)),
+  ),
+)('ARES application', (aresIt) => {
   aresIt.effect('runs only explicitly selected standard Actions and preserves every result', () =>
     Effect.gen(function* runsOnlyExplicitlySelectedStandard() {
       const calls: string[] = [];
@@ -580,42 +599,83 @@ it.layer(Layer.effectDiscard(TestClock.setTime(confirmedAtEpoch)))('ARES applica
       expect(calls).toEqual([]);
     }),
   );
-  aresIt.effect('every governed read and selected Action receives fresh audience-scoped authorization', () =>
-    Effect.gen(function* everyGovernedReadAndSelected() {
-      const tokens: string[] = [];
+  aresIt.effect(
+    'every governed read and selected Action retains the pinned release and receives fresh audience-scoped authorization',
+    () =>
+      Effect.gen(function* everyGovernedReadAndSelected() {
+        const tokens: string[] = [];
+        const calls: string[] = [];
+        const delegate = makeReads();
+        const issued = makeOperationGateway(({ compositionRevision: requestedRevision }) => {
+          expect(requestedRevision).toBe(compositionRevision);
+          const token = `token-${tokens.length + 1}`;
+          tokens.push(token);
+          return Effect.succeed({ apiBaseUrl, compositionRevision, expiresAt: 1_788_430_000, token });
+        });
+        const authorized: string[] = [];
+        const reads: AresApplyReads = {
+          contactPoints: (payload, authorization, ...rest) => {
+            expect(rest[1]).toEqual({ baseUrl: apiBaseUrl, compositionRevision });
+            authorized.push(authorization);
+            return delegate.contactPoints(payload, authorization, ...rest);
+          },
+          identifiers: (payload, authorization, ...rest) => {
+            expect(rest[1]).toEqual({ baseUrl: apiBaseUrl, compositionRevision });
+            authorized.push(authorization);
+            return delegate.identifiers(payload, authorization, ...rest);
+          },
+          observation: (payload, authorization, ...rest) => {
+            expect(rest[1]).toEqual({ baseUrl: apiBaseUrl, compositionRevision });
+            authorized.push(authorization);
+            return delegate.observation(payload, authorization, ...rest);
+          },
+          party: (payload, authorization, ...rest) => {
+            expect(rest[1]).toEqual({ baseUrl: apiBaseUrl, compositionRevision });
+            authorized.push(authorization);
+            expect(payload.includeFactHistory).toBe(undefined);
+            return delegate.party(payload, authorization, ...rest);
+          },
+        };
+        yield* applyAresObservation(request, makeInvoker(calls), {
+          gateway: issued,
+          reads,
+        });
+        expect(authorized).toEqual(['Bearer token-1', 'Bearer token-2', 'Bearer token-3', 'Bearer token-4']);
+        expect(calls).toEqual(['update-party|Bearer token-5', 'add-party-official-identifier|Bearer token-6']);
+      }),
+  );
+  aresIt.effect('rejects an issued revision that differs from the document before reads or Actions', () =>
+    Effect.gen(function* rejectWrongIssuedCompositionRevision() {
       const calls: string[] = [];
-      const delegate = makeReads();
-      const issued = makeOperationGateway(() => {
-        const token = `token-${tokens.length + 1}`;
-        tokens.push(token);
-        return Effect.succeed({ expiresAt: 1_788_430_000, token });
+      let readCalls = 0;
+      const mismatchedGateway = makeOperationGateway(({ compositionRevision: requestedRevision }) => {
+        expect(requestedRevision).toBe(compositionRevision);
+        return Effect.succeed({
+          apiBaseUrl,
+          compositionRevision: 'b'.repeat(64),
+          expiresAt: 1_788_430_000,
+          token: 'wrong-release-token',
+        });
       });
-      const authorized: string[] = [];
-      const reads: AresApplyReads = {
-        contactPoints: (payload, authorization, ...rest) => {
-          authorized.push(authorization);
-          return delegate.contactPoints(payload, authorization, ...rest);
+      const failure = yield* applyAresObservation(request, makeInvoker(calls), {
+        gateway: mismatchedGateway,
+        reads: {
+          ...makeReads(),
+          observation: () =>
+            Effect.sync(() => {
+              readCalls += 1;
+              return decodedObservation;
+            }),
         },
-        identifiers: (payload, authorization, ...rest) => {
-          authorized.push(authorization);
-          return delegate.identifiers(payload, authorization, ...rest);
-        },
-        observation: (payload, authorization, ...rest) => {
-          authorized.push(authorization);
-          return delegate.observation(payload, authorization, ...rest);
-        },
-        party: (payload, authorization, ...rest) => {
-          authorized.push(authorization);
-          expect(payload.includeFactHistory).toBe(undefined);
-          return delegate.party(payload, authorization, ...rest);
-        },
-      };
-      yield* applyAresObservation(request, makeInvoker(calls), {
-        gateway: issued,
-        reads,
-      });
-      expect(authorized).toEqual(['Bearer token-1', 'Bearer token-2', 'Bearer token-3', 'Bearer token-4']);
-      expect(calls).toEqual(['update-party|Bearer token-5', 'add-party-official-identifier|Bearer token-6']);
+      }).pipe(Effect.flip);
+      Match.value(failure).pipe(
+        Match.tag('DocumentCompositionRevisionError', (rejection) =>
+          expect(rejection.reason).toBe('revision-mismatch'),
+        ),
+        Match.orElse(() => expect.unreachable('Expected rejection of the mismatched document revision')),
+      );
+      expect(readCalls).toBe(0);
+      expect(calls).toEqual([]);
     }),
   );
   aresIt.effect('read denial fails before writes and preserves its declared error', () =>

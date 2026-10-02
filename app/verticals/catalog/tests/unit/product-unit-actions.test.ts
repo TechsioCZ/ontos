@@ -1,7 +1,9 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext, DomainEventContractMap } from '@app/core-runtime';
 import { ActionTransactionError, TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { bindActionTestServices, makeActionTestHarness } from '@app/core-runtime/testing/actions';
 import { describe, expect, it } from 'effect-rstest';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { Effect, Schema } from 'effect';
 
 import { CreateProductUnitPayloadSchema } from '../../shared/actions/create-product-unit.ts';
@@ -97,11 +99,13 @@ type ProductUnitRevisedDomainEvents = Readonly<
   Record<'commerce.catalog.product-unit-revised.v1', typeof OutboxPayloadSchema>
 >;
 const context = <DomainEvents extends DomainEventContractMap = Readonly<Record<string, never>>>(
+  compositionRevision: string,
   overrides: Partial<ProductUnitPersistence> = {},
 ): ActionHandlerContext<DomainEvents, ProductUnitPersistence> => ({
   actionInvocationId: '88888888-8888-4888-8888-888888888888',
   addDomainEvent: () => Effect.succeed(Object.create(null)),
   addOutboxMessage: () => Effect.void,
+  compositionRevision,
   recordAuditEvidence: () => Effect.void,
   recordDataAccess: () => Effect.void,
   scope,
@@ -117,9 +121,13 @@ const context = <DomainEvents extends DomainEventContractMap = Readonly<Record<s
 describe('Product Unit governed Actions', () => {
   it.effect('captures decoded success once and rolls back when capture fails', () =>
     Effect.gen(function* captureUnitResult() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const captured: unknown[] = [];
       const services = {
-        ...context().services,
+        ...context(compositionSnapshot.composition.revision).services,
         captureResult: (id: string, result: CreateProductUnitResult) =>
           Effect.sync(() => {
             captured.push({ id, result });
@@ -228,11 +236,20 @@ describe('Product Unit governed Actions', () => {
 
   it.effect('never reports mutation success without authoritative persistence', () =>
     Effect.gen(function* unavailableWrites() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const errors = yield* Effect.all([
-        handleCreateProductUnit(create, context()).pipe(Effect.flip),
-        handleReviseProductUnit(revise, context<ProductUnitRevisedDomainEvents>()).pipe(Effect.flip),
-        handleRetireProductUnit(retire, context()).pipe(Effect.flip),
-        handleSetProductUnitTargetDivisibility(divisibility, context()).pipe(Effect.flip),
+        handleCreateProductUnit(create, context(compositionSnapshot.composition.revision)).pipe(Effect.flip),
+        handleReviseProductUnit(
+          revise,
+          context<ProductUnitRevisedDomainEvents>(compositionSnapshot.composition.revision),
+        ).pipe(Effect.flip),
+        handleRetireProductUnit(retire, context(compositionSnapshot.composition.revision)).pipe(Effect.flip),
+        handleSetProductUnitTargetDivisibility(divisibility, context(compositionSnapshot.composition.revision)).pipe(
+          Effect.flip,
+        ),
       ]);
       expect(errors.map((error) => error.code)).toEqual([
         'product_unit_unavailable',
@@ -245,6 +262,10 @@ describe('Product Unit governed Actions', () => {
 
   it.effect('rejects foreign Tenant references before persistence', () =>
     Effect.gen(function* rejectForeignTenant() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const foreign = Schema.decodeUnknownSync(CreateProductUnitPayloadSchema)({
         ...create,
         unitRef: { ...unitRef, tenantId: otherTenantId },
@@ -253,10 +274,13 @@ describe('Product Unit governed Actions', () => {
         ...divisibility,
         target: { ...divisibility.target, tenantId: otherTenantId },
       });
-      const error = yield* handleCreateProductUnit(foreign, context({ create: unexpected })).pipe(Effect.flip);
+      const error = yield* handleCreateProductUnit(
+        foreign,
+        context(compositionSnapshot.composition.revision, { create: unexpected }),
+      ).pipe(Effect.flip);
       const targetError = yield* handleSetProductUnitTargetDivisibility(
         foreignTarget,
-        context({ setTargetDivisibility: unexpected }),
+        context(compositionSnapshot.composition.revision, { setTargetDivisibility: unexpected }),
       ).pipe(Effect.flip);
       expect(error.code).toBe('product_unit_invalid');
       expect(targetError.code).toBe('product_unit_invalid');

@@ -1,5 +1,7 @@
 import { Effect } from 'effect';
+import type { Schema } from 'effect';
 
+import type { DocumentCompositionRevisionError } from './document-composition-revision.ts';
 // eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure browser gateway value constructor, not a Context service.
 import { makeOperationGateway } from './operation-gateway.ts';
 import type { OperationGatewayIssuer } from './operation-gateway.ts';
@@ -20,7 +22,12 @@ const inventoryGateway = makeOperationGateway(inventoryAudience, ({ audience }) 
 });
 const failedInvocation = inventoryGateway.invoke(() => Effect.fail(attemptFailure));
 const successfulInvocation = makeOperationGateway(inventoryAudience, () =>
-  Effect.succeed({ expiresAt: 1_700_000_300, token: 'test-token' }),
+  Effect.succeed({
+    apiBaseUrl: '/shell-super-app-api/module-api/inventory-stock/build-1/inventory-stock-api',
+    compositionRevision: 'a'.repeat(64),
+    expiresAt: 1_700_000_300,
+    token: 'test-token',
+  }),
 ).invoke(() => Effect.succeed('completed' as const));
 
 type InventoryIssuer = OperationGatewayIssuer<typeof inventoryAudience, typeof acquisitionFailure>;
@@ -29,11 +36,15 @@ type InventoryAudience = Parameters<InventoryIssuer>[0]['audience'];
 const audienceIsExact: Equal<InventoryAudience, 'inventory-stock'> = true;
 const failureChannelsAreExact: Equal<
   EffectChannels<typeof failedInvocation>,
-  readonly [never, typeof acquisitionFailure | typeof attemptFailure, never]
+  readonly [
+    never,
+    typeof acquisitionFailure | typeof attemptFailure | DocumentCompositionRevisionError | Schema.SchemaError,
+    never,
+  ]
 > = true;
 const successChannelsAreExact: Equal<
   EffectChannels<typeof successfulInvocation>,
-  readonly ['completed', never, never]
+  readonly ['completed', DocumentCompositionRevisionError | Schema.SchemaError, never]
 > = true;
 
 void audienceIsExact;

@@ -91,6 +91,7 @@ const context = (
   actionInvocationId,
   addDomainEvent: () => Effect.die('unexpected domain event'),
   addOutboxMessage: () => Effect.die('unexpected outbox message'),
+  compositionRevision: 'a'.repeat(64),
   recordAuditEvidence: (evidence) =>
     Effect.sync(() => {
       record(decodeAuditEvidence(evidence));

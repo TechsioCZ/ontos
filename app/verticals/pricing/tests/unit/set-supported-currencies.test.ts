@@ -237,6 +237,7 @@ describe('Set supported currencies Action', () => {
         actionInvocationId,
         addDomainEvent: () => Effect.die('unused'),
         addOutboxMessage: () => Effect.die('unused'),
+        compositionRevision: 'a'.repeat(64),
         recordAuditEvidence: () => {
           auditCount += 1;
           return Effect.void;
@@ -352,6 +353,7 @@ describe('Set supported currencies Action', () => {
           actionInvocationId: trusted.actionInvocationId,
           addDomainEvent: () => Effect.die('must not add domain events'),
           addOutboxMessage: () => Effect.die('must not add outbox messages'),
+          compositionRevision: 'a'.repeat(64),
           recordAuditEvidence: () => Effect.die('must not record audit evidence'),
           recordDataAccess: () => Effect.die('must not record data access'),
           scope: {

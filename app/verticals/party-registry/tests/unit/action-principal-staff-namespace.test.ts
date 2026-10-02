@@ -2,7 +2,9 @@ import { OperationAuthenticationRequired } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime/actions/principal-context';
 import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-authentication-namespace';
 import { makeOperationalScopeResolver } from '@app/core-runtime/operations/context';
-import { Effect, Schema } from 'effect';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { Effect, Layer, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
 
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
@@ -57,7 +59,12 @@ const resolveFor = (audience: string) =>
     principal: staffPrincipal,
   });
 
-it.layer(ActionPrincipalVerifierLive)('party-registry action boundary', (suite) => {
+it.layer(
+  ActionPrincipalVerifierLive.pipe(
+    Layer.provide(ActiveApplicationCompositionSourceLive),
+    Layer.provide(FetchHttpClient.layer),
+  ),
+)('party-registry action boundary', (suite) => {
   suite.effect('revalidates a Shell-issued staff principal for this audience', () =>
     Effect.gen(function* staffPrincipalResolves() {
       const scope = yield* resolveFor('party-registry');

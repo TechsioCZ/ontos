@@ -1,10 +1,11 @@
 import { Schema } from 'effect';
 
 import { LegalEntityIdSchema, SafeTenantIdentitySchema } from '../../../shared/api.ts';
-import type { AuthenticatedHomePageModel } from '../../../src/routes/[lang]/page.data.ts';
+import type { AuthenticatedHomePageModel } from '../../../src/routes/[lang]/home-page-model.ts';
 
 /** The authenticated shell every route page test renders its own model on top of. */
 export const authenticatedShellFixture = (): AuthenticatedHomePageModel => ({
+  compositionRevision: '1'.repeat(64),
   contextState: 'authenticated',
   identity: Schema.decodeUnknownSync(SafeTenantIdentitySchema)({
     displayName: 'Ada Lovelace',

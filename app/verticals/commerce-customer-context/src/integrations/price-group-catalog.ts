@@ -6,7 +6,7 @@ import {
   executeValidatePriceGroupCompatibilityWithAuthorization,
 } from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
 import type { ValidatePriceGroupCompatibilityClientOptions } from '@app/price-group-catalog-contracts/validate-price-group-compatibility/client';
-import { Config, Effect, Match, Option, Redacted, Schema } from 'effect';
+import { Effect, Match, Option, Redacted, Schema } from 'effect';
 
 import type {
   PriceGroupCatalogOutcome,
@@ -26,19 +26,6 @@ import type { PriceGroupCatalogGatewayCredentialIssuer } from '../../shared/doma
 export { PriceGroupCatalogGatewayCredentialService } from '../../shared/domain/price-group-catalog-gateway-credential.ts';
 
 const compatibilityContractVersion = 1 as const;
-const providerHttpUrl = Schema.URLFromString.check(
-  Schema.makeFilter((url) =>
-    (url.protocol === 'http:' || url.protocol === 'https:') &&
-    url.username.length === 0 &&
-    url.password.length === 0 &&
-    url.search.length === 0 &&
-    url.hash.length === 0
-      ? undefined
-      : 'Price Group Catalog URL must be an HTTP(S) URL without credentials, query, or fragment',
-  ),
-);
-const providerBaseUrl = Config.schema(providerHttpUrl, 'ONTOS_PRICE_GROUP_CATALOG_BASE_URL');
-
 type CompatibilityClientError =
   ReturnType<typeof executeValidatePriceGroupCompatibility> extends Effect.Effect<unknown, infer Failure, unknown>
     ? Failure
@@ -83,15 +70,6 @@ const unavailableEvidence = (): CustomerPriceGroupCatalogUnavailable =>
     code: 'customer_price_group_catalog_unavailable',
     reason: 'The Price Group Catalog returned mismatched compatibility evidence',
   });
-
-const unavailableProviderConfiguration = (cause: unknown): CustomerPriceGroupCatalogUnavailable => {
-  const failure = new CustomerPriceGroupCatalogUnavailable({
-    code: 'customer_price_group_catalog_unavailable',
-    reason: 'No server-owned Price Group Catalog destination is configured',
-  });
-  Object.defineProperty(failure, 'cause', { configurable: true, value: cause });
-  return failure;
-};
 
 const sameReference = (left: PriceGroupRef, right: PriceGroupRef): boolean =>
   left.moduleId === right.moduleId &&
@@ -218,38 +196,31 @@ export const priceGroupCatalogPort = (
 const authorizedExecutor =
   (
     issuer: PriceGroupCatalogGatewayCredentialIssuer,
-    baseUrl: URL,
+    compositionRevision: string,
     execute: AuthorizedPriceGroupCompatibilityExecutor,
   ): PriceGroupCompatibilityExecutor =>
   (payload, correlation) =>
     issuer
-      .issue({
-        audience: 'price-group-catalog',
-        requestCorrelation: correlation,
-      })
-      .pipe(Effect.flatMap((credential) => execute(payload, credential, correlation, { baseUrl })));
+      .issue({ audience: 'price-group-catalog', compositionRevision, requestCorrelation: correlation })
+      .pipe(
+        Effect.flatMap(({ baseUrl, credential }) =>
+          execute(payload, credential, correlation, { baseUrl, compositionRevision }),
+        ),
+      );
 
 export const priceGroupCatalogPortFromEnvironment = (
-  context: {
-    readonly requestCorrelation: string;
-  },
+  context: { readonly compositionRevision: string; readonly requestCorrelation: string },
   execute: AuthorizedPriceGroupCompatibilityExecutor = executeAuthorizedCompatibility,
 ): Effect.Effect<PriceGroupCatalogPort> =>
   Effect.serviceOption(PriceGroupCatalogGatewayCredentialService).pipe(
-    Effect.flatMap((issuerOption) =>
-      providerBaseUrl.pipe(
-        Effect.match({
-          onFailure: (cause) =>
-            priceGroupCatalogPort(context.requestCorrelation, () =>
-              Effect.fail(unavailableProviderConfiguration(cause)),
-            ),
-          onSuccess: (baseUrl) => {
-            const issuer = Option.isSome(issuerOption)
-              ? issuerOption.value
-              : unavailablePriceGroupCatalogGatewayCredentialIssuer;
-            return priceGroupCatalogPort(context.requestCorrelation, authorizedExecutor(issuer, baseUrl, execute));
-          },
-        }),
+    Effect.map((issuerOption) =>
+      priceGroupCatalogPort(
+        context.requestCorrelation,
+        authorizedExecutor(
+          Option.isSome(issuerOption) ? issuerOption.value : unavailablePriceGroupCatalogGatewayCredentialIssuer,
+          context.compositionRevision,
+          execute,
+        ),
       ),
     ),
   );

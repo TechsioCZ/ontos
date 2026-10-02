@@ -27,6 +27,8 @@ import {
   unavailableStockSharingCommerceScopeValidator,
 } from '../../src/services/stock-sharing-eligibility-action.service.ts';
 
+const compositionRevision = 'a'.repeat(64);
+
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const legalEntityId = '22222222-2222-4222-8222-222222222222';
 const relationId = '33333333-3333-4333-8333-333333333333';
@@ -97,15 +99,18 @@ const endPayload = Schema.decodeUnknownSync(EndStockSharingEligibilityPayloadSch
   positionRef,
   relationRef: relation.ref,
 });
-const scope = trustVerifiedGatewayPrincipalContext({
-  authBindingId: '66666666-6666-4666-8666-666666666666',
-  authContextRef: 'test:stock-sharing-eligibility-actions',
-  authMethod: 'api_key',
-  correlationId: 'stock-sharing-eligibility-actions',
-  legalEntityId,
-  principalId: '77777777-7777-4777-8777-777777777777',
-  tenantId,
-});
+const scope = trustVerifiedGatewayPrincipalContext(
+  {
+    authBindingId: '66666666-6666-4666-8666-666666666666',
+    authContextRef: 'test:stock-sharing-eligibility-actions',
+    authMethod: 'api_key',
+    correlationId: 'stock-sharing-eligibility-actions',
+    legalEntityId,
+    principalId: '77777777-7777-4777-8777-777777777777',
+    tenantId,
+  },
+  compositionRevision,
+);
 
 const validator = {
   validateCurrent: () =>
@@ -262,6 +267,7 @@ describe('Stock Sharing Eligibility lifecycle Actions', () => {
         actionInvocationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
         addDomainEvent: collector.addDomainEvent,
         addOutboxMessage: collector.addOutboxMessage,
+        compositionRevision,
         recordAuditEvidence: collector.recordAuditEvidence,
         recordDataAccess: collector.recordDataAccess,
         scope,

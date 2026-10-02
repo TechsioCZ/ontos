@@ -1,8 +1,10 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { GovernProductAttributeApplicabilityPayloadSchema } from '../../shared/actions/govern-product-attribute-applicability.ts';
 import {
   governProductAttributeApplicabilityAction,
@@ -49,11 +51,12 @@ const scope = {
   correlationId: 'attribute-applicability-action-test',
 };
 
-const contextWith = (change: AttributeApplicabilityPersistence['change']) => {
+const contextWith = (compositionRevision: string, change: AttributeApplicabilityPersistence['change']) => {
   const context: ActionHandlerContext<Readonly<Record<string, never>>, AttributeApplicabilityPersistence> = {
     actionInvocationId: '55555555-5555-4555-8555-555555555555',
     addDomainEvent: () => Effect.succeed(Object.create(null)),
     addOutboxMessage: () => Effect.void,
+    compositionRevision,
     recordAuditEvidence: () => Effect.void,
     recordDataAccess: () => Effect.void,
     scope,
@@ -94,7 +97,11 @@ describe('govern Product Attribute applicability Action', () => {
 
   it.effect('passes trusted invocation and principal to the scoped owner service', () =>
     Effect.gen(function* handoff() {
-      const context = contextWith((input) =>
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
+      const context = contextWith(compositionSnapshot.composition.revision, (input) =>
         Effect.sync(() => {
           expect(input).toMatchObject({
             actionInvocationId: context.actionInvocationId,

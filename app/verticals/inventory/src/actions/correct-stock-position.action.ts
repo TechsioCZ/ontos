@@ -34,9 +34,7 @@ import { stockCorrectionSourceEvidencePersistenceForScope } from '../persistence
 import { stockCorrectionPersistenceForScope } from '../persistence/stock-correction-repository.ts';
 import { stockPositionPersistenceForScope } from '../persistence/stock-position-repository.ts';
 import type { StockCorrectionService } from '../services/stock-correction.service.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Core invokes this owner-local constructor only inside the generated transaction-scoped Action factory; expires: 2027-03-31.
 import { makeStockCorrectionService } from '../services/stock-correction.service.ts';
-// oxlint-disable-next-line anti-slop-effect/no-service-constructor-imports -- This owner-local constructor is bound inside the same generated transaction-scoped Action factory; expires: 2027-03-31.
 import { makeReservationShortageImpactService } from '../services/reservation-shortage-impact.service.ts';
 import { createCorrectStockPositionCommerceInventoryStockPositionEvidenceChangedV1OutboxMessage } from './correct-stock-position-commerce-inventory-stock-position-evidence-changed-v1.outbox-message.ts';
 

@@ -356,7 +356,7 @@ export const definePriceAction = defineAction(
     schemaVersion: '2',
   },
   handleDefinePrice,
-  (transaction, scope) => {
+  (transaction, scope, compositionRevision) => {
     const { legalEntityId } = scope;
     if (legalEntityId === undefined) {
       return Effect.fail(
@@ -372,14 +372,16 @@ export const definePriceAction = defineAction(
         {
           authority: externalPriceSourceAuthorityForScope(transaction, scope),
           catalog: catalogSelectionAssessmentPortFromEnvironment({
+            compositionRevision,
             legalEntityId,
             requestCorrelation: scope.correlationId,
           }),
           commercialContext: commercialContextAssessmentPortFromEnvironment({
+            compositionRevision,
             legalEntityId,
             requestCorrelation: scope.correlationId,
           }),
-          currencySupport: currencySupportPersistenceForScope(transaction, scope),
+          currencySupport: currencySupportPersistenceForScope(transaction, scope, compositionRevision),
           persistence: pricePersistenceForScope(transaction, scope),
         },
         { concurrency: 5 },

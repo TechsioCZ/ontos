@@ -1,8 +1,10 @@
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import { ActivatePackageDefinitionPayloadSchema } from '../../shared/actions/activate-package-definition.ts';
 import {
   activatePackageDefinitionAction,
@@ -35,11 +37,12 @@ const scope = {
   }),
   correlationId: 'package-activate-test',
 };
-const context = (activate: PackageActivationPersistence['activate']) =>
+const context = (compositionRevision: string, activate: PackageActivationPersistence['activate']) =>
   ({
     actionInvocationId: '44444444-4444-4444-8444-444444444444',
     addDomainEvent: () => Effect.succeed(Object.create(null)),
     addOutboxMessage: () => Effect.void,
+    compositionRevision,
     recordAuditEvidence: () => Effect.void,
     recordDataAccess: () => Effect.void,
     scope,
@@ -49,9 +52,13 @@ const context = (activate: PackageActivationPersistence['activate']) =>
 describe('Activate Package Definition Action', () => {
   it.effect('uses the trusted invocation and issues the new exact content revision', () =>
     Effect.gen(function* activate() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const result = yield* handleActivatePackageDefinition(
         payload,
-        context((input) => {
+        context(compositionSnapshot.composition.revision, (input) => {
           expect(input.actionInvocationId).toBe('44444444-4444-4444-8444-444444444444');
           expect(input.principalId).toBe(principalId);
           expect(input.expectedRevision).toBe(1);
@@ -65,9 +72,13 @@ describe('Activate Package Definition Action', () => {
 
   it.effect('maps stale and unavailable persistence without claiming activation', () =>
     Effect.gen(function* fails() {
+      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
+        ['catalog'],
+        ultramodernApiMarker.buildMarker,
+      );
       const stale = yield* handleActivatePackageDefinition(
         payload,
-        context(() => Effect.succeed({ _tag: 'stale', actualRevision: 2 })),
+        context(compositionSnapshot.composition.revision, () => Effect.succeed({ _tag: 'stale', actualRevision: 2 })),
       ).pipe(Effect.flip);
       expect(stale.code).toBe('package_definition_stale');
     }),

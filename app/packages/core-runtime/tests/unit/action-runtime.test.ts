@@ -35,7 +35,7 @@ import {
   getActionTransactionFailureCause,
   makeActionRepository,
 } from '../../src/actions/repository.ts';
-import type { ActionRuntimeStage } from '../../src/actions/runtime.ts';
+import type { ActionRuntimeOptions, ActionRuntimeStage } from '../../src/actions/runtime.ts';
 import { ACTION_RUNTIME_STAGES, makeActionRuntime } from '../../src/actions/runtime.ts';
 import { allowOwnerAuthorizationOverlay } from '../../src/permissions/owner-authorization-overlay.ts';
 import type {
@@ -124,6 +124,13 @@ const providePrincipalManagementRepository = Effect.provideService(
 const PermissionDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 type PermissionDecision = typeof PermissionDecisionSchema.Type;
 const transactionOperationAt = DateTime.toDateUtc(DateTime.makeUnsafe(Date.parse('2026-09-28T09:00:00.000Z')));
+const approvedCompositionRevision = 'a'.repeat(64);
+
+interface TestCompositionAuthority {
+  readonly phase: 'active' | 'draining';
+  readonly revision: string;
+  readonly unexpired: boolean;
+}
 
 interface HarnessOptions {
   readonly assortmentPermissionDecision?: PermissionDecision;
@@ -131,11 +138,15 @@ interface HarnessOptions {
   readonly businessPermissionDecision?: PermissionDecision;
   readonly commit?: Effect.Effect<readonly object[], SqlError>;
   readonly commitFailureCode?: string;
+  readonly compositionAuthority?: TestCompositionAuthority | 'missing';
+  readonly compositionIsolation?: 'read committed' | 'repeatable read' | 'serializable';
   readonly createRecord?: ActionInvocationRecord;
+  readonly failCompositionAuthorityLock?: boolean;
   readonly failTransactionTimestamp?: boolean;
   readonly legalEntityPermissionDecision?: PermissionDecision;
   readonly lockedModuleState?: 'active' | 'denied' | 'unavailable';
   readonly moduleState?: TenantModuleState | 'missing' | 'unavailable';
+  readonly omitCompositionRevisionResolver?: boolean;
   readonly omitOwnerAuthorizationOverlay?: boolean;
   readonly onAssortmentPermissionCheck?: (targets: readonly unknown[]) => void;
   readonly onBusinessPermissionCheck?: () => void;
@@ -148,6 +159,7 @@ interface HarnessOptions {
   readonly recordedByConcurrentRequest?: ActionRecordedRejection;
   readonly rejectionFailure?: boolean;
   readonly resolutionUnavailable?: boolean;
+  readonly resolveCompositionRevision?: Effect.Effect<string, ActionTransactionError>;
   readonly resourcePermissionDecision?: PermissionDecision;
   readonly tenantPermissionDecision?: PermissionDecision;
   readonly transactionMode?: 'commit-definite' | 'definite-failure' | 'normal' | 'uncertain';
@@ -177,6 +189,9 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
   let transactionCount = 0;
   let committedTransactionCount = 0;
   let rolledBackTransactionCount = 0;
+  let compositionAuthorityLockCount = 0;
+  let compositionAuthorityLockHeld = false;
+  const transactionSteps: string[] = [];
   const invocation =
     options.createRecord ??
     ({
@@ -216,6 +231,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return Effect.succeed(Option.fromNullishOr(options.recordedByConcurrentRequest));
     },
     flushSuccess: (_transaction, input) => {
+      transactionSteps.push('evidence_flushed');
       flushed.push(input);
       return Effect.void;
     },
@@ -227,6 +243,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       return Effect.succeed(rejections.length > 0 ? Option.some({ stage: 'authz' as const }) : Option.none());
     },
     lockInvocation: () => {
+      transactionSteps.push('invocation_locked');
       lockCount += 1;
       return Effect.succeed({
         ...currentInvocation,
@@ -308,6 +325,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       }
     }
     if (text === 'begin') {
+      transactionSteps.push('begin');
       transactionCount += 1;
       if (options.transactionMode === 'definite-failure') {
         return yield* new SqlError({
@@ -318,13 +336,49 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       }
     }
     if (text === 'commit') {
+      transactionSteps.push('commit_started');
       const committed = yield* commitTransaction();
+      compositionAuthorityLockHeld = false;
+      transactionSteps.push('commit_settled');
       committedTransactionCount += 1;
       return committed;
     }
     if (text === 'rollback') {
+      compositionAuthorityLockHeld = false;
+      transactionSteps.push('rollback');
       rolledBackTransactionCount += 1;
       return [];
+    }
+    if (text.includes('pg_advisory_xact_lock_shared')) {
+      compositionAuthorityLockCount += 1;
+      transactionSteps.push('composition_authority_locked');
+      if (options.failCompositionAuthorityLock === true) {
+        return yield* new SqlError({
+          reason: new ConnectionError({ cause: new Error('composition authority lock unavailable') }),
+        });
+      }
+      compositionAuthorityLockHeld = true;
+      return [];
+    }
+    if (text.includes('application_composition_authority')) {
+      const authority = options.compositionAuthority ?? {
+        phase: 'active',
+        revision: approvedCompositionRevision,
+        unexpired: true,
+      };
+      return authority === 'missing'
+        ? []
+        : [
+            {
+              phase: authority.phase,
+              revision: authority.revision,
+              subscriptionsJson: [],
+              unexpired: authority.unexpired,
+            },
+          ];
+    }
+    if (text.includes("current_setting('transaction_isolation')")) {
+      return [{ isolation: options.compositionIsolation ?? 'read committed' }];
     }
     if (text.includes('current_setting')) {
       return [
@@ -424,7 +478,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       : {
           ownerAuthorizationOverlay: options.ownerAuthorizationOverlay ?? allowOwnerAuthorizationOverlay,
         };
-  const runtime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, {
+  let runtimeOptions: ActionRuntimeOptions = {
     contextAccess: {
       assortmentPermissions: (input) => {
         assortmentPermissionChecks.push(...input.targets);
@@ -489,11 +543,23 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       handlerResolutionCount += 1;
       return getActionHandler(action);
     },
-  });
+  };
+  if (options.omitCompositionRevisionResolver !== true) {
+    runtimeOptions = {
+      ...runtimeOptions,
+      resolveCompositionRevision: () =>
+        options.resolveCompositionRevision ?? Effect.succeed(approvedCompositionRevision),
+    };
+  }
+  const runtime = makeActionRuntime(database, repository, permission, testOperationalScopeResolver, runtimeOptions);
 
   return {
     assortmentPermissionChecks,
     businessPermissionChecks,
+    compositionAuthority: () => ({
+      lockCount: compositionAuthorityLockCount,
+      lockHeld: compositionAuthorityLockHeld,
+    }),
     counts: () => ({
       createCount,
       lockCount,
@@ -520,6 +586,7 @@ const makeHarness = Effect.fn(function* makeHarness(options: HarnessOptions = {}
       committedTransactionCount,
       rolledBackTransactionCount,
     }),
+    transactionSteps,
     transactionTimestampReads: () => transactionTimestampReadCount,
   };
 });
@@ -665,6 +732,7 @@ const registration = () =>
     },
     Effect.fn(function* changeCounter(payload, context) {
       expect(context.actionInvocationId).toBe('invocation-1');
+      expect(context.compositionRevision).toBe(approvedCompositionRevision);
       expect(Object.isFrozen(context)).toBe(true);
       expect('transaction' in context).toBe(false);
       expect(context.services).toEqual({});
@@ -863,6 +931,169 @@ it.effect(
       moduleStateReadCount: 0,
       moduleStateRecheckCount: 0,
     });
+  }),
+);
+
+it.effect('rejects missing, stale, draining, and expired composition authority before any owner work', () =>
+  Effect.gen(function* rejectUnapprovedComposition() {
+    const authorityCases = [
+      'missing',
+      { phase: 'active', revision: 'b'.repeat(64), unexpired: true },
+      { phase: 'draining', revision: approvedCompositionRevision, unexpired: true },
+      { phase: 'active', revision: approvedCompositionRevision, unexpired: false },
+    ] as const;
+    for (const compositionAuthority of authorityCases) {
+      let ownerAuthorizationCalls = 0;
+      const harness = yield* makeHarness({
+        compositionAuthority,
+        ownerAuthorizationOverlay: {
+          authorize: () => {
+            ownerAuthorizationCalls += 1;
+            return Effect.succeed('allowed' as const);
+          },
+        },
+      });
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 1 },
+          principal,
+          registration: registration(),
+          transport: transport('unapproved-composition'),
+        }),
+      );
+      expect(Schema.is(ActionTransactionError)(failure)).toBe(true);
+      expect(ownerAuthorizationCalls).toBe(0);
+      expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+      expect(harness.counts().lockCount).toBe(0);
+      expect(harness.flushed).toHaveLength(0);
+      expect(harness.compositionAuthority()).toEqual({ lockCount: 1, lockHeld: false });
+      expect(harness.transactionOutcomes()).toEqual({
+        committedTransactionCount: 0,
+        rolledBackTransactionCount: 1,
+      });
+    }
+  }),
+);
+
+it.effect('rejects a release replaced after admission and before owner transaction entry', () =>
+  Effect.gen(function* changedCompositionAfterAdmission() {
+    const authority = { phase: 'active' as const, revision: approvedCompositionRevision, unexpired: true };
+    let admissionCount = 0;
+    const harness = yield* makeHarness({
+      compositionAuthority: authority,
+      resolveCompositionRevision: Effect.sync(() => {
+        admissionCount += 1;
+        authority.revision = 'b'.repeat(64);
+        return approvedCompositionRevision;
+      }),
+    });
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport('replaced-after-admission'),
+      }),
+    );
+    expect(Schema.is(ActionTransactionError)(failure)).toBe(true);
+    expect(admissionCount).toBe(1);
+    expect(harness.compositionAuthority()).toEqual({ lockCount: 1, lockHeld: false });
+    expect(harness.counts().lockCount).toBe(0);
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+    expect(harness.flushed).toHaveLength(0);
+  }),
+);
+
+it.effect('rejects owner transactions whose isolation could conceal a newly promoted release', () =>
+  Effect.gen(function* unsuitableCompositionIsolation() {
+    for (const compositionIsolation of ['repeatable read', 'serializable'] as const) {
+      const harness = yield* makeHarness({ compositionIsolation });
+      const failure = yield* Effect.flip(
+        harness.runtime.runAction({
+          payload: { amount: 1 },
+          principal,
+          registration: registration(),
+          transport: transport(`composition-${compositionIsolation}`),
+        }),
+      );
+      expect(Schema.is(ActionTransactionError)(failure)).toBe(true);
+      expect(harness.compositionAuthority()).toEqual({ lockCount: 0, lockHeld: false });
+      expect(harness.counts().lockCount).toBe(0);
+      expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+      expect(harness.flushed).toHaveLength(0);
+      expect(harness.transactionOutcomes().rolledBackTransactionCount).toBe(1);
+    }
+  }),
+);
+
+it.effect('fails closed if no receiving composition revision is supplied', () =>
+  Effect.gen(function* missingCompositionResolver() {
+    const harness = yield* makeHarness({ omitCompositionRevisionResolver: true });
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport('missing-composition-resolver'),
+      }),
+    );
+    expect(Schema.is(ActionTransactionError)(failure)).toBe(true);
+    expect(harness.counts().transactionCount).toBe(0);
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+    expect(harness.flushed).toHaveLength(0);
+  }),
+);
+
+it.effect('fails closed when the database cannot acquire the composition fence', () =>
+  Effect.gen(function* unavailableCompositionLock() {
+    const harness = yield* makeHarness({ failCompositionAuthorityLock: true });
+    const failure = yield* Effect.flip(
+      harness.runtime.runAction({
+        payload: { amount: 1 },
+        principal,
+        registration: registration(),
+        transport: transport('unavailable-composition-lock'),
+      }),
+    );
+    expect(Schema.is(ActionTransactionError)(failure)).toBe(true);
+    expect(harness.counts().lockCount).toBe(0);
+    expect(harness.gateCounts().handlerResolutionCount).toBe(0);
+    expect(harness.flushed).toHaveLength(0);
+    expect(harness.transactionOutcomes().rolledBackTransactionCount).toBe(1);
+  }),
+);
+
+it.effect('retains the composition fence through owner evidence and delayed commit settlement', () =>
+  Effect.gen(function* delayedOwnerCommitFence() {
+    const commitStarted = Deferred.makeUnsafe<null>();
+    const commitSettlement = Deferred.makeUnsafe<readonly object[]>();
+    const harness = yield* makeHarness({
+      commit: Deferred.succeed(commitStarted, null).pipe(Effect.andThen(Deferred.await(commitSettlement))),
+    });
+    const actionFiber = yield* harness.runtime
+      .runAction({
+        payload: { amount: 2 },
+        principal,
+        registration: registration(),
+        transport: transport('delayed-composition-commit'),
+      })
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(commitStarted);
+    expect(harness.compositionAuthority()).toEqual({ lockCount: 1, lockHeld: true });
+    expect(harness.flushed).toHaveLength(1);
+    expect(harness.flushed[0]?.evidence.outboxMessages).toHaveLength(1);
+    expect(harness.transactionSteps).toEqual([
+      'begin',
+      'composition_authority_locked',
+      'invocation_locked',
+      'evidence_flushed',
+      'commit_started',
+    ]);
+    expect(actionFiber.pollUnsafe()).toBeUndefined();
+    yield* Deferred.succeed(commitSettlement, []);
+    expect(yield* Fiber.join(actionFiber)).toEqual({ total: 2 });
+    expect(harness.compositionAuthority()).toEqual({ lockCount: 1, lockHeld: false });
+    expect(harness.transactionSteps.at(-1)).toBe('commit_settled');
   }),
 );
 
@@ -2257,10 +2488,13 @@ it.effect(
     expect(Exit.isFailure(untrusted.result)).toBe(true);
     expect(untrusted.harness.businessPermissionChecks).toHaveLength(0);
 
-    const trusted = trustVerifiedGatewayPrincipalContext({
-      ...principal,
-      trustedStorefrontId: 'storefront-a',
-    });
+    const trusted = trustVerifiedGatewayPrincipalContext(
+      {
+        ...principal,
+        trustedStorefrontId: 'storefront-a',
+      },
+      approvedCompositionRevision,
+    );
     const mismatch = yield* run(trusted, 'storefront-b', 'storefront-mismatch');
     expect(Exit.isFailure(mismatch.result)).toBe(true);
     expect(mismatch.harness.businessPermissionChecks).toHaveLength(0);

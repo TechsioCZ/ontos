@@ -14,6 +14,7 @@ import type { ManageProductCommercialFeeOperation } from '../../shared/actions/m
 
 export interface ProductCommercialFeeBulkTrustedContext {
   readonly actionInvocationId: string;
+  readonly compositionRevision: string;
   readonly principalContext: TrustedPrincipalContext;
   readonly requestCorrelationId: string;
   readonly trustedOperationAt: Date;

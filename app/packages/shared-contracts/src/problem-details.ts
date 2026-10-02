@@ -6,8 +6,16 @@ import { Match, Predicate, Schema, SchemaAST } from 'effect';
 /** HTTP statuses currently used by OntOS public Problem Details contracts. */
 export type ProblemDetailsStatus = 400 | 401 | 403 | 404 | 409 | 422 | 428 | 429 | 500 | 503 | 504;
 
+export const problemDetailsFields = Object.freeze({
+  detail: Schema.String,
+  title: Schema.String,
+  type: Schema.String,
+});
+
+export const problemDetailsContentType = 'application/problem+json';
+
 const problemDetailsRepresentation = HttpApiSchema.asJson({
-  contentType: 'application/problem+json',
+  contentType: problemDetailsContentType,
 });
 
 const hasJsonSafeNumberCheck = (checks: SchemaAST.Checks | undefined): boolean =>

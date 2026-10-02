@@ -1,7 +1,10 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import { RevisePackageDefinitionPayloadSchema } from '../../shared/actions/revise-package-definition.ts';
 import { PackageDefinitionSelectionRevisionSchema } from '../../shared/domain/catalog-selection-evidence.ts';
@@ -59,11 +62,15 @@ const scope = {
   correlationId: 'package-event-test',
 };
 const unexpected = () => Effect.die('Unexpected persistence call');
-const context = (revise: PackagePersistence['revise']) => {
-  const events: { eventType: string; payloadJson: unknown; reference: object; subjectResourceId: string }[] = [];
-  const outbox: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] = [];
-  const value: ActionHandlerContext<typeof revisePackageDefinitionAction.descriptor.domainEvents, PackagePersistence> =
-    {
+const context = (revise: PackagePersistence['revise']) =>
+  Effect.gen(function* makeContext() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const events: { eventType: string; payloadJson: unknown; reference: object; subjectResourceId: string }[] = [];
+    const outbox: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] = [];
+    const value: ActionHandlerContext<
+      typeof revisePackageDefinitionAction.descriptor.domainEvents,
+      PackagePersistence
+    > = {
       actionInvocationId: '77777777-7777-4777-8777-777777777777',
       addDomainEvent: (event) =>
         Effect.sync(() => {
@@ -80,18 +87,19 @@ const context = (revise: PackagePersistence['revise']) => {
         Effect.sync(() => {
           outbox.push({ event, message });
         }),
+      compositionRevision: snapshot.composition.revision,
       recordAuditEvidence: () => Effect.void,
       recordDataAccess: () => Effect.void,
       scope,
       services: { create: unexpected, retire: unexpected, revise },
     };
-  return { events, outbox, value };
-};
+    return { events, outbox, value };
+  });
 
 describe('Package Definition committed revision event', () => {
   it.effect('links one message to the exact committed successor revision without claiming it is Current', () =>
     Effect.gen(function* revisedEvent() {
-      const state = context(() =>
+      const state = yield* context(() =>
         Effect.succeed({ _tag: 'revised', contentRevision: revision, definitionRef: trustedRef }),
       );
       yield* handleRevisePackageDefinition(payload, state.value);
@@ -117,7 +125,7 @@ describe('Package Definition committed revision event', () => {
 
   it.effect('emits no completed-change event for a rejected revision', () =>
     Effect.gen(function* rejectedRevision() {
-      const state = context(() => Effect.succeed({ _tag: 'stale', actualRevision: 3 }));
+      const state = yield* context(() => Effect.succeed({ _tag: 'stale', actualRevision: 3 }));
       yield* handleRevisePackageDefinition(payload, state.value).pipe(Effect.flip);
       expect(state.events).toHaveLength(0);
       expect(state.outbox).toHaveLength(0);

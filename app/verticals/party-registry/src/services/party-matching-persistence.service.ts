@@ -50,7 +50,6 @@ import {
   partyDto,
 } from './party-identity-persistence.service.ts';
 import { addOfficialIdentifierRecord } from './party-official-identifier-persistence.service.ts';
-// eslint-disable-next-line anti-slop-effect/no-service-constructor-imports -- Pure owner-private ResourceRef value constructor.
 import { makePartyOfficialIdentifierRef } from './party-official-identifier-reference.ts';
 
 const MATCH_RULE_VERSION = 'party-exact-claims.v1';

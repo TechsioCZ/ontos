@@ -1,6 +1,7 @@
 import type { OutboxWorkerLegalEntityScope } from '@app/core-runtime/outbox/worker';
 import { OutboxWorkerLegalEntityScopeFanout } from '@app/core-runtime/outbox/worker';
 import { and, eq, inArray, sql } from 'drizzle-orm';
+import type { PgInsertValue } from 'drizzle-orm/pg-core';
 import { DateTime, Effect, Option, Ref, Schema, Semaphore } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -9,6 +10,7 @@ import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions
 import { trustVerifiedGatewayPrincipalContext } from '../../../../packages/core-runtime/src/auth/system-principal-context-provenance.ts';
 import {
   actionInvocations,
+  applicationCompositionAuthority,
   auditEvents,
   coreRelations,
   dataAccessEvents,
@@ -24,6 +26,9 @@ import {
   tenants,
   workerCheckpoints,
 } from '../../../../packages/core-runtime/src/db/schema.ts';
+import type { CoreTransaction } from '../../../../packages/core-runtime/src/db/types.ts';
+import { lockApplicationCompositionPublication } from '../../../../packages/core-runtime/src/modules/application-composition-authority.ts';
+import { extractOutboxWorkerSubscriptions } from '../../../../packages/core-runtime/src/outbox/definition.ts';
 import {
   makeOutboxWorkerLegalEntityScopeFanout,
   makePostgresOutboxWorkerLegalEntityScopeBackend,
@@ -128,6 +133,13 @@ import {
   ReservationConfirmationIssuanceExecution,
 } from '../../src/workers/execute-reservation-confirmation-issuance.worker.ts';
 
+const compositionRevision = 'a'.repeat(64);
+const compositionSubscriptions = extractOutboxWorkerSubscriptions([
+  executeInventoryReservationCreateWorker,
+  executeReservationConfirmationIssuanceWorker,
+  executeCommitmentProtectionEstablishmentWorker,
+]);
+
 const tenantId = 'd1000000-0000-4000-8000-000000000001';
 const legalEntityId = 'd2000000-0000-4000-8000-000000000001';
 const principalId = 'd3000000-0000-4000-8000-000000000001';
@@ -157,16 +169,19 @@ const fixtureInstant = '2026-09-28T08:00:00.000Z';
 const scenarioSemaphore = Semaphore.makeUnsafe(1);
 const currentIso = DateTime.nowAsDate.pipe(Effect.map((instant) => instant.toISOString()));
 
-const principal = trustVerifiedGatewayPrincipalContext({
-  authBindingId,
-  authContextRef: `better-auth-session:${authBindingId}`,
-  authenticationNamespaceId,
-  authMethod: 'session' as const,
-  legalEntityId,
-  principalId,
-  tenantId,
-  trustedStorefrontId: storefrontId,
-});
+const principal = trustVerifiedGatewayPrincipalContext(
+  {
+    authBindingId,
+    authContextRef: `better-auth-session:${authBindingId}`,
+    authenticationNamespaceId,
+    authMethod: 'session' as const,
+    legalEntityId,
+    principalId,
+    tenantId,
+    trustedStorefrontId: storefrontId,
+  },
+  compositionRevision,
+);
 
 const allowedPermission = {
   checkActionPermission: () => Effect.succeed('allowed' as const),
@@ -535,6 +550,48 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
   const admin = yield* makeTestDatabaseFromClient(adminClient, inventoryRelations);
   const coreAdmin = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
   const runtimeDatabase = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
+  yield* Effect.acquireRelease(
+    coreAdmin.transaction(
+      Effect.fn('ReviewRemediationPostgres.seedCompositionAuthority')(function* seedCompositionAuthority(
+        transaction: CoreTransaction,
+      ) {
+        yield* lockApplicationCompositionPublication(transaction);
+        const [previous] = yield* transaction
+          .select()
+          .from(applicationCompositionAuthority)
+          .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+        const admitted: PgInsertValue<typeof applicationCompositionAuthority> = {
+          authorityKey: 'active',
+          durableWorkAdmission: 'open',
+          phase: 'active',
+          revision: compositionRevision,
+          subscriptionsJson: compositionSubscriptions,
+          validUntil: sql`clock_timestamp() + interval '1 hour'`,
+        };
+        yield* transaction.insert(applicationCompositionAuthority).values(admitted).onConflictDoUpdate({
+          set: admitted,
+          target: applicationCompositionAuthority.authorityKey,
+        });
+        return previous;
+      }),
+    ),
+    (previous) =>
+      coreAdmin
+        .transaction(
+          Effect.fn('ReviewRemediationPostgres.restoreCompositionAuthority')(function* restoreCompositionAuthority(
+            transaction: CoreTransaction,
+          ) {
+            yield* lockApplicationCompositionPublication(transaction);
+            yield* transaction
+              .delete(applicationCompositionAuthority)
+              .where(eq(applicationCompositionAuthority.revision, compositionRevision));
+            if (previous !== undefined) {
+              yield* transaction.insert(applicationCompositionAuthority).values(previous);
+            }
+          }),
+        )
+        .pipe(Effect.orDie),
+  );
   yield* cleanupInventory(admin);
   yield* cleanupCore(coreAdmin);
   yield* Effect.addFinalizer(() => Effect.all([cleanupInventory(admin), cleanupCore(coreAdmin)]).pipe(Effect.orDie));
@@ -622,13 +679,14 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
   };
   const createMatchNow = yield* DateTime.nowAsDate;
   yield* outbox.matchMessages({
+    compositionRevision,
     now: createMatchNow,
-    subscriptions: [executeInventoryReservationCreateWorker.descriptor],
   });
   const createNow = new Date(createMatchNow.getTime() + 1000);
   const createCycle = yield* outbox
     .runCycle({
       claimOwner: 'review-remediation-create-worker',
+      compositionRevision,
       maxDeliveries: 1,
       now: createNow,
       registrations: [executeInventoryReservationCreateWorker],
@@ -673,13 +731,14 @@ const makeScenario = Effect.fn('ReviewRemediationPostgres.makeScenario')(functio
   };
   const confirmationMatchNow = yield* DateTime.nowAsDate;
   yield* outbox.matchMessages({
+    compositionRevision,
     now: confirmationMatchNow,
-    subscriptions: [executeReservationConfirmationIssuanceWorker.descriptor],
   });
   const confirmationNow = new Date(confirmationMatchNow.getTime() + 1000);
   const confirmationCycle = yield* outbox
     .runCycle({
       claimOwner: 'review-remediation-confirmation-worker',
+      compositionRevision,
       maxDeliveries: 1,
       now: confirmationNow,
       registrations: [executeReservationConfirmationIssuanceWorker],
@@ -783,13 +842,14 @@ it.live(
           });
           const matchNow = yield* DateTime.nowAsDate;
           yield* scenario.outbox.matchMessages({
+            compositionRevision,
             now: matchNow,
-            subscriptions: [executeCommitmentProtectionEstablishmentWorker.descriptor],
           });
           const now = new Date(matchNow.getTime() + 1000);
           const cycle = yield* scenario.outbox
             .runCycle({
               claimOwner: 'review-remediation-protection-worker',
+              compositionRevision,
               maxDeliveries: 1,
               now,
               registrations: [executeCommitmentProtectionEstablishmentWorker],
@@ -905,13 +965,14 @@ it.live(
           });
           const matchNow = yield* DateTime.nowAsDate;
           yield* scenario.outbox.matchMessages({
+            compositionRevision,
             now: matchNow,
-            subscriptions: [executeCommitmentProtectionEstablishmentWorker.descriptor],
           });
           const firstNow = new Date(matchNow.getTime() + 1000);
           const failedCycle = yield* scenario.outbox
             .runCycle({
               claimOwner: 'review-remediation-protection-crash',
+              compositionRevision,
               maxDeliveries: 1,
               now: firstNow,
               registrations: [executeCommitmentProtectionEstablishmentWorker],
@@ -957,6 +1018,7 @@ it.live(
           const retryCycle = yield* scenario.outbox
             .runCycle({
               claimOwner: 'review-remediation-protection-recovery',
+              compositionRevision,
               maxDeliveries: 1,
               now: retryNow,
               registrations: [executeCommitmentProtectionEstablishmentWorker],

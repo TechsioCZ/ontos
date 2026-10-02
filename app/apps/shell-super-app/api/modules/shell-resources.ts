@@ -14,7 +14,7 @@ import {
   ShellTimelineEntrySchema as SharedShellTimelineEntrySchema,
 } from '../../shared/api.ts';
 import type { ShellSearchResult as SharedShellSearchResult } from '../../shared/api.ts';
-import type { InstalledModuleCatalogError } from './installed-module-catalog.ts';
+import type { InstalledModuleCatalogError, ShellInstalledCatalog } from './installed-module-catalog.ts';
 
 const stableKey = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(300));
 const PartyRoleSchema = Schema.Literals(['CUSTOMER', 'SUPPLIER']);
@@ -108,6 +108,7 @@ export type ShellResourceContext = ShellResourceRequest;
 export interface ShellProviderAssertionIssuer {
   readonly issueAssertion: (input: {
     readonly appId: string;
+    readonly compositionRevision: string;
     readonly context: ShellResourceContext;
   }) => Effect.Effect<string, ShellProviderUnavailableError>;
 }
@@ -153,7 +154,7 @@ export interface ShellResourceGateways {
 }
 
 interface ShellResourceDependencies extends ShellProviderAssertionIssuer {
-  readonly catalog: Effect.Effect<InstalledModuleCatalog, InstalledModuleCatalogError>;
+  readonly catalog: Effect.Effect<ShellInstalledCatalog, InstalledModuleCatalogError>;
   readonly contextAccess: ContextAccessService;
   readonly moduleStates: Pick<TenantModuleStateServiceContract, 'getTenantModuleStates'>;
 }
@@ -455,33 +456,35 @@ export const makeShellSearch = (...[dependencies, gateway]: ShellSearchArguments
     const attempts = yield* Effect.forEach(
       eligible,
       (provider) =>
-        dependencies.issueAssertion({ appId: provider.appId, context }).pipe(
-          Effect.flatMap((authorization) => {
-            const requestFilters = new Set(provider.descriptor.requestFilters);
-            const providerRequest: ShellSearchProviderRequest = {
-              appId: provider.appId,
-              authorization,
-              correlationId: context.correlationId,
-              query: normalizedQuery,
-              searchKey: provider.contribution.searchKey,
-            };
-            const archiveFiltered =
-              requestFilters.has('includeArchived') && searchRequest.includeArchived !== undefined
-                ? {
-                    ...providerRequest,
-                    includeArchived: searchRequest.includeArchived,
-                  }
-                : providerRequest;
-            const roleFiltered =
-              requestFilters.has('role') && searchRequest.role !== undefined
-                ? { ...archiveFiltered, role: searchRequest.role }
-                : archiveFiltered;
-            return gateway.search(roleFiltered);
-          }),
-          Effect.flatMap(decodeProviderResults),
-          capture,
-          Effect.map((result) => ({ provider, result })),
-        ),
+        dependencies
+          .issueAssertion({ appId: provider.appId, compositionRevision: catalog.composition.revision, context })
+          .pipe(
+            Effect.flatMap((authorization) => {
+              const requestFilters = new Set(provider.descriptor.requestFilters);
+              const providerRequest: ShellSearchProviderRequest = {
+                appId: provider.appId,
+                authorization,
+                correlationId: context.correlationId,
+                query: normalizedQuery,
+                searchKey: provider.contribution.searchKey,
+              };
+              const archiveFiltered =
+                requestFilters.has('includeArchived') && searchRequest.includeArchived !== undefined
+                  ? {
+                      ...providerRequest,
+                      includeArchived: searchRequest.includeArchived,
+                    }
+                  : providerRequest;
+              const roleFiltered =
+                requestFilters.has('role') && searchRequest.role !== undefined
+                  ? { ...archiveFiltered, role: searchRequest.role }
+                  : archiveFiltered;
+              return gateway.search(roleFiltered);
+            }),
+            Effect.flatMap(decodeProviderResults),
+            capture,
+            Effect.map((result) => ({ provider, result })),
+          ),
       { concurrency: 1 },
     );
     const succeeded = attempts.filter(({ result }) => result.ok);
@@ -621,6 +624,7 @@ export const makeShellResourceDetail = (...[dependencies, gateway]: ShellResourc
     );
     return {
       appId: contract.deployment.appId,
+      compositionRevision: catalogResult.value.composition.revision,
       detailApiKey: detailBinding.apiKey,
       media,
       outcome: 'allowed',
@@ -645,7 +649,7 @@ export const makeShellResourceDetail = (...[dependencies, gateway]: ShellResourc
         return { outcome: 'unavailable' } as const;
       }
       const decodedDetail = yield* capture(
-        dependencies.issueAssertion({ appId: gate.appId, context }).pipe(
+        dependencies.issueAssertion({ appId: gate.appId, compositionRevision: gate.compositionRevision, context }).pipe(
           Effect.flatMap((authorization) =>
             gateway.detail({
               apiKey: gate.detailApiKey,
@@ -676,7 +680,7 @@ export const makeShellResourceDetail = (...[dependencies, gateway]: ShellResourc
         } as const;
       }
       const timelineResult = yield* capture(
-        dependencies.issueAssertion({ appId: gate.appId, context }).pipe(
+        dependencies.issueAssertion({ appId: gate.appId, compositionRevision: gate.compositionRevision, context }).pipe(
           Effect.flatMap((authorization) =>
             gateway.timeline({
               apiKey: timelineApiKey,

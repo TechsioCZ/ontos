@@ -145,6 +145,36 @@ it.effect('shared transport retains the concrete retryable backend error union',
   }),
 );
 
+it.effect('uses native release base URL and carries the document revision to private owner admission', () =>
+  Effect.gen(function* nativeReleaseTransportEffect() {
+    const revision = 'a'.repeat(64);
+    const requests: Request[] = [];
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      requests.push(new Request(input, init));
+      return Promise.resolve(Response.json('ok'));
+    };
+    const client = makeGovernedEffectBffClient(
+      {
+        api,
+        credential: Redacted.make('Bearer approved'),
+        defaultApiPrefix: '/owner-api',
+        requestCorrelation: 'release-request',
+      },
+      {
+        baseUrl: 'https://shell.example/shell-super-app-api/module-api/owner/build-1/owner-api',
+        compositionRevision: revision,
+      },
+    );
+    yield* client.pipe(
+      Effect.flatMap((value) => value.read.execute({})),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+    );
+    expect(requests.map((request) => [request.url, request.headers.get('x-ontos-composition-revision')])).toEqual([
+      ['https://shell.example/shell-super-app-api/module-api/owner/build-1/owner-api/read', revision],
+    ]);
+  }),
+);
+
 for (const baseUrl of ['data:text/plain,unsafe', 'https://user:password@owner.example/api', '//attacker.example/api']) {
   it.effect(`shared transport rejects unsafe URL ${baseUrl} before fetch`, () =>
     Effect.gen(function* checkUnsafeUrl() {

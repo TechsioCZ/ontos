@@ -99,8 +99,8 @@ it.effect('rejects malformed identity, source boundaries, and provider drift', (
   }),
 );
 
-it.effect('requires the publisher-owned composition snapshot only for Customer Context', () =>
-  Effect.gen(function* compositionSnapshotPreflight() {
+it.effect('keeps provider startup independent of composition availability', () =>
+  Effect.gen(function* independentCompositionStartup() {
     const customerContext = {
       id: 'commerce-customer-context',
       moduleFederation: { manifestUrl: 'http://localhost:4101/mf-manifest.json' },
@@ -129,9 +129,10 @@ it.effect('requires the publisher-owned composition snapshot only for Customer C
       generated.indexOf('  # </generated', partyRegistryStart),
     );
 
-    expect(customerContextBlock).toContain('test -n "$ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON"');
-    expect(customerContextBlock).not.toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON:');
-    expect(partyRegistryBlock).not.toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON');
+    expect(customerContextBlock).toContain("start: sh -c 'cd app/.zerops/runtime/commerce-customer-context");
+    expect(partyRegistryBlock).toContain("start: sh -c 'cd app/.zerops/runtime/party-registry");
+    expect(generated).not.toContain('ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON');
+    expect(generated).not.toContain('test -n');
   }),
 );
 

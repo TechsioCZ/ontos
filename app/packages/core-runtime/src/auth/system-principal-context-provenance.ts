@@ -9,6 +9,7 @@ const SystemPrincipalContextSchema = Schema.Struct({
 const SessionPrincipalContextSchema = Schema.Struct({
   authMethod: Schema.Literal('session'),
 });
+const CompositionRevisionSchema = Schema.String.check(Schema.isPattern(/^[\da-f]{64}$/u));
 const systemProvenance = Object.freeze({ kind: 'system' });
 const supportRecoveryProvenance = Object.freeze({ kind: 'support_recovery' });
 const redeemedGatewayProvenance = Object.freeze({ kind: 'redeemed_gateway' });
@@ -29,7 +30,7 @@ type PrincipalContextProvenanceToken =
 type PrincipalContextProvenanceAccess = (
   candidate: TrustedPrincipalContext,
   token: PrincipalContextProvenanceToken,
-) => boolean | object;
+) => boolean | object | string;
 
 const PrincipalContextProvenanceAccessSchema = Schema.declare<PrincipalContextProvenanceAccess>(
   (value): value is PrincipalContextProvenanceAccess => Predicate.isFunction(value),
@@ -45,13 +46,17 @@ const attachPrincipalContextProvenance = <
   context: Context,
   provenance: PrincipalContextProvenanceToken,
   actionRegistration?: Registration,
+  compositionRevision?: string,
 ): Context => {
   const carrier = { ...context };
   const accessProvenance: PrincipalContextProvenanceAccess = (candidate, token) => {
     if (candidate !== carrier || token !== provenance) {
       return false;
     }
-    return provenance === supportRecoveryProvenance ? (actionRegistration ?? false) : true;
+    if (provenance === supportRecoveryProvenance) {
+      return actionRegistration ?? false;
+    }
+    return provenance === redeemedGatewayProvenance ? (compositionRevision ?? false) : true;
   };
   Object.defineProperty(carrier, provenanceAccessProperty, {
     value: accessProvenance,
@@ -92,7 +97,7 @@ const hasRedeemedGatewayProvenance = <Context>(context: Context): boolean => {
   ) {
     return false;
   }
-  return context[provenanceAccessProperty]?.(context, redeemedGatewayProvenance) === true;
+  return Schema.is(CompositionRevisionSchema)(context[provenanceAccessProperty]?.(context, redeemedGatewayProvenance));
 };
 
 const failProvenanceInvariant = (reason: string): never => {
@@ -114,7 +119,27 @@ export const isTrustedSystemPrincipalContext = <Context>(context: Context): bool
 /** Marks a context only after an audience-bound gateway assertion has been verified and redeemed. */
 export const trustVerifiedGatewayPrincipalContext = <Context extends TrustedPrincipalContext>(
   context: Context,
-): Context => attachPrincipalContextProvenance(context, redeemedGatewayProvenance);
+  compositionRevision: string,
+): Context => {
+  if (!Schema.is(CompositionRevisionSchema)(compositionRevision)) {
+    return failProvenanceInvariant('Verified gateway provenance requires its signed composition revision');
+  }
+  return Object.freeze(
+    attachPrincipalContextProvenance(context, redeemedGatewayProvenance, undefined, compositionRevision),
+  );
+};
+
+/** Returns only the revision carried by this exact verified and redeemed context. */
+export const readVerifiedGatewayCompositionRevision = <Context>(context: Context): string | undefined => {
+  if (
+    !Schema.is(TrustedPrincipalContextSchema)(context) ||
+    !Schema.is(PrincipalContextProvenanceCarrierSchema)(context)
+  ) {
+    return undefined;
+  }
+  const revision = context[provenanceAccessProperty]?.(context, redeemedGatewayProvenance);
+  return Schema.is(CompositionRevisionSchema)(revision) ? revision : undefined;
+};
 
 export const isVerifiedGatewayPrincipalContext = <Context>(context: Context): boolean =>
   hasRedeemedGatewayProvenance(context);
@@ -151,8 +176,9 @@ export const preserveSystemPrincipalContextTrust = <Source, Context extends Trus
   if (isTrustedSystemPrincipalContext(source)) {
     return trustResolvedSystemPrincipalContext(context);
   }
-  if (isVerifiedGatewayPrincipalContext(source)) {
-    return trustVerifiedGatewayPrincipalContext(context);
+  const gatewayCompositionRevision = readVerifiedGatewayCompositionRevision(source);
+  if (gatewayCompositionRevision !== undefined) {
+    return trustVerifiedGatewayPrincipalContext(context, gatewayCompositionRevision);
   }
   const recoveryActionRegistration = readSupportRecoveryAction(source);
   if (recoveryActionRegistration !== null) {

@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ProfileReconciliationReadClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ProfileReconciliationReadAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeProfileReconciliationRead = (
   payload: ProfileReconciliationReadRequest,
   ...[requestCorrelation, options = {}]: ProfileReconciliationReadOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeProfileReconciliationReadWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeProfileReconciliationReadWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

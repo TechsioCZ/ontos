@@ -1,7 +1,10 @@
 import type { ActionHandlerContext } from '@app/core-runtime';
 import { TrustedPrincipalContextSchema } from '@app/core-runtime';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
+
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import { PublishProductConfigurationPayloadSchema } from '../../shared/actions/publish-product-configuration.ts';
 import { OutboxPayloadSchema } from '../../shared/outbox/commerce-catalog-product-configuration-published-v1.ts';
@@ -32,39 +35,43 @@ const scope = {
   correlationId: 'configuration-publication-test',
 };
 
-const makeContext = (outcome: ReturnType<ProductConfigurationPersistence['publish']>) => {
-  const events: { eventType: string; payloadJson: unknown; reference: object; subjectResourceId: string }[] = [];
-  const messages: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] = [];
-  const context: ActionHandlerContext<
-    typeof publishProductConfigurationAction.descriptor.domainEvents,
-    ProductConfigurationPersistence
-  > = {
-    actionInvocationId: '33333333-3333-4333-8333-333333333333',
-    addDomainEvent: (event) =>
-      Effect.sync(() => {
-        const reference = Object.create(null);
-        events.push({ ...event, reference });
-        return reference;
-      }),
-    addOutboxMessage: (event, message) =>
-      Effect.sync(() => {
-        messages.push({ event, message });
-      }),
-    recordAuditEvidence: () => Effect.void,
-    recordDataAccess: () => Effect.void,
-    scope,
-    services: {
-      publish: () => outcome,
-      readCurrent: () => Effect.succeedNone,
-    } satisfies ProductConfigurationPersistence,
-  };
-  return { context, events, messages };
-};
+const makeContext = (outcome: ReturnType<ProductConfigurationPersistence['publish']>) =>
+  Effect.gen(function* makeMakeContext() {
+    const snapshot = yield* makeApplicationCompositionSnapshotFixture(['catalog'], ultramodernApiMarker.buildMarker);
+    const events: { eventType: string; payloadJson: unknown; reference: object; subjectResourceId: string }[] = [];
+    const messages: { event: object; message: { payloadJson: unknown; producerModuleKey: string; topic: string } }[] =
+      [];
+    const context: ActionHandlerContext<
+      typeof publishProductConfigurationAction.descriptor.domainEvents,
+      ProductConfigurationPersistence
+    > = {
+      actionInvocationId: '33333333-3333-4333-8333-333333333333',
+      addDomainEvent: (event) =>
+        Effect.sync(() => {
+          const reference = Object.create(null);
+          events.push({ ...event, reference });
+          return reference;
+        }),
+      addOutboxMessage: (event, message) =>
+        Effect.sync(() => {
+          messages.push({ event, message });
+        }),
+      compositionRevision: snapshot.composition.revision,
+      recordAuditEvidence: () => Effect.void,
+      recordDataAccess: () => Effect.void,
+      scope,
+      services: {
+        publish: () => outcome,
+        readCurrent: () => Effect.succeedNone,
+      } satisfies ProductConfigurationPersistence,
+    };
+    return { context, events, messages };
+  });
 
 describe('Product Configuration publication event', () => {
   it.effect('records one typed event and linked outbox message after successful owner publication', () =>
     Effect.gen(function* publication() {
-      const state = makeContext(Effect.succeed({ _tag: 'published', revision: 2 }));
+      const state = yield* makeContext(Effect.succeed({ _tag: 'published', revision: 2 }));
       const result = yield* handlePublishProductConfiguration(payload, state.context);
       expect(result).toEqual({ definitionId: payload.definitionId, revision: 2 });
       expect(state.events).toHaveLength(1);
@@ -95,7 +102,7 @@ describe('Product Configuration publication event', () => {
 
   it.effect('does not announce a rejected publication', () =>
     Effect.gen(function* rejected() {
-      const state = makeContext(
+      const state = yield* makeContext(
         Effect.succeed({ _tag: 'incompatible', reason: 'Open selections cannot be preserved' }),
       );
       yield* handlePublishProductConfiguration(payload, state.context).pipe(Effect.flip);

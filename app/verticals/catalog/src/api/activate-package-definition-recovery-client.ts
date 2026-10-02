@@ -7,6 +7,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface ActivatePackageDefinitionRecoveryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type ActivatePackageDefinitionRecoveryAuthorizedInvocation = readonly [
@@ -47,6 +48,10 @@ export const executeActivatePackageDefinitionRecovery = (
   payload: ActivatePackageDefinitionRecoveryRequest,
   ...[requestCorrelation, options = {}]: ActivatePackageDefinitionRecoveryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeActivatePackageDefinitionRecoveryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeActivatePackageDefinitionRecoveryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );

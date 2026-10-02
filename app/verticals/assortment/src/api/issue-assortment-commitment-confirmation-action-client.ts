@@ -14,6 +14,7 @@ const traceIdOption = 'traceId' as const;
 
 export interface IssueAssortmentCommitmentConfirmationActionClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
   readonly gateway?: Parameters<typeof operationGateway.invoke>[1];
   readonly idempotencyKey: string;
   readonly [traceIdOption]?: string;
@@ -68,7 +69,11 @@ export const executeIssueAssortmentCommitmentConfirmation = (
   ...[requestCorrelation, options]: OperationInvocation
 ) =>
   operationGateway.invoke(
-    (credential) =>
-      executeIssueAssortmentCommitmentConfirmationWithAuthorization(payload, credential, requestCorrelation, options),
+    (credential, { apiBaseUrl, compositionRevision }) =>
+      executeIssueAssortmentCommitmentConfirmationWithAuthorization(payload, credential, requestCorrelation, {
+        ...options,
+        baseUrl: apiBaseUrl,
+        compositionRevision,
+      }),
     options.gateway,
   );

@@ -8,6 +8,7 @@ import { operationGateway } from './action-gateway.ts';
 
 export interface CounterpartyRoleHistoryClientOptions {
   readonly baseUrl?: string | URL;
+  readonly compositionRevision?: string;
 }
 
 type CounterpartyRoleHistoryAuthorizedInvocation = readonly [
@@ -48,6 +49,10 @@ export const executeCounterpartyRoleHistory = (
   payload: CounterpartyRoleHistoryRequest,
   ...[requestCorrelation, options = {}]: CounterpartyRoleHistoryOperationInvocation
 ) =>
-  operationGateway.invoke((credential) =>
-    executeCounterpartyRoleHistoryWithAuthorization(payload, credential, requestCorrelation, options),
+  operationGateway.invoke((credential, { apiBaseUrl, compositionRevision }) =>
+    executeCounterpartyRoleHistoryWithAuthorization(payload, credential, requestCorrelation, {
+      ...options,
+      baseUrl: apiBaseUrl,
+      compositionRevision,
+    }),
   );
