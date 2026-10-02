@@ -5,7 +5,13 @@
   "type": "module",
   "exports": {
     "./api": "./shared/api.ts",
-    "./api/client": "./src/api/pricing-client.ts"
+    "./api/client": "./src/api/pricing-client.ts",
+    "./permissions/pricing.commercial_fee.read": "./shared/permissions/pricing-commercial-fee-read.ts",
+    "./permissions/pricing.currency_support.read": "./shared/permissions/pricing-currency-support-read.ts",
+    "./permissions/pricing.exact_price_resolution.read": "./shared/permissions/pricing-exact-price-resolution-read.ts",
+    "./permissions/pricing.price.read": "./shared/permissions/pricing-price-read.ts",
+    "./resources/commercial-fee": "./shared/resources/commercial-fee.ts",
+    "./resources/price": "./shared/resources/price.ts"
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical pricing --target dist && ultramodern-create ultramodern public-surface --app pricing --target dist && modern deploy --skip-build --deploy-target node",
@@ -13,17 +19,22 @@
     "cloudflare:deploy": "pnpm run cloudflare:build && ultramodern-create ultramodern cloudflare-output-verify --app pricing --require-public-urls && wrangler deploy --config .output/wrangler.json",
     "cloudflare:preview": "pnpm run cloudflare:build && wrangler dev --config .output/wrangler.json",
     "cloudflare:proof": "ultramodern-create ultramodern cloudflare-proof --app pricing",
-    "db:check": "drizzle-kit check --config drizzle.config.ts",
+    "db:check": "drizzle-kit check --dialect postgresql --out ./drizzle --output text",
     "db:generate": "drizzle-kit generate --config drizzle.config.ts",
     "db:migrate": "drizzle-kit migrate --config drizzle.config.ts",
     "db:test": "rstest run tests/unit/database-schema-contract.test.ts --config rstest.config.ts",
     "db:verify": "node scripts/verify-db-schema.mts",
+    "test:integration": "rstest --project integration",
     "test:unit": "rstest --project unit",
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
+    "@app/catalog": "workspace:*",
+    "@app/commerce-customer-context": "workspace:*",
+    "@app/commerce-market-catalog": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
+    "@app/price-group-catalog-contracts": "workspace:*",
     "@app/pricing-contracts": "workspace:*",
     "@app/shared-contracts": "workspace:*",
     "@effect/sql-pg": "4.0.0-rc.117",

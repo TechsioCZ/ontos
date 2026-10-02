@@ -190,6 +190,8 @@ const sharedContractsNodeModulePath = 'node_modules/@app/shared-contracts';
 
 const partyGovernedContractPath = 'verticals/party-registry/shared/api.ts';
 const partyGovernedHandlerPath = 'verticals/party-registry/api/index.ts';
+const pricingGovernedContractPath = 'verticals/pricing/shared/api.ts';
+const pricingGovernedHandlerPath = 'verticals/pricing/api/index.ts';
 
 interface FixtureVertical {
   readonly appId: string;
@@ -6261,6 +6263,23 @@ it.live(
       hasValidGovernedHttpCompositionRoot(
         shared,
         handler.replace('export default apiRuntime;', 'export default unrelatedRuntime;'),
+      ),
+    ).toBe(false);
+  }),
+);
+
+it.live(
+  'concise governed runtime factory stays bound to the exported owner composition',
+  Effect.fn(function* conciseGovernedRuntimeFactory() {
+    const shared = yield* Effect.promise(() => readFile(path.join(appRoot, pricingGovernedContractPath), 'utf-8'));
+    const handler = yield* Effect.promise(() => readFile(path.join(appRoot, pricingGovernedHandlerPath), 'utf-8'));
+
+    expect(handler).toMatch(/makePricingApiRuntime\s*=\s*\(\)[\s\S]*=>\s*assembleEffectBffRuntime\(/u);
+    expect(hasValidGovernedHttpCompositionRoot(shared, handler)).toBe(true);
+    expect(
+      hasValidGovernedHttpCompositionRoot(
+        shared,
+        handler.replace('handlers: resolvedApiHandlersLive,', 'handlers: Layer.empty,'),
       ),
     ).toBe(false);
   }),

@@ -260,6 +260,7 @@ export interface PermissionScaffoldConfig {
     | 'counterparty'
     | 'counterparty_storefront'
     | 'inventory_resource'
+    | 'module'
     | 'price_group'
     | 'pricing_catalog'
     | 'retail_profile';

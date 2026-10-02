@@ -366,6 +366,30 @@ const allowedCompositionSeams: readonly AllowedCompositionSeam[] = [
     specifier: `${commercePackageSpecifierPrefix}/api/market-subject-restrictions-current/client`,
   },
   {
+    importer: 'verticals/pricing/src/integrations/commerce-price-group-resolution.ts',
+    reason:
+      'Pricing composes the narrow Customer Context price-group resolution owner client at its explicit integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/customer-price-group-resolution/client`,
+  },
+  {
+    importer: 'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence-live.ts',
+    reason:
+      'Pricing composes the narrow Customer Context price-group resolution owner client for external-owner evidence validation.',
+    specifier: `${commercePackageSpecifierPrefix}/api/customer-price-group-resolution/client`,
+  },
+  {
+    importer: 'verticals/pricing/src/integrations/current-pricing-decision-owner-final-fence.ts',
+    reason:
+      'Pricing composes the narrow Customer Context price-group resolution owner client for the final owner-authority fence.',
+    specifier: `${commercePackageSpecifierPrefix}/api/customer-price-group-resolution/client`,
+  },
+  {
+    importer: 'verticals/pricing/src/integrations/customer-context-subject-authority.ts',
+    reason:
+      'Pricing composes the narrow Customer Context purchase-context verification owner client at its subject-authority integration boundary.',
+    specifier: `${commercePackageSpecifierPrefix}/api/pricing-purchase-context-verification/client`,
+  },
+  {
     importer: 'apps/shell-super-app/src/api/vertical-clients.ts',
     reason: 'Commerce publishes this as its sanctioned read-only API client for Shell composition.',
     specifier: `${commercePackageSpecifierPrefix}/api/client`,

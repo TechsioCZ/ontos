@@ -17,6 +17,9 @@ import { purchaseCurrencyPricingPortFromEnvironment } from '../../src/integratio
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const sellingLegalEntityId = '40000000-0000-4000-8000-000000000001';
+const supportRootId = '30000000-0000-4000-8000-000000000001';
+const supportRevisionId = '31000000-0000-4000-8000-000000000001';
+const verificationRef = 'commerce.pricing.currency-support-proof:32000000-0000-4000-8000-000000000001';
 const purchasingContext = {
   cartId: 'cart-czk-launch',
   channelId: 'web',
@@ -73,15 +76,62 @@ const handlerScope = {
 const currentPricingResponse = (effectiveAt: string) =>
   Schema.decodeUnknownSync(CurrentSupportedCurrenciesResponseSchema)({
     completenessEvidence: {
+      nextApplicabilityBoundary: '2026-10-01T00:00:00.000Z',
       observedAt: effectiveAt,
-      ownerRevision: 'pricing:cz-launch:11',
-      scope: { kind: 'EXACT_PREDICATE', predicateRef: 'pricing:exact-current-context' },
+      ownerRevision: supportRevisionId,
+      scope: {
+        kind: 'EXACT_PREDICATE',
+        predicateRef: `commerce.pricing.current-supported-currencies:${tenantId}`,
+      },
+    },
+    currentnessEvidence: {
+      evaluatedAt: effectiveAt,
+      evaluationMode: 'CURRENT_WITH_REVALIDATION',
+      observedAt: effectiveAt,
+      revalidatedAt: effectiveAt,
+      scheduleRevision: 11,
+      supportRevisionRef: {
+        moduleId: 'commerce.pricing',
+        resourceId: supportRevisionId,
+        resourceType: 'commerce.pricing.currency-support-revision',
+        supportRootId,
+        tenantId,
+      },
+      supportRootRef: {
+        moduleId: 'commerce.pricing',
+        resourceId: supportRootId,
+        resourceType: 'commerce.pricing.currency-support',
+        tenantId,
+      },
     },
     effectiveAt,
+    effectivePeriod: {
+      effectiveFrom: '1970-01-01T00:00:00.000Z',
+      effectiveTo: null,
+    },
+    factProofs: [{ factRef: supportRootId, factRevisionRef: supportRevisionId, verificationRef }],
+    generation: 11,
+    nextApplicabilityBoundary: '2026-10-01T00:00:00.000Z',
     observedAt: effectiveAt,
     outcome: 'SUPPORTED_CURRENCIES_CURRENT',
     pricingRevision: 'pricing:cz-launch:11',
+    scheduleRevision: 11,
     supportedCurrencies: ['CZK'],
+    supportRevisionRef: {
+      moduleId: 'commerce.pricing',
+      resourceId: supportRevisionId,
+      resourceType: 'commerce.pricing.currency-support-revision',
+      supportRootId,
+      tenantId,
+    },
+    supportRootRef: {
+      moduleId: 'commerce.pricing',
+      resourceId: supportRootId,
+      resourceType: 'commerce.pricing.currency-support',
+      tenantId,
+    },
+    tenantId,
+    verificationRef,
   });
 
 const runtimeServices = (pricingPort: PurchaseCurrencyPricingPortService) =>
@@ -107,7 +157,7 @@ const runtimeServices = (pricingPort: PurchaseCurrencyPricingPortService) =>
   );
 
 describe('Purchase Currency Pricing runtime proof', () => {
-  it.effect('resolves CZK from the exact Pricing context and emits only safe owner evidence', () =>
+  it.effect('resolves CZK through the Tenant support read while keeping purchase context separate', () =>
     Effect.gen(function* validCzk() {
       const pricingCalls: unknown[] = [];
       const pricingPort = yield* purchaseCurrencyPricingPortFromEnvironment(
@@ -123,6 +173,11 @@ describe('Purchase Currency Pricing runtime proof', () => {
         scope: handlerScope,
         services,
       });
+      const currentOwnerResponse = currentPricingResponse(response.result.evidence.requestedAt);
+      if (currentOwnerResponse.outcome !== 'SUPPORTED_CURRENCIES_CURRENT') {
+        throw new Error('The test owner response must be Current');
+      }
+      const { outcome: _ownerOutcome, ...expectedPricingSupport } = currentOwnerResponse;
 
       expect(pricingCalls).toEqual([
         {
@@ -130,14 +185,7 @@ describe('Purchase Currency Pricing runtime proof', () => {
           credential: 'Bearer pricing-owner-issued',
           options: { baseUrl: new URL('https://pricing.example.test') },
           payload: {
-            cartId: purchasingContext.cartId,
-            channelId: purchasingContext.channelId,
-            contextRevision: request.contextRevision,
             effectiveAt: response.result.evidence.requestedAt,
-            marketId: purchasingContext.marketId,
-            sellingLegalEntityId,
-            storefrontId: purchasingContext.storefrontId,
-            subject,
             tenantId,
           },
         },
@@ -151,7 +199,7 @@ describe('Purchase Currency Pricing runtime proof', () => {
             contextRevision: request.contextRevision,
             policyCompleteness: policy.completeness,
             policyRevisionIds: policy.policyRevisionIds,
-            pricingRevision: 'pricing:cz-launch:11',
+            pricingSupport: expectedPricingSupport,
             requestedAt: response.result.evidence.requestedAt,
           },
           source: 'POLICY_DEFAULT',
@@ -193,7 +241,10 @@ describe('Purchase Currency Pricing runtime proof', () => {
 
   it.effect('fails closed for stale and unavailable Pricing evidence', () =>
     Effect.gen(function* nonCurrentPricingEvidence() {
-      for (const outcome of ['SUPPORTED_CURRENCIES_STALE', 'SUPPORTED_CURRENCIES_UNAVAILABLE'] as const) {
+      for (const [outcome, code] of [
+        ['SUPPORTED_CURRENCIES_STALE', 'pricing_currency_support_stale'],
+        ['SUPPORTED_CURRENCIES_UNAVAILABLE', 'pricing_currency_support_unavailable'],
+      ] as const) {
         const pricingPort = yield* purchaseCurrencyPricingPortFromEnvironment(
           { legalEntityId: sellingLegalEntityId, requestCorrelation: handlerScope.correlationId },
           (payload) =>
@@ -225,7 +276,7 @@ describe('Purchase Currency Pricing runtime proof', () => {
         }).pipe(Effect.flip);
 
         expect(Schema.is(PurchaseCurrencyDependencyUnavailable)(failure)).toBe(true);
-        expect(failure).toMatchObject({ code: 'pricing_currency_support_unavailable', retryable: true });
+        expect(failure).toMatchObject({ code, retryable: true });
       }
     }),
   );

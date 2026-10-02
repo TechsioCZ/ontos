@@ -120,6 +120,7 @@ import { moveProductCategoryActionApiLive } from './move-product-category-action
 import { moveProductCategoryRecoveryReadApiLive } from './move-product-category-recovery-read-server.ts';
 import { packageDefinitionHistoryReadApiLive } from './package-definition-history-read-server.ts';
 import { packageOptionHistoryReadApiLive } from './package-option-history-read-server.ts';
+import { pricingPurposeEquivalenceReadApiLive } from './pricing-purpose-equivalence-read-server.ts';
 import { productBrandCurrentReadApiLive } from './product-brand-current-read-server.ts';
 import { productBrandHistoryReadApiLive } from './product-brand-history-read-server.ts';
 import { productCategoryClassificationReadApiLive } from './product-category-classification-read-server.ts';
@@ -129,10 +130,12 @@ import { productHistoryReadApiLive } from './product-history-read-server.ts';
 import { productRelationshipCurrentReadApiLive } from './product-relationship-current-read-server.ts';
 import { productRelationshipHistoryReadApiLive } from './product-relationship-history-read-server.ts';
 import { productSizeCurrentReadApiLive } from './product-size-current-read-server.ts';
+import { productVariantSnapshotReadApiLive } from './product-variant-snapshot-read-server.ts';
 import { promotePackageDefinitionActionApiLive } from './promote-package-definition-action-server.ts';
 import { promotePackageDefinitionRecoveryReadApiLive } from './promote-package-definition-recovery-read-server.ts';
 import { publishProductConfigurationActionApiLive } from './publish-product-configuration-action-server.ts';
 import { publishProductConfigurationRecoveryReadApiLive } from './publish-product-configuration-recovery-read-server.ts';
+import { quantityBasisCompatibilityReadApiLive } from './quantity-basis-compatibility-read-server.ts';
 import { quantityPreparationReadApiLive } from './quantity-preparation-read-server.ts';
 import { reactivateBrandActionApiLive } from './reactivate-brand-action-server.ts';
 import { reactivateBrandRecoveryReadApiLive } from './reactivate-brand-recovery-read-server.ts';
@@ -432,6 +435,7 @@ export const makeCatalogApiRuntime = (
     moveProductCategoryRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     packageDefinitionHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     packageOptionHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    pricingPurposeEquivalenceReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     productBrandCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     productBrandHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     productCategoryClassificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
@@ -441,10 +445,12 @@ export const makeCatalogApiRuntime = (
     productRelationshipCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     productRelationshipHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     productSizeCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    productVariantSnapshotReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     promotePackageDefinitionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     promotePackageDefinitionRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     publishProductConfigurationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     publishProductConfigurationRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    quantityBasisCompatibilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     quantityPreparationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     reactivateBrandActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     reactivateBrandRecoveryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

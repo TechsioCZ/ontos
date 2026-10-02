@@ -8,7 +8,31 @@ import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microv
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 
 // <generated-governed-http-api-imports>
+import { CommercialFeeDefinitionApi } from './apis/commercial-fee-definition.ts';
+import { CommercialFeeResultLookupApi } from './apis/commercial-fee-result-lookup.ts';
+import { CommercialFeeScheduleApi } from './apis/commercial-fee-schedule.ts';
+import { ContractualDiscountResultLookupApi } from './apis/contractual-discount-result-lookup.ts';
+import { CurrencySupportResultLookupApi } from './apis/currency-support-result-lookup.ts';
+import { CurrentPricingDecisionApi } from './apis/current-pricing-decision.ts';
 import { CurrentSupportedCurrenciesApi } from './apis/current-supported-currencies.ts';
+import { DefineCommercialFeeActionApi } from './apis/define-commercial-fee-action.ts';
+import { DefinePriceActionApi } from './apis/define-price-action.ts';
+import { ExactPriceResolutionApi } from './apis/exact-price-resolution.ts';
+import { ManageContractualDiscountActionApi } from './apis/manage-contractual-discount-action.ts';
+import { ManageProductCommercialFeesBulkActionApi } from './apis/manage-product-commercial-fees-bulk-action.ts';
+import { ManageProductPricesBulkActionApi } from './apis/manage-product-prices-bulk-action.ts';
+import { ManageQuantityTierActionApi } from './apis/manage-quantity-tier-action.ts';
+import { ManageQuotationActionApi } from './apis/manage-quotation-action.ts';
+import { ManageZeroFloorAuthorizationActionApi } from './apis/manage-zero-floor-authorization-action.ts';
+import { PriceDefinitionApi } from './apis/price-definition.ts';
+import { PriceResultLookupApi } from './apis/price-result-lookup.ts';
+import { PriceScheduleApi } from './apis/price-schedule.ts';
+import { QuantityTierResultLookupApi } from './apis/quantity-tier-result-lookup.ts';
+import { QuotationResultLookupApi } from './apis/quotation-result-lookup.ts';
+import { ReviseCommercialFeeActionApi } from './apis/revise-commercial-fee-action.ts';
+import { RevisePriceActionApi } from './apis/revise-price-action.ts';
+import { SetSupportedCurrenciesActionApi } from './apis/set-supported-currencies-action.ts';
+import { ZeroFloorAuthorizationResultLookupApi } from './apis/zero-floor-authorization-result-lookup.ts';
 // </generated-governed-http-api-imports>
 
 export const pricingMarkerSchema = Schema.Struct({
@@ -73,7 +97,31 @@ export type {
 export const pricingApi = HttpApi.make('PricingApi')
   .addHttpApi(pricingFoundationApi)
   // <generated-governed-http-api-additions>
+  .addHttpApi(CommercialFeeDefinitionApi)
+  .addHttpApi(CommercialFeeResultLookupApi)
+  .addHttpApi(CommercialFeeScheduleApi)
+  .addHttpApi(ContractualDiscountResultLookupApi)
+  .addHttpApi(CurrencySupportResultLookupApi)
+  .addHttpApi(CurrentPricingDecisionApi)
   .addHttpApi(CurrentSupportedCurrenciesApi)
+  .addHttpApi(DefineCommercialFeeActionApi)
+  .addHttpApi(DefinePriceActionApi)
+  .addHttpApi(ExactPriceResolutionApi)
+  .addHttpApi(ManageContractualDiscountActionApi)
+  .addHttpApi(ManageProductCommercialFeesBulkActionApi)
+  .addHttpApi(ManageProductPricesBulkActionApi)
+  .addHttpApi(ManageQuantityTierActionApi)
+  .addHttpApi(ManageQuotationActionApi)
+  .addHttpApi(ManageZeroFloorAuthorizationActionApi)
+  .addHttpApi(PriceDefinitionApi)
+  .addHttpApi(PriceResultLookupApi)
+  .addHttpApi(PriceScheduleApi)
+  .addHttpApi(QuantityTierResultLookupApi)
+  .addHttpApi(QuotationResultLookupApi)
+  .addHttpApi(ReviseCommercialFeeActionApi)
+  .addHttpApi(RevisePriceActionApi)
+  .addHttpApi(SetSupportedCurrenciesActionApi)
+  .addHttpApi(ZeroFloorAuthorizationResultLookupApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

@@ -30,7 +30,10 @@ const effectiveFrom = '2026-10-01T00:00:00.000Z';
 const reason = 'Deterministic Czech Launch development fixture';
 const marketCatalogModuleId = 'commerce.market-catalog';
 const catalogModuleId = 'commerce.catalog';
+const pricingModuleId = 'commerce.pricing';
 const pricingCurrencyOwnerRevision = 'commerce.pricing.supported-currencies:czech-launch-v1';
+const pricingCurrencySupportRootId = '79000000-0000-4000-8000-000000000010';
+const pricingCurrencySupportRevisionId = '79000000-0000-4000-8000-000000000011';
 const marketBootstrapPolicyRevisionId = '75000000-0000-4000-8000-000000000010';
 const allowedCurrencyPolicyRevisionId = '75000000-0000-4000-8000-000000000020';
 const defaultCurrencyPolicyRevisionId = '75000000-0000-4000-8000-000000000021';
@@ -262,14 +265,51 @@ const paymentTermCatalogOwnerEvidence = {
 
 const pricingCurrencyOwnerEvidence = {
   completenessEvidence: ownerCompleteness(
-    pricingCurrencyOwnerRevision,
+    pricingCurrencySupportRevisionId,
     'commerce.pricing.supported-currencies.current:czech-launch',
   ),
+  currentnessEvidence: {
+    evaluatedAt: effectiveFrom,
+    evaluationMode: 'CURRENT_WITH_REVALIDATION',
+    observedAt: effectiveFrom,
+    revalidatedAt: effectiveFrom,
+    scheduleRevision: 1,
+    supportRevisionRef: {
+      moduleId: pricingModuleId,
+      resourceId: pricingCurrencySupportRevisionId,
+      resourceType: 'commerce.pricing.currency-support-revision',
+      supportRootId: pricingCurrencySupportRootId,
+      tenantId,
+    },
+    supportRootRef: {
+      moduleId: pricingModuleId,
+      resourceId: pricingCurrencySupportRootId,
+      resourceType: 'commerce.pricing.currency-support',
+      tenantId,
+    },
+  },
   effectiveAt: effectiveFrom,
+  effectivePeriod: { effectiveFrom, effectiveTo: null },
+  generation: 1,
   observedAt: effectiveFrom,
   outcome: 'SUPPORTED_CURRENCIES_CURRENT',
   pricingRevision: pricingCurrencyOwnerRevision,
+  scheduleRevision: 1,
   supportedCurrencies: ['CZK'],
+  supportRevisionRef: {
+    moduleId: pricingModuleId,
+    resourceId: pricingCurrencySupportRevisionId,
+    resourceType: 'commerce.pricing.currency-support-revision',
+    supportRootId: pricingCurrencySupportRootId,
+    tenantId,
+  },
+  supportRootRef: {
+    moduleId: pricingModuleId,
+    resourceId: pricingCurrencySupportRootId,
+    resourceType: 'commerce.pricing.currency-support',
+    tenantId,
+  },
+  tenantId,
 } as const;
 
 const customerCommercePolicyOwnerEvidence = {

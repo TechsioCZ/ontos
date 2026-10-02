@@ -187,6 +187,7 @@ import { openProfileReconciliationActionApiLive } from './open-profile-reconcili
 import { paymentTermAffectedUseAssessmentReadApiLive } from './payment-term-affected-use-assessment-read-server.ts';
 import { paymentTermPolicyCurrentReadApiLive } from './payment-term-policy-current-read-server.ts';
 import { paymentTermsResolutionReadApiLive } from './payment-terms-resolution-read-server.ts';
+import { pricingPurchaseContextVerificationReadApiLive } from './pricing-purchase-context-verification-read-server.ts';
 import { profileReconciliationReadReadApiLive } from './profile-reconciliation-read-read-server.ts';
 import { purchaseCurrencyPolicyCurrentReadApiLive } from './purchase-currency-policy-current-read-server.ts';
 import { purchaseCurrencyResolutionReadApiLive } from './purchase-currency-resolution-read-server.ts';
@@ -862,6 +863,7 @@ export const makeCommerceCustomerContextApiRuntime = (
     paymentTermAffectedUseAssessmentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentTermPolicyCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentTermsResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    pricingPurchaseContextVerificationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     profileReconciliationReadReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     purchaseCurrencyPolicyCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     purchaseCurrencyResolutionReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

@@ -41,6 +41,22 @@ import { purchaseCurrencyPricingPortFromEnvironment } from '../../src/integratio
 
 const effectiveAt = '2026-10-01T00:00:00.000Z';
 const fixtureScope = CZECH_LAUNCH_COMMERCE_FIXTURE.scope;
+const fixturePricingCurrencies = CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.pricingCurrencies;
+const fixturePricingVerificationRef = `commerce.pricing.currency-support-proof:${fixturePricingCurrencies.supportRevisionRef.resourceId}`;
+const activationOwnerFacts = {
+  ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts,
+  pricingCurrencies: {
+    ...fixturePricingCurrencies,
+    factProofs: [
+      {
+        factRef: fixturePricingCurrencies.supportRootRef.resourceId,
+        factRevisionRef: fixturePricingCurrencies.supportRevisionRef.resourceId,
+        verificationRef: fixturePricingVerificationRef,
+      },
+    ],
+    verificationRef: fixturePricingVerificationRef,
+  },
+};
 const [paymentTermDefinition] = CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.paymentTermCatalog.current;
 
 const requireFixtureOwner = <Value>(value: Value | undefined, owner: string): Value => {
@@ -94,7 +110,7 @@ const persistedCzechLaunchPolicyStates = () => {
 it.effect('composes the Czech Launch inventory and four policy defaults behind governed contracts', () =>
   Effect.gen(function* composedLaunch() {
     yield* validateCzechLaunchFixtureContracts();
-    yield* validateCzechLaunchActivation(CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts);
+    yield* validateCzechLaunchActivation(activationOwnerFacts);
 
     const { channelId, marketId, sellingLegalEntityId, storefrontId, tenantId } = CZECH_LAUNCH_COMMERCE_FIXTURE.scope;
     const purchasingContextFailure = yield* unavailablePurchaseCurrencyPurchasingContextPort()
@@ -337,7 +353,7 @@ it.effect('uses the Catalog production adapter and preserves owner quantity evid
   const ownerCalls: unknown[] = [];
 
   return Effect.gen(function* catalogQuantityOwnerAdapter() {
-    const catalogOwnerResponse = yield* validateCzechLaunchActivation(CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts).pipe(
+    const catalogOwnerResponse = yield* validateCzechLaunchActivation(activationOwnerFacts).pipe(
       Effect.flatMap(({ catalogQuantity }) =>
         catalogQuantity.status === 'READY'
           ? Effect.succeed(catalogQuantity)
@@ -418,8 +434,12 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
   const gatewayRequests: unknown[] = [];
   const ownerCalls: unknown[] = [];
   const pricingOwnerResponse = Schema.decodeUnknownSync(CurrentSupportedCurrenciesResponseSchema)(
-    CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.pricingCurrencies,
+    activationOwnerFacts.pricingCurrencies,
   );
+  if (pricingOwnerResponse.outcome !== 'SUPPORTED_CURRENCIES_CURRENT') {
+    throw new Error('The Czech Launch fixture must contain Current Pricing Currency Support');
+  }
+  const { outcome: _ownerOutcome, ...expectedPricingSupport } = pricingOwnerResponse;
   const purchasingContext = {
     cartId: 'czech-launch-cart',
     channelId: fixtureScope.channelId,
@@ -428,12 +448,6 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
     storefrontId: fixtureScope.storefrontId,
     tenantId: fixtureScope.tenantId,
   };
-  const subject = {
-    guestEvidenceRef: 'commerce.customer-context.guest-evidence:czech-launch',
-    guestSessionRef: 'commerce.cart.guest-session:czech-launch',
-    kind: 'GUEST' as const,
-  };
-
   return Effect.gen(function* pricingOwnerAdapter() {
     const port = yield* purchaseCurrencyPricingPortFromEnvironment(
       { legalEntityId: fixtureScope.sellingLegalEntityId, requestCorrelation: 'czech-launch-pricing' },
@@ -443,9 +457,8 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
       },
     );
     const pricing = yield* port.resolveCurrent({
-      context: { contextRevision: 'commerce.cart.context:czech-launch-v1', purchasingContext },
-      observedAt: effectiveAt,
-      subject,
+      effectiveAt,
+      tenantId: purchasingContext.tenantId,
     });
 
     expect(ownerCalls).toEqual([
@@ -454,14 +467,7 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
         credential: 'Bearer pricing-owner-issued',
         options: { baseUrl: new URL('https://pricing.example.test') },
         payload: {
-          cartId: purchasingContext.cartId,
-          channelId: purchasingContext.channelId,
-          contextRevision: 'commerce.cart.context:czech-launch-v1',
           effectiveAt,
-          marketId: purchasingContext.marketId,
-          sellingLegalEntityId: purchasingContext.sellingLegalEntityId,
-          storefrontId: purchasingContext.storefrontId,
-          subject,
           tenantId: purchasingContext.tenantId,
         },
       },
@@ -473,10 +479,7 @@ it.effect('uses the Pricing production adapter with the exact purchasing context
         requestCorrelation: 'czech-launch-pricing',
       },
     ]);
-    expect(pricing).toEqual({
-      pricingRevision: CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.pricingCurrencies.pricingRevision,
-      supportedCurrencies: ['CZK'],
-    });
+    expect(pricing).toEqual(expectedPricingSupport);
   }).pipe(
     Effect.provide(
       Layer.succeed(PurchaseCurrencyPricingGatewayCredentialService, {

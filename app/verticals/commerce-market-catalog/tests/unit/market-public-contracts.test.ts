@@ -5,11 +5,13 @@ import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contra
 import { getActionResourcePermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import {
   EligibleMarketTuplesRequestSchema as PublishedEligibleMarketTuplesRequestSchema,
+  PricingCurrentMarketEvidenceRequestSchema as PublishedPricingCurrentMarketEvidenceRequestSchema,
   ResolveCommerceMarketResponseSchema as PublishedResolveCommerceMarketResponseSchema,
   commerceMarketCatalogClient as publishedCommerceMarketCatalogClient,
   executeCurrentMarketCatalog,
   executeEligibleMarketTuples,
   executeMarketHistory,
+  executePricingCurrentMarketEvidence,
   executeResolveCommerceMarket,
   getCommerceMarketCatalogReadiness,
 } from '@app/commerce-market-catalog/api/client';
@@ -25,6 +27,7 @@ import {
   EligibleMarketTuplesRequestSchema,
   EligibleMarketTuplesResponseSchema,
 } from '../../shared/apis/eligible-market-tuples.ts';
+import { PricingCurrentMarketEvidenceRequestSchema } from '../../shared/apis/pricing-current-market-evidence.ts';
 import {
   ResolveCommerceMarketRequestSchema,
   ResolveCommerceMarketResponseSchema,
@@ -346,6 +349,7 @@ describe('Commerce Market public contracts', () => {
       'current-market-catalog',
       'eligible-market-tuples',
       'market-history',
+      'pricing-current-market-evidence',
       'resolve-commerce-market',
       'verify-market-eligibility-v1',
     ]);
@@ -585,10 +589,12 @@ describe('Commerce Market public contracts', () => {
       executeCurrentMarketCatalog,
       executeEligibleMarketTuples,
       executeMarketHistory,
+      executePricingCurrentMarketEvidence,
       executeResolveCommerceMarket,
       getCommerceMarketCatalogReadiness,
     });
     expect(PublishedEligibleMarketTuplesRequestSchema).toBe(EligibleMarketTuplesRequestSchema);
+    expect(PublishedPricingCurrentMarketEvidenceRequestSchema).toBe(PricingCurrentMarketEvidenceRequestSchema);
     expect(PublishedResolveCommerceMarketResponseSchema).toBe(ResolveCommerceMarketResponseSchema);
   });
 

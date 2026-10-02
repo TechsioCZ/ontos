@@ -8,68 +8,93 @@ import {
 import type {
   CurrentSupportedCurrenciesRequest,
   CurrentSupportedCurrenciesResponse,
+  CurrentSupportedCurrenciesSuccess,
 } from '../../shared/apis/current-supported-currencies.ts';
-import { DateTime, Effect, Option } from 'effect';
-import type { CurrencySupportPersistence, StoredCurrencySupport } from '../persistence/currency-support-persistence.ts';
+import { Effect, Match } from 'effect';
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
+import type { CurrencySupportPersistence, StoredCurrencySupport } from '../persistence/currency-support-persistence.ts';
 
 const MODULE_KEY = 'commerce.pricing';
 const currentSupportedCurrenciesEntrypoint = defineTenantModuleEntrypoint({
   access: 'read',
-  authorization: { kind: 'context_permission', permission: 'module.access' },
+  authorization: { kind: 'context_permission', permission: 'pricing.currency_support.read' },
   entrypointKey: 'commerce.pricing.api.current-supported-currencies',
   moduleKey: MODULE_KEY,
   role: 'api',
 });
 export interface PricingTrustedScope {
-  readonly legalEntityId: string | undefined;
-  readonly storefrontId: string | undefined;
   readonly tenantId: string;
 }
-const subjectPredicate = (subject: CurrentSupportedCurrenciesRequest['subject']) => {
-  if (subject.kind === 'GUEST') {
-    return `guest:${subject.guestSessionRef}:${subject.guestEvidenceRef}`;
-  }
-  if (subject.authorizationSubject.kind === 'RETAIL') {
-    return `retail:${subject.profileRef.resourceId}`;
-  }
-  return `counterparty:${subject.profileRef.resourceId}:${subject.authorizationSubject.counterpartyRef.resourceId}`;
-};
-const exactPredicateRef = (input: CurrentSupportedCurrenciesRequest) =>
-  [
-    'commerce.pricing.current-supported-currencies',
-    input.tenantId,
-    input.sellingLegalEntityId,
-    input.storefrontId,
-    input.marketId,
-    input.channelId,
-    input.cartId,
-    subjectPredicate(input.subject),
-    input.contextRevision,
-    input.effectiveAt,
-  ].join(':');
 const stale = (stored: StoredCurrencySupport, reason: string): CurrentSupportedCurrenciesResponse => ({
   code: 'pricing_currency_support_stale',
-  observedAt: DateTime.formatIso(stored.observedAt),
+  observedAt: stored.observedAt,
   outcome: 'SUPPORTED_CURRENCIES_STALE',
   pricingRevision: stored.pricingRevision,
   reason,
   retryable: true,
 });
+const current = (
+  input: CurrentSupportedCurrenciesRequest,
+  stored: StoredCurrencySupport,
+): CurrentSupportedCurrenciesResponse => {
+  if (stored.currentnessEvidence.evaluationMode === 'HISTORICAL_AS_OF') {
+    return stale(stored, 'Pricing support state changed before final Current revalidation');
+  }
+  if (
+    stored.nextApplicabilityBoundary !== undefined &&
+    stored.currentnessEvidence.evaluatedAt >= stored.nextApplicabilityBoundary
+  ) {
+    return stale(stored, 'Pricing support evidence crossed its next applicability boundary');
+  }
+  if (stored.predicateRef === undefined || stored.verificationRef === undefined || stored.factProofs === undefined) {
+    return stale(stored, 'Pricing support Current state has no durable owner proof receipt');
+  }
+  const completenessBase = {
+    observedAt: stored.observedAt,
+    ownerRevision: stored.supportRevisionRef.resourceId,
+    scope: {
+      kind: 'EXACT_PREDICATE' as const,
+      predicateRef: stored.predicateRef,
+    },
+  };
+  const completenessEvidence =
+    stored.nextApplicabilityBoundary === undefined
+      ? completenessBase
+      : { ...completenessBase, nextApplicabilityBoundary: stored.nextApplicabilityBoundary };
+  const result = {
+    completenessEvidence,
+    currentnessEvidence: stored.currentnessEvidence,
+    effectiveAt: input.effectiveAt,
+    effectivePeriod: stored.effectivePeriod,
+    factProofs: stored.factProofs,
+    generation: stored.generation,
+    observedAt: stored.observedAt,
+    outcome: 'SUPPORTED_CURRENCIES_CURRENT' as const,
+    pricingRevision: stored.pricingRevision,
+    scheduleRevision: stored.scheduleRevision,
+    supportedCurrencies: stored.supportedCurrencies,
+    supportRevisionRef: stored.supportRevisionRef,
+    supportRootRef: stored.supportRootRef,
+    tenantId: input.tenantId,
+    verificationRef: stored.verificationRef,
+  };
+  return stored.nextApplicabilityBoundary === undefined
+    ? (result satisfies CurrentSupportedCurrenciesSuccess)
+    : ({
+        ...result,
+        nextApplicabilityBoundary: stored.nextApplicabilityBoundary,
+      } satisfies CurrentSupportedCurrenciesSuccess);
+};
 
 export const resolveCurrentSupportedCurrencies = Effect.fn('CurrentSupportedCurrenciesRead.resolve')(function* resolve(
   input: CurrentSupportedCurrenciesRequest,
   trusted: PricingTrustedScope,
   loadCurrent: CurrencySupportPersistence['loadCurrent'],
 ) {
-  if (
-    input.tenantId !== trusted.tenantId ||
-    input.sellingLegalEntityId !== trusted.legalEntityId ||
-    input.storefrontId !== trusted.storefrontId
-  ) {
+  if (input.tenantId !== trusted.tenantId) {
     return yield* new ReadPermissionDenied({
       code: 'read_permission_denied',
-      reason: 'Pricing request does not match the trusted Tenant, seller, and Storefront context',
+      reason: 'Pricing request does not match the trusted Tenant context',
     });
   }
   const loaded = yield* loadCurrent(input).pipe(
@@ -86,48 +111,30 @@ export const resolveCurrentSupportedCurrencies = Effect.fn('CurrentSupportedCurr
       retryable: false,
     } satisfies CurrentSupportedCurrenciesResponse;
   }
-  if (Option.isNone(loaded.value)) {
-    return {
-      code: 'pricing_currency_support_unavailable',
-      outcome: 'SUPPORTED_CURRENCIES_UNAVAILABLE',
-      reason: 'No Pricing-owned support set exists for the exact Current purchasing context',
-      retryable: true,
-    } satisfies CurrentSupportedCurrenciesResponse;
-  }
-  const stored = loaded.value.value;
-  const effectiveEpoch = DateTime.toEpochMillis(DateTime.makeUnsafe(input.effectiveAt));
-  const observedEpoch = DateTime.toEpochMillis(stored.observedAt);
-  if (observedEpoch > effectiveEpoch) {
-    return stale(stored, 'Pricing observed the support set after the requested effective instant');
-  }
-  if (
-    stored.nextApplicabilityBoundary !== undefined &&
-    effectiveEpoch >= DateTime.toEpochMillis(stored.nextApplicabilityBoundary)
-  ) {
-    return stale(stored, 'Pricing support evidence crossed its next applicability boundary');
-  }
-  const completenessEvidence = {
-    observedAt: DateTime.formatIso(stored.observedAt),
-    ownerRevision: stored.pricingRevision,
-    scope: { kind: 'EXACT_PREDICATE' as const, predicateRef: exactPredicateRef(input) },
-  };
-  if (stored.nextApplicabilityBoundary !== undefined) {
-    Object.assign(completenessEvidence, {
-      nextApplicabilityBoundary: DateTime.formatIso(stored.nextApplicabilityBoundary),
-    });
-  }
-  const result = {
-    completenessEvidence,
-    effectiveAt: input.effectiveAt,
-    observedAt: DateTime.formatIso(stored.observedAt),
-    outcome: 'SUPPORTED_CURRENCIES_CURRENT',
-    pricingRevision: stored.pricingRevision,
-    supportedCurrencies: stored.supportedCurrencies,
-  } satisfies CurrentSupportedCurrenciesResponse;
-  if (stored.nextApplicabilityBoundary !== undefined) {
-    Object.assign(result, { nextApplicabilityBoundary: DateTime.formatIso(stored.nextApplicabilityBoundary) });
-  }
-  return result;
+  return Match.value(loaded.value).pipe(
+    Match.tags({
+      absent: () => ({
+        code: 'pricing_currency_support_not_initialized',
+        outcome: 'SUPPORTED_CURRENCIES_UNAVAILABLE' as const,
+        reason: 'No Pricing-owned Currency Support root exists for the Tenant',
+        retryable: true as const,
+      }),
+      conflict: () => ({
+        code: 'pricing_currency_support_revision_conflict',
+        outcome: 'SUPPORTED_CURRENCIES_INVALID' as const,
+        reason: 'More than one Currency Support Revision is effective for the Tenant',
+        retryable: false as const,
+      }),
+      current: ({ current: stored }) => current(input, stored),
+      gap: () => ({
+        code: 'pricing_currency_support_schedule_gap',
+        outcome: 'SUPPORTED_CURRENCIES_UNAVAILABLE' as const,
+        reason: 'The Tenant Currency Support schedule has no Revision at the requested effective instant',
+        retryable: true as const,
+      }),
+    }),
+    Match.exhaustive,
+  );
 });
 
 const handleCurrentSupportedCurrencies = Effect.fn('CurrentSupportedCurrenciesRead.handle')(function* handle(
@@ -137,8 +144,6 @@ const handleCurrentSupportedCurrencies = Effect.fn('CurrentSupportedCurrenciesRe
   const result = yield* resolveCurrentSupportedCurrencies(
     input,
     {
-      legalEntityId: context.scope.legalEntityId,
-      storefrontId: context.scope.trustedStorefrontId,
       tenantId: context.scope.tenantId,
     },
     context.services.loadCurrent,
@@ -163,7 +168,7 @@ export const currentSupportedCurrenciesRead = defineRead(
       policyKey: 'commerce.pricing.api.current-supported-currencies.evidence.v1',
     },
     inputSchema: CurrentSupportedCurrenciesRequestSchema,
-    legalEntityScope: 'required',
+    legalEntityScope: 'forbidden',
     owningModuleKey: MODULE_KEY,
     permissionTarget: 'module',
     policies: [],

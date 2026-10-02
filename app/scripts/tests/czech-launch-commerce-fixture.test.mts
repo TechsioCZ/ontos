@@ -7,6 +7,23 @@ import {
   validateCzechLaunchFixtureContracts,
 } from '../czech-launch-commerce-fixture.mts';
 
+const fixturePricingCurrencies = CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.pricingCurrencies;
+const fixturePricingVerificationRef = `commerce.pricing.currency-support-proof:${fixturePricingCurrencies.supportRevisionRef.resourceId}`;
+const activationOwnerFacts = {
+  ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts,
+  pricingCurrencies: {
+    ...fixturePricingCurrencies,
+    factProofs: [
+      {
+        factRef: fixturePricingCurrencies.supportRootRef.resourceId,
+        factRevisionRef: fixturePricingCurrencies.supportRevisionRef.resourceId,
+        verificationRef: fixturePricingVerificationRef,
+      },
+    ],
+    verificationRef: fixturePricingVerificationRef,
+  },
+};
+
 it.effect('publishes the complete active Czech Launch currency policy without an explicit-choice revision', () =>
   Effect.gen(function* czechLaunchCurrencyPolicy() {
     yield* validateCzechLaunchFixtureContracts();
@@ -118,6 +135,6 @@ it.effect('publishes exact Catalog-owner selection, Unit, normalization, and div
     });
     expect('catalogQuantityBasisCurrent' in CZECH_LAUNCH_COMMERCE_FIXTURE).toBe(false);
 
-    yield* validateCzechLaunchActivation(CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts);
+    yield* validateCzechLaunchActivation(activationOwnerFacts);
   }),
 );

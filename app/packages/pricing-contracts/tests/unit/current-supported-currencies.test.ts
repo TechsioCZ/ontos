@@ -5,24 +5,17 @@ import {
   CurrentSupportedCurrenciesPolicyConflictProblemSchema,
   CurrentSupportedCurrenciesRequestSchema,
   CurrentSupportedCurrenciesResponseSchema,
+  CurrentSupportedCurrenciesSuccessSchema,
   executeCurrentSupportedCurrencies,
   executeCurrentSupportedCurrenciesWithAuthorization,
 } from '../../src/index.ts';
 
 const tenantId = '22222222-2222-4222-8222-222222222222';
+const supportRootId = '33333333-3333-4333-8333-333333333333';
+const supportRevisionId = '55555555-5555-4555-8555-555555555555';
+const verificationRef = 'commerce.pricing.currency-support-proof:55555555-5555-4555-8555-555555555555';
 const request = {
-  cartId: 'cart-42',
-  channelId: 'web-b2c',
-  contextRevision: 'customer-context:41',
   effectiveAt: '2026-09-22T10:00:00.000Z',
-  marketId: 'cz-launch',
-  sellingLegalEntityId: 'tenant-a-cz',
-  storefrontId: 'storefront-cz',
-  subject: {
-    guestEvidenceRef: 'guest-evidence:17',
-    guestSessionRef: 'guest-session:42',
-    kind: 'GUEST' as const,
-  },
   tenantId,
 };
 
@@ -33,61 +26,83 @@ const decodeReadInput = Schema.decodeUnknownSync(CurrentSupportedCurrenciesReque
 
 const completenessEvidence = {
   nextApplicabilityBoundary: '2026-09-23T00:00:00.000Z',
-  observedAt: '2026-09-22T09:59:59.000Z',
-  ownerRevision: 'pricing:73',
+  observedAt: '2026-09-22T10:00:01.000Z',
+  ownerRevision: supportRevisionId,
   scope: {
     kind: 'EXACT_PREDICATE' as const,
-    predicateRef: 'pricing.supported-currencies:cart-42:customer-context:41',
+    predicateRef: `commerce.pricing.current-supported-currencies:${tenantId}`,
   },
+};
+
+const supportRootRef = {
+  moduleId: 'commerce.pricing' as const,
+  resourceId: supportRootId,
+  resourceType: 'commerce.pricing.currency-support' as const,
+  tenantId,
+};
+const supportRevisionRef = {
+  moduleId: 'commerce.pricing' as const,
+  resourceId: completenessEvidence.ownerRevision,
+  resourceType: 'commerce.pricing.currency-support-revision' as const,
+  supportRootId,
+  tenantId,
 };
 
 const current = {
   completenessEvidence,
+  currentnessEvidence: {
+    evaluatedAt: '2026-09-22T10:00:00.500Z',
+    evaluationMode: 'CURRENT_WITH_REVALIDATION' as const,
+    observedAt: completenessEvidence.observedAt,
+    revalidatedAt: '2026-09-22T10:00:02.000Z',
+    scheduleRevision: 5,
+    supportRevisionRef,
+    supportRootRef,
+  },
   effectiveAt: request.effectiveAt,
+  effectivePeriod: {
+    effectiveFrom: '2026-09-22T09:00:00.000Z',
+    effectiveTo: '2026-09-23T00:00:00.000Z',
+  },
+  factProofs: [{ factRef: supportRootId, factRevisionRef: supportRevisionId, verificationRef }],
+  generation: 4,
   nextApplicabilityBoundary: completenessEvidence.nextApplicabilityBoundary,
   observedAt: completenessEvidence.observedAt,
   outcome: 'SUPPORTED_CURRENCIES_CURRENT' as const,
-  pricingRevision: completenessEvidence.ownerRevision,
+  pricingRevision: 'pricing:73',
+  scheduleRevision: 5,
   supportedCurrencies: ['CZK', 'EUR'],
+  supportRevisionRef,
+  supportRootRef,
+  tenantId,
+  verificationRef,
 };
 
 describe('Pricing Current supported-currencies contract', () => {
-  it('strictly binds every pricing input and accepts an exact guest subject', () => {
+  it('accepts only Tenant and effective time as the capability identity', () => {
     expect(Schema.decodeSync(CurrentSupportedCurrenciesRequestSchema)(request)).toEqual(request);
-    expect(() => decodeReadInput({ ...request, extra: true })).toThrow();
+    for (const purchaseSpecific of [
+      { cartId: 'cart-42' },
+      { channelId: 'B2C' },
+      { contextRevision: 'customer-context:41' },
+      { marketId: 'cz-launch' },
+      { resolvedCurrency: 'CZK' },
+      { sellingLegalEntityId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' },
+      { storefrontId: 'storefront-cz' },
+      { subject: { kind: 'GUEST' } },
+      { variantId: 'variant-1' },
+    ]) {
+      expect(() => decodeReadInput({ ...request, ...purchaseSpecific })).toThrow();
+    }
     expect(() =>
       Schema.decodeSync(CurrentSupportedCurrenciesRequestSchema)({
         ...request,
         effectiveAt: '2026-09-22T10:00:00Z',
       }),
     ).toThrow();
-    expect(() =>
-      decodeReadInput({
-        ...request,
-        subject: { ...request.subject, extra: true },
-      }),
-    ).toThrow();
   });
 
-  it('rejects a profile from a different Tenant', () => {
-    expect(() =>
-      Schema.decodeSync(CurrentSupportedCurrenciesRequestSchema)({
-        ...request,
-        subject: {
-          authorizationSubject: { kind: 'RETAIL' },
-          kind: 'PROFILE',
-          profileRef: {
-            moduleId: 'commerce.customer-context',
-            resourceId: 'retail-profile-1',
-            resourceType: 'commerce.customer-context.retail-customer-profile',
-            tenantId: '33333333-3333-4333-8333-333333333333',
-          },
-        },
-      }),
-    ).toThrow();
-  });
-
-  it('requires unique currencies and owner-verifiable current evidence', () => {
+  it('requires unique generalized currencies and owner-verifiable current evidence', () => {
     expect(Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)(current)).toEqual(current);
     expect(() =>
       Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)({
@@ -98,15 +113,137 @@ describe('Pricing Current supported-currencies contract', () => {
     expect(() =>
       Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)({
         ...current,
-        pricingRevision: 'pricing:72',
+        supportedCurrencies: [],
       }),
     ).toThrow();
+    expect(
+      Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)({
+        ...current,
+        currentnessEvidence: {
+          ...current.currentnessEvidence,
+          evaluatedAt: '2026-09-22T09:59:58.000Z',
+        },
+        effectiveAt: '2026-09-22T09:59:58.000Z',
+      }),
+    ).toMatchObject({ observedAt: completenessEvidence.observedAt, supportedCurrencies: ['CZK', 'EUR'] });
+    expect(
+      Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)({
+        ...current,
+        pricingRevision: 'pricing:72',
+      }),
+    ).toMatchObject({ pricingRevision: 'pricing:72', supportRevisionRef });
     expect(() =>
       Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)({
         ...current,
         effectiveAt: '2026-09-23T00:00:00.000Z',
       }),
     ).toThrow();
+    expect(() =>
+      Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)({
+        ...current,
+        currentnessEvidence: {
+          ...current.currentnessEvidence,
+          evaluatedAt: '2026-09-22T09:59:59.999Z',
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      (() => {
+        const { nextApplicabilityBoundary: _completenessBoundary, ...completenessWithoutBoundary } =
+          current.completenessEvidence;
+        const { nextApplicabilityBoundary: _resultBoundary, ...currentWithoutBoundary } = current;
+        return Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)({
+          ...currentWithoutBoundary,
+          completenessEvidence: {
+            ...completenessWithoutBoundary,
+            observedAt: '2026-09-23T00:00:00.001Z',
+          },
+          currentnessEvidence: {
+            ...current.currentnessEvidence,
+            evaluatedAt: '2026-09-23T00:00:00.000Z',
+            observedAt: '2026-09-23T00:00:00.001Z',
+            revalidatedAt: '2026-09-23T00:00:00.002Z',
+          },
+          observedAt: '2026-09-23T00:00:00.001Z',
+        });
+      })(),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)({
+        ...current,
+        supportRevisionRef: { ...supportRevisionRef, supportRootId: '44444444-4444-4444-8444-444444444444' },
+      }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)({
+        ...current,
+        currentnessEvidence: { ...current.currentnessEvidence, observedAt: '2026-09-22T10:00:00.500Z' },
+      }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)({
+        ...current,
+        currentnessEvidence: {
+          ...current.currentnessEvidence,
+          supportRevisionRef: {
+            ...current.currentnessEvidence.supportRevisionRef,
+            tenantId: '44444444-4444-4444-8444-444444444444',
+          },
+          supportRootRef: {
+            ...current.currentnessEvidence.supportRootRef,
+            tenantId: '44444444-4444-4444-8444-444444444444',
+          },
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)({
+        ...current,
+        currentnessEvidence: {
+          ...current.currentnessEvidence,
+          supportRevisionRef: {
+            ...current.currentnessEvidence.supportRevisionRef,
+            tenantId: '44444444-4444-4444-8444-444444444444',
+          },
+          supportRootRef: {
+            ...current.currentnessEvidence.supportRootRef,
+            tenantId: '44444444-4444-4444-8444-444444444444',
+          },
+        },
+        pricingRevision: completenessEvidence.ownerRevision,
+      }),
+    ).toThrow();
+    expect(() => {
+      const { revalidatedAt: _revalidatedAt, ...currentnessWithoutRevalidation } = current.currentnessEvidence;
+      return Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)({
+        ...current,
+        currentnessEvidence: {
+          ...currentnessWithoutRevalidation,
+          evaluatedAt: '2026-09-22T10:00:00.500Z',
+          evaluationMode: 'HISTORICAL_AS_OF',
+        },
+      });
+    }).toThrow();
+  });
+
+  it('decodes the prior v2 success only through the bounded compatibility envelope', () => {
+    const compatibilityCompletenessEvidence = {
+      ...completenessEvidence,
+      ownerRevision: 'pricing:73',
+    };
+    const compatibilityResponse = {
+      completenessEvidence: compatibilityCompletenessEvidence,
+      effectiveAt: request.effectiveAt,
+      nextApplicabilityBoundary: completenessEvidence.nextApplicabilityBoundary,
+      observedAt: completenessEvidence.observedAt,
+      outcome: 'SUPPORTED_CURRENCIES_CURRENT' as const,
+      pricingRevision: compatibilityCompletenessEvidence.ownerRevision,
+      supportedCurrencies: ['CZK'],
+    };
+    expect(Schema.decodeSync(CurrentSupportedCurrenciesResponseSchema)(compatibilityResponse)).toEqual(
+      compatibilityResponse,
+    );
+    expect(() => Schema.decodeUnknownSync(CurrentSupportedCurrenciesSuccessSchema)(compatibilityResponse)).toThrow();
   });
 
   it('publishes distinct invalid, unavailable, unverifiable, and stale outcomes', () => {

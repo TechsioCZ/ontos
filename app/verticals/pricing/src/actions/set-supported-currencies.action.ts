@@ -2,23 +2,20 @@
 // @ontos-action-owner commerce.pricing
 // @ontos-action-slug set-supported-currencies
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { commitActionThenReject, defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import {
-  PricingCartIdSchema,
-  PricingChannelIdSchema,
-  PricingContextRevisionSchema,
-  PricingCurrencyCodeSetSchema,
-  PricingCurrencySubjectSchema,
-  PricingInstantSchema,
-  PricingMarketIdSchema,
-  PricingRevisionSchema,
-  PricingStorefrontIdSchema,
-} from '@app/pricing-contracts/current-supported-currencies';
-import { Effect, Match, Schema } from 'effect';
-import type {
-  CurrencySupportPersistence,
-  SetCurrencySupportOutcome,
-} from '../persistence/currency-support-persistence.ts';
+  CurrencySupportScheduleAcknowledgementSchema,
+  PricingNonEmptyCurrencyCodeSetSchema,
+} from '@app/pricing-contracts/domain/currency-support';
+import { DateTime, Effect, Schema } from 'effect';
+
+import {
+  SetSupportedCurrenciesPayloadSchema,
+  SetSupportedCurrenciesResultSchema,
+} from '../../shared/actions/set-supported-currencies.ts';
+import type { SetSupportedCurrenciesPayload } from '../../shared/actions/set-supported-currencies.ts';
+
+import type { CurrencySupportPersistence } from '../persistence/currency-support-persistence.ts';
 import { currencySupportPersistenceForScope } from '../persistence/currency-support-persistence.ts';
 import { CurrencySupportPersistenceUnavailable } from './currency-support-persistence-unavailable.ts';
 import { SupportedCurrenciesAdministrationRejected } from './supported-currencies-administration-rejected.ts';
@@ -26,36 +23,37 @@ import { SupportedCurrenciesAdministrationRejected } from './supported-currencie
 export { CurrencySupportPersistenceUnavailable } from './currency-support-persistence-unavailable.ts';
 export { SupportedCurrenciesAdministrationRejected } from './supported-currencies-administration-rejected.ts';
 
-const boundedReason = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed());
-const nonEmptyCurrencies = PricingCurrencyCodeSetSchema.check(Schema.isMinLength(1));
+export {
+  SetSupportedCurrenciesPayloadSchema,
+  SetSupportedCurrenciesResultSchema,
+} from '../../shared/actions/set-supported-currencies.ts';
+export type {
+  SetSupportedCurrenciesPayload,
+  SetSupportedCurrenciesResult,
+} from '../../shared/actions/set-supported-currencies.ts';
 
-export const SetSupportedCurrenciesPayloadSchema = Schema.Struct({
-  cartId: PricingCartIdSchema,
-  channelId: PricingChannelIdSchema,
-  contextRevision: PricingContextRevisionSchema,
-  effectiveFrom: PricingInstantSchema,
-  expectedGeneration: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  marketId: PricingMarketIdSchema,
-  reason: boundedReason,
-  storefrontId: PricingStorefrontIdSchema,
-  subject: PricingCurrencySubjectSchema,
-  supportedCurrencies: nonEmptyCurrencies,
-});
-export type SetSupportedCurrenciesPayload = typeof SetSupportedCurrenciesPayloadSchema.Type;
-
-export const SetSupportedCurrenciesResultSchema = Schema.Struct({
-  changed: Schema.Boolean,
-  generation: Schema.Int.check(Schema.isGreaterThan(0)),
-  pricingRevision: PricingRevisionSchema,
-  supportedCurrencies: nonEmptyCurrencies,
-});
+export const SupportedCurrenciesConflictReasonSchema = Schema.Literals([
+  'BOUNDARY_CROSSED',
+  'EXPECTED_CURRENT_MISMATCH',
+  'IDEMPOTENCY_CONFLICT',
+  'OVERLAPPING_SCHEDULE',
+  'SCHEDULE_ACKNOWLEDGEMENT_STALE',
+  'SCHEDULE_REVISION_STALE',
+]);
 
 export class SupportedCurrenciesRevisionConflict extends Schema.TaggedError<SupportedCurrenciesRevisionConflict>()(
   'SupportedCurrenciesRevisionConflict',
   {
-    actualGeneration: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     code: Schema.Literal('supported_currencies_revision_conflict'),
-    expectedGeneration: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    reason: SupportedCurrenciesConflictReasonSchema,
+  },
+) {}
+
+export class SupportedCurrenciesScheduleAcknowledgementRequired extends Schema.TaggedError<SupportedCurrenciesScheduleAcknowledgementRequired>()(
+  'SupportedCurrenciesScheduleAcknowledgementRequired',
+  {
+    acknowledgement: CurrencySupportScheduleAcknowledgementSchema,
+    code: Schema.Literal('supported_currencies_schedule_acknowledgement_required'),
     reason: Schema.String,
   },
 ) {}
@@ -63,32 +61,46 @@ export class SupportedCurrenciesRevisionConflict extends Schema.TaggedError<Supp
 const ErrorSchema = Schema.Union([
   SupportedCurrenciesAdministrationRejected,
   SupportedCurrenciesRevisionConflict,
+  SupportedCurrenciesScheduleAcknowledgementRequired,
   CurrencySupportPersistenceUnavailable,
 ]);
 const auditEvidenceSchema = Schema.Struct({
-  changed: Schema.Boolean,
-  generation: Schema.Int.check(Schema.isGreaterThan(0)),
-  reason: boundedReason,
+  intent: Schema.Literals(['ESTABLISH_CURRENT', 'SCHEDULE_REVISION', 'VALUE_ONLY_CURRENT']),
+  reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1000), Schema.isTrimmed()),
+  supportedCurrencies: PricingNonEmptyCurrencyCodeSetSchema,
 });
 const MODULE_KEY = 'commerce.pricing' as const;
+const RESOURCE_TYPE = 'commerce.pricing.currency-support' as const;
 const domainEvents = {} as const;
 
 export interface PricingAdministrationTrustedContext {
   readonly actionInvocationId: string;
   readonly actorPrincipalId: string;
-  readonly legalEntityId: string | undefined;
   readonly tenantId: string;
+  readonly trustedOperationAt: Date;
 }
 
-const subjectTenantId = (subject: SetSupportedCurrenciesPayload['subject']): string | undefined =>
-  subject.kind === 'GUEST' ? undefined : subject.profileRef.tenantId;
+const isLaunchCurrencySet = (currencies: readonly string[]): boolean =>
+  currencies.length === 1 && currencies[0] === 'CZK';
 
-const conflict = (outcome: Extract<SetCurrencySupportOutcome, { readonly _tag: 'revision_conflict' }>) =>
-  new SupportedCurrenciesRevisionConflict({
-    actualGeneration: outcome.actualGeneration,
-    code: 'supported_currencies_revision_conflict',
-    expectedGeneration: outcome.expectedGeneration,
-    reason: 'Pricing currency support changed after this administration request was prepared',
+const expectedRootTenant = (payload: SetSupportedCurrenciesPayload): string | undefined =>
+  payload.expectedState.state === 'PRESENT' ? payload.expectedState.supportRootRef.tenantId : undefined;
+
+const acknowledgementMatchesTrustedContext = (
+  payload: Extract<SetSupportedCurrenciesPayload, { readonly intent: 'VALUE_ONLY_CURRENT' }>,
+  trusted: PricingAdministrationTrustedContext,
+): boolean => {
+  const { acknowledgement } = payload;
+  return (
+    acknowledgement === undefined ||
+    (acknowledgement.actingPrincipalId === trusted.actorPrincipalId &&
+      acknowledgement.supportRootRef.tenantId === trusted.tenantId)
+  );
+};
+
+const unavailableEvidence = () =>
+  new CurrencySupportPersistenceUnavailable({
+    reason: 'Pricing currency support mutation evidence could not be verified',
   });
 
 export const applySupportedCurrencies = Effect.fn('SetSupportedCurrenciesAction.apply')(function* apply(
@@ -96,44 +108,70 @@ export const applySupportedCurrencies = Effect.fn('SetSupportedCurrenciesAction.
   trusted: PricingAdministrationTrustedContext,
   setCurrent: CurrencySupportPersistence['setCurrent'],
 ) {
-  const payloadTenantId = subjectTenantId(payload.subject);
-  if (trusted.legalEntityId === undefined || (payloadTenantId !== undefined && payloadTenantId !== trusted.tenantId)) {
+  if (!isLaunchCurrencySet(payload.supportedCurrencies)) {
+    return yield* new SupportedCurrenciesAdministrationRejected({
+      code: 'supported_currencies_launch_set_invalid',
+      reason: 'Launch Pricing Currency Support must contain exactly CZK',
+    });
+  }
+
+  if (expectedRootTenant(payload) !== undefined && expectedRootTenant(payload) !== trusted.tenantId) {
     return yield* new SupportedCurrenciesAdministrationRejected({
       code: 'supported_currencies_scope_mismatch',
-      reason: 'Supported-currency administration must match the trusted Tenant and Legal Entity scope',
+      reason: 'Currency Support expected state must belong to the trusted Tenant',
+    });
+  }
+
+  if (payload.intent === 'VALUE_ONLY_CURRENT' && !acknowledgementMatchesTrustedContext(payload, trusted)) {
+    return yield* new SupportedCurrenciesAdministrationRejected({
+      code: 'supported_currencies_acknowledgement_mismatch',
+      reason: 'Schedule acknowledgement must bind the trusted Principal and Tenant',
     });
   }
 
   const outcome = yield* setCurrent({
+    ...payload,
+    actingPrincipalId: trusted.actorPrincipalId,
     actionInvocationId: trusted.actionInvocationId,
-    actorPrincipalId: trusted.actorPrincipalId,
-    cartId: payload.cartId,
-    channelId: payload.channelId,
-    contextRevision: payload.contextRevision,
-    effectiveFrom: payload.effectiveFrom,
-    expectedGeneration: payload.expectedGeneration,
-    marketId: payload.marketId,
-    reason: payload.reason,
-    storefrontId: payload.storefrontId,
-    subject: payload.subject,
-    supportedCurrencies: payload.supportedCurrencies.toSorted(),
+    tenantId: trusted.tenantId,
+    trustedOperationAt: trusted.trustedOperationAt,
   });
 
-  return yield* Match.value(outcome).pipe(
-    Match.tags({
-      applied: ({ result }) => Effect.succeed(result),
-      effective_time_conflict: () =>
-        Effect.fail(
-          new SupportedCurrenciesAdministrationRejected({
-            code: 'supported_currencies_effective_time_conflict',
-            reason: 'A replacement currency-support revision must start after the current revision',
-          }),
-        ),
-      revision_conflict: (revisionConflict) => Effect.fail(conflict(revisionConflict)),
-      unchanged: ({ result }) => Effect.succeed(result),
-    }),
-    Match.exhaustive,
-  );
+  if (outcome.outcome === 'ACKNOWLEDGEMENT_REQUIRED') {
+    if (
+      outcome.acknowledgement.actingPrincipalId !== trusted.actorPrincipalId ||
+      outcome.acknowledgement.supportRootRef.tenantId !== trusted.tenantId ||
+      !isLaunchCurrencySet(outcome.acknowledgement.intendedSupportedCurrencies)
+    ) {
+      return yield* unavailableEvidence();
+    }
+    return yield* new SupportedCurrenciesScheduleAcknowledgementRequired({
+      acknowledgement: outcome.acknowledgement,
+      code: 'supported_currencies_schedule_acknowledgement_required',
+      reason: 'A future Currency Support change must be reviewed and explicitly acknowledged',
+    });
+  }
+  if (outcome.outcome === 'CONFLICT') {
+    if (outcome.reason === 'LAUNCH_CURRENCY_REJECTED') {
+      return yield* new SupportedCurrenciesAdministrationRejected({
+        code: 'supported_currencies_launch_set_invalid',
+        reason: 'Launch Pricing Currency Support must contain exactly CZK',
+      });
+    }
+    return yield* new SupportedCurrenciesRevisionConflict({
+      code: 'supported_currencies_revision_conflict',
+      reason: outcome.reason,
+    });
+  }
+  if (
+    outcome.result.supportRootRef.tenantId !== trusted.tenantId ||
+    outcome.result.current.supportRevisionRef.tenantId !== trusted.tenantId ||
+    outcome.result.current.supportRevisionRef.supportRootId !== outcome.result.supportRootRef.resourceId ||
+    !isLaunchCurrencySet(outcome.result.current.supportedCurrencies)
+  ) {
+    return yield* unavailableEvidence();
+  }
+  return outcome.result;
 });
 
 export const handleSetSupportedCurrencies = Effect.fn('SetSupportedCurrenciesAction.handle')(function* handle(
@@ -145,28 +183,33 @@ export const handleSetSupportedCurrencies = Effect.fn('SetSupportedCurrenciesAct
     {
       actionInvocationId: context.actionInvocationId,
       actorPrincipalId: context.scope.principalId,
-      legalEntityId: context.scope.legalEntityId,
       tenantId: context.scope.tenantId,
+      trustedOperationAt: yield* DateTime.nowAsDate,
     },
     context.services.setCurrent,
   ).pipe(
-    Effect.catchTag('PersistenceFailure', ({ reason }) =>
-      Effect.fail(new CurrencySupportPersistenceUnavailable({ reason })),
-    ),
+    Effect.catchTags({
+      PersistenceFailure: ({ reason }) => Effect.fail(new CurrencySupportPersistenceUnavailable({ reason })),
+      SupportedCurrenciesScheduleAcknowledgementRequired: (warning) => Effect.succeed(commitActionThenReject(warning)),
+    }),
   );
   yield* context.recordAuditEvidence({
-    changed: result.changed,
-    generation: result.generation,
+    intent: payload.intent,
     reason: payload.reason,
+    supportedCurrencies: payload.supportedCurrencies,
   });
+  const targetResourceId =
+    payload.expectedState.state === 'PRESENT'
+      ? payload.expectedState.supportRootRef.resourceId
+      : context.scope.tenantId;
   yield* context.recordDataAccess({
     accessKind: 'read',
-    queryHash: `pricing-currency-support:${payload.contextRevision}:${payload.expectedGeneration}`,
-    resultCount: result.supportedCurrencies.length,
+    queryHash: `pricing-currency-support:${payload.intent}:${targetResourceId}`,
+    resultCount: payload.expectedState.state === 'PRESENT' ? 1 : 0,
     servingModuleKey: MODULE_KEY,
     targetModuleKey: MODULE_KEY,
-    targetResourceId: payload.contextRevision,
-    targetResourceType: `${MODULE_KEY}.currency-support`,
+    targetResourceId,
+    targetResourceType: RESOURCE_TYPE,
   });
   return result;
 });
@@ -184,18 +227,18 @@ export const setSupportedCurrenciesAction = defineAction(
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
       access: 'write',
-      authorization: { kind: 'action_execution', provisioning: 'tenant_membership_default' },
+      authorization: { kind: 'action_execution', provisioning: 'explicit' },
       entrypointKey: 'commerce.pricing.set-supported-currencies',
       moduleKey: MODULE_KEY,
       role: 'action',
     }),
     idempotency: 'required',
-    legalEntityScope: 'required',
+    legalEntityScope: 'forbidden',
     owningModuleKey: MODULE_KEY,
     payloadSchema: SetSupportedCurrenciesPayloadSchema,
     policies: [],
     resultSchema: SetSupportedCurrenciesResultSchema,
-    schemaVersion: '1',
+    schemaVersion: '2',
   },
   handleSetSupportedCurrencies,
   currencySupportPersistenceForScope,

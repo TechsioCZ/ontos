@@ -81,7 +81,10 @@ const purchaseCurrencyResolutionServicesFromPorts = (
             observedAt,
             subject: currentContext.subject,
           }),
-          pricingPort.resolveCurrent({ context: currentContext, observedAt, subject: currentContext.subject }),
+          pricingPort.resolveCurrent({
+            effectiveAt: observedAt,
+            tenantId: currentContext.purchasingContext.tenantId,
+          }),
         ],
         { concurrency: 2 },
       );

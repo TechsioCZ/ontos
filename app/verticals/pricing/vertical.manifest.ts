@@ -4,8 +4,39 @@
 import { defineOntosModuleManifest } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
+import { CommercialFeeDefinitionApi } from './shared/apis/commercial-fee-definition.ts';
+import { commercialFeeResourceDescriptor } from './shared/resources/commercial-fee.ts';
+import { CommercialFeeResultLookupApi } from './shared/apis/commercial-fee-result-lookup.ts';
+import { CommercialFeeScheduleApi } from './shared/apis/commercial-fee-schedule.ts';
+import { compensateCurrencySupportRecoveryAction } from './src/actions/compensate-currency-support-recovery.action.ts';
+import { ContractualDiscountResultLookupApi } from './shared/apis/contractual-discount-result-lookup.ts';
+import { CurrencySupportResultLookupApi } from './shared/apis/currency-support-result-lookup.ts';
+import { CurrentPricingDecisionApi } from './shared/apis/current-pricing-decision.ts';
 import { CurrentSupportedCurrenciesApi } from './shared/apis/current-supported-currencies.ts';
+import { defineCommercialFeeAction } from './src/actions/define-commercial-fee.action.ts';
+import { definePriceAction } from './src/actions/define-price.action.ts';
+import { ExactPriceResolutionApi } from './shared/apis/exact-price-resolution.ts';
+import { manageCommitmentConfirmationAction } from './src/actions/manage-commitment-confirmation.action.ts';
+import { manageContractualDiscountAction } from './src/actions/manage-contractual-discount.action.ts';
+import { manageProductCommercialFeesBulkAction } from './src/actions/manage-product-commercial-fees-bulk.action.ts';
+import { manageProductPricesBulkAction } from './src/actions/manage-product-prices-bulk.action.ts';
+import { manageQuantityTierAction } from './src/actions/manage-quantity-tier.action.ts';
+import { manageQuotationAction } from './src/actions/manage-quotation.action.ts';
+import { manageZeroFloorAuthorizationAction } from './src/actions/manage-zero-floor-authorization.action.ts';
+import { PriceDefinitionApi } from './shared/apis/price-definition.ts';
+import { priceResourceDescriptor } from './shared/resources/price.ts';
+import { PriceResultLookupApi } from './shared/apis/price-result-lookup.ts';
+import { PriceScheduleApi } from './shared/apis/price-schedule.ts';
+import { pricingCommercialFeeReadPermission } from './shared/permissions/pricing-commercial-fee-read.ts';
+import { pricingCurrencySupportReadPermission } from './shared/permissions/pricing-currency-support-read.ts';
+import { pricingExactPriceResolutionReadPermission } from './shared/permissions/pricing-exact-price-resolution-read.ts';
+import { pricingPriceReadPermission } from './shared/permissions/pricing-price-read.ts';
+import { QuantityTierResultLookupApi } from './shared/apis/quantity-tier-result-lookup.ts';
+import { QuotationResultLookupApi } from './shared/apis/quotation-result-lookup.ts';
+import { reviseCommercialFeeAction } from './src/actions/revise-commercial-fee.action.ts';
+import { revisePriceAction } from './src/actions/revise-price.action.ts';
 import { setSupportedCurrenciesAction } from './src/actions/set-supported-currencies.action.ts';
+import { ZeroFloorAuthorizationResultLookupApi } from './shared/apis/zero-floor-authorization-result-lookup.ts';
 // </generated-module-manifest-imports>
 export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -24,16 +55,45 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      compensateCurrencySupportRecoveryAction,
+      defineCommercialFeeAction,
+      definePriceAction,
+      manageCommitmentConfirmationAction,
+      manageContractualDiscountAction,
+      manageProductCommercialFeesBulkAction,
+      manageProductPricesBulkAction,
+      manageQuantityTierAction,
+      manageQuotationAction,
+      manageZeroFloorAuthorizationAction,
+      reviseCommercialFeeAction,
+      revisePriceAction,
       setSupportedCurrenciesAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
+      'commercial-fee-definition': CommercialFeeDefinitionApi,
+      'commercial-fee-result-lookup': CommercialFeeResultLookupApi,
+      'commercial-fee-schedule': CommercialFeeScheduleApi,
+      'contractual-discount-result-lookup': ContractualDiscountResultLookupApi,
+      'currency-support-result-lookup': CurrencySupportResultLookupApi,
+      'current-pricing-decision': CurrentPricingDecisionApi,
       'current-supported-currencies': CurrentSupportedCurrenciesApi,
+      'exact-price-resolution': ExactPriceResolutionApi,
+      'price-definition': PriceDefinitionApi,
+      'price-result-lookup': PriceResultLookupApi,
+      'price-schedule': PriceScheduleApi,
+      'quantity-tier-result-lookup': QuantityTierResultLookupApi,
+      'quotation-result-lookup': QuotationResultLookupApi,
+      'zero-floor-authorization-result-lookup': ZeroFloorAuthorizationResultLookupApi,
       // </generated-module-manifest-apis>
     },
     businessPermissions: [
       // <generated-module-manifest-business-permissions>
+      pricingCommercialFeeReadPermission,
+      pricingCurrencySupportReadPermission,
+      pricingExactPriceResolutionReadPermission,
+      pricingPriceReadPermission,
       // </generated-module-manifest-business-permissions>
     ],
     components: {
@@ -47,6 +107,8 @@ export const pricingManifest: OntosModuleManifestInput = defineOntosModuleManife
     ],
     resourceTypes: [
       // <generated-module-manifest-resources>
+      commercialFeeResourceDescriptor,
+      priceResourceDescriptor,
       // </generated-module-manifest-resources>
     ],
     search: [

@@ -102,6 +102,7 @@ import { PaymentTermAffectedUseAssessmentApi } from './shared/apis/payment-term-
 import { PaymentTermPolicyCurrentApi } from './shared/apis/payment-term-policy-current.ts';
 import { paymentTermPolicyResourceDescriptor } from './shared/resources/payment-term-policy.ts';
 import { PaymentTermsResolutionApi } from './shared/apis/payment-terms-resolution.ts';
+import { PricingPurchaseContextVerificationApi } from './shared/apis/pricing-purchase-context-verification.ts';
 import { profileReconciliationCaseResourceDescriptor } from './shared/resources/profile-reconciliation-case.ts';
 import { ProfileReconciliationReadApi } from './shared/apis/profile-reconciliation-read.ts';
 import { purchaseApprovalRequestResourceDescriptor } from './shared/resources/purchase-approval-request.ts';
@@ -286,6 +287,7 @@ export const commerceCustomerContextManifest: OntosModuleManifestInput = defineO
       'payment-term-affected-use-assessment': PaymentTermAffectedUseAssessmentApi,
       'payment-term-policy-current': PaymentTermPolicyCurrentApi,
       'payment-terms-resolution': PaymentTermsResolutionApi,
+      'pricing-purchase-context-verification': PricingPurchaseContextVerificationApi,
       'profile-reconciliation-read': ProfileReconciliationReadApi,
       'purchase-currency-policy-current': PurchaseCurrencyPolicyCurrentApi,
       'purchase-currency-resolution': PurchaseCurrencyResolutionApi,

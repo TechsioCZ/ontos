@@ -61,6 +61,23 @@ const topology = JSON.stringify({
   ],
 });
 
+const fixturePricingCurrencies = CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.pricingCurrencies;
+const fixturePricingVerificationRef = `commerce.pricing.currency-support-proof:${fixturePricingCurrencies.supportRevisionRef.resourceId}`;
+const activationOwnerFacts = {
+  ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts,
+  pricingCurrencies: {
+    ...fixturePricingCurrencies,
+    factProofs: [
+      {
+        factRef: fixturePricingCurrencies.supportRootRef.resourceId,
+        factRevisionRef: fixturePricingCurrencies.supportRevisionRef.resourceId,
+        verificationRef: fixturePricingVerificationRef,
+      },
+    ],
+    verificationRef: fixturePricingVerificationRef,
+  },
+};
+
 const moduleContract = (moduleId: string): Effect.Success<ReturnType<typeof deriveOntosModuleDeploymentContract>> =>
   makeModuleContractFixture({
     appId: 'test-module',
@@ -227,19 +244,19 @@ it.effect('fails Czech Launch activation closed without every current owner proo
   Effect.gen(function* validateActivation() {
     expect(
       yield* validateCzechLaunchActivation({
-        ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts,
+        ...activationOwnerFacts,
         paymentTermCatalog: {
           ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.paymentTermCatalog,
           current: [],
         },
       }).pipe(Effect.flip),
     ).toBeInstanceOf(CzechLaunchActivationRejected);
-    const withUndeclaredEvidence = { ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts, undeclaredEvidence: true };
+    const withUndeclaredEvidence = { ...activationOwnerFacts, undeclaredEvidence: true };
     expect(yield* validateCzechLaunchActivation(withUndeclaredEvidence).pipe(Effect.flip)).toBeInstanceOf(
       CzechLaunchActivationRejected,
     );
 
-    expect(yield* validateCzechLaunchActivation(CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts)).toBeDefined();
+    expect(yield* validateCzechLaunchActivation(activationOwnerFacts)).toBeDefined();
   }),
 );
 

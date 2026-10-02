@@ -12,5 +12,9 @@
     "types": ["node"]
   },
   "include": ["src", "tests"],
-  "references": [{ "path": "../shared-contracts" }]
+  "references": [
+    { "path": "../../verticals/catalog" },
+    { "path": "../core-runtime" },
+    { "path": "../shared-contracts" }
+  ]
 }

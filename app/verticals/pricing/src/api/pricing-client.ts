@@ -11,11 +11,93 @@ import type { OperationContext, PricingReadiness } from '../../shared/api.ts';
 
 // oxlint-disable-next-line effect-native/no-scattered-browser-effect-run -- Generated compatibility surface retained for existing callers.
 export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';
+// <generated-action-http-client-exports>
+export * from './define-commercial-fee-action-client.ts';
+export * from './define-price-action-client.ts';
+export * from './manage-contractual-discount-action-client.ts';
+export * from './manage-product-commercial-fees-bulk-action-client.ts';
+export * from './manage-product-prices-bulk-action-client.ts';
+export * from './manage-quantity-tier-action-client.ts';
+export * from './manage-quotation-action-client.ts';
+export * from './manage-zero-floor-authorization-action-client.ts';
+export * from './revise-commercial-fee-action-client.ts';
+export * from './revise-price-action-client.ts';
+export * from './set-supported-currencies-action-client.ts';
+// </generated-action-http-client-exports>
 export {
   executeCurrentSupportedCurrencies,
   executeCurrentSupportedCurrenciesWithAuthorization,
 } from './current-supported-currencies-client.ts';
 export type { CurrentSupportedCurrenciesClientOptions } from './current-supported-currencies-client.ts';
+export {
+  executeCommercialFeeDefinition,
+  executeCommercialFeeDefinitionWithAuthorization,
+} from './commercial-fee-definition-client.ts';
+export type { CommercialFeeDefinitionClientOptions } from './commercial-fee-definition-client.ts';
+export {
+  executeCommercialFeeResultLookup,
+  executeCommercialFeeResultLookupWithAuthorization,
+} from './commercial-fee-result-lookup-client.ts';
+export type { CommercialFeeResultLookupClientOptions } from './commercial-fee-result-lookup-client.ts';
+export {
+  CommercialFeeDefinitionRequestSchema,
+  CommercialFeeDefinitionResponseSchema,
+} from '../../shared/apis/commercial-fee-definition.ts';
+export type {
+  CommercialFeeDefinitionRequest,
+  CommercialFeeDefinitionResponse,
+} from '../../shared/apis/commercial-fee-definition.ts';
+export { executePriceDefinition, executePriceDefinitionWithAuthorization } from './price-definition-client.ts';
+export type { PriceDefinitionClientOptions } from './price-definition-client.ts';
+export { PriceDefinitionRequestSchema, PriceDefinitionResponseSchema } from '../../shared/apis/price-definition.ts';
+export type { PriceDefinitionRequest, PriceDefinitionResponse } from '../../shared/apis/price-definition.ts';
+export {
+  executeCommercialFeeSchedule,
+  executeCommercialFeeScheduleWithAuthorization,
+} from './commercial-fee-schedule-client.ts';
+export type { CommercialFeeScheduleClientOptions } from './commercial-fee-schedule-client.ts';
+export {
+  CommercialFeeScheduleRequestSchema,
+  CommercialFeeScheduleResponseSchema,
+} from '../../shared/apis/commercial-fee-schedule.ts';
+export type {
+  CommercialFeeScheduleRequest,
+  CommercialFeeScheduleResponse,
+} from '../../shared/apis/commercial-fee-schedule.ts';
+export {
+  executeContractualDiscountResultLookup,
+  executeContractualDiscountResultLookupWithAuthorization,
+} from './contractual-discount-result-lookup-client.ts';
+export type { ContractualDiscountResultLookupClientOptions } from './contractual-discount-result-lookup-client.ts';
+export {
+  executeCurrencySupportResultLookup,
+  executeCurrencySupportResultLookupWithAuthorization,
+} from './currency-support-result-lookup-client.ts';
+export type { CurrencySupportResultLookupClientOptions } from './currency-support-result-lookup-client.ts';
+export {
+  executeCurrentPricingDecision,
+  executeCurrentPricingDecisionWithAuthorization,
+} from './current-pricing-decision-client.ts';
+export type { CurrentPricingDecisionClientOptions } from './current-pricing-decision-client.ts';
+export { executePriceResultLookup, executePriceResultLookupWithAuthorization } from './price-result-lookup-client.ts';
+export type { PriceResultLookupClientOptions } from './price-result-lookup-client.ts';
+export { executePriceSchedule, executePriceScheduleWithAuthorization } from './price-schedule-client.ts';
+export type { PriceScheduleClientOptions } from './price-schedule-client.ts';
+export {
+  executeQuantityTierResultLookup,
+  executeQuantityTierResultLookupWithAuthorization,
+} from './quantity-tier-result-lookup-client.ts';
+export type { QuantityTierResultLookupClientOptions } from './quantity-tier-result-lookup-client.ts';
+export {
+  executeQuotationResultLookup,
+  executeQuotationResultLookupWithAuthorization,
+} from './quotation-result-lookup-client.ts';
+export type { QuotationResultLookupClientOptions } from './quotation-result-lookup-client.ts';
+export {
+  executeZeroFloorAuthorizationResultLookup,
+  executeZeroFloorAuthorizationResultLookupWithAuthorization,
+} from './zero-floor-authorization-result-lookup-client.ts';
+export type { ZeroFloorAuthorizationResultLookupClientOptions } from './zero-floor-authorization-result-lookup-client.ts';
 export { CurrentSupportedCurrenciesRequestSchema, CurrentSupportedCurrenciesResponseSchema } from '../../shared/api.ts';
 export type { CurrentSupportedCurrenciesRequest, CurrentSupportedCurrenciesResponse } from '../../shared/api.ts';
 

@@ -17,6 +17,7 @@ const paymentTermPreferencePermission = 'retail.settings.payment_term_preference
 const repeatOrderPermission = 'retail.repeat_order';
 const priceGroupReadPermission = 'pricing.price_group.read';
 const inventoryResourceReadPermission = 'inventory.resource.read';
+const currencySupportReadPermission = 'pricing.currency_support.read';
 const assortmentPermissions = [
   ['assortment.configuration.read', 'assortment_configuration'],
   ['assortment.decision.explain', 'assortment_decision'],
@@ -37,6 +38,7 @@ const PermissionScopeSchema = Schema.Literals([
   'counterparty',
   'counterparty_storefront',
   'inventory_resource',
+  'module',
   'price_group',
   'pricing_catalog',
   'retail_profile',
@@ -140,17 +142,41 @@ it.live('permission help is write-free and documents exact business scopes', () 
     }).pipe(Effect.provide(NodeServices.layer));
     expect(result).toEqual({ help: getHelpText('permission'), kind: 'help' });
     if (result.kind === 'help') {
-      expect(result.help).toMatch(/pricing\.price_group\.\*/u);
+      expect(result.help).toMatch(/stable\.lowercase\.code/u);
+      expect(result.help).toMatch(/module\|retail_profile/u);
       expect(result.help).toMatch(/pricing_catalog\|price_group/u);
       expect(result.help).toMatch(
-        /retail_profile\|counterparty\|counterparty_storefront\|inventory_resource\|pricing_catalog\|price_group\|assortment_configuration\|assortment_decision\|assortment_rule\|assortment_binding\|assortment_boundary/u,
-      );
-      expect(result.help).toMatch(
-        /retail\.\*\|counterparty\.\*\|inventory\.\*\|pricing\.price_group\.\*\|assortment\.\*/u,
+        /module\|retail_profile\|counterparty\|counterparty_storefront\|inventory_resource\|pricing_catalog\|price_group\|assortment_configuration\|assortment_decision\|assortment_rule\|assortment_binding\|assortment_boundary/u,
       );
       expect(result.help).toMatch(/start non-delegable/u);
     }
   }),
+);
+
+it.live('generates and registers module-scoped context permissions without a business target family', () =>
+  withFixture(
+    Effect.fn(function* generatesModulePermission(root) {
+      yield* scaffoldPermission(root, currencySupportReadPermission, 'module');
+      const [permission, manifest, packageSource] = yield* Effect.all([
+        Effect.promise(() =>
+          readFile(
+            path.join(root, `verticals/${vertical}/shared/permissions/pricing-currency-support-read.ts`),
+            'utf-8',
+          ),
+        ),
+        Effect.promise(() => readFile(path.join(root, `verticals/${vertical}/vertical.manifest.ts`), 'utf-8')),
+        Effect.promise(() => readFile(path.join(root, `verticals/${vertical}/package.json`), 'utf-8')),
+      ]);
+      expect(permission).toMatch(/key: 'pricing\.currency_support\.read'/u);
+      expect(permission).toMatch(/allowedScopeKinds: \['module'\]/u);
+      expect(permission).toMatch(/module-scoped permission/u);
+      expect(manifest).toMatch(/pricingCurrencySupportReadPermission,/u);
+      const packageValue = yield* Schema.decodeUnknownEffect(PackageExportsSchema)(JSON.parse(packageSource));
+      expect(packageValue.exports['./permissions/pricing.currency_support.read']).toBe(
+        './shared/permissions/pricing-currency-support-read.ts',
+      );
+    }),
+  ),
 );
 
 it.live('generates and registers tenant-only Pricing permissions for both canonical scopes', () =>
@@ -336,25 +362,25 @@ it.live('rejects malformed and duplicate permissions without partial writes', ()
     Effect.fn(function* rejectsUnsafePermission(root) {
       const before = yield* snapshotTree(root);
       const malformed = yield* scaffoldPermission(root, 'generic.manage').pipe(Effect.sandbox, Effect.flip);
-      expect(String(Cause.squash(malformed))).toMatch(/pricing\.price_group\.\*/u);
+      expect(String(Cause.squash(malformed))).toMatch(/compatible business target scope/u);
       expect(yield* snapshotTree(root)).toEqual(before);
       const malformedPricing = yield* scaffoldPermission(root, 'pricing.discount.read', 'price_group').pipe(
         Effect.sandbox,
         Effect.flip,
       );
-      expect(String(Cause.squash(malformedPricing))).toMatch(/pricing\.price_group\.\*/u);
+      expect(String(Cause.squash(malformedPricing))).toMatch(/compatible business target scope/u);
       expect(yield* snapshotTree(root)).toEqual(before);
       const mismatchedPricingScope = yield* scaffoldPermission(root, priceGroupReadPermission, 'counterparty').pipe(
         Effect.sandbox,
         Effect.flip,
       );
-      expect(String(Cause.squash(mismatchedPricingScope))).toMatch(/require pricing_catalog or price_group scope/u);
+      expect(String(Cause.squash(mismatchedPricingScope))).toMatch(/compatible business target scope/u);
       expect(yield* snapshotTree(root)).toEqual(before);
       const mismatchedExistingScope = yield* scaffoldPermission(root, addressBookPermission, 'price_group').pipe(
         Effect.sandbox,
         Effect.flip,
       );
-      expect(String(Cause.squash(mismatchedExistingScope))).toMatch(/those scopes reject other permission families/u);
+      expect(String(Cause.squash(mismatchedExistingScope))).toMatch(/compatible business target scope/u);
       for (const permission of [
         'assortment.manage',
         'assortment.admin',

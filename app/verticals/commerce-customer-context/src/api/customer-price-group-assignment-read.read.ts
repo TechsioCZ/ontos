@@ -58,11 +58,12 @@ export const validateCustomerPriceGroupReadProfile = Effect.fn(
   tenantId: string,
   services: Pick<CustomerPriceGroupAssignmentReadServices, 'now' | 'profileValidation'>,
   mapUnavailable: (cause: unknown) => ReadHandlerUnavailable,
+  effectiveAtOverride?: PriceGroupInstant,
 ) {
   if (input.profile.tenantId !== tenantId) {
     return yield* notFound();
   }
-  const effectiveAt = yield* services.now;
+  const effectiveAt = effectiveAtOverride ?? (yield* services.now);
   const validation = yield* services.profileValidation
     .inspect(
       input.profile,

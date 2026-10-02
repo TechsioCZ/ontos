@@ -108,6 +108,7 @@ import { MoveProductCategoryRecoveryApi } from './shared/apis/move-product-categ
 import { PackageDefinitionHistoryApi } from './shared/apis/package-definition-history.ts';
 import { packageDefinitionResourceDescriptor } from './shared/resources/package-definition.ts';
 import { PackageOptionHistoryApi } from './shared/apis/package-option-history.ts';
+import { PricingPurposeEquivalenceApi } from './shared/apis/pricing-purpose-equivalence.ts';
 import { ProductBrandCurrentApi } from './shared/apis/product-brand-current.ts';
 import { ProductBrandHistoryApi } from './shared/apis/product-brand-history.ts';
 import { ProductCategoryClassificationApi } from './shared/apis/product-category-classification.ts';
@@ -121,10 +122,12 @@ import { productResourceDescriptor } from './shared/resources/product.ts';
 import { ProductSizeCurrentApi } from './shared/apis/product-size-current.ts';
 import { productTypeResourceDescriptor } from './shared/resources/product-type.ts';
 import { productUnitResourceDescriptor } from './shared/resources/product-unit.ts';
+import { ProductVariantSnapshotApi } from './shared/apis/product-variant-snapshot.ts';
 import { promotePackageDefinitionAction } from './src/actions/promote-package-definition.action.ts';
 import { PromotePackageDefinitionRecoveryApi } from './shared/apis/promote-package-definition-recovery.ts';
 import { publishProductConfigurationAction } from './src/actions/publish-product-configuration.action.ts';
 import { PublishProductConfigurationRecoveryApi } from './shared/apis/publish-product-configuration-recovery.ts';
+import { QuantityBasisCompatibilityApi } from './shared/apis/quantity-basis-compatibility.ts';
 import { QuantityPreparationApi } from './shared/apis/quantity-preparation.ts';
 import { reactivateBrandAction } from './src/actions/reactivate-brand.action.ts';
 import { ReactivateBrandRecoveryApi } from './shared/apis/reactivate-brand-recovery.ts';
@@ -398,6 +401,7 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
       'move-product-category-recovery': MoveProductCategoryRecoveryApi,
       'package-definition-history': PackageDefinitionHistoryApi,
       'package-option-history': PackageOptionHistoryApi,
+      'pricing-purpose-equivalence': PricingPurposeEquivalenceApi,
       'product-brand-current': ProductBrandCurrentApi,
       'product-brand-history': ProductBrandHistoryApi,
       'product-category-classification': ProductCategoryClassificationApi,
@@ -407,8 +411,10 @@ export const catalogManifest: OntosModuleManifestInput = defineOntosModuleManife
       'product-relationship-current': ProductRelationshipCurrentApi,
       'product-relationship-history': ProductRelationshipHistoryApi,
       'product-size-current': ProductSizeCurrentApi,
+      'product-variant-snapshot': ProductVariantSnapshotApi,
       'promote-package-definition-recovery': PromotePackageDefinitionRecoveryApi,
       'publish-product-configuration-recovery': PublishProductConfigurationRecoveryApi,
+      'quantity-basis-compatibility': QuantityBasisCompatibilityApi,
       'quantity-preparation': QuantityPreparationApi,
       'reactivate-brand-recovery': ReactivateBrandRecoveryApi,
       'reactivate-controlled-attribute-value-recovery': ReactivateControlledAttributeValueRecoveryApi,

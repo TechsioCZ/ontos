@@ -19,7 +19,7 @@ const pricingOwner = 'pricing';
 const storefrontOwner = 'storefront-registry';
 const owners = [pricingOwner, storefrontOwner] as const;
 const bootstrapScript = 'scripts/postgres/bootstrap-runtime-role.mts';
-const pricingTable = 'pricing.currency_support_revisions';
+const pricingTable = 'pricing.currency_support_roots';
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();
 const otherScopeId = randomUUID();
@@ -113,17 +113,15 @@ const readCurrencies = (runtime: PgClient.PgClient) =>
 const verifyRuntimeCalls = Effect.fn('MigratorRuntimeAccess.verifyRuntimeCalls')(function* verifyRuntimeCallsEffect(
   runtime: PgClient.PgClient,
 ) {
-  for (const generation of [0, 1]) {
-    const written = yield* inScope(runtime, tenantId, legalEntityId, setCurrencies(runtime, generation));
-    expect(written[0]?.result).toMatchObject({ actualGeneration: generation + 1, outcome: 'APPLIED' });
-  }
+  const written = yield* inScope(runtime, tenantId, legalEntityId, setCurrencies(runtime, 0));
+  expect(written[0]?.result).toMatchObject({ actualGeneration: 1, outcome: 'APPLIED' });
   const current = yield* inScope(runtime, tenantId, legalEntityId, readCurrencies(runtime));
-  expect(current[0]?.result).toMatchObject({ generation: 2, supportedCurrencies: ['CZK', 'EUR'] });
+  expect(current[0]?.result).toMatchObject({ generation: 1, supportedCurrencies: ['CZK'] });
   for (const [scopeTenant, scopeEntity] of [
     [otherScopeId, legalEntityId],
     [tenantId, otherScopeId],
   ] as const) {
-    expect(yield* inScope(runtime, scopeTenant, scopeEntity, readCurrencies(runtime))).toEqual([]);
+    yield* denied(inScope(runtime, scopeTenant, scopeEntity, readCurrencies(runtime)));
     yield* denied(inScope(runtime, scopeTenant, scopeEntity, setCurrencies(runtime, 0)));
   }
   yield* denied(inScope(runtime, tenantId, legalEntityId, runtime.unsafe(`delete from ${pricingTable}`)));

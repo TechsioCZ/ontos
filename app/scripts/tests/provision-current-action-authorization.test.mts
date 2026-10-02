@@ -245,6 +245,7 @@ const addedVerticalActionKeys = [
   'commerce.market-catalog.revise-market-definition',
   'commerce.market-catalog.revise-storefront-association',
   'commerce.market-catalog.suspend-market',
+  'commerce.pricing.define-price',
   'commerce.pricing.set-supported-currencies',
   'commerce.storefront-registry.register-storefront-application',
   'commerce.storefront-registry.revise-storefront-application',
@@ -283,6 +284,17 @@ const explicitlyProvisionedActionKeys = [
   'commerce.inventory.select-inventory-backend',
   'commerce.inventory.stock-issue',
   'commerce.inventory.stock-receipt',
+  'commerce.pricing.compensate-currency-support-recovery',
+  'commerce.pricing.define-commercial-fee',
+  'commerce.pricing.manage-commitment-confirmation',
+  'commerce.pricing.manage-contractual-discount',
+  'commerce.pricing.manage-product-commercial-fees-bulk',
+  'commerce.pricing.manage-product-prices-bulk',
+  'commerce.pricing.manage-quantity-tier',
+  'commerce.pricing.manage-quotation',
+  'commerce.pricing.manage-zero-floor-authorization',
+  'commerce.pricing.revise-commercial-fee',
+  'commerce.pricing.revise-price',
   'core.identity.activate-principal-binding',
   changePrincipalBindingStatusAction,
   'core.identity.reserve-principal-binding',
@@ -491,6 +503,8 @@ it.effect(
     expect(currentActionKeys.filter((key) => key.startsWith('core.')).length).toBe(8);
     expect(currentActionKeys.filter((key) => key.startsWith('party.registry.')).length).toBe(30);
     expect(new Set(completeCurrentActionKeys).size).toBe(completeCurrentActionKeys.length);
+    expect(completeCurrentActionKeys).toHaveLength(246);
+    expect(completeCurrentActionKeys.filter((key) => key.startsWith('commerce.pricing.'))).toHaveLength(13);
     expect(completeCurrentActionKeys).toContain('commerce.customer-context.claim-counterparty-access-invitation');
     expect(completeCurrentActionKeys).toContain('commerce.catalog.publish-product-configuration');
     expect(completeCurrentActionKeys).toContain('commerce.assortment.replace-closed-assortment-boundary');

@@ -97,6 +97,7 @@ import { MoveProductCategoryActionApi } from './apis/move-product-category-actio
 import { MoveProductCategoryRecoveryApi } from './apis/move-product-category-recovery.ts';
 import { PackageDefinitionHistoryApi } from './apis/package-definition-history.ts';
 import { PackageOptionHistoryApi } from './apis/package-option-history.ts';
+import { PricingPurposeEquivalenceApi } from './apis/pricing-purpose-equivalence.ts';
 import { ProductBrandCurrentApi } from './apis/product-brand-current.ts';
 import { ProductBrandHistoryApi } from './apis/product-brand-history.ts';
 import { ProductCategoryClassificationApi } from './apis/product-category-classification.ts';
@@ -106,10 +107,12 @@ import { ProductHistoryApi } from './apis/product-history.ts';
 import { ProductRelationshipCurrentApi } from './apis/product-relationship-current.ts';
 import { ProductRelationshipHistoryApi } from './apis/product-relationship-history.ts';
 import { ProductSizeCurrentApi } from './apis/product-size-current.ts';
+import { ProductVariantSnapshotApi } from './apis/product-variant-snapshot.ts';
 import { PromotePackageDefinitionActionApi } from './apis/promote-package-definition-action.ts';
 import { PromotePackageDefinitionRecoveryApi } from './apis/promote-package-definition-recovery.ts';
 import { PublishProductConfigurationActionApi } from './apis/publish-product-configuration-action.ts';
 import { PublishProductConfigurationRecoveryApi } from './apis/publish-product-configuration-recovery.ts';
+import { QuantityBasisCompatibilityApi } from './apis/quantity-basis-compatibility.ts';
 import { QuantityPreparationApi } from './apis/quantity-preparation.ts';
 import { ReactivateBrandActionApi } from './apis/reactivate-brand-action.ts';
 import { ReactivateBrandRecoveryApi } from './apis/reactivate-brand-recovery.ts';
@@ -325,6 +328,7 @@ type CatalogApiGroups = GroupsOf<
   | typeof MoveProductCategoryRecoveryApi
   | typeof PackageDefinitionHistoryApi
   | typeof PackageOptionHistoryApi
+  | typeof PricingPurposeEquivalenceApi
   | typeof ProductBrandCurrentApi
   | typeof ProductBrandHistoryApi
   | typeof ProductCategoryClassificationApi
@@ -334,10 +338,12 @@ type CatalogApiGroups = GroupsOf<
   | typeof ProductRelationshipCurrentApi
   | typeof ProductRelationshipHistoryApi
   | typeof ProductSizeCurrentApi
+  | typeof ProductVariantSnapshotApi
   | typeof PromotePackageDefinitionActionApi
   | typeof PromotePackageDefinitionRecoveryApi
   | typeof PublishProductConfigurationActionApi
   | typeof PublishProductConfigurationRecoveryApi
+  | typeof QuantityBasisCompatibilityApi
   | typeof QuantityPreparationApi
   | typeof ReactivateBrandActionApi
   | typeof ReactivateBrandRecoveryApi
@@ -530,6 +536,7 @@ export const catalogApi: CatalogApi = HttpApi.make('CatalogApi')
   .addHttpApi(MoveProductCategoryRecoveryApi)
   .addHttpApi(PackageDefinitionHistoryApi)
   .addHttpApi(PackageOptionHistoryApi)
+  .addHttpApi(PricingPurposeEquivalenceApi)
   .addHttpApi(ProductBrandCurrentApi)
   .addHttpApi(ProductBrandHistoryApi)
   .addHttpApi(ProductCategoryClassificationApi)
@@ -539,10 +546,12 @@ export const catalogApi: CatalogApi = HttpApi.make('CatalogApi')
   .addHttpApi(ProductRelationshipCurrentApi)
   .addHttpApi(ProductRelationshipHistoryApi)
   .addHttpApi(ProductSizeCurrentApi)
+  .addHttpApi(ProductVariantSnapshotApi)
   .addHttpApi(PromotePackageDefinitionActionApi)
   .addHttpApi(PromotePackageDefinitionRecoveryApi)
   .addHttpApi(PublishProductConfigurationActionApi)
   .addHttpApi(PublishProductConfigurationRecoveryApi)
+  .addHttpApi(QuantityBasisCompatibilityApi)
   .addHttpApi(QuantityPreparationApi)
   .addHttpApi(ReactivateBrandActionApi)
   .addHttpApi(ReactivateBrandRecoveryApi)
@@ -1167,6 +1176,16 @@ export const catalogPublicOperationContracts = {
     scope: 'tenant',
     version: '1',
   },
+  'commerce.catalog.api.pricing-purpose-equivalence': {
+    authorityBundle: 'CATALOG_READER',
+    businessTarget: 'product',
+    permission: 'commerce.catalog.read.pricing-purpose-equivalence',
+    permissionKind: 'context_permission',
+    permissionTarget: 'resource',
+    resourcePermission: 'read',
+    scope: 'tenant',
+    version: '1',
+  },
   'commerce.catalog.api.product-brand-current': {
     authorityBundle: 'CATALOG_READER',
     businessTarget: 'product',
@@ -1248,6 +1267,14 @@ export const catalogPublicOperationContracts = {
     scope: 'tenant',
     version: '1',
   },
+  'commerce.catalog.api.product-variant-snapshot': {
+    authorityBundle: 'CATALOG_READER',
+    businessTarget: 'product',
+    permission: 'commerce.catalog.read.product-variant-snapshot',
+    permissionKind: 'context_permission',
+    scope: 'tenant',
+    version: '1',
+  },
   'commerce.catalog.api.promote-package-definition-recovery': {
     authorityBundle: 'CATALOG_READER',
     businessTarget: packageDefinitionBusinessTarget,
@@ -1261,6 +1288,16 @@ export const catalogPublicOperationContracts = {
     businessTarget: 'product',
     permission: 'commerce.catalog.read.publish-product-configuration-recovery',
     permissionKind: 'context_permission',
+    scope: 'tenant',
+    version: '1',
+  },
+  'commerce.catalog.api.quantity-basis-compatibility': {
+    authorityBundle: 'CATALOG_READER',
+    businessTarget: 'product',
+    permission: 'commerce.catalog.read.quantity-basis-compatibility',
+    permissionKind: 'context_permission',
+    permissionTarget: 'resource',
+    resourcePermission: 'read',
     scope: 'tenant',
     version: '1',
   },
@@ -2453,6 +2490,8 @@ export const catalogAuthorityBundles = {
     'commerce.catalog.read.product-brand-current',
     'commerce.catalog.read.product-brand-history',
     'commerce.catalog.read.product-detail',
+    'commerce.catalog.read.product-variant-snapshot',
+    'commerce.catalog.read.pricing-purpose-equivalence',
     'commerce.catalog.read.effective-attribute-values-current',
     'commerce.catalog.read.list-recorded-variants',
     'commerce.catalog.read.product-history',
@@ -2464,6 +2503,7 @@ export const catalogAuthorityBundles = {
     'commerce.catalog.read.product-size-current',
     'commerce.catalog.read.product-relationship',
     'commerce.catalog.read.product-relationship-history',
+    'commerce.catalog.read.quantity-basis-compatibility',
     'commerce.catalog.read.quantity-preparation',
     'commerce.catalog.read.sku-lookup',
   ],

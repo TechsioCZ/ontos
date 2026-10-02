@@ -24,8 +24,12 @@
     "vertical.registration.ts"
   ],
   "references": [
+    { "path": "../catalog" },
+    { "path": "../commerce-customer-context" },
+    { "path": "../commerce-market-catalog" },
     { "path": "../../packages/core-runtime" },
     { "path": "../../packages/gateway-principal-verifier" },
+    { "path": "../../packages/price-group-catalog-contracts" },
     { "path": "../../packages/pricing-contracts" },
     { "path": "../../packages/shared-contracts" },
     { "path": "../../packages/shared-design-tokens" }

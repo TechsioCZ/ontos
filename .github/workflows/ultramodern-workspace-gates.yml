@@ -197,6 +197,9 @@ jobs:
               pnpm -r --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:unit
               pnpm -r --if-present --filter ./verticals/catalog --filter ./verticals/commerce-customer-context --filter ./verticals/inventory run test:component
           - name: Unit and Component Tests (every other package)
+            # Pricing's issue #890 traceability test compares immutable historical revisions and the
+            # branch's latest main integration merge. Keep that bounded history in this shard only.
+            fetch_depth: 512
             commands: |
               pnpm -r --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:unit
               pnpm -r --if-present --filter '!.' --filter '!./verticals/catalog' --filter '!./verticals/commerce-customer-context' --filter '!./verticals/inventory' run test:component
@@ -209,7 +212,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 1
+          fetch-depth: ${{ matrix.fetch_depth || 1 }}
           persist-credentials: false
 
       - name: Install the app workspace
@@ -297,6 +300,9 @@ jobs:
       - name: API Boundaries
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         working-directory: app
+        env:
+          # The whole-workspace analyzer exceeds V8's ~4 GiB default while releasing its graph.
+          NODE_OPTIONS: --max-old-space-size=6144
         run: mise exec -- pnpm api:check
 
       - name: Database Access Boundaries

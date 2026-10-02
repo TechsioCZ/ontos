@@ -20,6 +20,10 @@ import { priceGroupCatalogGatewayCredentialLive } from './price-group-catalog-ga
 import { catalogQuantityGatewayCredentialLive } from './catalog-quantity-gateway-credential.ts';
 import { purchaseCurrencyPricingGatewayCredentialLive } from './purchase-currency-pricing-gateway-credential.ts';
 import { applicationCompositionMarketReferenceOwnerDeploymentStateAuthorityLive } from './application-composition-market-reference-owner-authority.ts';
+import {
+  pricingPurchaseContextOwnerAuthorityUnavailableLive,
+  pricingPurchaseContextVerificationLive,
+} from '../src/services/pricing-purchase-context-owner-authority.ts';
 
 type CommerceCustomerContextOwnerRuntimeServices =
   | Layer.Success<typeof BusinessPermissionRelationshipMutationLive>
@@ -28,12 +32,14 @@ type CommerceCustomerContextOwnerRuntimeServices =
   | Layer.Success<typeof profileRetailPermissionReaderFactoryLive>
   | Layer.Success<typeof profileReactivationEligibilityEvaluatorFactoryLive>
   | Layer.Success<typeof partyRegistryGuestResolverFactoryLive>
-  | Layer.Success<typeof partyRegistryRetailPartyResolverFactoryLive>;
+  | Layer.Success<typeof partyRegistryRetailPartyResolverFactoryLive>
+  | Layer.Success<typeof pricingPurchaseContextVerificationLive>;
 
 type CommerceCustomerContextOwnerRuntimeDependencies =
   | Layer.Services<typeof PrincipalEligibilityLive>
   | Layer.Services<typeof profileRetailPermissionReaderFactoryLive>
-  | Layer.Services<typeof profileReactivationEligibilityEvaluatorFactoryLive>;
+  | Layer.Services<typeof profileReactivationEligibilityEvaluatorFactoryLive>
+  | Layer.Services<typeof pricingPurchaseContextVerificationLive>;
 
 /** Owner services remain dependency-transparent; the API root supplies Core persistence. */
 export const commerceCustomerContextOwnerRuntimeServicesLive: Layer.Layer<
@@ -48,6 +54,7 @@ export const commerceCustomerContextOwnerRuntimeServicesLive: Layer.Layer<
   profileReactivationEligibilityEvaluatorFactoryLive,
   partyRegistryGuestResolverFactoryLive,
   partyRegistryRetailPartyResolverFactoryLive,
+  pricingPurchaseContextVerificationLive,
 );
 
 /** Proof delivery is an explicit after-commit deployment integration; absence fails closed. */
@@ -78,4 +85,5 @@ export const commerceCustomerContextProductionExternalPortsLive = Layer.mergeAll
   catalogQuantityGatewayCredentialLive,
   unavailableRepeatCartOwnerLive,
   applicationCompositionMarketReferenceOwnerDeploymentStateAuthorityLive,
+  pricingPurchaseContextOwnerAuthorityUnavailableLive,
 );

@@ -672,15 +672,15 @@ Options:
   permission: defineCommand({
     flags: ['permission', 'scope', 'vertical'],
     generator: permissionGenerator,
-    help: `Usage: pnpm scaffold:permission -- --vertical <vertical> --permission <retail.*|counterparty.*|inventory.*|pricing.price_group.*|assortment.*> --scope <retail_profile|counterparty|counterparty_storefront|inventory_resource|pricing_catalog|price_group|assortment_configuration|assortment_decision|assortment_rule|assortment_binding|assortment_boundary>
+    help: `Usage: pnpm scaffold:permission -- --vertical <vertical> --permission <stable.lowercase.code> --scope <module|retail_profile|counterparty|counterparty_storefront|inventory_resource|pricing_catalog|price_group|assortment_configuration|assortment_decision|assortment_rule|assortment_binding|assortment_boundary>
 
-Generate one versioned, fail-closed business Permission declaration and register it in the module manifest.
+Generate one versioned, fail-closed Permission declaration and register it in the module manifest.
 Generated Permissions start non-delegable and with no authority-group or protected-entrypoint membership.
 
 Required flags:
   --vertical <vertical>  Existing generated vertical folder (lower-kebab-case)
-  --permission <code>    Stable lowercase retail.*, counterparty.*, inventory.*, pricing.price_group.*, or one of the approved assortment.* codes
-  --scope <scope>        Exact business target scope
+  --permission <code>    Stable lowercase dotted Permission code
+  --scope <scope>        Exact module or compatible business target scope
 
 Options:
   --help                 Show this help without writing
@@ -694,6 +694,7 @@ Options:
           scope !== 'counterparty' &&
           scope !== 'counterparty_storefront' &&
           scope !== 'inventory_resource' &&
+          scope !== 'module' &&
           scope !== 'pricing_catalog' &&
           scope !== 'price_group' &&
           scope !== 'assortment_configuration' &&
@@ -703,7 +704,7 @@ Options:
           scope !== 'assortment_boundary'
         ) {
           return yield* failScaffolding(
-            '--scope must be retail_profile, counterparty, counterparty_storefront, inventory_resource, pricing_catalog, price_group, assortment_configuration, assortment_decision, assortment_rule, assortment_binding, or assortment_boundary',
+            '--scope must be module, retail_profile, counterparty, counterparty_storefront, inventory_resource, pricing_catalog, price_group, assortment_configuration, assortment_decision, assortment_rule, assortment_binding, or assortment_boundary',
           );
         }
         return {

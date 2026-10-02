@@ -28,6 +28,9 @@ it('builds an immutable, reciprocal and versioned permission catalog', () => {
     'assortment.configuration.read',
   );
   expect(Schema.decodeSync(BusinessPermissionScopeKindSchema)('assortment_boundary')).toBe('assortment_boundary');
+  expect(Schema.decodeSync(BusinessPermissionCodeSchema)('pricing.currency_support.read')).toBe(
+    'pricing.currency_support.read',
+  );
   const catalog = defineBusinessPermissionCatalog({
     authorityGroups: {
       'Counterparty Buyer': [Schema.decodeSync(BusinessPermissionCodeSchema)('counterparty.profile.read')],
@@ -107,6 +110,30 @@ it('accepts Inventory permissions only for exact Inventory Resource scope', () =
     defineBusinessPermission({
       ...readPermission,
       allowedScopeKinds: ['inventory_resource'],
+    }),
+  ).toThrow(/incompatible target scope/u);
+});
+
+it('models module-scoped context permissions without admitting a business target scope', () => {
+  expect(
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['module'],
+      key: 'pricing.currency_support.read',
+    }).allowedScopeKinds,
+  ).toEqual(['module']);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['pricing_catalog'],
+      key: 'pricing.currency_support.read',
+    }),
+  ).toThrow(/incompatible target scope/u);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['module'],
+      key: 'pricing.price_group.read',
     }),
   ).toThrow(/incompatible target scope/u);
 });

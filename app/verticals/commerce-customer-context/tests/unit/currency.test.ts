@@ -42,6 +42,9 @@ import { composeCurrentPurchaseCurrencyPolicy } from '../../src/integrations/pur
 
 const tenantId = '20000000-0000-4000-8000-000000000001';
 const sellingLegalEntityId = '40000000-0000-4000-8000-000000000001';
+const supportRootId = '50000000-0000-4000-8000-000000000001';
+const supportRevisionId = '51000000-0000-4000-8000-000000000001';
+const supportVerificationRef = `commerce.pricing.currency-support-proof:${supportRevisionId}`;
 const profileRef = {
   moduleId: 'commerce.customer-context' as const,
   resourceId: '10000000-0000-4000-8000-000000000001',
@@ -91,20 +94,79 @@ const policy = {
   defaultCurrency: 'CZK' as const,
   policyRevisionIds: ['10000000-0000-4000-8000-000000000011'] as const,
 };
-const pricing = {
-  pricingRevision: 'pricing-1',
-  supportedCurrencies: ['CZK', 'EUR'] as const,
-};
+const pricingSupport = <const Currencies extends readonly string[]>(
+  pricingRevision: string,
+  supportedCurrencies: Currencies,
+) => ({
+  completenessEvidence: {
+    observedAt: '2026-09-09T10:00:01.000Z',
+    ownerRevision: supportRevisionId,
+    scope: {
+      kind: 'EXACT_PREDICATE' as const,
+      predicateRef: `commerce.pricing.current-supported-currencies:${tenantId}`,
+    },
+  },
+  currentnessEvidence: {
+    evaluatedAt: '2026-09-09T10:00:01.000Z',
+    evaluationMode: 'CURRENT_WITH_REVALIDATION' as const,
+    observedAt: '2026-09-09T10:00:01.000Z',
+    revalidatedAt: '2026-09-09T10:00:01.000Z',
+    scheduleRevision: 1,
+    supportRevisionRef: {
+      moduleId: 'commerce.pricing' as const,
+      resourceId: supportRevisionId,
+      resourceType: 'commerce.pricing.currency-support-revision' as const,
+      supportRootId,
+      tenantId,
+    },
+    supportRootRef: {
+      moduleId: 'commerce.pricing' as const,
+      resourceId: supportRootId,
+      resourceType: 'commerce.pricing.currency-support' as const,
+      tenantId,
+    },
+  },
+  effectiveAt: '2026-09-09T10:00:01.000Z',
+  effectivePeriod: {
+    effectiveFrom: '2026-09-01T00:00:00.000Z',
+    effectiveTo: null,
+  },
+  factProofs: [
+    {
+      factRef: supportRootId,
+      factRevisionRef: supportRevisionId,
+      verificationRef: supportVerificationRef,
+    },
+  ],
+  generation: 1,
+  observedAt: '2026-09-09T10:00:01.000Z',
+  pricingRevision,
+  scheduleRevision: 1,
+  supportedCurrencies,
+  supportRevisionRef: {
+    moduleId: 'commerce.pricing' as const,
+    resourceId: supportRevisionId,
+    resourceType: 'commerce.pricing.currency-support-revision' as const,
+    supportRootId,
+    tenantId,
+  },
+  supportRootRef: {
+    moduleId: 'commerce.pricing' as const,
+    resourceId: supportRootId,
+    resourceType: 'commerce.pricing.currency-support' as const,
+    tenantId,
+  },
+  tenantId,
+  verificationRef: supportVerificationRef,
+});
+const pricing = pricingSupport('pricing-1', ['CZK', 'EUR'] as const);
 const launchCurrencyPolicy = {
   allowedCurrencies: ['CZK'] as const,
   completeness: policyCompleteness,
   defaultCurrency: 'CZK' as const,
   policyRevisionIds: ['10000000-0000-4000-8000-000000000011', '10000000-0000-4000-8000-000000000012'] as const,
 };
-const launchPricingCurrencySupport = {
-  pricingRevision: 'pricing-czk-launch-v1',
-  supportedCurrencies: ['CZK'] as const,
-};
+const launchPricingCurrencySupport = pricingSupport('pricing-czk-launch-v1', ['CZK'] as const);
 const baseResolution = () => ({
   policy,
   pricing,
@@ -155,6 +217,7 @@ it('resolves explicit choice before the Launch CZK default', () => {
     }),
   );
   expect(result).toMatchObject({ currencyCode: 'EUR', source: 'EXPLICIT_CHOICE' });
+  expect(result.evidence.pricingSupport).toEqual(pricing);
 });
 
 it('rejects an unsupported explicit choice without falling back', () => {
@@ -342,7 +405,7 @@ it.effect('uses the most specific default and intersects every applicable non-re
 it('rejects a Pricing-unsupported explicit currency without falling back', () => {
   const result = resolvePurchaseCurrency({
     ...baseResolution(),
-    pricing: { pricingRevision: 'pricing-czk-only', supportedCurrencies: ['CZK'] },
+    pricing: pricingSupport('pricing-czk-only', ['CZK']),
     request: { ...baseResolution().request, explicitChoice: 'EUR' },
   });
   expect(Schema.is(ExplicitPurchaseCurrencyChoiceInvalid)(result)).toBe(true);
@@ -354,7 +417,7 @@ it('rejects a Pricing-unsupported explicit currency without falling back', () =>
 it('returns no usable currency when Pricing does not support the policy default', () => {
   const result = resolvePurchaseCurrency({
     ...baseResolution(),
-    pricing: { pricingRevision: 'pricing-eur-only', supportedCurrencies: ['EUR'] },
+    pricing: pricingSupport('pricing-eur-only', ['EUR']),
   });
   expect(Schema.is(NoUsablePurchaseCurrency)(result)).toBe(true);
 });
@@ -646,13 +709,8 @@ it.effect('loads Current policy and pricing without a preference persistence dep
     expect(calls).toEqual(['context', 'policy', 'pricing']);
     expect(pricingInputs).toEqual([
       {
-        context: {
-          contextRevision: input.contextRevision,
-          purchasingContext,
-          subject: input.subject,
-        },
-        observedAt: '2026-09-09T10:00:01.000Z',
-        subject: input.subject,
+        effectiveAt: '2026-09-09T10:00:01.000Z',
+        tenantId,
       },
     ]);
   }),

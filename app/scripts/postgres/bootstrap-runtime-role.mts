@@ -6,6 +6,7 @@ import { Reactivity } from 'effect/unstable/reactivity';
 import type { SqlError } from 'effect/unstable/sql/SqlError';
 
 import { loadDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
+import { PRICING_RUNTIME_ROUTINE_SIGNATURES, PRICING_RUNTIME_TABLE_GRANTS } from './runtime-role-grants.mts';
 
 class RuntimeRoleBootstrapError extends Schema.TaggedError<RuntimeRoleBootstrapError>()('RuntimeRoleBootstrapError', {
   reason: Schema.String,
@@ -83,6 +84,48 @@ const bootstrapRuntimeRole = (
         }),
       { concurrency: 1, discard: true },
     );
+    const pricingSchemaExists = yield* query<{ exists: boolean }>(
+      client,
+      'select exists(select 1 from pg_catalog.pg_namespace where nspname = $1) as exists',
+      ['pricing'],
+    );
+    if (pricingSchemaExists[0]?.exists) {
+      yield* query(client, 'revoke all on schema pricing from public, ontos_runtime');
+      yield* query(client, 'grant usage on schema pricing to ontos_runtime');
+      yield* Effect.forEach(
+        PRICING_RUNTIME_TABLE_GRANTS,
+        ({ privileges, table }) =>
+          Effect.gen(function* grantPricingTablePrivilegesEffect() {
+            const qualifiedTable = `pricing.${quoteIdentifier(table)}`;
+            const tableExists = yield* query<{ exists: boolean }>(
+              client,
+              'select pg_catalog.to_regclass($1) is not null as exists',
+              [`pricing.${table}`],
+            );
+            if (tableExists[0]?.exists) {
+              yield* query(client, `revoke all on table ${qualifiedTable} from public, ontos_runtime`);
+              yield* query(client, `grant ${privileges.join(', ')} on table ${qualifiedTable} to ontos_runtime`);
+            }
+          }),
+        { concurrency: 1, discard: true },
+      );
+      yield* Effect.forEach(
+        PRICING_RUNTIME_ROUTINE_SIGNATURES,
+        (signature) =>
+          Effect.gen(function* grantPricingRoutinePrivilegesEffect() {
+            const routineExists = yield* query<{ exists: boolean }>(
+              client,
+              'select pg_catalog.to_regprocedure($1) is not null as exists',
+              [signature],
+            );
+            if (routineExists[0]?.exists) {
+              yield* query(client, `revoke all on function ${signature} from public, ontos_runtime`);
+              yield* query(client, `grant execute on function ${signature} to ontos_runtime`);
+            }
+          }),
+        { concurrency: 1, discard: true },
+      );
+    }
     const role = yield* query<{ rolbypassrls: boolean; rolsuper: boolean }>(
       client,
       'select rolsuper, rolbypassrls from pg_catalog.pg_roles where rolname = $1',

@@ -13,6 +13,7 @@ import { marketCatalogRootResourceDescriptor } from './shared/resources/market-c
 import { marketDefinitionRevisionResourceDescriptor } from './shared/resources/market-definition-revision.ts';
 import { MarketHistoryApi } from './shared/apis/market-history.ts';
 import { marketResourceDescriptor } from './shared/resources/market.ts';
+import { PricingCurrentMarketEvidenceApi } from './shared/apis/pricing-current-market-evidence.ts';
 import { removeStorefrontAssociationAction } from './src/actions/remove-storefront-association.action.ts';
 import { ResolveCommerceMarketApi } from './shared/apis/resolve-commerce-market.ts';
 import { retireMarketAction } from './src/actions/retire-market.action.ts';
@@ -55,6 +56,7 @@ export const commerceMarketCatalogManifest: OntosModuleManifestInput = defineOnt
       'current-market-catalog': CurrentMarketCatalogApi,
       'eligible-market-tuples': EligibleMarketTuplesApi,
       'market-history': MarketHistoryApi,
+      'pricing-current-market-evidence': PricingCurrentMarketEvidenceApi,
       'resolve-commerce-market': ResolveCommerceMarketApi,
       'verify-market-eligibility-v1': VerifyMarketEligibilityV1Api,
       // </generated-module-manifest-apis>

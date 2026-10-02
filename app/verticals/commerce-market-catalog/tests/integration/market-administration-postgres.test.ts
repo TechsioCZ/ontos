@@ -521,19 +521,22 @@ it.live('enforces CAS, idempotency, temporal associations, terminal retirement, 
   ),
 );
 
-it.live('exposes only the six governed mutations and three governed reads over forced Tenant RLS', () =>
+it.live('exposes only the six governed mutations and four governed reads over forced Tenant RLS', () =>
   Effect.scoped(
     Effect.gen(function* marketSecurityCatalog() {
       const { admin: adminClient } = yield* testDatabaseClients;
       const admin = yield* makeTestDatabaseFromClient(adminClient, commerceMarketCatalogRelations);
       const [catalog] = yield* admin.execute<{
-        readonly executable_routines: number;
+        readonly executable_routines: readonly string[];
         readonly forced_tables: number;
         readonly private_routines_executable: boolean;
         readonly runtime_table_grants: number;
       }>(
         sql`select
-          (select count(*)::integer from pg_proc routine join pg_namespace ns on ns.oid = routine.pronamespace
+          (select array_agg(
+              format('%I(%s)', routine.proname, oidvectortypes(routine.proargtypes))
+              order by routine.proname
+            ) from pg_proc routine join pg_namespace ns on ns.oid = routine.pronamespace
             where ns.nspname = 'commerce_market_catalog' and routine.prosecdef
               and has_function_privilege('ontos_runtime', routine.oid, 'EXECUTE')) as executable_routines,
           (select count(*)::integer from pg_class relation join pg_namespace ns on ns.oid = relation.relnamespace
@@ -547,7 +550,18 @@ it.live('exposes only the six governed mutations and three governed reads over f
         'objects',
       );
       expect(catalog).toEqual({
-        executable_routines: 9,
+        executable_routines: [
+          'associate_storefront(uuid, uuid, jsonb)',
+          'create_market(uuid, uuid, jsonb)',
+          'read_current_market_catalog(uuid, uuid, jsonb)',
+          'read_market_eligibility_snapshot(uuid, jsonb)',
+          'read_market_history(uuid, uuid, jsonb)',
+          'read_pricing_current_market_evidence(uuid, uuid, jsonb)',
+          'remove_storefront_association(uuid, uuid, jsonb)',
+          'revise_market_definition(uuid, uuid, jsonb)',
+          'revise_storefront_association(uuid, uuid, jsonb)',
+          'transition_market_lifecycle(uuid, uuid, jsonb)',
+        ],
         forced_tables: 6,
         private_routines_executable: false,
         runtime_table_grants: 0,

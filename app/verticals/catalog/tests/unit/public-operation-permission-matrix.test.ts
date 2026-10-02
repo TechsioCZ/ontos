@@ -87,6 +87,7 @@ import { productCategoryClassificationRead } from '../../src/api/product-categor
 import { productCategoryHistoryRead } from '../../src/api/product-category-history.read.ts';
 import { productDetailRead } from '../../src/api/product-detail.read.ts';
 import { productHistoryRead } from '../../src/api/product-history.read.ts';
+import { productVariantSnapshotRead } from '../../src/api/product-variant-snapshot.read.ts';
 import { variantHistoryRead } from '../../src/api/variant-history.read.ts';
 import { packageDefinitionHistoryRead } from '../../src/api/package-definition-history.read.ts';
 import { packageOptionHistoryRead } from '../../src/api/package-option-history.read.ts';
@@ -95,6 +96,8 @@ import { productBrandHistoryRead } from '../../src/api/product-brand-history.rea
 import { productSizeCurrentRead } from '../../src/api/product-size-current.read.ts';
 import { productRelationshipCurrentRead } from '../../src/api/product-relationship-current.read.ts';
 import { productRelationshipHistoryRead } from '../../src/api/product-relationship-history.read.ts';
+import { pricingPurposeEquivalenceRead } from '../../src/api/pricing-purpose-equivalence.read.ts';
+import { quantityBasisCompatibilityRead } from '../../src/api/quantity-basis-compatibility.read.ts';
 import { quantityPreparationRead } from '../../src/api/quantity-preparation.read.ts';
 import { skuLookupRead } from '../../src/api/sku-lookup.read.ts';
 import { removeProductManufacturerRecoveryRead } from '../../src/api/remove-product-manufacturer-recovery.read.ts';
@@ -205,6 +208,7 @@ const reads = [
   productCategoryHistoryRead,
   productDetailRead,
   productHistoryRead,
+  productVariantSnapshotRead,
   variantHistoryRead,
   packageDefinitionHistoryRead,
   packageOptionHistoryRead,
@@ -213,6 +217,8 @@ const reads = [
   productSizeCurrentRead,
   productRelationshipCurrentRead,
   productRelationshipHistoryRead,
+  pricingPurposeEquivalenceRead,
+  quantityBasisCompatibilityRead,
   quantityPreparationRead,
   skuLookupRead,
   removeProductManufacturerRecoveryRead,
@@ -241,6 +247,8 @@ const reads = [
 const expectedPermissionTarget = (readKey: string) => {
   if (
     readKey === 'commerce.catalog.api.catalog-media-current' ||
+    readKey === 'commerce.catalog.api.pricing-purpose-equivalence' ||
+    readKey === 'commerce.catalog.api.quantity-basis-compatibility' ||
     readKey === 'commerce.catalog.api.quantity-preparation'
   ) {
     return 'resource';

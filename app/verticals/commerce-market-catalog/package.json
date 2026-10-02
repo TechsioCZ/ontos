@@ -6,6 +6,8 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/commerce-market-catalog-client.ts",
+    "./api/pricing-current-market-evidence": "./shared/apis/pricing-current-market-evidence.ts",
+    "./api/pricing-current-market-evidence-client": "./src/api/pricing-current-market-evidence-client.ts",
     "./api/verify-market-eligibility-v1": "./shared/apis/verify-market-eligibility-v1.ts",
     "./api/verify-market-eligibility-v1/client": "./src/api/verify-market-eligibility-v1-client.ts",
     "./outbox/commerce-market-catalog-market-activated-v1": "./shared/outbox/commerce-market-catalog-market-activated-v1.ts",

@@ -463,19 +463,19 @@ const defaultExportExpression = (source: string): string | undefined =>
   assignedExpression(source, /^\s*export default\s+/mu);
 
 const returnedEffectBffDefinition = (source: string): string | undefined => {
+  const returned = callbackReturnedExpression(source);
+  const declaration = /^(?:defineEffectBff|assembleEffectBffRuntime)\(/u;
+  if (returned === undefined || !isWholeCallExpression(returned, declaration)) {
+    return undefined;
+  }
   const structure = maskNonCode(source);
+  const arrow = structure.indexOf('=>');
+  const body = arrow === -1 ? undefined : source.slice(arrow + 2).trim();
   const returnedCalls = [...structure.matchAll(/\breturn\s+(?:defineEffectBff|assembleEffectBffRuntime)\(/gu)];
-  if (returnedCalls.length !== 1 || returnedCalls[0]?.index === undefined) {
+  if (body?.startsWith('{') === true && (returnedCalls.length !== 1 || returnedCalls[0]?.index === undefined)) {
     return undefined;
   }
-  const callStart =
-    returnedCalls[0].index + returnedCalls[0][0].search(/(?:defineEffectBff|assembleEffectBffRuntime)\(/u);
-  const opening = structure.indexOf('(', callStart);
-  const closing = matchingDelimiterEnd(structure, opening, '(', ')');
-  if (closing === undefined) {
-    return undefined;
-  }
-  return objectArgument(source.slice(callStart, closing + 1), /^(?:defineEffectBff|assembleEffectBffRuntime)\(/u);
+  return objectArgument(returned, declaration);
 };
 
 const exportedRuntimeFactory = (source: string): SourceRange | undefined => {

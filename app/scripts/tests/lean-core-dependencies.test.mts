@@ -8,6 +8,9 @@ import { expect, it } from 'effect-rstest';
 
 import { checkLeanCoreDependencies } from '../check-lean-core-dependencies.mts';
 
+const customerPriceGroupClientImport =
+  "import { execute } from '@app/commerce-customer-context/api/customer-price-group-resolution/client';\n";
+
 it.live(
   'flags Core Commerce/Storefront/Better-Auth vocabulary and non-Commerce mandatory imports of Commerce private implementation, while allowing documented seams',
   () =>
@@ -87,8 +90,11 @@ it.live(
           exports: {
             '.': './src/index.ts',
             './api/client': './src/api/client.ts',
+            './api/customer-price-group-resolution/client': './src/api/customer-price-group-resolution-client.ts',
             './api/market-subject-restrictions-current/client':
               './src/api/market-subject-restrictions-current-client.ts',
+            './api/pricing-purchase-context-verification/client':
+              './src/api/pricing-purchase-context-verification-client.ts',
             './portal-auth/verification/client': './src/portal-auth/verification/client.ts',
             './shared/contracts': './shared/contracts.ts',
           },
@@ -99,6 +105,15 @@ it.live(
         // The narrow owner client is accepted only at the exact documented Market composition seam.
         'verticals/party-registry/api/uses-subject-restrictions-client.ts':
           "import { execute } from '@app/commerce-customer-context/api/market-subject-restrictions-current/client';\n",
+        // Pricing: only these four exact importer/client pairs are documented composition seams.
+        'verticals/pricing/src/integrations/commerce-price-group-resolution.ts': customerPriceGroupClientImport,
+        'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence-live.ts': `${customerPriceGroupClientImport}import { verify } from '@app/commerce-customer-context/api/pricing-purchase-context-verification/client';\n`,
+        'verticals/pricing/src/integrations/current-pricing-decision-owner-final-fence.ts':
+          customerPriceGroupClientImport,
+        'verticals/pricing/src/integrations/customer-context-subject-authority.ts':
+          "import { verify } from '@app/commerce-customer-context/api/pricing-purchase-context-verification/client';\n",
+        // An adjacent Pricing importer is not admitted merely because it uses the same narrow client.
+        'verticals/pricing/src/integrations/unauthorized-price-group-resolution.ts': customerPriceGroupClientImport,
       } as const;
       yield* Effect.all(
         Object.entries(files).map(([relative, source]) =>
@@ -124,6 +139,8 @@ it.live(
         'packages/core-runtime/src/auth/unpinned.ts:1: Core runtime source imports a dependency outside the pinned external specifier set: "zod"',
         'verticals/party-registry/api/uses-commerce-api.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "../../commerce-customer-context/api/owner-transition.ts" (only published shared/ contracts and documented composition seams are allowed)',
         'verticals/party-registry/api/uses-subject-restrictions-client.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "@app/commerce-customer-context/api/market-subject-restrictions-current/client" (only published shared/ contracts and documented composition seams are allowed)',
+        'verticals/pricing/src/integrations/current-pricing-decision-external-owner-evidence-live.ts:2: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "@app/commerce-customer-context/api/pricing-purchase-context-verification/client" (only published shared/ contracts and documented composition seams are allowed)',
+        'verticals/pricing/src/integrations/unauthorized-price-group-resolution.ts:1: Non-Commerce unit takes a mandatory runtime import of Commerce\'s private implementation "@app/commerce-customer-context/api/customer-price-group-resolution/client" (only published shared/ contracts and documented composition seams are allowed)',
       ]);
     }),
 );

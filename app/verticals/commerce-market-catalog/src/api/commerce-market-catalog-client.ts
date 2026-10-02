@@ -16,6 +16,7 @@ import type { OperationContext, CommerceMarketCatalogReadiness } from '../../sha
 import { executeCurrentMarketCatalog } from './current-market-catalog-client.ts';
 import { executeEligibleMarketTuples } from './eligible-market-tuples-client.ts';
 import { executeMarketHistory } from './market-history-client.ts';
+import { executePricingCurrentMarketEvidence } from './pricing-current-market-evidence-client.ts';
 import { executeResolveCommerceMarket } from './resolve-commerce-market-client.ts';
 
 // oxlint-disable-next-line effect-native/no-scattered-browser-effect-run -- This generated public compatibility surface remains until the vertical adds a centralized browser runtime.
@@ -69,6 +70,31 @@ export {
 } from '../../shared/apis/market-history.ts';
 export type { MarketHistoryRequest, MarketHistoryResponse } from '../../shared/apis/market-history.ts';
 export {
+  PricingCurrentMarketEvidenceApi,
+  PricingCurrentMarketEvidenceAuthenticationProblemSchema,
+  PricingCurrentMarketEvidenceForbiddenProblemSchema,
+  PricingCurrentMarketEvidenceInternalProblemSchema,
+  PricingCurrentMarketEvidenceInvalidProblemSchema,
+  PricingCurrentMarketEvidenceNotFoundProblemSchema,
+  PricingCurrentMarketEvidencePolicyConflictProblemSchema,
+  PricingCurrentMarketEvidencePolicyProblemSchema,
+  PricingCurrentMarketEvidenceRequestSchema,
+  PricingCurrentMarketEvidenceResponseSchema,
+  PricingCurrentMarketEvidenceUnavailableProblemSchema,
+  PricingMarketCommercialScopeSchema,
+  PricingMarketSourceFactProofSchema,
+  PricingMarketSourceReceiptSchema,
+  PricingMarketSourceSetAuthoritySchema,
+} from '../../shared/apis/pricing-current-market-evidence.ts';
+export type {
+  PricingCurrentMarketEvidenceRequest,
+  PricingCurrentMarketEvidenceResponse,
+  PricingMarketCommercialScope,
+  PricingMarketSourceFactProof,
+  PricingMarketSourceReceipt,
+  PricingMarketSourceSetAuthority,
+} from '../../shared/apis/pricing-current-market-evidence.ts';
+export {
   ResolveCommerceMarketApi,
   ResolveCommerceMarketAuthenticationProblemSchema,
   ResolveCommerceMarketForbiddenProblemSchema,
@@ -106,6 +132,11 @@ export {
 export type { EligibleMarketTuplesClientOptions } from './eligible-market-tuples-client.ts';
 export { executeMarketHistory, executeMarketHistoryWithAuthorization } from './market-history-client.ts';
 export type { MarketHistoryClientOptions } from './market-history-client.ts';
+export {
+  executePricingCurrentMarketEvidence,
+  executePricingCurrentMarketEvidenceWithAuthorization,
+} from './pricing-current-market-evidence-client.ts';
+export type { PricingCurrentMarketEvidenceClientOptions } from './pricing-current-market-evidence-client.ts';
 export {
   executeResolveCommerceMarket,
   executeResolveCommerceMarketWithAuthorization,
@@ -169,6 +200,7 @@ export interface CommerceMarketCatalogOperationsClient {
   readonly executeCurrentMarketCatalog: typeof executeCurrentMarketCatalog;
   readonly executeEligibleMarketTuples: typeof executeEligibleMarketTuples;
   readonly executeMarketHistory: typeof executeMarketHistory;
+  readonly executePricingCurrentMarketEvidence: typeof executePricingCurrentMarketEvidence;
   readonly executeResolveCommerceMarket: typeof executeResolveCommerceMarket;
   readonly getCommerceMarketCatalogReadiness: typeof getCommerceMarketCatalogReadiness;
 }
@@ -177,6 +209,7 @@ export const commerceMarketCatalogClient = {
   executeCurrentMarketCatalog,
   executeEligibleMarketTuples,
   executeMarketHistory,
+  executePricingCurrentMarketEvidence,
   executeResolveCommerceMarket,
   getCommerceMarketCatalogReadiness,
 } satisfies CommerceMarketCatalogOperationsClient;

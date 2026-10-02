@@ -116,6 +116,23 @@ export type { ProductDetailClientOptions } from './product-detail-client.ts';
 export { executeProductHistory, executeProductHistoryWithAuthorization } from './product-history-client.ts';
 export type { ProductHistoryClientOptions } from './product-history-client.ts';
 export {
+  executeProductVariantSnapshot,
+  executeProductVariantSnapshotWithAuthorization,
+} from './product-variant-snapshot-client.ts';
+export type { ProductVariantSnapshotClientOptions } from './product-variant-snapshot-client.ts';
+export {
+  executePricingPurposeEquivalence,
+  executePricingPurposeEquivalenceWithAuthorization,
+} from './pricing-purpose-equivalence-client.ts';
+export type { PricingPurposeEquivalenceClientOptions } from './pricing-purpose-equivalence-client.ts';
+export {
+  executeQuantityBasisCompatibility,
+  executeQuantityBasisCompatibilityWithAuthorization,
+} from './quantity-basis-compatibility-client.ts';
+export type { QuantityBasisCompatibilityClientOptions } from './quantity-basis-compatibility-client.ts';
+export { executeSelectionEvidence, executeSelectionEvidenceWithAuthorization } from './selection-evidence-client.ts';
+export type { SelectionEvidenceClientOptions } from './selection-evidence-client.ts';
+export {
   executeProductCategoryClassification,
   executeProductCategoryClassificationWithAuthorization,
 } from './product-category-classification-client.ts';

@@ -25,10 +25,10 @@ export class CatalogSelectionOwnerEvidence extends Context.Service<
   CatalogSelectionOwnerEvidencePort
 >()('@app/catalog/api/selection-evidence.read/CatalogSelectionOwnerEvidence') {}
 
-interface SelectionEvidenceServices {
+export interface SelectionEvidenceServices {
   readonly assess: (
     request: SelectionEvidenceRequest,
-    ownerEvidence: CatalogSelectionInjectedOwnerEvidence,
+    ownerEvidence?: CatalogSelectionInjectedOwnerEvidence,
   ) => Effect.Effect<SelectionEvidenceResponse>;
   readonly readCartEvidence: CatalogSelectionOwnerEvidencePort['readCartEvidence'];
 }
@@ -71,11 +71,14 @@ export const readSelectionEvidence = Effect.fn('SelectionEvidenceRead.read')(fun
   if (input.selection.productRef.tenantId !== tenantId) {
     return yield* unavailable('Cross-Tenant selection');
   }
+  if (input.purpose === 'PRICING') {
+    return yield* services.assess(input).pipe(Effect.mapError(unavailable));
+  }
   const ownerEvidence = yield* services.readCartEvidence(input).pipe(Effect.mapError(unavailable));
   return yield* services.assess(input, ownerEvidence).pipe(Effect.mapError(unavailable));
 });
 
-/** Production is deliberately unbound until Cart publishes the owner read. */
+/** Cart-qualified purposes remain unbound until Cart publishes its owner read; PRICING is Catalog-local. */
 export const selectionEvidenceRead = defineRead(
   {
     accessKind: 'detail',

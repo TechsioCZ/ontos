@@ -76,6 +76,7 @@ import { OpenProfileReconciliationActionApi } from './apis/open-profile-reconcil
 import { PaymentTermAffectedUseAssessmentApi } from './apis/payment-term-affected-use-assessment.ts';
 import { PaymentTermPolicyCurrentApi } from './apis/payment-term-policy-current.ts';
 import { PaymentTermsResolutionApi } from './apis/payment-terms-resolution.ts';
+import { PricingPurchaseContextVerificationApi } from './apis/pricing-purchase-context-verification.ts';
 import { ProfileReconciliationReadApi } from './apis/profile-reconciliation-read.ts';
 import { PurchaseCurrencyPolicyCurrentApi } from './apis/purchase-currency-policy-current.ts';
 import { PurchaseCurrencyResolutionApi } from './apis/purchase-currency-resolution.ts';
@@ -227,6 +228,7 @@ export const commerceCustomerContextApi = HttpApi.make('CommerceCustomerContextA
   .addHttpApi(PaymentTermAffectedUseAssessmentApi)
   .addHttpApi(PaymentTermPolicyCurrentApi)
   .addHttpApi(PaymentTermsResolutionApi)
+  .addHttpApi(PricingPurchaseContextVerificationApi)
   .addHttpApi(ProfileReconciliationReadApi)
   .addHttpApi(PurchaseCurrencyPolicyCurrentApi)
   .addHttpApi(PurchaseCurrencyResolutionApi)

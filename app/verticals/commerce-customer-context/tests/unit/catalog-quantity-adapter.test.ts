@@ -17,6 +17,22 @@ import { CommerceQuantityCatalogLineRequestSchema } from '../../shared/domain/co
 import { catalogQuantityPortFromEnvironment } from '../../src/integrations/catalog-quantity.ts';
 
 const { tenantId } = CZECH_LAUNCH_COMMERCE_FIXTURE.scope;
+const fixturePricingCurrencies = CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts.pricingCurrencies;
+const fixturePricingVerificationRef = `commerce.pricing.currency-support-proof:${fixturePricingCurrencies.supportRevisionRef.resourceId}`;
+const activationOwnerFacts = {
+  ...CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts,
+  pricingCurrencies: {
+    ...fixturePricingCurrencies,
+    factProofs: [
+      {
+        factRef: fixturePricingCurrencies.supportRootRef.resourceId,
+        factRevisionRef: fixturePricingCurrencies.supportRevisionRef.resourceId,
+        verificationRef: fixturePricingVerificationRef,
+      },
+    ],
+    verificationRef: fixturePricingVerificationRef,
+  },
+};
 const gateway = Layer.succeed(CatalogQuantityGatewayCredentialService, {
   issue: () =>
     Effect.succeed({
@@ -32,7 +48,7 @@ const line = Schema.decodeUnknownSync(CommerceQuantityCatalogLineRequestSchema)(
   requestedQuantity: '7',
   selection,
 });
-const decodeReady = validateCzechLaunchActivation(CZECH_LAUNCH_COMMERCE_FIXTURE.ownerFacts).pipe(
+const decodeReady = validateCzechLaunchActivation(activationOwnerFacts).pipe(
   Effect.flatMap(({ catalogQuantity }) => {
     if (catalogQuantity.status !== 'READY') {
       return Effect.die('Validated Czech Launch Catalog Quantity evidence must be READY');

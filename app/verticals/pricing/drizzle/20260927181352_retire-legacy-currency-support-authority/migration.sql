@@ -1,0 +1,9 @@
+DROP POLICY "pricing_currency_support_scope_select" ON "pricing"."currency_support_revisions";--> statement-breakpoint
+DROP POLICY "pricing_currency_support_scope_insert" ON "pricing"."currency_support_revisions";--> statement-breakpoint
+DROP POLICY "pricing_currency_support_scope_update" ON "pricing"."currency_support_revisions";--> statement-breakpoint
+DROP POLICY "pricing_currency_support_scope_delete" ON "pricing"."currency_support_revisions";--> statement-breakpoint
+DROP POLICY "pricing_currency_support_tenant_read_bridge" ON "pricing"."currency_support_revisions";--> statement-breakpoint
+CREATE POLICY "pricing_currency_support_legacy_scope_select" ON "pricing"."currency_support_revisions" AS PERMISSIVE FOR SELECT TO "ontos_runtime" USING ("pricing"."currency_support_revisions"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and "pricing"."currency_support_revisions"."legal_entity_id" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid);--> statement-breakpoint
+CREATE POLICY "pricing_currency_support_legacy_scope_insert" ON "pricing"."currency_support_revisions" AS PERMISSIVE FOR INSERT TO "ontos_runtime" WITH CHECK ("pricing"."currency_support_revisions"."tenant_id" = nullif(current_setting('ontos.tenant_id', true), '')::uuid and "pricing"."currency_support_revisions"."legal_entity_id" = nullif(current_setting('ontos.legal_entity_id', true), '')::uuid);--> statement-breakpoint
+CREATE POLICY "pricing_currency_support_legacy_scope_update" ON "pricing"."currency_support_revisions" AS PERMISSIVE FOR UPDATE TO "ontos_runtime" USING (false) WITH CHECK (false);--> statement-breakpoint
+CREATE POLICY "pricing_currency_support_legacy_scope_delete" ON "pricing"."currency_support_revisions" AS PERMISSIVE FOR DELETE TO "ontos_runtime" USING (false);

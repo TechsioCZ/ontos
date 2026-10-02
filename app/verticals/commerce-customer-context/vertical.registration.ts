@@ -189,6 +189,8 @@ export const commerceCustomerContextRegistration = defineVerticalRuntimeRegistra
       'payment-term-affected-use-assessment': () => import('./src/api/payment-term-affected-use-assessment-client.ts'),
       'payment-term-policy-current': () => import('./src/api/payment-term-policy-current-client.ts'),
       'payment-terms-resolution': () => import('./src/api/payment-terms-resolution-client.ts'),
+      'pricing-purchase-context-verification': () =>
+        import('./src/api/pricing-purchase-context-verification-client.ts'),
       'profile-reconciliation-read': () => import('./src/api/profile-reconciliation-read-client.ts'),
       'purchase-currency-policy-current': () => import('./src/api/purchase-currency-policy-current-client.ts'),
       'purchase-currency-resolution': () => import('./src/api/purchase-currency-resolution-client.ts'),

@@ -1,5 +1,6 @@
+import { CurrentSupportedCurrenciesSuccessSchema } from '@app/pricing-contracts/current-supported-currencies';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
-import { Schema } from 'effect';
+import { DateTime, Schema } from 'effect';
 import {
   CustomerProfileRefSchema,
   PurchaseCurrencyAuthorizationSubjectSchema,
@@ -47,12 +48,8 @@ const PolicyRevisionSchema = StableReferenceSchema.pipe(
   Schema.brand('PurchaseCurrencyPolicyRevision'),
   Schema.decodeTo(Schema.String),
 );
-const PricingRevisionSchema = StableReferenceSchema.pipe(
-  Schema.brand('PurchaseCurrencyPricingRevision'),
-  Schema.decodeTo(Schema.String),
-);
 
-const PurchaseCurrencySubjectSchema = Schema.Union([
+export const PurchaseCurrencySubjectSchema = Schema.Union([
   Schema.Struct({
     guestEvidenceRef: GuestEvidenceRefSchema,
     guestSessionRef: GuestSessionRefSchema,
@@ -114,17 +111,102 @@ const CurrencyPolicyDecisionSchema = Schema.Struct({
 });
 export type CurrencyPolicyDecision = typeof CurrencyPolicyDecisionSchema.Type;
 
-const PricingCurrencySupportSchema = Schema.Struct({
-  pricingRevision: PricingRevisionSchema,
-  supportedCurrencies: CurrencyCodeSetSchema,
-});
+const currentPricingSupportFields = CurrentSupportedCurrenciesSuccessSchema.fields;
+const instantFallsInPeriod = (instant: number, effectiveFrom: number, effectiveTo: number | undefined): boolean =>
+  instant >= effectiveFrom && (effectiveTo === undefined || instant < effectiveTo);
+
+const pricingSupportTemporalEvidenceIsValid = (support: {
+  readonly currentnessEvidence: typeof currentPricingSupportFields.currentnessEvidence.Type;
+  readonly effectiveAt: typeof currentPricingSupportFields.effectiveAt.Type;
+  readonly effectivePeriod: typeof currentPricingSupportFields.effectivePeriod.Type;
+  readonly nextApplicabilityBoundary?: typeof currentPricingSupportFields.nextApplicabilityBoundary.Type;
+}): boolean => {
+  const evaluationBindsRequest =
+    support.currentnessEvidence.evaluationMode === 'HISTORICAL_AS_OF'
+      ? support.currentnessEvidence.evaluatedAt === support.effectiveAt
+      : support.effectiveAt <= support.currentnessEvidence.evaluatedAt;
+  const effectiveAt = DateTime.toEpochMillis(DateTime.makeUnsafe(support.effectiveAt));
+  const evaluatedAt = DateTime.toEpochMillis(DateTime.makeUnsafe(support.currentnessEvidence.evaluatedAt));
+  const effectiveFrom = DateTime.toEpochMillis(DateTime.makeUnsafe(support.effectivePeriod.effectiveFrom));
+  const effectiveTo =
+    support.effectivePeriod.effectiveTo === null
+      ? undefined
+      : DateTime.toEpochMillis(DateTime.makeUnsafe(support.effectivePeriod.effectiveTo));
+  const nextBoundary =
+    support.nextApplicabilityBoundary === undefined
+      ? undefined
+      : DateTime.toEpochMillis(DateTime.makeUnsafe(support.nextApplicabilityBoundary));
+  return (
+    evaluationBindsRequest &&
+    instantFallsInPeriod(effectiveAt, effectiveFrom, effectiveTo) &&
+    instantFallsInPeriod(evaluatedAt, effectiveFrom, effectiveTo) &&
+    (nextBoundary === undefined || evaluatedAt < nextBoundary)
+  );
+};
+
+export const PricingCurrencySupportSchema = Schema.Struct({
+  completenessEvidence: currentPricingSupportFields.completenessEvidence,
+  currentnessEvidence: currentPricingSupportFields.currentnessEvidence,
+  effectiveAt: currentPricingSupportFields.effectiveAt,
+  effectivePeriod: currentPricingSupportFields.effectivePeriod,
+  factProofs: currentPricingSupportFields.factProofs,
+  generation: currentPricingSupportFields.generation,
+  nextApplicabilityBoundary: currentPricingSupportFields.nextApplicabilityBoundary,
+  observedAt: currentPricingSupportFields.observedAt,
+  pricingRevision: currentPricingSupportFields.pricingRevision,
+  scheduleRevision: currentPricingSupportFields.scheduleRevision,
+  supportedCurrencies: currentPricingSupportFields.supportedCurrencies,
+  supportRevisionRef: currentPricingSupportFields.supportRevisionRef,
+  supportRootRef: currentPricingSupportFields.supportRootRef,
+  tenantId: currentPricingSupportFields.tenantId,
+  verificationRef: currentPricingSupportFields.verificationRef,
+}).check(
+  Schema.makeFilter((support) => {
+    const rootId = support.supportRootRef.resourceId;
+    const revisionId = support.supportRevisionRef.resourceId;
+    if (
+      support.supportRootRef.tenantId !== support.tenantId ||
+      support.supportRevisionRef.tenantId !== support.tenantId ||
+      support.supportRevisionRef.supportRootId !== rootId
+    ) {
+      return 'Pricing Currency Support evidence must bind one Tenant support root';
+    }
+    if (
+      support.completenessEvidence.ownerRevision !== revisionId ||
+      support.completenessEvidence.observedAt !== support.observedAt ||
+      support.completenessEvidence.nextApplicabilityBoundary !== support.nextApplicabilityBoundary
+    ) {
+      return 'Pricing Currency Support completeness evidence must bind the exact observed Revision';
+    }
+    const [factProof] = support.factProofs;
+    if (
+      factProof === undefined ||
+      factProof.factRef !== rootId ||
+      factProof.factRevisionRef !== revisionId ||
+      factProof.verificationRef !== support.verificationRef
+    ) {
+      return 'Pricing Currency Support fact proof must bind the exact root, Revision, and owner receipt';
+    }
+    if (
+      support.currentnessEvidence.supportRootRef.resourceId !== rootId ||
+      support.currentnessEvidence.supportRevisionRef.resourceId !== revisionId ||
+      support.currentnessEvidence.scheduleRevision !== support.scheduleRevision ||
+      support.currentnessEvidence.observedAt !== support.observedAt
+    ) {
+      return 'Pricing Currency Support currentness evidence must bind the exact evaluation';
+    }
+    return pricingSupportTemporalEvidenceIsValid(support)
+      ? undefined
+      : 'Pricing Currency Support request and owner evaluation must fall inside the proven interval';
+  }),
+);
 export type PricingCurrencySupport = typeof PricingCurrencySupportSchema.Type;
 
 const resolutionEvidenceFields = {
   contextRevision: ContextRevisionSchema,
   policyCompleteness: PurchaseCurrencyPolicyCompletenessEvidenceSchema,
   policyRevisionIds: Schema.Array(PolicyRevisionSchema).check(Schema.isMinLength(1)),
-  pricingRevision: PricingRevisionSchema,
+  pricingSupport: PricingCurrencySupportSchema,
   requestedAt: ProfileInstantSchema,
 } as const;
 
@@ -193,7 +275,7 @@ const evidence = (input: PurchaseCurrencyResolutionInput) => ({
   contextRevision: input.request.contextRevision,
   policyCompleteness: input.policy.completeness,
   policyRevisionIds: input.policy.policyRevisionIds,
-  pricingRevision: input.pricing.pricingRevision,
+  pricingSupport: input.pricing,
   requestedAt: input.request.requestedAt,
 });
 

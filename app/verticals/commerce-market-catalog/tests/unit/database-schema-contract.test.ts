@@ -148,6 +148,32 @@ describe('Commerce Market Catalog database contract', () => {
     expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
   });
 
+  it('exposes an exact Pricing Current Market proof routine with trusted operation-time observation', () => {
+    const migration = readFileSync(
+      new URL('../../drizzle/20260928133500_pricing_current_market_evidence/migration.sql', import.meta.url),
+      'utf-8',
+    );
+    expect(migration).toContain(
+      'commerce_market_catalog.read_pricing_current_market_evidence(\n  p_tenant_id uuid,\n  p_legal_entity_id uuid,\n  p_payload jsonb',
+    );
+    expect(migration).toContain('security definer\nset search_path = pg_catalog, pg_temp');
+    expect(migration).toContain('perform commerce_market_catalog.assert_operation_scope');
+    expect(migration).toContain('market_id = v_market_id');
+    expect(migration).toContain('selling_legal_entity_id = p_legal_entity_id');
+    expect(migration).toContain('v_definition.channels ? v_channel');
+    expect(migration).toContain('v_effective_at > v_observed_at');
+    expect(migration).toContain("'generation', coalesce(v_generation, 0)");
+    expect(migration).toContain("'nextApplicabilityBoundary', v_next_boundary");
+    expect(migration).toContain("'observedAt', v_observed_at");
+    expect(migration).toContain(
+      'revoke all on function commerce_market_catalog.read_pricing_current_market_evidence(uuid, uuid, jsonb) from public',
+    );
+    expect(migration).toContain(
+      'grant execute on function commerce_market_catalog.read_pricing_current_market_evidence(uuid, uuid, jsonb) to ontos_runtime',
+    );
+    expect(migration).not.toMatch(/grant\s+(?:select|insert|update|delete)\s+on/iu);
+  });
+
   it('requires the server-issued reservation token, version, and digest before persisting retirement', () => {
     const migration = readFileSync(
       new URL('../../drizzle/20260922160411_market_retirement_reservation_evidence/migration.sql', import.meta.url),

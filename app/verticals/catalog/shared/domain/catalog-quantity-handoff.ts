@@ -100,7 +100,7 @@ export const CatalogQuantityBasisSchema = Schema.Struct({
 );
 export type CatalogQuantityBasis = typeof CatalogQuantityBasisSchema.Type;
 
-const CatalogQuantityHandoffReadySchema = Schema.Struct({
+export const CatalogQuantityHandoffReadySchema = Schema.Struct({
   ...CatalogQuantityHandoffCoreReadySchema.fields,
   completeness: Schema.toEncoded(OwnerVerifiableSetCompletenessEvidenceSchema),
   equivalentSelectionKey: CatalogEquivalentSelectionKeySchema,

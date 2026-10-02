@@ -1,6 +1,7 @@
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 
 import { NodeServices } from '@effect/platform-node';
 import { Effect } from 'effect';
@@ -93,4 +94,77 @@ it.live(
         'verticals/stock/src/testing-harness-leak.ts:1',
       ]);
     }),
+);
+
+it.live('checks shared transitive import graphs without revisiting every import path', () =>
+  Effect.gen(function* sharedTransitiveImportGraph() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-boundary-diamond-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const write = (relative: string, source: string) =>
+      Effect.gen(function* writeSource() {
+        const file = path.join(root, relative);
+        yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+        yield* Effect.tryPromise(() => writeFile(file, source));
+      });
+
+    yield* write(
+      'verticals/stock/src/actions/check.action.ts',
+      "import '../graph/left-0.ts';\nimport '../graph/right-0.ts';\n",
+    );
+    yield* Effect.forEach(
+      Array.from({ length: 18 }, (_, index) => index),
+      (index) => {
+        const next = index + 1;
+        const source =
+          index === 17 ? 'export const leaf = true;\n' : `import './left-${next}.ts';\nimport './right-${next}.ts';\n`;
+        return Effect.all(
+          [
+            write(`verticals/stock/src/graph/left-${index}.ts`, source),
+            write(`verticals/stock/src/graph/right-${index}.ts`, source),
+          ],
+          { concurrency: 2, discard: true },
+        );
+      },
+      { concurrency: 1, discard: true },
+    );
+
+    const started = performance.now();
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    const elapsedMilliseconds = performance.now() - started;
+
+    expect(violations).toEqual([]);
+    expect(elapsedMilliseconds).toBeLessThan(500);
+  }),
+);
+
+it.live('allows private scoped service factories but rejects executor exposure to handlers', () =>
+  Effect.gen(function* scopedServiceFactoryBoundary() {
+    const root = yield* Effect.acquireRelease(
+      Effect.tryPromise(() => mkdtemp(path.join(os.tmpdir(), 'ontos-db-boundary-scoped-factory-'))),
+      (directory) => Effect.promise(() => rm(directory, { force: true, recursive: true })),
+    );
+    const files = {
+      'verticals/stock/src/actions/leaky.action.ts':
+        "import type { OperationalScope, ScopedTransactionExecutor as Executor } from '@app/core-runtime';\ninterface LeakyHandlerServices { readonly transaction: Executor; }\nconst handle = (transaction: Executor) => transaction;\n",
+      'verticals/stock/src/actions/safe.action.ts':
+        "import type { OperationalScope, ScopedTransactionExecutor as Executor } from '@app/core-runtime';\ninterface ScopedAuthority { readonly forScope: (transaction: Executor, scope: OperationalScope) => unknown; }\nconst actionServicesForScope = function* actionServicesForScope(transaction: Executor, scope: OperationalScope) { yield scope; return {}; };\n",
+    } as const;
+    yield* Effect.all(
+      Object.entries(files).map(([relative, source]) =>
+        Effect.gen(function* writeSource() {
+          const file = path.join(root, relative);
+          yield* Effect.tryPromise(() => mkdir(path.dirname(file), { recursive: true }));
+          yield* Effect.tryPromise(() => writeFile(file, source));
+        }),
+      ),
+    );
+
+    const violations = yield* checkDatabaseAccessBoundaries(root).pipe(Effect.provide(NodeServices.layer));
+    expect(violations.map(({ file, line }) => `${file}:${line}`)).toEqual([
+      'verticals/stock/src/actions/leaky.action.ts:2',
+      'verticals/stock/src/actions/leaky.action.ts:3',
+    ]);
+  }),
 );
