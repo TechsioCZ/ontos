@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import { NodeFileSystem, NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem } from 'effect';
+import { Config, Effect, FileSystem, Option, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { describe, expect, it } from 'effect-rstest';
 
@@ -25,6 +25,17 @@ const expectedAuthorizedOwnerIssues = [333, 346, 452, 476, 479] as const;
 const deferredIssueStart = 891;
 const deferredIssueEnd = 905;
 const worktreeRoot = new URL('../../../../../', import.meta.url);
+const githubEventNameConfig = Config.option(
+  Config.schema(Schema.Literals(['merge_group', 'pull_request', 'push', 'workflow_dispatch']), 'GITHUB_EVENT_NAME'),
+);
+const githubEventPathConfig = Config.option(Config.String('GITHUB_EVENT_PATH'));
+const decodeMergeGroupEvent = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      merge_group: Schema.Struct({ base_sha: Schema.String }),
+    }),
+  ),
+);
 
 describe('issue #890 leaf traceability for the #738 remediation', () => {
   it('covers every active leaf and authorized owner contract exactly once', () => {
@@ -107,17 +118,33 @@ it.layer(NodeServices.layer)('issue #738 fixed-base scope disposition', (suite) 
   suite.effect('covers every reviewed non-Pricing path and records the accepted live disposition', () =>
     Effect.gen(function* exhaustiveNonPricingDisposition() {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fileSystem = yield* FileSystem.FileSystem;
       const [headParentsLine] = yield* spawner.lines(
         ChildProcess.make('git', ['-C', worktreeRoot.pathname, 'show', '--no-patch', '--format=%P', 'HEAD']),
       );
       const [firstParent, secondParent] = headParentsLine?.split(' ') ?? [];
       const isSyntheticMerge = secondParent !== undefined && secondParent.length > 0;
       const branchHistoryHead = isSyntheticMerge ? 'HEAD^2' : 'HEAD';
-      const [localMainBase] = isSyntheticMerge
-        ? [firstParent]
-        : yield* spawner.lines(
-            ChildProcess.make('git', ['-C', worktreeRoot.pathname, 'merge-base', branchHistoryHead, 'origin/main']),
-          );
+      const githubEventName = yield* githubEventNameConfig;
+      const githubEventPath = yield* githubEventPathConfig;
+      const mergeGroupBase =
+        Option.isSome(githubEventName) && githubEventName.value === 'merge_group' && Option.isSome(githubEventPath)
+          ? yield* Effect.gen(function* readMergeGroupBase() {
+              const eventSource = yield* fileSystem.readFileString(githubEventPath.value);
+              const eventPayload = yield* decodeMergeGroupEvent(eventSource);
+              return Option.some(eventPayload.merge_group.base_sha);
+            })
+          : Option.none<string>();
+      let localMainBase: string | undefined;
+      if (Option.isSome(mergeGroupBase)) {
+        localMainBase = mergeGroupBase.value;
+      } else if (isSyntheticMerge) {
+        localMainBase = firstParent;
+      } else {
+        [localMainBase] = yield* spawner.lines(
+          ChildProcess.make('git', ['-C', worktreeRoot.pathname, 'merge-base', branchHistoryHead, 'origin/main']),
+        );
+      }
       const integratedMainBase =
         localMainBase ?? (yield* Effect.die('The #738 branch must have a resolvable main base'));
       const liveTrackedChangedPaths = yield* spawner.lines(
