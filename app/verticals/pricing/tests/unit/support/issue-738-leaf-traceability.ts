@@ -18,15 +18,117 @@ export const Issue738TraceabilityOwnerSchema = Schema.Literals([
 ]);
 export type Issue738TraceabilityOwner = typeof Issue738TraceabilityOwnerSchema.Type;
 
-export const ISSUE_738_FIXED_BASE = '94544ebc7c3444bb98212839f8725cf999af832e' as const;
-export const ISSUE_738_REVIEWED_HEAD = '31fc67056a51300302e4b343d19ff443ee09e727' as const;
-
 export const ISSUE_738_PRICING_OWNED_PATH_PREFIXES = [
   'app/packages/pricing-contracts/',
   'app/verticals/pricing/',
 ] as const;
 
 export const ISSUE_738_OUT_OF_SCOPE_PATH_PREFIXES = ['app/packages/promotion-contracts/'] as const;
+
+/**
+ * Immutable non-Pricing path snapshot from
+ * `94544ebc7c3444bb98212839f8725cf999af832e..31fc67056a51300302e4b343d19ff443ee09e727`.
+ *
+ * The merge queue rebases pull requests, so those historical commits are not guaranteed to remain
+ * reachable from the live branch. Keeping the reviewed path set here preserves the fixed-base
+ * evidence without coupling validation to a particular branch topology.
+ */
+export const ISSUE_738_REVIEWED_NON_PRICING_PATHS = [
+  '.codex/plans/pricing-741-exact-resolution.plan.md',
+  '.codex/plans/pricing-742-quantity-tiers.plan.md',
+  '.codex/plans/pricing-743-discounts-fees.plan.md',
+  'app/package.json',
+  'app/packages/promotion-contracts/package.json',
+  'app/packages/promotion-contracts/rstest.config.ts',
+  'app/packages/promotion-contracts/src/contribution.ts',
+  'app/packages/promotion-contracts/src/index.ts',
+  'app/packages/promotion-contracts/tests/unit/promotion-contribution-issue-775-acceptance.test.ts',
+  'app/packages/promotion-contracts/tests/unit/promotion-contribution.test.ts',
+  'app/packages/promotion-contracts/tsconfig.json',
+  'app/pnpm-lock.yaml',
+  'app/scripts/czech-launch-commerce-fixture.mts',
+  'app/scripts/postgres/bootstrap-runtime-role.mts',
+  'app/scripts/postgres/runtime-role-grants.mts',
+  'app/scripts/tests/bootstrap-runtime-role.test.mts',
+  'app/scripts/tests/czech-launch-commerce-fixture.test.mts',
+  'app/scripts/tests/initialize-local-development.test.mts',
+  'app/scripts/tests/provision-current-action-authorization.test.mts',
+  'app/tsconfig.json',
+  'app/verticals/catalog/api/index.ts',
+  'app/verticals/catalog/api/pricing-purpose-equivalence-read-server.ts',
+  'app/verticals/catalog/api/product-variant-snapshot-read-server.ts',
+  'app/verticals/catalog/api/quantity-basis-compatibility-read-server.ts',
+  'app/verticals/catalog/package.json',
+  'app/verticals/catalog/shared/api.ts',
+  'app/verticals/catalog/shared/apis/pricing-purpose-equivalence.ts',
+  'app/verticals/catalog/shared/apis/product-variant-snapshot.ts',
+  'app/verticals/catalog/shared/apis/quantity-basis-compatibility.ts',
+  'app/verticals/catalog/shared/domain/catalog-quantity-handoff.ts',
+  'app/verticals/catalog/src/api/catalog-client.ts',
+  'app/verticals/catalog/src/api/pricing-purpose-equivalence-client.ts',
+  'app/verticals/catalog/src/api/pricing-purpose-equivalence.read.ts',
+  'app/verticals/catalog/src/api/product-variant-snapshot-client.ts',
+  'app/verticals/catalog/src/api/product-variant-snapshot.read.ts',
+  'app/verticals/catalog/src/api/quantity-basis-compatibility-client.ts',
+  'app/verticals/catalog/src/api/quantity-basis-compatibility.read.ts',
+  'app/verticals/catalog/src/api/selection-evidence.read.ts',
+  'app/verticals/catalog/src/persistence/product-variant-snapshot-source.ts',
+  'app/verticals/catalog/src/services/quantity-basis-compatibility.service.ts',
+  'app/verticals/catalog/tests/unit/pricing-catalog-target-scope-acceptance.test.ts',
+  'app/verticals/catalog/tests/unit/pricing-purpose-equivalence.test.ts',
+  'app/verticals/catalog/tests/unit/product-variant-snapshot-read.test.ts',
+  'app/verticals/catalog/tests/unit/public-operation-permission-matrix.test.ts',
+  'app/verticals/catalog/tests/unit/quantity-basis-compatibility.test.ts',
+  'app/verticals/catalog/tests/unit/selection-evidence-read.test.ts',
+  'app/verticals/catalog/vertical.manifest.ts',
+  'app/verticals/catalog/vertical.registration.ts',
+  'app/verticals/commerce-customer-context/api/commerce-customer-context-production-layers.ts',
+  'app/verticals/commerce-customer-context/api/index.ts',
+  'app/verticals/commerce-customer-context/api/pricing-purchase-context-verification-read-server.ts',
+  'app/verticals/commerce-customer-context/package.json',
+  'app/verticals/commerce-customer-context/shared/api.ts',
+  'app/verticals/commerce-customer-context/shared/apis/customer-price-group-resolution.ts',
+  'app/verticals/commerce-customer-context/shared/apis/pricing-purchase-context-verification.ts',
+  'app/verticals/commerce-customer-context/shared/apis/purchase-currency-resolution-domain-unavailable-problem.ts',
+  'app/verticals/commerce-customer-context/shared/domain/purchase-currency-dependency.ts',
+  'app/verticals/commerce-customer-context/shared/domain/purchase-currency-pricing-port.ts',
+  'app/verticals/commerce-customer-context/shared/domain/purchase-currency-resolution.ts',
+  'app/verticals/commerce-customer-context/src/api/customer-price-group-assignment-read.read.ts',
+  'app/verticals/commerce-customer-context/src/api/customer-price-group-resolution.read.ts',
+  'app/verticals/commerce-customer-context/src/api/pricing-purchase-context-verification-client.ts',
+  'app/verticals/commerce-customer-context/src/api/pricing-purchase-context-verification.read.ts',
+  'app/verticals/commerce-customer-context/src/api/purchase-currency-resolution.read.ts',
+  'app/verticals/commerce-customer-context/src/integrations/purchase-currency-pricing.ts',
+  'app/verticals/commerce-customer-context/src/services/pricing-purchase-context-owner-authority.ts',
+  'app/verticals/commerce-customer-context/tests/unit/catalog-quantity-adapter.test.ts',
+  'app/verticals/commerce-customer-context/tests/unit/currency-support-evidence-issue-786-acceptance.test.ts',
+  'app/verticals/commerce-customer-context/tests/unit/currency.test.ts',
+  'app/verticals/commerce-customer-context/tests/unit/issue-333-composed-acceptance.test.ts',
+  'app/verticals/commerce-customer-context/tests/unit/price-group-resolution.test.ts',
+  'app/verticals/commerce-customer-context/tests/unit/pricing-purchase-context-owner-authority.test.ts',
+  'app/verticals/commerce-customer-context/tests/unit/purchase-currency-pricing-adapter.test.ts',
+  'app/verticals/commerce-customer-context/tests/unit/purchase-currency-pricing-runtime-proof.test.ts',
+  'app/verticals/commerce-customer-context/tests/unit/tenant-currency-support-context-invariance-acceptance.test.ts',
+  'app/verticals/commerce-customer-context/vertical.manifest.ts',
+  'app/verticals/commerce-customer-context/vertical.registration.ts',
+  'app/verticals/commerce-market-catalog/api/index.ts',
+  'app/verticals/commerce-market-catalog/api/pricing-current-market-evidence-read-server.ts',
+  'app/verticals/commerce-market-catalog/drizzle/20260928133500_pricing_current_market_evidence/migration.sql',
+  'app/verticals/commerce-market-catalog/package.json',
+  'app/verticals/commerce-market-catalog/scripts/verify-db-schema.mts',
+  'app/verticals/commerce-market-catalog/shared/api.ts',
+  'app/verticals/commerce-market-catalog/shared/apis/pricing-current-market-evidence.ts',
+  'app/verticals/commerce-market-catalog/src/api/commerce-market-catalog-client.ts',
+  'app/verticals/commerce-market-catalog/src/api/pricing-current-market-evidence-client.ts',
+  'app/verticals/commerce-market-catalog/src/api/pricing-current-market-evidence.read.ts',
+  'app/verticals/commerce-market-catalog/src/persistence/pricing-current-market-evidence-persistence.ts',
+  'app/verticals/commerce-market-catalog/src/services/pricing-current-market-evidence.service.ts',
+  'app/verticals/commerce-market-catalog/tests/unit/database-schema-contract.test.ts',
+  'app/verticals/commerce-market-catalog/tests/unit/market-public-contracts.test.ts',
+  'app/verticals/commerce-market-catalog/tests/unit/pricing-current-market-evidence.test.ts',
+  'app/verticals/commerce-market-catalog/vertical.manifest.ts',
+  'app/verticals/commerce-market-catalog/vertical.registration.ts',
+] as const;
 
 export const Issue738NonPricingDispositionSchema = Schema.Literals(['keep', 'remove', 'split']);
 export type Issue738NonPricingDisposition = typeof Issue738NonPricingDispositionSchema.Type;

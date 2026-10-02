@@ -5,12 +5,11 @@ import { describe, expect, it } from 'effect-rstest';
 
 import {
   ISSUE_738_ACTIVE_PRICING_LEAVES,
-  ISSUE_738_FIXED_BASE,
   ISSUE_738_NON_PRICING_DISPOSITIONS,
   ISSUE_738_NON_PRICING_SCOPE_LEDGER,
   ISSUE_738_OUT_OF_SCOPE_PATH_PREFIXES,
   ISSUE_738_PRICING_OWNED_PATH_PREFIXES,
-  ISSUE_738_REVIEWED_HEAD,
+  ISSUE_738_REVIEWED_NON_PRICING_PATHS,
   issue738LeafTraceability,
   issue738RoadmapAuthority,
 } from './support/issue-738-leaf-traceability.ts';
@@ -106,56 +105,29 @@ it.layer(NodeServices.layer)('issue #738 fixed-base scope disposition', (suite) 
   suite.effect('covers every reviewed non-Pricing path and records the accepted live disposition', () =>
     Effect.gen(function* exhaustiveNonPricingDisposition() {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const reviewedChangedPaths = yield* spawner.lines(
+      const [headParentsLine] = yield* spawner.lines(
+        ChildProcess.make('git', ['-C', worktreeRoot.pathname, 'show', '--no-patch', '--format=%P', 'HEAD']),
+      );
+      const [firstParent, secondParent] = headParentsLine?.split(' ') ?? [];
+      const isSyntheticMerge = secondParent !== undefined && secondParent.length > 0;
+      const branchHistoryHead = isSyntheticMerge ? 'HEAD^2' : 'HEAD';
+      const [localMainBase] = isSyntheticMerge
+        ? [firstParent]
+        : yield* spawner.lines(
+            ChildProcess.make('git', ['-C', worktreeRoot.pathname, 'merge-base', branchHistoryHead, 'origin/main']),
+          );
+      const integratedMainBase =
+        localMainBase ?? (yield* Effect.die('The #738 branch must have a resolvable main base'));
+      const liveTrackedChangedPaths = yield* spawner.lines(
         ChildProcess.make('git', [
           '-C',
           worktreeRoot.pathname,
           'diff',
           '--name-only',
-          ISSUE_738_FIXED_BASE,
-          ISSUE_738_REVIEWED_HEAD,
+          integratedMainBase,
+          branchHistoryHead,
           '--',
         ]),
-      );
-      const [headParentsLine] = yield* spawner.lines(
-        ChildProcess.make('git', ['-C', worktreeRoot.pathname, 'show', '--no-patch', '--format=%P', 'HEAD']),
-      );
-      const [firstParent, secondParent] = headParentsLine?.split(' ') ?? [];
-      let firstParentReviewedBase: string | undefined;
-      if (firstParent !== undefined && firstParent.length > 0) {
-        [firstParentReviewedBase] = yield* spawner.lines(
-          ChildProcess.make('git', ['-C', worktreeRoot.pathname, 'merge-base', ISSUE_738_REVIEWED_HEAD, firstParent]),
-        );
-      }
-      let secondParentReviewedBase: string | undefined;
-      if (secondParent !== undefined && secondParent.length > 0) {
-        [secondParentReviewedBase] = yield* spawner.lines(
-          ChildProcess.make('git', ['-C', worktreeRoot.pathname, 'merge-base', ISSUE_738_REVIEWED_HEAD, secondParent]),
-        );
-      }
-      // Pull-request and merge-queue checkouts wrap the branch in a temporary merge whose first parent
-      // is main. Follow the parent that contains the reviewed branch head before finding its integration.
-      let branchHistoryHead = 'HEAD';
-      if (firstParentReviewedBase !== ISSUE_738_REVIEWED_HEAD && secondParentReviewedBase === ISSUE_738_REVIEWED_HEAD) {
-        branchHistoryHead = 'HEAD^2';
-      }
-      const [latestMergeParents] = yield* spawner.lines(
-        ChildProcess.make('git', [
-          '-C',
-          worktreeRoot.pathname,
-          'log',
-          '--first-parent',
-          '--merges',
-          '--format=%P',
-          '-1',
-          branchHistoryHead,
-        ]),
-      );
-      const integratedMainBase =
-        latestMergeParents?.split(' ')[1] ??
-        (yield* Effect.die('The #738 branch must retain its latest-main integration merge'));
-      const liveTrackedChangedPaths = yield* spawner.lines(
-        ChildProcess.make('git', ['-C', worktreeRoot.pathname, 'diff', '--name-only', integratedMainBase, '--']),
       );
       const liveUntrackedChangedPaths = yield* spawner.lines(
         ChildProcess.make('git', [
@@ -170,9 +142,7 @@ it.layer(NodeServices.layer)('issue #738 fixed-base scope disposition', (suite) 
         ]),
       );
       const liveChangedPaths = [...new Set([...liveTrackedChangedPaths, ...liveUntrackedChangedPaths])];
-      const reviewedNonPricingPaths = reviewedChangedPaths.filter(
-        (path) => path.length > 0 && !ISSUE_738_PRICING_OWNED_PATH_PREFIXES.some((prefix) => path.startsWith(prefix)),
-      );
+      const reviewedNonPricingPaths = [...ISSUE_738_REVIEWED_NON_PRICING_PATHS];
       const liveNonPricingPaths = liveChangedPaths.filter(
         (path) => path.length > 0 && !ISSUE_738_PRICING_OWNED_PATH_PREFIXES.some((prefix) => path.startsWith(prefix)),
       );
