@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { NodeFileSystem, NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
@@ -9,7 +11,7 @@ import {
   ISSUE_738_NON_PRICING_SCOPE_LEDGER,
   ISSUE_738_OUT_OF_SCOPE_PATH_PREFIXES,
   ISSUE_738_PRICING_OWNED_PATH_PREFIXES,
-  ISSUE_738_REVIEWED_NON_PRICING_PATHS,
+  ISSUE_738_REVIEWED_NON_PRICING_PATH_HASHES,
   issue738LeafTraceability,
   issue738RoadmapAuthority,
 } from './support/issue-738-leaf-traceability.ts';
@@ -142,11 +144,17 @@ it.layer(NodeServices.layer)('issue #738 fixed-base scope disposition', (suite) 
         ]),
       );
       const liveChangedPaths = [...new Set([...liveTrackedChangedPaths, ...liveUntrackedChangedPaths])];
-      const reviewedNonPricingPaths = [...ISSUE_738_REVIEWED_NON_PRICING_PATHS];
       const liveNonPricingPaths = liveChangedPaths.filter(
         (path) => path.length > 0 && !ISSUE_738_PRICING_OWNED_PATH_PREFIXES.some((prefix) => path.startsWith(prefix)),
       );
-      const ledgerPaths = ISSUE_738_NON_PRICING_SCOPE_LEDGER.map(({ path }) => path);
+      const ledgerPathRecords = ISSUE_738_NON_PRICING_SCOPE_LEDGER.map(({ path }) => ({
+        path,
+        pathHash: createHash('sha256').update(path).digest('hex'),
+      }));
+      const ledgerPaths = ledgerPathRecords.map(({ path }) => path);
+      const reviewedPathHashes = new Set<string>(ISSUE_738_REVIEWED_NON_PRICING_PATH_HASHES);
+      const reviewedPathRecords = ledgerPathRecords.filter(({ pathHash }) => reviewedPathHashes.has(pathHash));
+      const reviewedNonPricingPaths = reviewedPathRecords.map(({ path }) => path);
       const expectedLedgerPaths = [...new Set([...reviewedNonPricingPaths, ...liveNonPricingPaths])];
       const retainedLedgerPaths = ISSUE_738_NON_PRICING_SCOPE_LEDGER.filter(
         ({ disposition }) => disposition !== 'remove',
@@ -156,6 +164,7 @@ it.layer(NodeServices.layer)('issue #738 fixed-base scope disposition', (suite) 
       ).map(({ path }) => path);
 
       expect(reviewedNonPricingPaths).toHaveLength(94);
+      expect(new Set(reviewedPathRecords.map(({ pathHash }) => pathHash))).toEqual(reviewedPathHashes);
       expect(new Set(ledgerPaths).size, 'the disposition map must not claim one path twice').toBe(ledgerPaths.length);
       expect(ledgerPaths.toSorted()).toEqual(expectedLedgerPaths.toSorted());
       expect(retainedLedgerPaths.toSorted()).toEqual(liveNonPricingPaths.toSorted());
