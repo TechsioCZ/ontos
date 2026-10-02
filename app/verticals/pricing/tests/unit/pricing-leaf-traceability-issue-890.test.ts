@@ -127,14 +127,12 @@ it.layer(NodeServices.layer)('issue #738 fixed-base scope disposition', (suite) 
       const branchHistoryHead = isSyntheticMerge ? 'HEAD^2' : 'HEAD';
       const githubEventName = yield* githubEventNameConfig;
       const githubEventPath = yield* githubEventPathConfig;
-      const mergeGroupBase =
-        Option.isSome(githubEventName) && githubEventName.value === 'merge_group' && Option.isSome(githubEventPath)
-          ? yield* Effect.gen(function* readMergeGroupBase() {
-              const eventSource = yield* fileSystem.readFileString(githubEventPath.value);
-              const eventPayload = yield* decodeMergeGroupEvent(eventSource);
-              return Option.some(eventPayload.merge_group.base_sha);
-            })
-          : Option.none<string>();
+      let mergeGroupBase = Option.none<string>();
+      if (Option.isSome(githubEventName) && githubEventName.value === 'merge_group' && Option.isSome(githubEventPath)) {
+        const eventSource = yield* fileSystem.readFileString(githubEventPath.value);
+        const eventPayload = yield* decodeMergeGroupEvent(eventSource);
+        mergeGroupBase = Option.some(eventPayload.merge_group.base_sha);
+      }
       let localMainBase: string | undefined;
       if (Option.isSome(mergeGroupBase)) {
         localMainBase = mergeGroupBase.value;
