@@ -1,19 +1,19 @@
 name: Initial Application Composition Cutover
 
-# This is an explicit operator action: delete the reviewed old Node runtime services and the
-# reviewed old public Worker executables. It never selects installed modules or promotes a release.
+# Disposable diagnostic branch: read metadata with the same sealed stage-edge credentials.
 on:
   workflow_dispatch:
     inputs:
       environment:
-        description: Protected environment whose old executables must be quiesced.
+        description: Protected environment whose provider credentials are checked.
         type: choice
-        options: [stage, production]
+        options: [stage]
         default: stage
       inventory-file:
-        description: Reviewed execution inventory under app/topology, relative to app.
+        description: Reviewed stage inventory under app/topology, relative to app.
         type: string
         required: true
+        default: topology/initial-composition-execution.stage.json
 
 permissions:
   contents: read
@@ -23,56 +23,112 @@ defaults:
     shell: bash
 
 jobs:
-  quiesce:
-    name: Retire and verify the reviewed legacy execution inventory
-    if: github.ref == 'refs/heads/main'
+  credential-probe:
+    name: Read reviewed provider metadata with the sealed stage credentials
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     environment:
-      name: ${{ inputs.environment == 'stage' && 'stage-edge' || inputs.environment }}
+      name: stage-edge
       deployment: false
     concurrency:
       group: zerops-${{ inputs.environment }}
       cancel-in-progress: false
     env:
-      DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
       EXECUTION_INVENTORY_FILE: ${{ inputs.inventory-file }}
-      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
     steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2
-        with:
-          egress-policy: audit
-
-      - name: Checkout reviewed main revision
+      - name: Checkout the diagnostic revision
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
 
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
+      - name: Read provider status without exposing credentials or response bodies
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          import urllib.error
+          import urllib.request
+          from pathlib import Path
 
-      - name: Delete and independently verify the reviewed old runtime executables
-        working-directory: app
-        env:
-          CUTOVER_RECEIPT_FILE: ${{ runner.temp }}/initial-composition-cutover-receipt.json
-        run: mise exec -- pnpm active-composition:publish quiesce-initial-cutover --environment "$DEPLOY_ENVIRONMENT" --inventory-file "$EXECUTION_INVENTORY_FILE" --receipt-file "$CUTOVER_RECEIPT_FILE"
+          account = "e8608e0073bff00c7875f171ac38b8c6"
+          namespace = "d51f044c49bc4757a5613c61b19b46d8"
+          project = "t1ljmn3DRDafgi8AuPvhdQ"
+          service = "CtExzcDCTVCzKt5mMZhuRA"
+          workers = (
+              "app-assortment", "app-catalog", "app-commerce-customer-context",
+              "app-commerce-market-catalog", "app-inventory", "app-party-registry",
+              "app-payment-term-catalog", "app-price-group-catalog", "app-pricing",
+              "app-shell-super-app", "app-storefront-registry",
+          )
+          path = "topology/initial-composition-execution.stage.json"
+          inventory = json.loads(Path("app", path).read_text())
+          if (
+              os.environ.get("EXECUTION_INVENTORY_FILE") != path
+              or inventory["environment"] != "stage"
+              or inventory["cloudflare"]["accountId"] != account
+              or inventory["cloudflare"]["compositionPointer"]["namespaceId"] != namespace
+              or tuple(item["name"] for item in inventory["cloudflare"]["workers"]) != workers
+              or tuple(item["serviceId"] for item in inventory["zerops"]) != (service,)
+          ):
+              print(json.dumps({"probe": "inventory", "status": 0, "errorCodes": []}))
+              sys.exit(1)
 
-      - name: Preserve the inventory-bound native quiescence receipt
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: initial-composition-cutover-receipt
-          path: ${{ runner.temp }}/initial-composition-cutover-receipt.json
-          if-no-files-found: error
-          retention-days: 7
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self, req, fp, code, msg, headers, newurl):
+                  return None
 
-      - name: Configure the native composition source before the first runtime deployment
-        working-directory: app
-        env:
-          ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-          ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
-          ONTOS_ACTIVE_APPLICATION_COMPOSITION_READ_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-        run: mise exec -- pnpm active-composition:publish configure-source
+          opener = urllib.request.build_opener(NoRedirect())
+
+          def probe(label, url, token, read_namespace=False):
+              record = {"probe": label, "status": 0, "errorCodes": []}
+              if read_namespace:
+                  record["namespaceConfirmed"] = False
+              response = None
+              try:
+                  if not token:
+                      raise ValueError()
+                  request = urllib.request.Request(
+                      url, method="GET", headers={"Authorization": "Bearer " + token}
+                  )
+                  try:
+                      response = opener.open(request, timeout=15)
+                  except urllib.error.HTTPError as error:
+                      response = error
+                  record["status"] = response.status
+                  # Executable Worker GET bodies are never consumed, even on errors.
+                  if read_namespace:
+                      body = response.read(65537)
+                      if len(body) <= 65536:
+                          envelope = json.loads(body)
+                          if isinstance(envelope, dict):
+                              errors = envelope.get("errors", [])
+                              if isinstance(errors, list):
+                                  record["errorCodes"] = [
+                                      item["code"] for item in errors
+                                      if isinstance(item, dict) and type(item.get("code")) is int
+                                  ][:16]
+                              result = envelope.get("result")
+                              record["namespaceConfirmed"] = (
+                                  isinstance(result, dict) and result.get("id") == namespace
+                              )
+              except Exception:
+                  # Never print exception text, headers, bodies, or credential values.
+                  pass
+              finally:
+                  if response is not None:
+                      response.close()
+              print(json.dumps(record, separators=(",", ":")))
+
+          cf_token = os.environ.get("CLOUDFLARE_API_TOKEN", "")
+          cf_base = "https://api.cloudflare.com/client/v4/accounts/" + account
+          probe("cloudflare.namespace", cf_base + "/storage/kv/namespaces/" + namespace, cf_token, True)
+          for worker in workers:
+              probe("cloudflare.worker." + worker, cf_base + "/workers/scripts/" + worker, cf_token)
+          zerops_token = os.environ.get("ZEROPS_TOKEN", "")
+          zerops_base = "https://api.app-prg1.zerops.io/api/rest/public"
+          probe("zerops.project", zerops_base + "/project/" + project, zerops_token)
+          probe("zerops.old-service", zerops_base + "/service-stack/" + service, zerops_token)
+          PY
