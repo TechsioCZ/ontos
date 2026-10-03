@@ -12,6 +12,7 @@ import {
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
   loadDatabaseConnectionPair,
+  lockApplicationCompositionPublication,
   OntosModuleDeploymentContractSchema,
   publishApplicationCompositionAuthority,
   toContextPermissionAccessObjectId,
@@ -32,13 +33,13 @@ import type {
   ReserveMarketRetirementPayload,
   ReserveMarketRetirementResult,
 } from '@app/customer-market-retirement-contracts';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { Array as EffectArray, ConfigProvider, Effect, Layer, Order, Redacted, Schema } from 'effect';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
 import { SignJWT } from 'jose';
 
-import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
+import { applicationCompositionAuthority, coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import {
@@ -430,7 +431,20 @@ it.live(
         const coreDatabase = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
         const clock = yield* readAcceptanceClock(database);
         const snapshot = yield* compositionSnapshot(clock);
-        yield* coreDatabase.transaction((transaction) => publishApplicationCompositionAuthority(transaction, snapshot));
+        yield* coreDatabase.transaction((transaction) =>
+          Effect.gen(function* publishMarketComposition() {
+            yield* lockApplicationCompositionPublication(transaction);
+            const [predecessor] = yield* transaction
+              .select({ revision: applicationCompositionAuthority.revision })
+              .from(applicationCompositionAuthority)
+              .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+            if (predecessor !== undefined && predecessor.revision !== snapshot.composition.revision) {
+              yield* closeApplicationCompositionDurableAdmission(transaction, predecessor.revision);
+              yield* drainApplicationCompositionAuthority(transaction, predecessor.revision);
+            }
+            yield* publishApplicationCompositionAuthority(transaction, snapshot);
+          }),
+        );
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
@@ -596,7 +610,20 @@ it.live(
         const coreDatabase = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
         const clock = yield* readAcceptanceClock(database);
         const snapshot = yield* compositionSnapshot(clock);
-        yield* coreDatabase.transaction((transaction) => publishApplicationCompositionAuthority(transaction, snapshot));
+        yield* coreDatabase.transaction((transaction) =>
+          Effect.gen(function* publishMarketComposition() {
+            yield* lockApplicationCompositionPublication(transaction);
+            const [predecessor] = yield* transaction
+              .select({ revision: applicationCompositionAuthority.revision })
+              .from(applicationCompositionAuthority)
+              .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+            if (predecessor !== undefined && predecessor.revision !== snapshot.composition.revision) {
+              yield* closeApplicationCompositionDurableAdmission(transaction, predecessor.revision);
+              yield* drainApplicationCompositionAuthority(transaction, predecessor.revision);
+            }
+            yield* publishApplicationCompositionAuthority(transaction, snapshot);
+          }),
+        );
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
@@ -730,7 +757,20 @@ it.live(
         const coreDatabase = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
         const clock = yield* readAcceptanceClock(database);
         const snapshot = yield* compositionSnapshot(clock);
-        yield* coreDatabase.transaction((transaction) => publishApplicationCompositionAuthority(transaction, snapshot));
+        yield* coreDatabase.transaction((transaction) =>
+          Effect.gen(function* publishMarketComposition() {
+            yield* lockApplicationCompositionPublication(transaction);
+            const [predecessor] = yield* transaction
+              .select({ revision: applicationCompositionAuthority.revision })
+              .from(applicationCompositionAuthority)
+              .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+            if (predecessor !== undefined && predecessor.revision !== snapshot.composition.revision) {
+              yield* closeApplicationCompositionDurableAdmission(transaction, predecessor.revision);
+              yield* drainApplicationCompositionAuthority(transaction, predecessor.revision);
+            }
+            yield* publishApplicationCompositionAuthority(transaction, snapshot);
+          }),
+        );
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,

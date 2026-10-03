@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { DateTime, Effect } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -8,6 +8,9 @@ import { makeActionRepository } from '../../../../packages/core-runtime/src/acti
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import {
   coreRelations,
+  outboxAttempts,
+  outboxDeliveries,
+  outboxMessages,
   principalAuthBindings,
   principals,
   tenants,
@@ -87,6 +90,38 @@ it.live('commits a scheduled retirement with server-trusted acceptance chronolog
         admin.transaction((transaction) =>
           Effect.gen(function* cleanupTenant() {
             yield* transaction.execute(sql`set local session_replication_role = 'replica'`);
+            const messages = yield* transaction
+              .select({ messageId: outboxMessages.outboxMessageId })
+              .from(outboxMessages)
+              .where(
+                and(
+                  eq(outboxMessages.tenantId, tenantId),
+                  eq(outboxMessages.producerModuleKey, 'pricing.price-group-catalog'),
+                ),
+              );
+            const messageIds: string[] = [];
+            for (const { messageId } of messages) {
+              messageIds.push(messageId);
+            }
+            const deliveries = yield* transaction
+              .select({ deliveryId: outboxDeliveries.outboxDeliveryId })
+              .from(outboxDeliveries)
+              .where(inArray(outboxDeliveries.outboxMessageId, messageIds));
+            const deliveryIds: string[] = [];
+            for (const { deliveryId } of deliveries) {
+              deliveryIds.push(deliveryId);
+            }
+            yield* transaction.delete(outboxAttempts).where(inArray(outboxAttempts.outboxDeliveryId, deliveryIds));
+            yield* transaction.delete(outboxDeliveries).where(inArray(outboxDeliveries.outboxMessageId, messageIds));
+            yield* transaction
+              .delete(outboxMessages)
+              .where(
+                and(
+                  eq(outboxMessages.tenantId, tenantId),
+                  eq(outboxMessages.producerModuleKey, 'pricing.price-group-catalog'),
+                  inArray(outboxMessages.outboxMessageId, messageIds),
+                ),
+              );
             yield* transaction.delete(priceGroupRetirements).where(eq(priceGroupRetirements.tenantId, tenantId));
             yield* transaction
               .delete(priceGroupCompatibilitySupport)
