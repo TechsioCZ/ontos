@@ -184,6 +184,8 @@ it.live('generates a separate supervised worker setup without changing owner con
     expect(worker).not.toMatch(/ run build/u);
     expect(worker).toContain('cd app/.zerops/runtime/ledger-worker && exec node worker.mjs');
     expect(worker).not.toMatch(/(?:^|\s)&(?:\s|$)/u);
+    expect(worker).toContain("path: '/live'");
+    expect(worker).not.toContain("path: '/ready'");
     expect(generated.match(/ONTOS_KEEP_ME: 'true'/gu)?.length).toBe(3);
     expect((yield* Effect.tryPromise(() => generateOutboxWorkerDeployment(root, generated))).deployment).toBe(
       generated,
@@ -205,6 +207,8 @@ it.live('generates the Outbox Worker host setup and entry beside the dedicated w
     expect(host).toContain('ULTRAMODERN_ZEROPS_SERVICE: outbox-worker-host');
     expect(host).toContain('DATABASE_URL: postgresql://ontos_runtime:');
     expect(host).not.toContain('4110');
+    expect(host?.match(/path: '\/live'/gu)).toHaveLength(2);
+    expect(host).not.toContain("path: '/ready'");
     expect(host).toContain(`start: sh -c 'cd app/.zerops/runtime/outbox-worker-host && `);
     expect(hostEntry).toContain("import { startOutboxWorkerHost } from '@app/core-runtime/outbox/worker';");
     expect(hostEntry).toContain(

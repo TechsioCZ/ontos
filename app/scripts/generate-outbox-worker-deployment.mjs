@@ -185,7 +185,7 @@ const renderHostService = (services, serviceIds, rootPackageName) =>
       '      healthCheck:',
       '        httpGet:',
       `          port: ${OUTBOX_WORKER_HOST_HEALTH_PORT}`,
-      "          path: '/ready'",
+      "          path: '/live'",
       `      start: sh -c 'cd ${runtimeDir} && PATH="$PWD/node/bin:$PATH" exec node ${OUTBOX_WORKER_BUNDLE}'`,
     ].join('\n');
   });
@@ -248,7 +248,7 @@ const generateOutboxWorkerDeploymentEffect = (root, source) =>
         )
         .join('\n')
         .replace(/(?<command>run zerops:materialize[^\n]*)/u, '$<command> --worker')
-        .replaceAll(`/${vertical.id}-api/${vertical.id}/readiness`, '/ready')
+        .replaceAll(`/${vertical.id}-api/${vertical.id}/readiness`, '/live')
         .replace(`ULTRAMODERN_ZEROPS_SERVICE: ${vertical.id}`, `ULTRAMODERN_ZEROPS_SERVICE: ${delivery.id}`)
         // npm does not wait for its child on SIGTERM, so the worker would never drain; exec Node directly.
         .replace('exec npm run serve', `exec node ${OUTBOX_WORKER_BUNDLE}`)

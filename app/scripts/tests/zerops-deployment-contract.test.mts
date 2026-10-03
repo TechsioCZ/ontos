@@ -170,7 +170,7 @@ it('starts a dedicated Price Group worker that drains durable pending projection
   );
   expect(worker).toContain(`OUTBOX_WORKER_HEALTH_PORT: '4108'`);
   expect(worker).toContain(runtimeDatabaseUrl);
-  expect(worker).toContain(`path: '/ready'`);
+  expect(worker).toContain(`path: '/live'`);
   expect(worker).toContain(`exec node worker.mjs`);
   expect(worker).not.toContain('npm run serve');
 });
@@ -186,7 +186,7 @@ it('runs every owner worker in one Outbox Worker host service beside the dedicat
   // Commerce's worker reaches Price Group Catalog, so the host carries its binding too.
   expect(host).toContain(`ONTOS_PRICE_GROUP_CATALOG_BASE_URL: 'http://pricegroupcatalog:4108/price-group-catalog-api'`);
   expect(host).toContain("start: sh -c 'cd app/.zerops/runtime/outbox-worker-host");
-  expect(host.match(/path: '\/ready'/gu)).toHaveLength(2);
+  expect(host.match(/path: '\/live'/gu)).toHaveLength(2);
   // The dedicated Outbox Worker mode keeps deploying each owner's own worker.
   for (const worker of ['party-registry-worker', 'commerce-customer-context-worker', 'price-group-catalog-worker']) {
     expect(serviceBlock(zeropsYaml, worker)).toContain('--worker');

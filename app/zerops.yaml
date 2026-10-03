@@ -709,7 +709,7 @@ zerops:
       readinessCheck:
         httpGet:
           port: 4102
-          path: '/ready'
+          path: '/live'
         failureTimeout: 3m
         retryPeriod: 10s
     run:
@@ -731,7 +731,7 @@ zerops:
       healthCheck:
         httpGet:
           port: 4102
-          path: '/ready'
+          path: '/live'
       start: sh -c 'cd app/.zerops/runtime/party-registry-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
 
   - setup: 'commerce-customer-context-worker'
@@ -755,7 +755,7 @@ zerops:
       readinessCheck:
         httpGet:
           port: 4101
-          path: '/ready'
+          path: '/live'
         failureTimeout: 3m
         retryPeriod: 10s
     run:
@@ -778,7 +778,7 @@ zerops:
       healthCheck:
         httpGet:
           port: 4101
-          path: '/ready'
+          path: '/live'
       start: sh -c 'cd app/.zerops/runtime/commerce-customer-context-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
 
   - setup: 'price-group-catalog-worker'
@@ -802,7 +802,7 @@ zerops:
       readinessCheck:
         httpGet:
           port: 4108
-          path: '/ready'
+          path: '/live'
         failureTimeout: 3m
         retryPeriod: 10s
     run:
@@ -824,7 +824,7 @@ zerops:
       healthCheck:
         httpGet:
           port: 4108
-          path: '/ready'
+          path: '/live'
       start: sh -c 'cd app/.zerops/runtime/price-group-catalog-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
 
   - setup: 'inventory-worker'
@@ -848,7 +848,7 @@ zerops:
       readinessCheck:
         httpGet:
           port: 4110
-          path: '/ready'
+          path: '/live'
         failureTimeout: 3m
         retryPeriod: 10s
     run:
@@ -870,7 +870,7 @@ zerops:
       healthCheck:
         httpGet:
           port: 4110
-          path: '/ready'
+          path: '/live'
       start: sh -c 'cd app/.zerops/runtime/inventory-worker && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
 
   - setup: 'outbox-worker-host'
@@ -894,7 +894,7 @@ zerops:
       readinessCheck:
         httpGet:
           port: 4100
-          path: '/ready'
+          path: '/live'
         failureTimeout: 3m
         retryPeriod: 10s
     run:
@@ -917,6 +917,6 @@ zerops:
       healthCheck:
         httpGet:
           port: 4100
-          path: '/ready'
+          path: '/live'
       start: sh -c 'cd app/.zerops/runtime/outbox-worker-host && PATH="$PWD/node/bin:$PATH" exec node worker.mjs'
   # </generated-outbox-worker-deployments>
