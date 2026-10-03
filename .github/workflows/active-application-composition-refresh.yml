@@ -64,12 +64,45 @@ jobs:
           token: ${{ secrets.ZEROPS_TOKEN }}
           database-url: ${{ secrets.DATABASE_URL }}
           database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
-      - name: Publish the existing approved release with safe phase diagnostics
+      - name: Reproduce the native promotion query sequence without domain writes
         working-directory: app
-        env:
-          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
-        run: timeout --signal=INT --kill-after=10s 180s mise exec -- pnpm active-composition:publish publish --environment stage --candidate-file .composition-candidate/active-application-composition-candidate.json
+        run: |
+          probe_path="$PWD/.native-promotion-sequence-probe.mts"
+          trap 'rm --force -- "$probe_path"' EXIT
+          cat >"$probe_path" <<'PROBE'
+          import { sql } from 'drizzle-orm';
+          import { DateTime, Effect } from 'effect';
+          import { makeCoreDatabase } from './packages/core-runtime/src/db/client.ts';
+          let phase = 'start';
+          const mark = (next) => { phase = next; console.log(JSON.stringify({ phase, checkedAt: new Date().toISOString() })); };
+          const watchdog = setTimeout(() => { console.log(JSON.stringify({ phase, outcome: 'fifteen-second-deadline' })); process.exit(124); }, 15000);
+          const program = Effect.scoped(Effect.gen(function* () {
+            const connectionString = process.env.DATABASE_ADMIN_URL;
+            const parsed = URL.parse(connectionString ?? '');
+            if (parsed === null) return yield* Effect.fail(Error('admin configuration missing'));
+            const database = yield* makeCoreDatabase({ connectionString, database: decodeURIComponent(parsed.pathname.slice(1)), host: parsed.hostname, port: Number(parsed.port || '5432'), user: decodeURIComponent(parsed.username) });
+            const connection = yield* database.executor.$client.reserve;
+            const key = 'ontos.unique-native-runner.' + crypto.randomUUID();
+            yield* Effect.acquireRelease(connection.executeValues('select pg_advisory_lock(hashtextextended($1, 0))', [key]), () => connection.executeValues('select pg_advisory_unlock(hashtextextended($1, 0))', [key]));
+            yield* Effect.sync(() => mark('session-lock-returned'));
+            const previous = yield* database.executor.execute(sql`select phase from core.application_composition_authority where authority_key = 'active'`, 'objects');
+            yield* Effect.sync(() => mark('authority-read-returned'));
+            yield* database.executor.transaction((transaction) => Effect.gen(function* () {
+              yield* Effect.sync(() => mark('transaction-entered'));
+              yield* transaction.execute(sql`select current_setting('transaction_isolation') as isolation`, 'objects');
+              yield* transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 1))`, 'objects');
+              yield* Effect.sync(() => mark('transaction-fence-returned'));
+              const validUntil = DateTime.makeUnsafe(Date.now() + 3600000);
+              yield* Effect.sync(() => mark('freshness-query-start'));
+              const rows = yield* transaction.execute(sql`select ${DateTime.toDateUtc(validUntil)}::timestamptz > clock_timestamp() as unexpired`, 'objects');
+              if (rows[0]?.unexpired !== true) return yield* Effect.fail(Error('freshness boolean invalid'));
+              yield* Effect.sync(() => mark('freshness-query-returned'));
+            }), { accessMode: 'read only' });
+            yield* Effect.sync(() => mark('transaction-returned'));
+          }));
+          try { await Effect.runPromise(program); mark('scopes-closed'); } catch { console.log(JSON.stringify({ phase, outcome: 'failed-sensitive-errors-omitted' })); process.exitCode = 1; } finally { clearTimeout(watchdog); }
+          PROBE
+          timeout --signal=INT --kill-after=5s 25s mise exec -- node "$probe_path"
       - name: Clear the runner-owned Zerops VPN
         if: always() && steps.composition-vpn.outputs.state-directory != ''
         uses: ./.github/actions/zerops-vpn
