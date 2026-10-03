@@ -491,22 +491,35 @@ it.live('serializes matching behind promotion and rejects the superseded matcher
     expect(
       (yield* repository.matchUnmatched(promotedCompositionRevision, yield* DateTime.nowAsDate)).deliveriesCreated,
     ).toBe(1);
+    const [pendingDelivery] = yield* database
+      .select({ availableAt: outboxDeliveries.availableAt })
+      .from(outboxDeliveries)
+      .where(
+        and(
+          eq(outboxDeliveries.outboxMessageId, messageId),
+          eq(outboxDeliveries.workerKey, registration.descriptor.workerKey),
+        ),
+      );
+    const { availableAt } = Option.getOrThrow(Option.fromNullishOr(pendingDelivery));
+    // PostgreSQL retains sub-millisecond precision beyond the decoded JavaScript Date.
+    const dueAt = advanceDate(availableAt, 1);
     expect(
-      Schema.is(ApplicationCompositionAuthorityError)(
-        yield* Effect.flip(
-          repository.claimNext([registration], 'stale-worker', yield* DateTime.nowAsDate, compositionRevision),
+      Option.isNone(
+        yield* repository.claimNext(
+          [registration],
+          'not-yet-due-worker',
+          advanceDate(availableAt, -1),
+          promotedCompositionRevision,
         ),
       ),
     ).toBe(true);
     expect(
-      Option.isSome(
-        yield* repository.claimNext(
-          [registration],
-          'current-worker',
-          yield* DateTime.nowAsDate,
-          promotedCompositionRevision,
-        ),
+      Schema.is(ApplicationCompositionAuthorityError)(
+        yield* Effect.flip(repository.claimNext([registration], 'stale-worker', dueAt, compositionRevision)),
       ),
+    ).toBe(true);
+    expect(
+      Option.isSome(yield* repository.claimNext([registration], 'current-worker', dueAt, promotedCompositionRevision)),
     ).toBe(true);
   }),
 );

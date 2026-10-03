@@ -31,6 +31,7 @@ import {
   tenants,
 } from '../../packages/core-runtime/src/db/schema.ts';
 import { moduleReleaseAssetWorkerName } from '../../packages/core-runtime/src/http/module-release-identity.ts';
+import { ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY } from '../../packages/core-runtime/src/modules/active-application-composition-edge.ts';
 import { ActiveApplicationCompositionSnapshotSchema } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
 import {
   ApplicationCompositionAuthorityError,
@@ -57,9 +58,19 @@ const PRODUCER_MODULE = 'publication.test';
 const LEGACY_ACCOUNT_ID = 'a'.repeat(32);
 const LEGACY_NODE_PATH = '/api/rest/public/service-stack/publication-legacy-node';
 const LEGACY_WORKER_PATH = `/client/v4/accounts/${LEGACY_ACCOUNT_ID}/workers/scripts/publication-legacy-worker`;
-const KV_URL = `https://api.cloudflare.com/client/v4/accounts/${'b'.repeat(32)}/storage/kv/namespaces/${'c'.repeat(32)}/values/publication-native-test`;
+const KV_NAMESPACE_ID = 'c'.repeat(32);
+const KV_NAMESPACE_PATH = `/client/v4/accounts/${LEGACY_ACCOUNT_ID}/storage/kv/namespaces/${KV_NAMESPACE_ID}`;
+const KV_VALUE_PATH = `${KV_NAMESPACE_PATH}/values/${ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY}`;
+const KV_URL = `https://api.cloudflare.com${KV_VALUE_PATH}`;
 const INITIAL_INVENTORY = {
-  cloudflare: { accountId: LEGACY_ACCOUNT_ID, workerNames: ['publication-legacy-worker'] },
+  cloudflare: {
+    accountId: LEGACY_ACCOUNT_ID,
+    compositionPointer: {
+      namespaceId: KV_NAMESPACE_ID,
+      sha256: createHash('sha256').update('obsolete composition pointer bytes').digest('hex'),
+    },
+    workerNames: ['publication-legacy-worker'],
+  },
   zeropsServiceIds: ['publication-legacy-node'],
 };
 
@@ -84,6 +95,19 @@ const initialCutoverProvider = (nodeStatus: string | undefined, workerPresent: b
           workerPresent
             ? new Response('old Worker executable bytes')
             : Response.json({ errors: [{ code: 10_007 }], success: false }, { status: 404 }),
+        ),
+      );
+    }
+    if (url.pathname === KV_NAMESPACE_PATH || url.pathname === KV_VALUE_PATH) {
+      expect(request.method).toBe('GET');
+      expect(url.href).toBe(`https://api.cloudflare.com${url.pathname}`);
+      expect(request.headers.authorization).toBe('Bearer publication-test-cloudflare-token');
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          url.pathname === KV_NAMESPACE_PATH
+            ? Response.json({ errors: [], result: { id: KV_NAMESPACE_ID }, success: true })
+            : new Response(null, { status: 404 }),
         ),
       );
     }
@@ -261,15 +285,24 @@ it.live(
         );
       const storedPointer = yield* Ref.make(Option.none<string>());
       const rejectWrite = yield* Ref.make(false);
+      const initialReadbackObserved = yield* Ref.make(false);
       const kvRequests: string[] = [];
       const kvClient = HttpClient.make((request, url) =>
         Effect.gen(function* nativeKvResponse() {
           expect(url.href).toBe(KV_URL);
           expect(request.headers.authorization).toBe('Bearer publication-native-kv-token');
+          const previousMethod = kvRequests.at(-1);
           kvRequests.push(request.method);
           if (request.method === 'GET') {
             expect(request.headers['cache-control']).toBe('no-cache');
             const current = yield* Ref.get(storedPointer);
+            if (previousMethod === 'PUT' && !(yield* Ref.get(initialReadbackObserved))) {
+              // The initial authority must remain uncommitted through native provider readback.
+              expect(
+                yield* observer.executor.select().from(applicationCompositionAuthority).pipe(Effect.orDie),
+              ).toEqual([]);
+              yield* Ref.set(initialReadbackObserved, true);
+            }
             return HttpClientResponse.fromWeb(
               request,
               Option.match(current, {
@@ -309,13 +342,18 @@ it.live(
       );
       yield* publishSnapshot(first, Option.none(), initialProof).pipe(Effect.provide(nativeKvLayer));
       expect(kvRequests).toEqual(['GET', 'PUT', 'GET']);
+      expect(yield* Ref.get(initialReadbackObserved)).toBe(true);
       expect(successfulProvider.requests).toEqual(
         expect.arrayContaining([
           `GET https://api.app-prg1.zerops.io${LEGACY_NODE_PATH}`,
           `GET https://api.cloudflare.com${LEGACY_WORKER_PATH}`,
         ]),
       );
-      expect(successfulProvider.requests).toHaveLength(2);
+      expect(successfulProvider.requests).toHaveLength(4);
+      expect(successfulProvider.requests.slice(-2)).toEqual([
+        `GET https://api.cloudflare.com${KV_NAMESPACE_PATH}`,
+        `GET https://api.cloudflare.com${KV_VALUE_PATH}`,
+      ]);
       const [firstAuthority] = yield* observer.executor.select().from(applicationCompositionAuthority);
       expect(firstAuthority).toMatchObject({ phase: 'active', revision: first.composition.revision });
       const nestedFailure = yield* database.executor

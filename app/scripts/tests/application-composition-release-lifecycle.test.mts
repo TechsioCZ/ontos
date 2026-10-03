@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { ConfigProvider, DateTime, Effect, Fiber, Layer, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -36,7 +38,9 @@ const MODULE_APP_ID = 'catalog';
 const MODULE_BUILD_MARKER = 'catalog-lifecycle-build';
 const OLD_REVISION = `sha256:${'1'.repeat(64)}`;
 const INITIAL_NODE_ID = 'A'.repeat(22);
-const INITIAL_ACCOUNT_ID = 'c'.repeat(32);
+const INITIAL_ACCOUNT_ID = 'a'.repeat(32);
+const INITIAL_NAMESPACE_ID = 'b'.repeat(32);
+const INITIAL_NAMESPACE_PATH = `/client/v4/accounts/${INITIAL_ACCOUNT_ID}/storage/kv/namespaces/${INITIAL_NAMESPACE_ID}`;
 const INITIAL_WORKER_NAME = 'old-shell-worker';
 const SESSION_UNLOCK = 'SESSION UNLOCK';
 const MIGRATION_EVENT = 'MIGRATION';
@@ -45,7 +49,14 @@ const DURABLE_COMPLETE = 'DURABLE COMPLETE';
 const ROLLBACK_EVENT = 'TRANSACTION ROLLBACK';
 const AUTHORITY_FROM = 'from "core"."application_composition_authority"';
 const initialProviderProof = verifyInitialCutoverProviderInventory({
-  cloudflare: { accountId: INITIAL_ACCOUNT_ID, workerNames: [INITIAL_WORKER_NAME] },
+  cloudflare: {
+    accountId: INITIAL_ACCOUNT_ID,
+    compositionPointer: {
+      namespaceId: INITIAL_NAMESPACE_ID,
+      sha256: createHash('sha256').update('obsolete lifecycle fixture pointer').digest('hex'),
+    },
+    workerNames: [INITIAL_WORKER_NAME],
+  },
   zeropsServiceIds: [INITIAL_NODE_ID],
 });
 const JsonText = Schema.fromJsonString(Schema.Unknown);
@@ -399,6 +410,13 @@ const migrationFixture = (options: MigrationFixtureOptions = {}) => {
   const client = HttpClient.make((request, destination) => {
     proofRequests.push(`${request.method} ${destination.href}`);
     events.push(`PROOF ${destination.href}`);
+    if (destination.pathname.startsWith(INITIAL_NAMESPACE_PATH)) {
+      const pointerResponse =
+        destination.pathname === INITIAL_NAMESPACE_PATH
+          ? Response.json({ errors: [], result: { id: INITIAL_NAMESPACE_ID }, success: true })
+          : new Response(null, { status: 404 });
+      return Effect.succeed(HttpClientResponse.fromWeb(request, pointerResponse));
+    }
     const response =
       destination.pathname === `/api/rest/public/service-stack/${INITIAL_NODE_ID}`
         ? Response.json({ error: { code: 'serviceStackNotFound' } }, { status: 400 })
@@ -572,7 +590,7 @@ it.effect('requires native provider absence and quiescent database transactions 
         }),
         initialProviderProof,
       ).pipe(Effect.provide(fixture.layer));
-      expect(fixture.proofRequests).toHaveLength(2);
+      expect(fixture.proofRequests).toHaveLength(4);
       expect(fixture.events.indexOf('LEGACY TRANSACTION CHECK')).toBeLessThan(fixture.events.indexOf(MIGRATION_EVENT));
       expect(fixture.events.at(-1)).toBe(SESSION_UNLOCK);
       expect(fixture.statements).not.toContain('BEGIN');
@@ -589,7 +607,7 @@ it.effect('requires native provider absence and quiescent database transactions 
       initialProviderProof,
     ).pipe(Effect.provide(blocked.layer), Effect.flip);
     expect(Schema.is(ApplicationCompositionAuthorityError)(failure)).toBe(true);
-    expect(blocked.proofRequests).toHaveLength(2);
+    expect(blocked.proofRequests).toHaveLength(4);
     expect(blocked.events).not.toContain(MIGRATION_EVENT);
     expect(blocked.events.at(-1)).toBe(SESSION_UNLOCK);
   }),

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { NodeServices } from '@effect/platform-node';
 import { ConfigProvider, DateTime, Effect, Layer, Match, Option, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -48,7 +50,9 @@ const PUBLICATION_UNLOCK_SQL =
 const TOKEN = 'publication-test-token';
 const LEGACY_NODE_SERVICE_ID = 'legacy-node-service';
 const LEGACY_WORKER_NAME = 'legacy-worker';
-const CUTOVER_ACCOUNT_ID = 'c'.repeat(32);
+const CUTOVER_ACCOUNT_ID = 'a'.repeat(32);
+const CUTOVER_NAMESPACE_ID = 'b'.repeat(32);
+const CUTOVER_NAMESPACE_PATH = `/client/v4/accounts/${CUTOVER_ACCOUNT_ID}/storage/kv/namespaces/${CUTOVER_NAMESPACE_ID}`;
 const NODE_ACTIVE_STATE = 'node-active';
 const NODE_STOPPED_STATE = 'node-stopped';
 const WORKER_ACTIVE_STATE = 'worker-active';
@@ -57,7 +61,14 @@ const WORKER_VERSION_ID = 'c302ec41-290b-4d31-8105-5c3467008799';
 const WORKER_ACCOUNT_SUBDOMAIN = 'test-account';
 const CATALOG_MODULE_ID = 'catalog.products';
 const initialCutoverProof = verifyInitialCutoverProviderInventory({
-  cloudflare: { accountId: CUTOVER_ACCOUNT_ID, workerNames: [LEGACY_WORKER_NAME] },
+  cloudflare: {
+    accountId: CUTOVER_ACCOUNT_ID,
+    compositionPointer: {
+      namespaceId: CUTOVER_NAMESPACE_ID,
+      sha256: createHash('sha256').update('obsolete publication fixture pointer').digest('hex'),
+    },
+    workerNames: [LEGACY_WORKER_NAME],
+  },
   zeropsServiceIds: [LEGACY_NODE_SERVICE_ID],
 });
 const OBSERVED_AT = '2026-10-02T16:00:00.000Z';
@@ -172,6 +183,7 @@ const provider = (
 ) => {
   const requests: RecordedRequest[] = [];
   const proofRequests: RecordedRequest[] = [];
+  let awaitingCutoverPointer = false;
   const statements: string[] = [];
   const transactionStatements: string[] = [];
   const events: string[] = [];
@@ -207,6 +219,21 @@ const provider = (
           ? Response.json({ success: true })
           : Response.json({ errors: [{ code: 10_007 }], success: false }, { status: 404 });
       return Effect.succeed(HttpClientResponse.fromWeb(request, proofAnswer));
+    }
+    if (destination.pathname === CUTOVER_NAMESPACE_PATH) {
+      proofRequests.push(recorded);
+      awaitingCutoverPointer = true;
+      return Effect.succeed(
+        HttpClientResponse.fromWeb(
+          request,
+          Response.json({ errors: [], result: { id: CUTOVER_NAMESPACE_ID }, success: true }),
+        ),
+      );
+    }
+    if (destination.href === KV_URL && awaitingCutoverPointer) {
+      proofRequests.push(recorded);
+      awaitingCutoverPointer = false;
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status: 404 })));
     }
     requests.push(recorded);
     return Effect.succeed(HttpClientResponse.fromWeb(request, answer(recorded, requests.length - 1)));
@@ -509,8 +536,12 @@ it.effect('publishes and reads back the exact complete bundle through native KV 
     const published = yield* publishSnapshot(snapshot, Option.none(), initialCutoverProof).pipe(Effect.provide(layer));
 
     expect(published).toEqual(snapshot);
-    expect(proofRequests).toHaveLength(2);
-    expect(proofRequests.map(({ method }) => method)).toEqual(['GET', 'GET']);
+    expect(proofRequests).toHaveLength(4);
+    expect(proofRequests.map(({ method }) => method)).toEqual(['GET', 'GET', 'GET', 'GET']);
+    expect(proofRequests.slice(-2).map(({ url }) => url)).toEqual([
+      `https://api.cloudflare.com${CUTOVER_NAMESPACE_PATH}`,
+      KV_URL,
+    ]);
     expect(events.lastIndexOf('COMMIT')).toBeGreaterThan(events.indexOf(`GET ${proofRequests[0]?.url ?? ''}`));
     expect(events.findIndex((event) => event.includes(`/workers/scripts/${LEGACY_WORKER_NAME}`))).toBeLessThan(
       events.indexOf(`PUT ${KV_URL}`),

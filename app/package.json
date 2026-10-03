@@ -64,7 +64,7 @@
     "db:verify": "node ./scripts/verify-application-db-schema.mts",
     "local:initialize": "node ./scripts/initialize-local-development.mts",
     "test:unit": "pnpm -r --if-present run test:unit && pnpm -r --if-present run test:component",
-    "test:integration": "rstest --project integration && pnpm -r --if-present run test:integration",
+    "test:integration": "rstest --project integration --pool.maxWorkers 1 && pnpm -r --workspace-concurrency 1 --if-present run test:integration --pool.maxWorkers 1",
     "test:scripts": "rstest --project scripts",
     "test:lint-rules": "rstest --project lint-rules",
     "typecheck:lint-rules": "tsc -p tools/oxlint/effect-native/tsconfig.json",

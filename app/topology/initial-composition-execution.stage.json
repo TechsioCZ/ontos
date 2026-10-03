@@ -15,6 +15,10 @@
   ],
   "cloudflare": {
     "accountId": "e8608e0073bff00c7875f171ac38b8c6",
+    "compositionPointer": {
+      "namespaceId": "d51f044c49bc4757a5613c61b19b46d8",
+      "sha256": "79786c864c3305127df78a54410e42dc9403b6e9136fc56dec6dfff0ccb54cfc"
+    },
     "workers": [
       {
         "appId": "assortment",

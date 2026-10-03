@@ -1,6 +1,11 @@
+import { createHash } from 'node:crypto';
+
 import { Config, Duration, Effect, Option, Redacted, Schema, Stream } from 'effect';
 import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
 import type { HttpClientResponse } from 'effect/unstable/http';
+
+import { ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY } from '../packages/core-runtime/src/modules/active-application-composition-edge.ts';
+import { ONTOS_APPLICATION_COMPOSITION_MAX_BYTES } from '../packages/core-runtime/src/modules/application-composition-limits.ts';
 
 import { ZeropsPublicApi } from './zerops-public-api.mts';
 
@@ -8,6 +13,7 @@ import { ZeropsPublicApi } from './zerops-public-api.mts';
 export interface InitialCutoverProviderInventory {
   readonly cloudflare: {
     readonly accountId: string;
+    readonly compositionPointer: { readonly namespaceId: string; readonly sha256: string };
     readonly workerNames: readonly string[];
   };
   readonly zeropsServiceIds: readonly string[];
@@ -16,6 +22,7 @@ export interface InitialCutoverProviderInventory {
 const snapshotInventory = (inventory: InitialCutoverProviderInventory): InitialCutoverProviderInventory => ({
   cloudflare: {
     accountId: inventory.cloudflare.accountId,
+    compositionPointer: { ...inventory.cloudflare.compositionPointer },
     workerNames: [...inventory.cloudflare.workerNames],
   },
   zeropsServiceIds: [...inventory.zeropsServiceIds],
@@ -39,6 +46,10 @@ const CloudflareEnvelopeSchema = Schema.Struct({
   errors: Schema.Array(Schema.Struct({ code: Schema.Number })),
   success: Schema.Boolean,
 });
+const CloudflareNamespaceSchema = Schema.Struct({
+  ...CloudflareEnvelopeSchema.fields,
+  result: Schema.Struct({ id: Schema.String }),
+});
 
 type Provider = InitialCutoverProviderError['provider'];
 type Operation = InitialCutoverProviderError['operation'];
@@ -57,9 +68,9 @@ const bounded =
       }),
     );
 
-/** Decode only the small provider envelope; a successful GET returns executable bytes and is not read. */
-const cloudflareEnvelope = (response: HttpClientResponse.HttpClientResponse, operation: Operation) =>
-  Effect.gen(function* decodeCloudflareEnvelope() {
+/** Read only small native envelopes; executable GET bodies are never consumed. */
+const cloudflareResponseText = (response: HttpClientResponse.HttpClientResponse, operation: Operation) =>
+  Effect.gen(function* readCloudflareEnvelopeText() {
     const decoder = new TextDecoder();
     const body = yield* response.stream.pipe(
       Stream.runFoldEffect(
@@ -72,10 +83,102 @@ const cloudflareEnvelope = (response: HttpClientResponse.HttpClientResponse, ope
         },
       ),
     );
-    return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(CloudflareEnvelopeSchema))(
-      body.text + decoder.decode(),
-    );
+    return body.text + decoder.decode();
   });
+
+const decodeCloudflareEnvelope = (response: HttpClientResponse.HttpClientResponse, operation: Operation) =>
+  cloudflareResponseText(response, operation).pipe(
+    Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(CloudflareEnvelopeSchema))),
+  );
+
+const compositionPointerRequest = Effect.fn('InitialCutover.compositionPointerRequest')(
+  function* compositionPointerRequest(
+    inventory: InitialCutoverProviderInventory,
+    method: 'GET' | 'DELETE',
+    namespaceOnly: boolean,
+  ) {
+    const token = yield* Config.Redacted('CLOUDFLARE_API_TOKEN');
+    const client = yield* HttpClient.HttpClient;
+    const namespace = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(inventory.cloudflare.accountId)}/storage/kv/namespaces/${encodeURIComponent(inventory.cloudflare.compositionPointer.namespaceId)}`;
+    const url = namespaceOnly ? namespace : `${namespace}/values/${ACTIVE_APPLICATION_COMPOSITION_EDGE_KEY}`;
+    return yield* client.execute(
+      HttpClientRequest.make(method)(url).pipe(
+        HttpClientRequest.bearerToken(Redacted.value(token)),
+        HttpClientRequest.setHeader('cache-control', 'no-cache'),
+      ),
+    );
+  },
+);
+
+const verifyCompositionNamespace = Effect.fn('InitialCutover.verifyCompositionNamespace')(
+  function* verifyCompositionNamespace(inventory: InitialCutoverProviderInventory) {
+    const response = yield* compositionPointerRequest(inventory, 'GET', true);
+    if (response.status !== 200) {
+      return yield* failure('cloudflare', 'read', 'provider did not confirm the reviewed composition namespace');
+    }
+    const envelope = yield* cloudflareResponseText(response, 'read').pipe(
+      Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(CloudflareNamespaceSchema))),
+    );
+    if (
+      !envelope.success ||
+      envelope.errors.length !== 0 ||
+      envelope.result.id !== inventory.cloudflare.compositionPointer.namespaceId
+    ) {
+      return yield* failure('cloudflare', 'read', 'provider did not confirm the reviewed composition namespace');
+    }
+    return yield* Effect.void;
+  },
+);
+
+const verifyCompositionPointerAbsent = Effect.fn('InitialCutover.verifyCompositionPointerAbsent')(
+  function* verifyCompositionPointerAbsent(inventory: InitialCutoverProviderInventory) {
+    yield* verifyCompositionNamespace(inventory);
+    const response = yield* compositionPointerRequest(inventory, 'GET', false);
+    // The native raw-value endpoint's 404 establishes key absence only after namespace identity was proved.
+    if (response.status !== 404) {
+      return yield* failure('cloudflare', 'verify', 'provider did not confirm composition pointer absence');
+    }
+    return yield* Effect.void;
+  },
+);
+
+const retireCompositionPointer = Effect.fn('InitialCutover.retireCompositionPointer')(
+  function* retireCompositionPointer(inventory: InitialCutoverProviderInventory) {
+    yield* verifyCompositionNamespace(inventory);
+    const response = yield* compositionPointerRequest(inventory, 'GET', false);
+    if (response.status !== 404) {
+      if (response.status !== 200) {
+        return yield* failure('cloudflare', 'read', 'provider did not return the reviewed obsolete pointer');
+      }
+      const hash = createHash('sha256');
+      yield* response.stream.pipe(
+        Stream.runFoldEffect(
+          () => 0,
+          (size, chunk) => {
+            const next = size + chunk.byteLength;
+            if (next > ONTOS_APPLICATION_COMPOSITION_MAX_BYTES) {
+              return Effect.fail(failure('cloudflare', 'read', 'composition pointer exceeded byte limit'));
+            }
+            hash.update(chunk);
+            return Effect.succeed(next);
+          },
+        ),
+      );
+      if (hash.digest('hex') !== inventory.cloudflare.compositionPointer.sha256) {
+        return yield* failure('cloudflare', 'delete', 'composition pointer differs from the reviewed obsolete bytes');
+      }
+      const deletion = yield* compositionPointerRequest(inventory, 'DELETE', false);
+      if (deletion.status < 200 || deletion.status >= 300) {
+        return yield* failure('cloudflare', 'delete', 'provider did not confirm composition pointer deletion');
+      }
+      const envelope = yield* decodeCloudflareEnvelope(deletion, 'delete');
+      if (!envelope.success || envelope.errors.length !== 0) {
+        return yield* failure('cloudflare', 'delete', 'provider did not confirm composition pointer deletion');
+      }
+    }
+    return yield* verifyCompositionPointerAbsent(inventory);
+  },
+);
 
 /** RequestInit.redirect must be manual in the process-edge FetchHttpClient layer. */
 const cloudflareRequest = Effect.fn('InitialCutover.cloudflareRequest')(function* cloudflareRequest(
@@ -102,7 +205,7 @@ const cloudflareWorkerPresent = Effect.fn('InitialCutover.cloudflareWorkerPresen
   if (response.status !== 404) {
     return yield* failure('cloudflare', 'read', 'provider did not confirm Worker absence');
   }
-  const envelope = yield* cloudflareEnvelope(response, 'read');
+  const envelope = yield* decodeCloudflareEnvelope(response, 'read');
   // 10007 is Worker not found; auth errors, generic 404s, and mixed errors never prove absence.
   if (envelope.success || envelope.errors.length === 0 || envelope.errors.some(({ code }) => code !== 10_007)) {
     return yield* failure('cloudflare', 'read', 'provider did not confirm Worker absence');
@@ -140,6 +243,7 @@ export const verifyInitialCutoverProviderInventory = Effect.fn('InitialCutover.v
   function* verifyInitialCutoverProviderInventory(inventory: InitialCutoverProviderInventory) {
     const snapshot = snapshotInventory(inventory);
     yield* Effect.all(providerChecks(snapshot), { concurrency: PROVIDER_CONCURRENCY, discard: true });
+    yield* verifyCompositionPointerAbsent(snapshot).pipe(bounded('cloudflare', 'verify'));
   },
 );
 
@@ -173,7 +277,7 @@ export const quiesceInitialCutoverProviderInventory = Effect.fn('InitialCutover.
           if (response.status < 200 || response.status >= 300) {
             yield* failure('cloudflare', 'delete', 'provider did not confirm Worker deletion');
           }
-          const envelope = yield* cloudflareEnvelope(response, 'delete');
+          const envelope = yield* decodeCloudflareEnvelope(response, 'delete');
           if (!envelope.success || envelope.errors.length !== 0) {
             yield* failure('cloudflare', 'delete', 'provider did not confirm Worker deletion');
           }
@@ -181,6 +285,8 @@ export const quiesceInitialCutoverProviderInventory = Effect.fn('InitialCutover.
       ),
     ];
     yield* Effect.all(operations, { concurrency: PROVIDER_CONCURRENCY, discard: true });
-    yield* verifyInitialCutoverProviderInventory(snapshot);
+    yield* Effect.all(providerChecks(snapshot), { concurrency: PROVIDER_CONCURRENCY, discard: true });
+    // Supported first publishers require the receipt, so none can write a new pointer during this retirement.
+    yield* retireCompositionPointer(snapshot).pipe(bounded('cloudflare', 'delete'));
   },
 );

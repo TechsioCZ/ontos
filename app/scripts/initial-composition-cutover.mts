@@ -16,6 +16,9 @@ const EnvironmentSchema = Schema.Literals(['stage', 'production']);
 const AccountIdSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{32}$/u)).pipe(
   Schema.brand('CompositionCutoverAccountId'),
 );
+const NamespaceIdSchema = Schema.String.check(Schema.isPattern(/^[a-f0-9]{32}$/u)).pipe(
+  Schema.brand('CompositionCutoverNamespaceId'),
+);
 const ServiceIdSchema = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9]{22}$/u)).pipe(
   Schema.brand('CompositionCutoverServiceId'),
 );
@@ -28,6 +31,10 @@ export const InitialCompositionExecutionInventorySchema = Schema.Struct({
   applicationIds: ApplicationIdsSchema,
   cloudflare: Schema.Struct({
     accountId: AccountIdSchema,
+    compositionPointer: Schema.Struct({
+      namespaceId: NamespaceIdSchema,
+      sha256: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u)),
+    }),
     workers: Schema.Array(
       Schema.Struct({ appId: LegacyApplicationSchema, name: WorkerNameSchema, roles: RolesSchema }),
     ),
@@ -68,6 +75,10 @@ export const validateConfiguredInitialCompositionInventory = (inventory: Initial
     if (accountId !== inventory.cloudflare.accountId) {
       return yield* invalid('The execution inventory belongs to another provider account');
     }
+    const namespaceId = new URL(source).pathname.split('/').at(8);
+    if (namespaceId !== inventory.cloudflare.compositionPointer.namespaceId) {
+      return yield* invalid('The obsolete composition pointer belongs to another provider namespace');
+    }
     return yield* Effect.void;
   });
 
@@ -99,6 +110,7 @@ export const validateInitialCompositionExecutionInventory = (inventory: InitialC
 const providerInventory = (inventory: InitialCompositionExecutionInventory) => ({
   cloudflare: {
     accountId: inventory.cloudflare.accountId,
+    compositionPointer: inventory.cloudflare.compositionPointer,
     workerNames: inventory.cloudflare.workers.map(({ name }) => name),
   },
   zeropsServiceIds: inventory.zerops.map(({ serviceId }) => serviceId),

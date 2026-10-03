@@ -47,7 +47,7 @@ const InventoryHome = () => {
             className="inventory:rounded-full inventory:border inventory:border-stone-900/15 inventory:bg-white inventory:px-4 inventory:py-2 inventory:text-sm inventory:font-bold inventory:text-stone-950 inventory:no-underline"
             key={code}
             params={{ lang: code }}
-            to="/$lang"
+            to="/$lang/"
           >
             {t(`inventory.language.${code}`)}
           </Link>

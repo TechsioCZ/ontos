@@ -19,7 +19,12 @@ import { InitialCutoverProviderError } from '../initial-composition-cutover-prov
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 
 const ACCOUNT_ID = 'a'.repeat(32);
-const SOURCE_URL = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/storage/kv/namespaces/${'c'.repeat(32)}/values/active`;
+const NAMESPACE_ID = 'c'.repeat(32);
+const OBSOLETE_POINTER = '\uFEFFopaque obsolete pointer\n';
+const POINTER_SHA256 = createHash('sha256').update(OBSOLETE_POINTER).digest('hex');
+const NAMESPACE_PATH = `/client/v4/accounts/${ACCOUNT_ID}/storage/kv/namespaces/${NAMESPACE_ID}`;
+const POINTER_PATH = `${NAMESPACE_PATH}/values/active`;
+const SOURCE_URL = `https://api.cloudflare.com/client/v4/accounts/${ACCOUNT_ID}/storage/kv/namespaces/${NAMESPACE_ID}/values/active`;
 const SHELL_APPLICATION_ID = 'shell-super-app';
 const COMMERCE_APPLICATION_ID = 'commerce-customer-context';
 const PROVIDER_CREDENTIAL = 'test-provider-credential';
@@ -31,6 +36,7 @@ const inventory = () => ({
   applicationIds: APPLICATION_IDS,
   cloudflare: {
     accountId: ACCOUNT_ID,
+    compositionPointer: { namespaceId: NAMESPACE_ID, sha256: POINTER_SHA256 },
     workers: [{ appId: COMMERCE_APPLICATION_ID, name: 'cccccccccccccccccccccc-worker', roles: ['worker'] }],
   },
   environment: 'stage',
@@ -52,18 +58,41 @@ const inventory = () => ({
   ],
 });
 
+interface PointerState {
+  readonly persistAfterDelete?: boolean;
+  readonly refuseDelete?: boolean;
+  value: string | null;
+}
+
 const provider = (
   initiallyAbsent = true,
   refuseDelete = false,
   serviceMetadata: { readonly base?: string; readonly isSystem?: boolean } = NODE_SERVICE_METADATA,
   workerInitiallyAbsent = initiallyAbsent,
+  pointerInput?: PointerState,
 ) => {
+  const pointerState = pointerInput ?? { value: OBSOLETE_POINTER };
   const requests: string[] = [];
   let nodeAbsent = initiallyAbsent;
   let workerDeleted = workerInitiallyAbsent;
   const client = HttpClient.make((request, url) => {
     requests.push(`${request.method} ${url.pathname}`);
     const response = (() => {
+      if (url.pathname === NAMESPACE_PATH) {
+        return Response.json({ errors: [], result: { id: NAMESPACE_ID }, success: true });
+      }
+      if (url.pathname === POINTER_PATH) {
+        if (request.method === 'DELETE') {
+          if (pointerState.refuseDelete === true) {
+            return Response.json({ errors: [], success: false });
+          }
+          if (pointerState.persistAfterDelete !== true) {
+            pointerState.value = null;
+          }
+          return Response.json({ errors: [], success: true });
+        }
+        return pointerState.value === null ? new Response(null, { status: 404 }) : new Response(pointerState.value);
+      }
       if (url.hostname === 'api.cloudflare.com') {
         if (request.method === 'DELETE') {
           workerDeleted = true;
@@ -189,7 +218,7 @@ it.effect('requires exact declared application coverage including Shell and the 
 it.effect('rejects missing execution roles, misplaced hosted jobs, and ambiguous provider identities', () =>
   Effect.gen(function* rejectsIncompleteExecutionRoles() {
     const invalidInventories = [
-      { ...inventory(), cloudflare: { accountId: ACCOUNT_ID, workers: [] } },
+      { ...inventory(), cloudflare: { ...inventory().cloudflare, workers: [] } },
       {
         ...inventory(),
         zerops: [
@@ -241,7 +270,7 @@ it.effect('rejects missing execution roles, misplaced hosted jobs, and ambiguous
       {
         ...inventory(),
         cloudflare: {
-          accountId: ACCOUNT_ID,
+          ...inventory().cloudflare,
           workers: [...inventory().cloudflare.workers, ...inventory().cloudflare.workers],
         },
       },
@@ -269,6 +298,23 @@ it.effect('writes a receipt binding the exact reviewed bytes only after deleting
     expect(native.requests).toContain(
       `DELETE /client/v4/accounts/${ACCOUNT_ID}/workers/scripts/cccccccccccccccccccccc-worker`,
     );
+    const pointerDeletion = native.requests.indexOf(`DELETE ${POINTER_PATH}`);
+    expect(pointerDeletion).toBeGreaterThan(0);
+    expect(native.requests.slice(pointerDeletion)).toEqual([
+      `DELETE ${POINTER_PATH}`,
+      `GET ${NAMESPACE_PATH}`,
+      `GET ${POINTER_PATH}`,
+    ]);
+    expect(
+      native.requests
+        .slice(0, pointerDeletion)
+        .filter((request) => request.startsWith('GET ') && request.includes('/service-stack/')),
+    ).toHaveLength(4);
+    expect(
+      native.requests
+        .slice(0, pointerDeletion)
+        .filter((request) => request.startsWith('GET ') && request.includes('/workers/scripts/')),
+    ).toHaveLength(2);
     yield* verifyInitialCompositionCutover(input).pipe(Effect.provide(native.layer));
     expect(
       native.requests.filter((request) => request === 'GET /api/rest/public/service-stack/ssssssssssssssssssssss'),
@@ -284,6 +330,7 @@ it.effect('does not write a receipt when native retirement fails', () =>
     expect(Schema.is(InitialCutoverProviderError)(error)).toBe(true);
     expect(JSON.stringify(error)).not.toContain(PROVIDER_CREDENTIAL);
     expect(yield* filesystem.exists(input.receiptFile)).toBe(false);
+    expect(native.requests.some((request) => request.includes('/storage/kv/'))).toBe(false);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -363,6 +410,7 @@ it.effect('binds Cloudflare absence checks to the protected publication account'
     );
     for (const sourceUrl of [
       SOURCE_URL.replace(ACCOUNT_ID, 'd'.repeat(32)),
+      SOURCE_URL.replace(NAMESPACE_ID, 'd'.repeat(32)),
       SOURCE_URL.replace('api.cloudflare.com', 'untrusted.example'),
     ]) {
       const error = yield* validateConfiguredInitialCompositionInventory(complete).pipe(
@@ -403,5 +451,64 @@ it.effect('rejects another environment and non-topology inventory paths before p
       expect(yield* filesystem.exists(input.receiptFile)).toBe(false);
     }
     expect(native.requests).toEqual([]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('requires a reviewed exact namespace and raw pointer digest before retiring any executable', () =>
+  Effect.gen(function* rejectsUnreviewedPointerTargets() {
+    for (const target of [
+      undefined,
+      { namespaceId: NAMESPACE_ID, sha256: 'not-a-digest' },
+      { namespaceId: 'd'.repeat(32), sha256: POINTER_SHA256 },
+      { namespaceId: `${NAMESPACE_ID}/other`, sha256: POINTER_SHA256 },
+      { key: 'other', namespaceId: NAMESPACE_ID, sha256: POINTER_SHA256 },
+    ]) {
+      const { filesystem, input } = yield* files;
+      yield* filesystem.writeFileString(
+        input.inventoryFile,
+        JSON.stringify({ ...inventory(), cloudflare: { ...inventory().cloudflare, compositionPointer: target } }),
+      );
+      const native = provider(false);
+      const error = yield* quiesceInitialCompositionCutover(input).pipe(Effect.provide(native.layer), Effect.flip);
+      expect(Schema.is(InitialCutoverProviderError)(error)).toBe(true);
+      expect(native.requests).toEqual([]);
+      expect(yield* filesystem.exists(input.receiptFile)).toBe(false);
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('does not attest cutover when the pointer differs, deletion fails, or native absence is not observed', () =>
+  Effect.gen(function* requiresVerifiedPointerRetirementBeforeReceipt() {
+    for (const pointerState of [
+      { value: `${OBSOLETE_POINTER}changed` },
+      { refuseDelete: true, value: OBSOLETE_POINTER },
+      { persistAfterDelete: true, value: OBSOLETE_POINTER },
+    ]) {
+      const { filesystem, input } = yield* files;
+      const native = provider(true, false, NODE_SERVICE_METADATA, true, pointerState);
+      const error = yield* quiesceInitialCompositionCutover(input).pipe(Effect.provide(native.layer), Effect.flip);
+      expect(Schema.is(InitialCutoverProviderError)(error)).toBe(true);
+      expect(yield* filesystem.exists(input.receiptFile)).toBe(false);
+      expect(native.requests.some((request) => request.startsWith('DELETE ') && !request.endsWith(POINTER_PATH))).toBe(
+        false,
+      );
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect('rechecks pointer absence before first publication and cannot erase a replacement on repeated cutover', () =>
+  Effect.gen(function* rejectsReplacementPointerWithHistoricalReceipt() {
+    const { input } = yield* files;
+    const pointerState: PointerState = { value: OBSOLETE_POINTER };
+    const native = provider(true, false, NODE_SERVICE_METADATA, true, pointerState);
+    yield* quiesceInitialCompositionCutover(input).pipe(Effect.provide(native.layer));
+    pointerState.value = JSON.stringify({ composition: { revision: 'replacement', schemaVersion: '2' } });
+    const previousDeletes = native.requests.filter((request) => request.startsWith('DELETE ')).length;
+    for (const operation of [verifyInitialCompositionCutover(input), quiesceInitialCompositionCutover(input)]) {
+      const error = yield* operation.pipe(Effect.provide(native.layer), Effect.flip);
+      expect(Schema.is(InitialCutoverProviderError)(error)).toBe(true);
+      expect(native.requests.filter((request) => request.startsWith('DELETE '))).toHaveLength(previousDeletes);
+    }
+    expect(pointerState.value).toContain('replacement');
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

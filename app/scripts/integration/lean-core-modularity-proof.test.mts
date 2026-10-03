@@ -1,10 +1,39 @@
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
+import nodePath from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { v1 } from '@authzed/authzed-node';
-import { eq, inArray } from 'drizzle-orm';
-import { Context, Effect, Schema } from 'effect';
+import { NodeHttpServer, NodeServices } from '@effect/platform-node';
+import { resolveUltramodernReleaseIdentity } from '@modern-js/app-tools-extensions/release-identity';
+import { defineEffectBff } from '@modern-js/bff-effect/effect-edge';
+import { and, eq, inArray } from 'drizzle-orm';
+import { Config, ConfigProvider, Context, DateTime, Duration, Effect, FileSystem, Layer, Ref, Schema } from 'effect';
+import { HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { NetAddress } from 'effect/unstable/net';
 import { expect, it } from 'effect-rstest';
 import { decodeJwt } from 'jose';
+
+import { createSharedRuntimeConfig } from '../../module-federation.shared.ts';
+import { parseDatabaseConnectionPair } from '../../packages/core-runtime/src/db/config.ts';
+import { validateActiveApplicationCompositionSnapshot } from '../../packages/core-runtime/src/modules/active-application-composition.ts';
+import {
+  lockApplicationCompositionPublication,
+  publishApplicationCompositionAuthority,
+} from '../../packages/core-runtime/src/modules/application-composition-authority.ts';
+import {
+  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
+  OntosShellRuntimeContractSchema,
+} from '../../packages/core-runtime/src/modules/application-composition.ts';
+import {
+  ONTOS_MODULE_CONTRACT_PATH,
+  OntosModuleDeploymentContractSchema,
+} from '../../packages/core-runtime/src/modules/manifest.ts';
+import {
+  deriveActiveApplicationCompositionSnapshot,
+  encodeActiveApplicationCompositionSnapshot,
+} from '../active-application-composition.mts';
+import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-contract.mts';
 
 import { makeActionRepository } from '../../packages/core-runtime/src/actions/repository.ts';
 import { ActionRuntime, makeActionRuntime } from '../../packages/core-runtime/src/actions/runtime.ts';
@@ -24,6 +53,7 @@ import {
 } from '../../packages/core-runtime/src/auth/support-recovery-principal-context.ts';
 import {
   actionInvocations,
+  applicationCompositionAuthority,
   auditEvents,
   coreRelations,
   dataAccessEvents,
@@ -72,24 +102,251 @@ import { AuthenticationService, makeAuthenticationService } from '../../apps/she
 
 const gatewayAudience = 'party-registry';
 
-/** The isolated composition has one valid gateway audience and no Commerce vertical. */
-const isolatedTopology = Object.freeze({
-  verticals: Object.freeze([Object.freeze({ id: gatewayAudience, kind: 'vertical', surfaceProfile: 'api-only' })]),
-});
-const isolatedAllowlist = Object.freeze({
-  environment: 'development',
-  overlay: Object.freeze({
-    environment: 'development',
-    ontosModuleManifests: Object.freeze({}),
-    schemaVersion: 1,
-  }),
-  topology: isolatedTopology,
-});
+class LeanCoreCompositionFixtureError extends Schema.TaggedError<LeanCoreCompositionFixtureError>()(
+  'LeanCoreCompositionFixtureError',
+  { reason: Schema.String },
+) {}
 
-// The root integration project does not use the Shell application's Modern/Rstest define block.
-// Supply the same build inputs before the default API module is dynamically evaluated.
-Reflect.set(globalThis, 'ULTRAMODERN_GATEWAY_AUDIENCE_TOPOLOGY', isolatedTopology);
-Reflect.set(globalThis, 'ULTRAMODERN_MODULE_DEPLOYMENT_ALLOWLIST', isolatedAllowlist);
+const fixtureError = (reason: string) => new LeanCoreCompositionFixtureError({ reason });
+const artifact = (url: string, document: string) => ({ bytes: new TextEncoder().encode(document), url });
+const packageVersionJson = Schema.fromJsonString(Schema.Struct({ version: Schema.NonEmptyString }));
+const topologyIdentityJson = Schema.fromJsonString(
+  Schema.Struct({
+    shell: Schema.Struct({
+      deliveryUnit: Schema.Struct({
+        buildMarker: Schema.NonEmptyString,
+        unitId: Schema.Literal('app/shell-super-app'),
+      }),
+    }),
+  }),
+);
+
+/** Local admission claims for the isolated API-only audience, not deployed browser artifact evidence. */
+const acquireLeanCoreComposition = Effect.fn('LeanCoreProof.acquireComposition')(function* acquireComposition() {
+  const documents = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+  const server = Context.get(yield* Layer.build(NodeHttpServer.layerTest), HttpServer.HttpServer);
+  yield* server.serve(
+    HttpServerRequest.HttpServerRequest.use((request) =>
+      Ref.get(documents).pipe(
+        Effect.map((current) => {
+          if (request.method !== 'GET') {
+            return HttpServerResponse.empty({ status: 405 });
+          }
+          const document = current.get(request.url);
+          return document === undefined
+            ? HttpServerResponse.empty({ status: 404 })
+            : HttpServerResponse.text(document, {
+                contentType: 'application/json',
+                headers: { 'cache-control': 'no-store' },
+              });
+        }),
+      ),
+    ),
+  );
+  if (!NetAddress.isInetAddress(server.address)) {
+    return yield* fixtureError('The composition fixture must bind one native loopback TCP server');
+  }
+  const origin = `http://127.0.0.1:${server.address.port}`;
+  const workspaceRoot = nodePath.resolve(import.meta.dirname, '../..');
+  const fileSystem = yield* FileSystem.FileSystem;
+  const { shell } = yield* Schema.decodeEffect(topologyIdentityJson)(
+    yield* fileSystem.readFileString(nodePath.join(workspaceRoot, 'topology/reference-topology.json')),
+  );
+  const identity = yield* Effect.try({
+    catch: () => fixtureError('The Shell fixture requires a native release identity'),
+    try: () =>
+      resolveUltramodernReleaseIdentity({
+        generationBuildMarker: shell.deliveryUnit.buildMarker,
+        unitId: shell.deliveryUnit.unitId,
+        workspaceRoot,
+      }),
+  });
+  const localRequire = createRequire(pathToFileURL(nodePath.join(workspaceRoot, 'apps/shell-super-app/package.json')));
+  const versions = yield* Effect.forEach(
+    ['@modern-js/plugin-i18n', '@modern-js/runtime', '@tanstack/react-router', 'react', 'react-dom'],
+    (name) =>
+      Effect.gen(function* readInstalledSingleton() {
+        const filename = yield* Effect.try({
+          catch: () => fixtureError('A native Shell singleton package could not be resolved'),
+          try: () => localRequire.resolve(`${name}/package.json`),
+        });
+        const { version } = yield* Schema.decodeEffect(packageVersionJson)(yield* fileSystem.readFileString(filename));
+        return version;
+      }),
+    { concurrency: 1 },
+  );
+  const [i18n, runtime, router, react, reactDom] = versions;
+  const shared = Object.entries(
+    createSharedRuntimeConfig({
+      '@modern-js/plugin-i18n/runtime': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(i18n),
+      '@modern-js/runtime': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(runtime),
+      '@tanstack/react-router': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(router),
+      react: yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(react),
+      'react-dom': yield* Schema.decodeUnknownEffect(Schema.NonEmptyString)(reactDom),
+    }),
+  ).map(([name, value]) => ({ name, requiredVersion: value.requiredVersion, singleton: value.singleton }));
+  const moduleContract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)({
+    deployment: { appId: gatewayAudience, buildMarker: `lean-core-api-only-${identity.buildMarker}` },
+    manifest: {
+      activation: {
+        defaultState: 'inactive',
+        preservesHistoryWhenInactive: true,
+        scope: 'tenant',
+        supportedStates: ['inactive', 'active'],
+      },
+      module: {
+        description: 'Isolated API-only modularity proof audience.',
+        displayName: 'Party proof audience',
+        id: 'party.registry',
+        implementedAs: 'ultramodern_microvertical',
+        kind: 'business_module',
+      },
+      publicSurface: {
+        actions: [],
+        api: [],
+        businessPermissions: [],
+        components: [],
+        events: [],
+        reports: [],
+        resourceTypes: [],
+        search: [],
+        shellContributions: {
+          mediaAttachments: [],
+          navigation: [],
+          pages: [],
+          publicComponents: [],
+          reports: [],
+          resourceDetails: [],
+          search: [],
+          timelines: [],
+        },
+      },
+    },
+    runtime: { outboxSubscriptions: [] },
+    schemaVersion: '2',
+  });
+  const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    moduleContract,
+  );
+  const shellContract = yield* Schema.encodeEffect(Schema.fromJsonString(OntosShellRuntimeContractSchema))(
+    createShellRuntimeContract(identity.buildMarker),
+  );
+  const shellManifest = JSON.stringify({ exposes: [], name: 'shellSuperApp', shared });
+  const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
+    environment: 'development',
+    modules: [
+      {
+        appId: gatewayAudience,
+        backend: { baseUrl: `${origin}/`, transport: 'node-http' },
+        contract: artifact(`${origin}${ONTOS_MODULE_CONTRACT_PATH}`, contractDocument),
+      },
+    ],
+    observedAt: yield* DateTime.now,
+    shell: {
+      federationManifest: artifact(`${origin}/mf-manifest.json`, shellManifest),
+      runtimeContract: artifact(`${origin}${ONTOS_SHELL_RUNTIME_CONTRACT_PATH}`, shellContract),
+    },
+    validity: Duration.minutes(30),
+  });
+  const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot);
+  const encoded = yield* encodeActiveApplicationCompositionSnapshot(approved);
+  const [runtimeUrl, adminUrl] = yield* Effect.all([
+    Config.String('DATABASE_URL'),
+    Config.String('DATABASE_ADMIN_URL'),
+  ]);
+  const connections = yield* parseDatabaseConnectionPair({ DATABASE_ADMIN_URL: adminUrl, DATABASE_URL: runtimeUrl });
+  if (
+    connections.admin.host !== connections.runtime.host ||
+    connections.admin.port !== connections.runtime.port ||
+    connections.admin.database !== connections.runtime.database
+  ) {
+    return yield* fixtureError('The modularity proof requires one explicit administrative and runtime database');
+  }
+  const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
+  const adminDatabase = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+  yield* Effect.acquireRelease(
+    adminDatabase.transaction((transaction) =>
+      Effect.gen(function* publishFixtureAuthority() {
+        yield* lockApplicationCompositionPublication(transaction);
+        const existing = yield* transaction.select().from(applicationCompositionAuthority);
+        if (existing.length !== 0) {
+          yield* fixtureError('The modularity proof requires an empty native composition authority');
+        }
+        yield* publishApplicationCompositionAuthority(transaction, approved);
+      }),
+    ),
+    () =>
+      adminDatabase
+        .transaction((transaction) =>
+          Effect.gen(function* cleanupFixtureAuthority() {
+            yield* lockApplicationCompositionPublication(transaction);
+            const rows = yield* transaction.select().from(applicationCompositionAuthority);
+            const [current] = rows;
+            if (
+              rows.length !== 1 ||
+              current?.revision !== approved.composition.revision ||
+              current.validUntil.getTime() !== DateTime.toEpochMillis(approved.validUntil) ||
+              current.phase !== 'active' ||
+              current.durableWorkAdmission !== 'open'
+            ) {
+              yield* fixtureError('The modularity proof no longer owns the native composition authority');
+            }
+            yield* transaction
+              .delete(applicationCompositionAuthority)
+              .where(
+                and(
+                  eq(applicationCompositionAuthority.authorityKey, 'active'),
+                  eq(applicationCompositionAuthority.revision, approved.composition.revision),
+                  eq(applicationCompositionAuthority.validUntil, DateTime.toDateUtc(approved.validUntil)),
+                  eq(applicationCompositionAuthority.phase, 'active'),
+                  eq(applicationCompositionAuthority.durableWorkAdmission, 'open'),
+                ),
+              );
+          }),
+        )
+        .pipe(Effect.orDie),
+  );
+  yield* Ref.set(
+    documents,
+    new Map([
+      ['/active', encoded],
+      [ONTOS_MODULE_CONTRACT_PATH, contractDocument],
+      [ONTOS_SHELL_RUNTIME_CONTRACT_PATH, shellContract],
+      ['/mf-manifest.json', shellManifest],
+    ]),
+  );
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      const buildMarker = Object.getOwnPropertyDescriptor(globalThis, 'ULTRAMODERN_BUILD_MARKER');
+      const sourceRevision = Object.getOwnPropertyDescriptor(globalThis, 'ULTRAMODERN_SOURCE_REVISION');
+      Reflect.set(globalThis, 'ULTRAMODERN_BUILD_MARKER', identity.buildMarker);
+      Reflect.set(globalThis, 'ULTRAMODERN_SOURCE_REVISION', identity.sourceRevision);
+      return { buildMarker, sourceRevision };
+    }),
+    (previous) =>
+      Effect.sync(() => {
+        for (const [name, descriptor] of [
+          ['ULTRAMODERN_BUILD_MARKER', previous.buildMarker],
+          ['ULTRAMODERN_SOURCE_REVISION', previous.sourceRevision],
+        ] as const) {
+          if (descriptor === undefined) {
+            Reflect.deleteProperty(globalThis, name);
+          } else {
+            Object.defineProperty(globalThis, name, descriptor);
+          }
+        }
+      }),
+  );
+  expect(approved.composition.modules.map(({ deployment }) => deployment.appId)).toEqual([gatewayAudience]);
+  expect(approved.composition.modules[0]?.federation.execution).toBe('server');
+  return {
+    configuration: ConfigProvider.fromUnknown({ ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: `${origin}/active` }).pipe(
+      ConfigProvider.orElse(ConfigProvider.fromEnv()),
+    ),
+    revision: approved.composition.revision,
+    targetBuildMarker: moduleContract.deployment.buildMarker,
+  };
+});
 
 const principalIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PrincipalId'));
 const tenantIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand('TenantId'));
@@ -211,6 +468,7 @@ const requestFor = (
 it.live(
   'proves the default Shell runtime starts and serves staff authentication without Commerce',
   Effect.fnUntraced(function* leanCoreModularityProof() {
+    const composition = yield* acquireLeanCoreComposition();
     const configuration = yield* loadAuthConfig();
     const coreClient = yield* makeTestPgClient(configuration.connectionString);
     const coreDatabase = yield* makeTestDatabaseFromClient(coreClient, coreRelations);
@@ -320,8 +578,12 @@ it.live(
     yield* writeSpiceDbRelationships(spiceDbClient, spiceDbRelationships, v1.RelationshipUpdate_Operation.TOUCH);
 
     const shellApi = yield* Effect.tryPromise(() => import('../../apps/shell-super-app/api/index.ts'));
+    const configuredShellApi = defineEffectBff({
+      ...shellApi.default,
+      layer: shellApi.default.layer.pipe(Layer.provide(ConfigProvider.layer(composition.configuration))),
+    });
     const handler = yield* Effect.acquireRelease(
-      Effect.sync(() => shellApi.default.createHandler()),
+      Effect.sync(() => configuredShellApi.createHandler()),
       (createdHandler) => Effect.tryPromise(() => createdHandler.dispose()).pipe(Effect.orDie),
     );
 
@@ -392,7 +654,7 @@ it.live(
     const gatewayResponse = yield* Effect.tryPromise(() =>
       handler.handler(
         requestFor(configuration.baseUrl, '/auth/api-key/gateway-context', {
-          body: { audience: gatewayAudience },
+          body: { audience: gatewayAudience, compositionRevision: composition.revision },
           headers: { 'x-api-key': issuedApiKey.secret },
           method: 'POST',
         }),
@@ -404,6 +666,9 @@ it.live(
     );
     const gatewayClaims = Schema.decodeUnknownSync(GatewayContextV2ClaimsSchema)(decodeJwt(gateway.token));
     // T27: the API-key gateway context (v2) resolves for the freshly issued self API key.
+    expect(gateway.compositionRevision).toBe(composition.revision);
+    expect(gatewayClaims.compositionRevision).toBe(composition.revision);
+    expect(gatewayClaims.targetBuildMarker).toBe(composition.targetBuildMarker);
     expect(gatewayClaims.aud).toBe(gatewayAudience);
     expect(gatewayClaims.principal.authMethod).toBe('api_key');
     expect(gatewayClaims.principal.authenticationNamespaceId).toBe(STAFF_AUTHENTICATION_NAMESPACE_ID);
@@ -417,6 +682,7 @@ it.live(
           body: {
             authenticationNamespaceId: 'unknown.absent.better-auth.v1',
             authenticationRef: `lean-core-absent-${randomUUID()}`,
+            compositionRevision: composition.revision,
             providerSubjectId: `absent-provider-subject-${randomUUID()}`,
             subjectType: 'user',
           },
@@ -571,5 +837,5 @@ it.live(
     expect(stopped.checkpointPending).toBe(false);
 
     return yield* Effect.void;
-  }),
+  }, Effect.provide(NodeServices.layer)),
 );

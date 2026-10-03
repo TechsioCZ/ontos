@@ -407,6 +407,10 @@ it('aligns public proof roots and cleans its exact temporary directory when the 
   const bin = path.join(directory, 'bin');
   const argumentsFile = path.join(directory, 'producer-arguments');
   const invocationFile = path.join(directory, 'native-proof-invocation');
+  const cryptoInvocationFile = path.join(directory, 'native-crypto-invocations');
+  const shellFile = path.join(artifactRoot, 'apps/shell-super-app/.output/.dev.vars');
+  const partyFile = path.join(artifactRoot, 'verticals/party-registry/.output/.dev.vars');
+  const proofDirectoryPrefix = 'ontos-workerd-proof.';
   try {
     mkdirSync(bin);
     mkdirSync(metadataRoot);
@@ -415,7 +419,20 @@ it('aligns public proof roots and cleans its exact temporary directory when the 
     const producer = path.join(bin, 'node');
     writeFileSync(
       producer,
-      '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\ncase "$1" in\n--artifact-root|--intent-file) printf "%s=%s\\n" "$1" "$2" >> "$PROOF_TEST_ARGUMENTS"; shift 2;;\n*) shift;;\nesac\ndone\n',
+      [
+        '#!/bin/sh',
+        'if [ "$#" -eq 3 ] && [ "$1" = "--input-type=module" ] && [ "$2" = "-e" ] && [ "$3" = \'import { randomBytes } from "node:crypto"; process.stdout.write(randomBytes(32).toString("hex"));\' ]; then',
+        String.raw`printf "crypto\n" >> "$PROOF_TEST_CRYPTO_INVOCATIONS"`,
+        'exec "$PROOF_TEST_NATIVE_NODE" "$@"',
+        'fi',
+        'while [ "$#" -gt 0 ]; do',
+        'case "$1" in',
+        String.raw`--artifact-root|--intent-file) printf "%s=%s\n" "$1" "$2" >> "$PROOF_TEST_ARGUMENTS"; shift 2;;`,
+        '*) shift;;',
+        'esac',
+        'done',
+        '',
+      ].join('\n'),
     );
     chmodSync(producer, 0o700);
     const nativeProof = path.join(bin, 'ultramodern-create');
@@ -424,26 +441,67 @@ it('aligns public proof roots and cleans its exact temporary directory when the 
       '#!/bin/sh\ntest -d "$(dirname "$ULTRAMODERN_WORKERD_PROOF_FIXTURE")" || exit 43\nprintf "%s\\n" "$ULTRAMODERN_WORKERD_PROOF_FIXTURE" > "$PROOF_TEST_INVOCATION"\nexit 42\n',
     );
     chmodSync(nativeProof, 0o700);
+    const proofEnv = {
+      PATH: `${bin}:/usr/bin:/bin`,
+      PROOF_TEST_ARGUMENTS: argumentsFile,
+      PROOF_TEST_CRYPTO_INVOCATIONS: cryptoInvocationFile,
+      PROOF_TEST_INVOCATION: invocationFile,
+      PROOF_TEST_NATIVE_NODE: process.execPath,
+      RUNNER_TEMP: directory,
+      ULTRAMODERN_WORKERD_ARTIFACT_ROOT: artifactRoot,
+      ULTRAMODERN_WORKSPACE_ROOT: metadataRoot,
+    };
     const result = spawnSync('/bin/sh', ['-c', command], {
       cwd: path.resolve(import.meta.dirname, '../..'),
       encoding: 'utf-8',
-      env: {
-        PATH: `${bin}:/usr/bin:/bin`,
-        PROOF_TEST_ARGUMENTS: argumentsFile,
-        PROOF_TEST_INVOCATION: invocationFile,
-        RUNNER_TEMP: directory,
-        ULTRAMODERN_WORKERD_ARTIFACT_ROOT: artifactRoot,
-        ULTRAMODERN_WORKSPACE_ROOT: metadataRoot,
-      },
+      env: proofEnv,
     });
     expect(result.status).toBe(42);
     expect(readFileSync(argumentsFile, 'utf-8')).toBe(
       `--intent-file=${path.join(metadataRoot, 'topology/application-release-intent.json')}\n--artifact-root=${artifactRoot}\n`,
     );
-    expect(readFileSync(invocationFile, 'utf-8')).toContain(path.join(directory, 'ontos-workerd-proof.'));
-    expect(existsSync(path.join(artifactRoot, 'apps/shell-super-app/.output/.dev.vars'))).toBe(true);
-    expect(existsSync(path.join(artifactRoot, 'verticals/party-registry/.output/.dev.vars'))).toBe(true);
-    expect(readdirSync(directory).some((name) => name.startsWith('ontos-workerd-proof.'))).toBe(false);
+    expect(readFileSync(invocationFile, 'utf-8')).toContain(path.join(directory, proofDirectoryPrefix));
+    expect(existsSync(shellFile)).toBe(true);
+    expect(existsSync(partyFile)).toBe(true);
+    expect(readdirSync(directory).some((name) => name.startsWith(proofDirectoryPrefix))).toBe(false);
+    const shellFields = readFileSync(shellFile, 'utf-8').trim().split('\n');
+    const partyFields = readFileSync(partyFile, 'utf-8').trim().split('\n');
+    const existingKeys = [
+      'CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE',
+      'SPICEDB_ENDPOINT',
+      'SPICEDB_PRESHARED_KEY',
+    ];
+    expect(partyFields.length).toBe(3);
+    expect(partyFields.map((line) => line.split('=', 1)[0])).toEqual(expect.arrayContaining(existingKeys));
+    expect(shellFields.length).toBe(5);
+    expect(shellFields.map((line) => line.split('=', 1)[0])).toEqual(
+      expect.arrayContaining([...existingKeys, 'BETTER_AUTH_URL', 'BETTER_AUTH_SECRET']),
+    );
+    const authUrl = shellFields.find((line) => line.startsWith('BETTER_AUTH_URL='))?.slice('BETTER_AUTH_URL='.length);
+    expect(authUrl).toBe('http://localhost:8787');
+    expect(new URL(authUrl ?? '').protocol).toBe('http:');
+    const firstSecret = shellFields
+      .find((line) => line.startsWith('BETTER_AUTH_SECRET='))
+      ?.slice('BETTER_AUTH_SECRET='.length);
+    expect(firstSecret?.trim().length ?? 0).toBeGreaterThanOrEqual(32);
+    expect(/^[a-f\d]{64}$/u.test(firstSecret ?? '')).toBe(true);
+    expect(readFileSync(cryptoInvocationFile, 'utf-8')).toBe('crypto\n');
+
+    const repeated = spawnSync('/bin/sh', ['-c', command], {
+      cwd: path.resolve(import.meta.dirname, '../..'),
+      encoding: 'utf-8',
+      env: proofEnv,
+    });
+    expect(repeated.status).toBe(42);
+    expect(readdirSync(directory).some((name) => name.startsWith(proofDirectoryPrefix))).toBe(false);
+    const secondSecret = readFileSync(shellFile, 'utf-8')
+      .split('\n')
+      .find((line) => line.startsWith('BETTER_AUTH_SECRET='))
+      ?.slice('BETTER_AUTH_SECRET='.length);
+    expect(secondSecret?.trim().length ?? 0).toBeGreaterThanOrEqual(32);
+    expect(/^[a-f\d]{64}$/u.test(secondSecret ?? '')).toBe(true);
+    expect(secondSecret !== firstSecret).toBe(true);
+    expect(readFileSync(cryptoInvocationFile, 'utf-8')).toBe('crypto\ncrypto\n');
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }

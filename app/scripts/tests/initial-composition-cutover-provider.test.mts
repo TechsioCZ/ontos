@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { ConfigProvider, Effect, Fiber, Layer, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
@@ -8,9 +10,17 @@ import {
   quiesceInitialCutoverProviderInventory,
   verifyInitialCutoverProviderInventory,
 } from '../initial-composition-cutover-provider.mts';
+import { ONTOS_APPLICATION_COMPOSITION_MAX_BYTES } from '../../packages/core-runtime/src/modules/application-composition-limits.ts';
+
 import { ZeropsPublicApiLive } from '../zerops-public-api.mts';
 
 const accountId = 'a'.repeat(32);
+const namespaceId = 'c'.repeat(32);
+const obsoletePointer = '\uFEFFobsolete pointer bytes\n';
+const compositionPointer = { namespaceId, sha256: createHash('sha256').update(obsoletePointer).digest('hex') };
+const namespacePath = `/client/v4/accounts/${accountId}/storage/kv/namespaces/${namespaceId}`;
+const pointerPath = `${namespacePath}/values/active`;
+const nativeNamespace = () => Response.json({ errors: [], result: { id: namespaceId }, success: true });
 const legacyServiceId = 'legacy-node';
 const deletionProcessId = 'delete-process';
 const deletionProcessPath = `/api/rest/public/process/${deletionProcessId}`;
@@ -18,7 +28,7 @@ const cloudflareToken = 'secret-cloudflare-token';
 const cloudflarePath = `/client/v4/accounts/${accountId}/workers/scripts/legacy-worker`;
 const zeropsPath = '/api/rest/public/service-stack/legacy-node';
 const inventory = {
-  cloudflare: { accountId, workerNames: ['legacy-worker'] },
+  cloudflare: { accountId, compositionPointer, workerNames: ['legacy-worker'] },
   zeropsServiceIds: [legacyServiceId],
 };
 const absentWorker = () => Response.json({ errors: [{ code: 10_007 }], success: false }, { status: 404 });
@@ -26,11 +36,18 @@ const absentService = () => Response.json({ error: { code: 'serviceStackNotFound
 const service = (status: string) =>
   Response.json({ base: 'alpine/nodejs@24', isSystem: false, name: legacyServiceId, status, subdomainAccess: false });
 
-const provider = (answer: (method: string, url: URL) => Effect.Effect<Response>) => {
+const provider = (
+  answer: (method: string, url: URL) => Effect.Effect<Response>,
+  pointerAnswer: (method: string, url: URL) => Effect.Effect<Response> = (_method, url) =>
+    Effect.succeed(url.pathname === namespacePath ? nativeNamespace() : new Response(null, { status: 404 })),
+) => {
   const requests: string[] = [];
   const client = HttpClient.make((request, url) => {
     requests.push(`${request.method} ${url.origin}${url.pathname}`);
-    return answer(request.method, url).pipe(Effect.map((response) => HttpClientResponse.fromWeb(request, response)));
+    const response = url.pathname.startsWith(namespacePath)
+      ? pointerAnswer(request.method, url)
+      : answer(request.method, url);
+    return response.pipe(Effect.map((value) => HttpClientResponse.fromWeb(request, value)));
   });
   const http = Layer.succeed(HttpClient.HttpClient, client);
   return {
@@ -54,7 +71,7 @@ it.effect('accepts only provider-confirmed absence of the exact retired inventor
       Effect.succeed(url.pathname === zeropsPath ? absentService() : absentWorker()),
     );
     yield* verifyInitialCutoverProviderInventory(inventory).pipe(Effect.provide(native.layer));
-    expect(native.requests).toHaveLength(2);
+    expect(native.requests).toHaveLength(4);
     expect(native.requests).toEqual(
       expect.arrayContaining([
         `GET https://api.app-prg1.zerops.io${zeropsPath}`,
@@ -144,7 +161,10 @@ it.effect('permanently retires the explicit inventory, then independently rechec
 
 it.effect('does not mistake a successful delete response for verified absence or drop mutated caller targets', () =>
   Effect.gen(function* rechecksTheOriginalTargets() {
-    const mutable = { cloudflare: { accountId, workerNames: ['legacy-worker'] }, zeropsServiceIds: [] };
+    const mutable = {
+      cloudflare: { accountId, compositionPointer, workerNames: ['legacy-worker'] },
+      zeropsServiceIds: [],
+    };
     const native = provider((method) => {
       if (method === 'DELETE') {
         mutable.cloudflare.workerNames.length = 0;
@@ -193,10 +213,14 @@ it.effect('shares one concurrency limit across both providers', () =>
       }),
     );
     yield* verifyInitialCutoverProviderInventory({
-      cloudflare: { accountId, workerNames: Array.from({ length: 6 }, (_, index) => `worker-${String(index)}`) },
+      cloudflare: {
+        accountId,
+        compositionPointer,
+        workerNames: Array.from({ length: 6 }, (_, index) => `worker-${String(index)}`),
+      },
       zeropsServiceIds: Array.from({ length: 6 }, (_, index) => `node-${String(index)}`),
     }).pipe(Effect.provide(native.layer));
-    expect(native.requests).toHaveLength(12);
+    expect(native.requests).toHaveLength(14);
     expect(maximum).toBeGreaterThan(1);
     expect(maximum).toBeLessThanOrEqual(4);
   }),
@@ -222,7 +246,7 @@ it.effect('keeps traversal identifiers in one encoded service path segment and r
       return Effect.succeed(nodeDeleted ? absentService() : service('ACTIVE'));
     });
     yield* quiesceInitialCutoverProviderInventory({
-      cloudflare: { accountId, workerNames: [] },
+      cloudflare: { accountId, compositionPointer, workerNames: [] },
       zeropsServiceIds: [serviceId],
     }).pipe(Effect.provide(native.layer));
     expect(native.requests).toEqual([
@@ -230,10 +254,14 @@ it.effect('keeps traversal identifiers in one encoded service path segment and r
       `DELETE https://api.app-prg1.zerops.io${exactPath}`,
       'GET https://api.app-prg1.zerops.io/api/rest/public/process/delete-process',
       `GET https://api.app-prg1.zerops.io${exactPath}`,
+      `GET https://api.cloudflare.com${namespacePath}`,
+      `GET https://api.cloudflare.com${pointerPath}`,
+      `GET https://api.cloudflare.com${namespacePath}`,
+      `GET https://api.cloudflare.com${pointerPath}`,
     ]);
     for (const dot of ['.', '..']) {
       const forbidden = provider(() => Effect.succeed(absentService()));
-      const input = { cloudflare: { accountId, workerNames: [] }, zeropsServiceIds: [dot] };
+      const input = { cloudflare: { accountId, compositionPointer, workerNames: [] }, zeropsServiceIds: [dot] };
       yield* verifyInitialCutoverProviderInventory(input).pipe(Effect.provide(forbidden.layer), Effect.flip);
       yield* quiesceInitialCutoverProviderInventory(input).pipe(Effect.provide(forbidden.layer), Effect.flip);
       expect(forbidden.requests).toHaveLength(0);
@@ -259,7 +287,7 @@ it.effect('rejects database, storage, system, missing, and unknown service ident
         ),
       );
       const error = yield* quiesceInitialCutoverProviderInventory({
-        cloudflare: { accountId, workerNames: [] },
+        cloudflare: { accountId, compositionPointer, workerNames: [] },
         zeropsServiceIds: [legacyServiceId],
       }).pipe(Effect.provide(native.layer), Effect.flip);
       expect(Schema.is(InitialCutoverProviderError)(error)).toBe(true);
@@ -277,7 +305,7 @@ it.effect('rejects a finished native deletion process while the old service rema
       return Effect.succeed(service('STOPPED'));
     });
     const error = yield* quiesceInitialCutoverProviderInventory({
-      cloudflare: { accountId, workerNames: [] },
+      cloudflare: { accountId, compositionPointer, workerNames: [] },
       zeropsServiceIds: [legacyServiceId],
     }).pipe(Effect.provide(native.layer), Effect.flip);
     expect(error.provider).toBe('zerops');
@@ -295,7 +323,7 @@ it.effect('bounds an unfinished native deletion process without claiming retirem
       ),
     );
     const fiber = yield* quiesceInitialCutoverProviderInventory({
-      cloudflare: { accountId, workerNames: [] },
+      cloudflare: { accountId, compositionPointer, workerNames: [] },
       zeropsServiceIds: [legacyServiceId],
     }).pipe(Effect.provide(native.layer), Effect.flip, Effect.forkChild);
     yield* TestClock.adjust('15 minutes');
@@ -305,5 +333,203 @@ it.effect('bounds an unfinished native deletion process without claiming retirem
     expect(
       native.requests.filter((request) => request === `GET https://api.app-prg1.zerops.io${zeropsPath}`),
     ).toHaveLength(1);
+  }),
+);
+
+it.effect(
+  'retires only the reviewed raw pointer after all executable absence checks and independently verifies deletion',
+  () =>
+    Effect.gen(function* retiresReviewedPointerAfterExecutables() {
+      let pointerPresent = true;
+      const native = provider(
+        (_method, url) => Effect.succeed(url.pathname === zeropsPath ? absentService() : absentWorker()),
+        (method, url) => {
+          if (url.pathname === namespacePath) {
+            return Effect.succeed(nativeNamespace());
+          }
+          if (method === 'DELETE') {
+            expect(native.requests).toContain(`GET https://api.app-prg1.zerops.io${zeropsPath}`);
+            expect(native.requests).toContain(`GET https://api.cloudflare.com${cloudflarePath}`);
+            pointerPresent = false;
+            return Effect.succeed(Response.json({ errors: [], success: true }));
+          }
+          return Effect.succeed(pointerPresent ? new Response(obsoletePointer) : new Response(null, { status: 404 }));
+        },
+      );
+      yield* quiesceInitialCutoverProviderInventory(inventory).pipe(Effect.provide(native.layer));
+      const firstPointerRead = native.requests.indexOf(`GET https://api.cloudflare.com${namespacePath}`);
+      expect(firstPointerRead).toBe(4);
+      expect(native.requests.slice(firstPointerRead)).toEqual([
+        `GET https://api.cloudflare.com${namespacePath}`,
+        `GET https://api.cloudflare.com${pointerPath}`,
+        `DELETE https://api.cloudflare.com${pointerPath}`,
+        `GET https://api.cloudflare.com${namespacePath}`,
+        `GET https://api.cloudflare.com${pointerPath}`,
+      ]);
+    }),
+);
+
+it.effect('rejects changed obsolete bytes and a replacement pointer before any key deletion', () =>
+  Effect.gen(function* protectsUnreviewedPointerBytes() {
+    for (const body of [
+      obsoletePointer.slice(1),
+      `${obsoletePointer}\n`,
+      JSON.stringify({ composition: { schemaVersion: '2' } }),
+    ]) {
+      const native = provider(
+        (_method, url) => Effect.succeed(url.pathname === zeropsPath ? absentService() : absentWorker()),
+        (_method, url) => Effect.succeed(url.pathname === namespacePath ? nativeNamespace() : new Response(body)),
+      );
+      const error = yield* quiesceInitialCutoverProviderInventory(inventory).pipe(
+        Effect.provide(native.layer),
+        Effect.flip,
+      );
+      expect(Schema.is(InitialCutoverProviderError)(error)).toBe(true);
+      expect(native.requests.filter((request) => request.startsWith('DELETE '))).toEqual([]);
+    }
+  }),
+);
+
+it.effect('requires authenticated exact namespace identity before trusting raw-value absence', () =>
+  Effect.gen(function* rejectsUnprovedNamespace() {
+    const answers = [
+      () => new Response(null, { status: 404 }),
+      () => new Response(null, { status: 403 }),
+      () => new Response(null, { headers: { location: 'https://untrusted.example/' }, status: 302 }),
+      () => Response.json({ errors: [], result: { id: 'd'.repeat(32) }, success: true }),
+      () => Response.json({ errors: [], result: { id: namespaceId }, success: false }),
+      () => Response.json({ errors: [{ code: 10_000 }], result: { id: namespaceId }, success: true }),
+      () => Response.json({ errors: [], success: true }),
+      () => new Response(cloudflareToken),
+    ];
+    for (const answer of answers) {
+      const native = provider(
+        (_method, url) => Effect.succeed(url.pathname === zeropsPath ? absentService() : absentWorker()),
+        () => Effect.succeed(answer()),
+      );
+      const error = yield* quiesceInitialCutoverProviderInventory(inventory).pipe(
+        Effect.provide(native.layer),
+        Effect.flip,
+      );
+      expect(Schema.is(InitialCutoverProviderError)(error)).toBe(true);
+      expect(JSON.stringify(error)).not.toContain(cloudflareToken);
+      expect(native.requests.some((request) => request.endsWith(pointerPath))).toBe(false);
+    }
+  }),
+);
+
+it.effect('does not accept deletion acknowledgement without native pointer absence', () =>
+  Effect.gen(function* rejectsFailedOrUnobservedPointerDeletion() {
+    const answers = [
+      () => new Response(null, { status: 403 }),
+      () => new Response(null, { headers: { location: 'https://untrusted.example/' }, status: 302 }),
+      () => Response.json({ errors: [], success: false }),
+      () => Response.json({ errors: [{ code: 10_000 }], success: true }),
+      () => new Response(cloudflareToken),
+      () => Response.json({ errors: [], success: true }),
+    ];
+    for (const answer of answers) {
+      const native = provider(
+        (_method, url) => Effect.succeed(url.pathname === zeropsPath ? absentService() : absentWorker()),
+        (method, url) => {
+          if (url.pathname === namespacePath) {
+            return Effect.succeed(nativeNamespace());
+          }
+          return Effect.succeed(method === 'DELETE' ? answer() : new Response(obsoletePointer));
+        },
+      );
+      const error = yield* quiesceInitialCutoverProviderInventory(inventory).pipe(
+        Effect.provide(native.layer),
+        Effect.flip,
+      );
+      expect(Schema.is(InitialCutoverProviderError)(error)).toBe(true);
+      expect(JSON.stringify(error)).not.toContain(cloudflareToken);
+      expect(native.requests.filter((request) => request.startsWith('DELETE '))).toEqual([
+        `DELETE https://api.cloudflare.com${pointerPath}`,
+      ]);
+    }
+  }),
+);
+
+it.effect('does not delete an already absent pointer and rejects any pointer before first publication', () =>
+  Effect.gen(function* requiresFreshPointerAbsence() {
+    const absent = provider((_method, url) =>
+      Effect.succeed(url.pathname === zeropsPath ? absentService() : absentWorker()),
+    );
+    yield* quiesceInitialCutoverProviderInventory(inventory).pipe(Effect.provide(absent.layer));
+    expect(absent.requests.some((request) => request.startsWith('DELETE '))).toBe(false);
+    for (const status of [200, 302, 401, 403, 500]) {
+      const native = provider(
+        (_method, url) => Effect.succeed(url.pathname === zeropsPath ? absentService() : absentWorker()),
+        (_method, url) =>
+          Effect.succeed(url.pathname === namespacePath ? nativeNamespace() : new Response(null, { status })),
+      );
+      const error = yield* verifyInitialCutoverProviderInventory(inventory).pipe(
+        Effect.provide(native.layer),
+        Effect.flip,
+      );
+      expect(Schema.is(InitialCutoverProviderError)(error)).toBe(true);
+      expect(native.requests.some((request) => request.startsWith('DELETE '))).toBe(false);
+    }
+  }),
+);
+
+it.effect('bounds streamed raw pointer bytes before hashing even when the reviewed digest matches', () =>
+  Effect.gen(function* limitsRawPointerBytesBeforeDelete() {
+    const bytes = new Uint8Array(ONTOS_APPLICATION_COMPOSITION_MAX_BYTES + 1).fill(32);
+    const input = {
+      ...inventory,
+      cloudflare: {
+        ...inventory.cloudflare,
+        compositionPointer: { namespaceId, sha256: createHash('sha256').update(bytes).digest('hex') },
+      },
+    };
+    let deleted = false;
+    const native = provider(
+      (_method, url) => Effect.succeed(url.pathname === zeropsPath ? absentService() : absentWorker()),
+      (method, url) => {
+        if (url.pathname === namespacePath) {
+          return Effect.succeed(nativeNamespace());
+        }
+        if (method === 'DELETE') {
+          deleted = true;
+          return Effect.succeed(Response.json({ errors: [], success: true }));
+        }
+        return Effect.succeed(
+          deleted
+            ? new Response(null, { status: 404 })
+            : new Response(
+                new ReadableStream({
+                  start(controller) {
+                    controller.enqueue(bytes);
+                    controller.close();
+                  },
+                }),
+              ),
+        );
+      },
+    );
+    const error = yield* quiesceInitialCutoverProviderInventory(input).pipe(Effect.provide(native.layer), Effect.flip);
+    expect(Schema.is(InitialCutoverProviderError)(error)).toBe(true);
+    expect(deleted).toBe(false);
+  }),
+);
+
+it.effect('bounds a stalled obsolete pointer stream without deleting the key', () =>
+  Effect.gen(function* timesOutPointerStream() {
+    const native = provider(
+      (_method, url) => Effect.succeed(url.pathname === zeropsPath ? absentService() : absentWorker()),
+      (_method, url) =>
+        Effect.succeed(url.pathname === namespacePath ? nativeNamespace() : new Response(new ReadableStream())),
+    );
+    const fiber = yield* quiesceInitialCutoverProviderInventory(inventory).pipe(
+      Effect.provide(native.layer),
+      Effect.flip,
+      Effect.forkChild,
+    );
+    yield* TestClock.adjust('10 seconds');
+    const error = yield* Fiber.join(fiber);
+    expect(error.reason).toBe('provider operation timed out');
+    expect(native.requests.some((request) => request.startsWith('DELETE '))).toBe(false);
   }),
 );
