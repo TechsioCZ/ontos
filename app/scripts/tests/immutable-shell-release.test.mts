@@ -743,7 +743,10 @@ for (const secretResponse of [
             Match.orElse(() => false),
           );
           const firstRobotsResponseObserved = yield* Deferred.make<boolean>();
-          const initialRobotsResponse = new Response(text('User-agent: *\nDisallow: /\n'), { status: 200 });
+          const initialRobotsResponse = new Response(text('User-agent: *\nDisallow: /\n'), {
+            headers: { 'cache-control': 'max-age=0' },
+            status: 200,
+          });
           let robotsRequests = 0;
           const firstAssetResponseObserved = yield* Deferred.make<boolean>();
           const mainAssetBytes = yield* fileSystem.readFile(nodePath.join(publicDirectory, 'main.js'));
@@ -881,7 +884,7 @@ for (const secretResponse of [
             yield* Deferred.await(firstRobotsResponseObserved);
             expect(requests.filter((url) => url === robotsUrl)).toEqual([robotsUrl]);
             expect(initialRobotsResponse.headers.get('access-control-allow-origin')).toBeNull();
-            expect(initialRobotsResponse.headers.get('cache-control')).toBeNull();
+            expect(initialRobotsResponse.headers.get('cache-control')).toBe('max-age=0');
             expect(initialRobotsResponse.headers.get('x-content-type-options')).toBeNull();
           }
           yield* TestClock.adjust('1 second');

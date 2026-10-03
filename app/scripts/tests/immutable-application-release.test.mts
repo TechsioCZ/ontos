@@ -84,10 +84,22 @@ const text = (value: string) => new TextEncoder().encode(value);
 const json = (value: Schema.Json) => text(JSON.stringify(value));
 const file = (path: string, bytes = text('retained release bytes')) => ({ bytes, path });
 
-const applyUnreadyCorsHeader = (headers: Headers, mode: string | undefined): void => {
+const applyUnreadyHeaders = (
+  headers: Headers,
+  policy: { readonly cacheControl?: string; readonly mode: string } | undefined,
+): void => {
+  const mode = policy?.mode;
+  const cacheControl = policy?.cacheControl;
   headers.delete('access-control-allow-origin');
   if (mode === 'empty-cors') {
     headers.set('access-control-allow-origin', '');
+  }
+  if (mode === ALL_ABSENT_HEADERS) {
+    headers.delete('cache-control');
+    headers.delete('x-content-type-options');
+    if (cacheControl !== undefined) {
+      headers.set('cache-control', cacheControl);
+    }
   }
 };
 
@@ -988,6 +1000,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly assetDeploymentPercentage?: number;
     readonly assetHeaderReadiness?: {
       readonly attempts: 'always' | 'once';
+      readonly cacheControl?: string;
       readonly mode: 'all-absent' | 'cors-absent' | 'empty-cors';
       readonly path: string;
       readonly stallBody?: boolean;
@@ -1317,10 +1330,8 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           Match.orElse(() => false),
         );
         if (unreadyHeaders) {
-          applyUnreadyCorsHeader(headers, options.assetHeaderReadiness?.mode);
+          applyUnreadyHeaders(headers, options.assetHeaderReadiness);
           if (options.assetHeaderReadiness?.mode === ALL_ABSENT_HEADERS) {
-            headers.delete('cache-control');
-            headers.delete('x-content-type-options');
             const startUnreadyBody = (controller: ReadableStreamDefaultController<Uint8Array>) => {
               controller.enqueue(text('controlled native default robots response'));
             };
@@ -1895,7 +1906,12 @@ it.effect(
       Effect.gen(function* transientRootRobotsReadiness() {
         const fixture = yield* prepareDeployment({
           additionalPublicFiles: [compiledRobots],
-          assetHeaderReadiness: { attempts: 'once', mode: ALL_ABSENT_HEADERS, path: ROBOTS_PATH },
+          assetHeaderReadiness: {
+            attempts: 'once',
+            cacheControl: 'max-age=0',
+            mode: ALL_ABSENT_HEADERS,
+            path: ROBOTS_PATH,
+          },
         });
         const fiber = yield* fixture.deploy.pipe(Effect.forkChild);
         yield* Deferred.await(fixture.assetHeadersNotReadyStarted);
@@ -1976,7 +1992,7 @@ it.effect('cancels a stalled unowned root robots body at the overall deadline wi
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-const nonretryableHeaderStates: readonly {
+const invalidHeaderStates: readonly {
   readonly mode: 'all-absent' | 'cors-absent' | 'empty-cors';
   readonly path: string;
 }[] = [
@@ -1984,21 +2000,34 @@ const nonretryableHeaderStates: readonly {
   { mode: 'empty-cors', path: ROBOTS_PATH },
   { mode: ALL_ABSENT_HEADERS, path: CONTRACT_PATH },
 ];
-for (const state of nonretryableHeaderStates) {
-  it.effect(`refuses nonretryable delivery headers immediately ${JSON.stringify(state)}`, () =>
-    Effect.scoped(
-      Effect.gen(function* nonretryableRootRobotsHeaders() {
-        const fixture = yield* prepareDeployment({
-          additionalPublicFiles: [compiledRobots],
-          assetHeaderReadiness: { ...state, attempts: 'always' },
-        });
-        const failure = yield* fixture.deploy.pipe(Effect.flip);
-        expect(failure.message).toBe(ASSET_READBACK_FAILURE);
-        const cause = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleaseError)(failure.cause);
-        expect(cause.cause).toMatchObject({ hasPublicCors: false, path: state.path, status: 200 });
-        expect(fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${state.path}`)).toHaveLength(1);
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+for (const state of invalidHeaderStates) {
+  it.effect(
+    `bounds invalid root robots headers and refuses other asset headers immediately ${JSON.stringify(state)}`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* nonretryableRootRobotsHeaders() {
+          const fixture = yield* prepareDeployment({
+            additionalPublicFiles: [compiledRobots],
+            assetHeaderReadiness: { ...state, attempts: 'always' },
+          });
+          const fiber = yield* fixture.deploy.pipe(Effect.flip, Effect.forkChild);
+          if (state.path === ROBOTS_PATH) {
+            yield* Deferred.await(fixture.assetHeadersNotReadyStarted);
+            yield* TestClock.adjust(READBACK_DEADLINE);
+          }
+          const failure = yield* Fiber.join(fiber);
+          expect(failure.message).toBe(ASSET_READBACK_FAILURE);
+          const cause = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleaseError)(failure.cause);
+          expect(cause.cause).toMatchObject({ hasPublicCors: false, path: state.path, status: 200 });
+          const attempts = fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${state.path}`);
+          if (state.path === ROBOTS_PATH) {
+            expect(attempts.length).toBeGreaterThan(1);
+            expect(attempts.length).toBeLessThanOrEqual(31);
+          } else {
+            expect(attempts).toHaveLength(1);
+          }
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 }
 

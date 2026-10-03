@@ -795,9 +795,7 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
         };
         if (
           file.path === 'robots.txt' &&
-          response.headers['access-control-allow-origin'] === undefined &&
-          response.headers['cache-control'] === undefined &&
-          response.headers['x-content-type-options'] === undefined
+          (!headerState.hasPublicCors || !headerState.hasImmutableCache || !headerState.hasNoSniff)
         ) {
           lastNotReady = new ImmutableAssetNotReady({
             cause: headerState,
