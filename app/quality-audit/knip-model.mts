@@ -40,6 +40,7 @@ const PackageSchema = Schema.Struct({
   devDependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   exports: Schema.optional(ExportsSchema),
   name: Schema.optional(Schema.String),
+  scripts: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   modernjs: Schema.optional(
     Schema.Struct({
       ontosModule: Schema.optional(
@@ -58,6 +59,7 @@ class KnipModelError extends Schema.TaggedError<KnipModelError>()('KnipModelErro
 }) {}
 
 const unprovenResolver = { kind: 'resolver-unproven' } as const;
+const playwrightPackageName = '@playwright/test';
 
 export const KnipModelEvidenceSchema = Schema.Struct({
   anchor: Schema.optional(Schema.String),
@@ -349,6 +351,26 @@ const evidenceAt = (
   target,
   workspace,
 });
+
+const staticObjectFields = (node: Node | undefined): ReadonlyMap<string, Node> | undefined => {
+  if (node?.type !== 'ObjectExpression') {
+    return undefined;
+  }
+  const fields = new Map<string, Node>();
+  for (const property of node.properties) {
+    if (property.type !== 'Property' || property.computed || property.kind !== 'init' || property.method) {
+      return undefined;
+    }
+    const name = propertyName(property.key);
+    if (name === undefined || fields.has(name)) {
+      return undefined;
+    }
+    fields.set(name, property.value);
+  }
+  return fields;
+};
+
+const isSingleLineCommand = (command: string): boolean => !/[\r\n\u2028\u2029]/u.test(command);
 
 interface ExportedBinding {
   readonly kind: 'export' | 'type';
@@ -1087,6 +1109,130 @@ const scopedVariables = (facts: SourceFacts, offset: number): ReadonlyMap<string
     FunctionExpression: recordParameters,
   }).visit(facts.program);
   return variables;
+};
+
+const importsPlaywrightDefineConfig = (facts: SourceFacts, name: string): boolean =>
+  facts.program.body.some(
+    (node) =>
+      node.type === 'ImportDeclaration' &&
+      node.importKind !== 'type' &&
+      node.source.value === playwrightPackageName &&
+      node.specifiers.some(
+        (binding) =>
+          binding.type === 'ImportSpecifier' &&
+          binding.importKind !== 'type' &&
+          propertyName(binding.imported) === 'defineConfig' &&
+          binding.local.name === name,
+      ),
+  );
+
+const playwrightConfigFields = (facts: SourceFacts): ReadonlyMap<string, Node> | undefined => {
+  const exported = facts.program.body.find((node) => node.type === 'ExportDefaultDeclaration');
+  const call = exported?.type === 'ExportDefaultDeclaration' ? exported.declaration : undefined;
+  if (call?.type !== 'CallExpression' || call.optional || call.arguments.length !== 1) {
+    return undefined;
+  }
+  const { callee } = call;
+  if (
+    callee.type !== 'Identifier' ||
+    scopedVariables(facts, call.start).has(callee.name) ||
+    !importsPlaywrightDefineConfig(facts, callee.name)
+  ) {
+    return undefined;
+  }
+  let modifiedDefineConfig = false;
+  new Visitor({
+    AssignmentExpression: (node) => {
+      if (node.left.type === 'Identifier' && node.left.name === callee.name) {
+        modifiedDefineConfig = true;
+      }
+    },
+    UpdateExpression: (node) => {
+      if (node.argument.type === 'Identifier' && node.argument.name === callee.name) {
+        modifiedDefineConfig = true;
+      }
+    },
+  }).visit(facts.program);
+  return modifiedDefineConfig ? undefined : staticObjectFields(call.arguments[0]);
+};
+
+const nodeCommandSource = (command: string | undefined): string | undefined => {
+  if (command === undefined || !isSingleLineCommand(command)) {
+    return undefined;
+  }
+  const script = /^[ \t]*node(?:[ \t]+--experimental-strip-types)?[ \t]+(?<script>[\w./@-]+\.[cm]?[jt]s)[ \t]*$/u.exec(
+    command,
+  )?.groups?.script;
+  return script?.startsWith('-') === false ? script : undefined;
+};
+
+const playwrightNodeSource = (
+  facts: SourceFacts,
+  server: Node | undefined,
+  manifestFile: string,
+  workspace: string,
+  ownerRoot: string,
+  path: Path.Path,
+): KnipModelEvidence | undefined => {
+  const fields = staticObjectFields(server);
+  const commandNode = fields?.get('command');
+  const script = nodeCommandSource(staticString(commandNode, new Map()));
+  const cwdNode = fields?.get('cwd');
+  const cwd = cwdNode === undefined ? '' : staticString(cwdNode, new Map());
+  if (script === undefined || cwd === undefined) {
+    return undefined;
+  }
+  const target = path.relative(ownerRoot, path.resolve(ownerRoot, cwd, script)).replaceAll('\\', '/');
+  if (target.startsWith('../') || path.isAbsolute(target)) {
+    return undefined;
+  }
+  return {
+    ...evidenceAt(
+      facts,
+      workspace,
+      'file',
+      target,
+      commandNode?.start ?? 0,
+      'Native Playwright webServer.command executes this source in its owning workspace',
+    ),
+    owningManifest: manifestFile,
+  };
+};
+
+/** Playwright starts webServer commands; Knip's native plugin discovers only tests and setup hooks. */
+const playwrightWebServerEvidence = (
+  facts: SourceFacts,
+  manifest: typeof PackageSchema.Type,
+  manifestFile: string,
+  workspace: string,
+  appRoot: string,
+  path: Path.Path,
+): KnipModelEvidence[] => {
+  const ownerRoot = path.resolve(appRoot, path.dirname(manifestFile));
+  const configuration = path.relative(ownerRoot, path.resolve(appRoot, facts.file));
+  if (
+    !/^playwright\.config\.[cm]?[jt]s$/u.test(configuration) ||
+    (manifest.dependencies?.[playwrightPackageName] === undefined &&
+      manifest.devDependencies?.[playwrightPackageName] === undefined) ||
+    !Object.values(manifest.scripts ?? {}).some(
+      (command) => isSingleLineCommand(command) && /^playwright[ \t]+test[ \t]*$/u.test(command),
+    )
+  ) {
+    return [];
+  }
+  const webServer = playwrightConfigFields(facts)?.get('webServer');
+  const servers = webServer?.type === 'ArrayExpression' ? webServer.elements : [webServer];
+  if (servers.some((server) => server?.type !== 'ObjectExpression')) {
+    return [];
+  }
+  const evidence: KnipModelEvidence[] = [];
+  for (const server of servers) {
+    const fact = playwrightNodeSource(facts, server ?? undefined, manifestFile, workspace, ownerRoot, path);
+    if (fact !== undefined) {
+      evidence.push(fact);
+    }
+  }
+  return evidence;
 };
 
 const nativeSubprocessEvidence = (
@@ -1910,6 +2056,9 @@ const workspaceModel = Effect.fn('QualityAudit.knipWorkspaceModel')(function* bu
       }
     }
     const directory = path.dirname(path.relative(path.resolve(appRoot, prefix), path.resolve(appRoot, file)));
+    for (const fact of playwrightWebServerEvidence(facts, manifest, manifestFile, workspace, appRoot, path)) {
+      add(fact);
+    }
     for (const fact of sourceEvidence(facts, workspace, directory, path, appRoot)) {
       add(fact);
     }

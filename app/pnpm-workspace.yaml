@@ -111,6 +111,10 @@ allowBuilds:
 patchedDependencies:
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/code-tools
   '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-code-tools@3.9.0-ultramodern.28.patch
+  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/cli/plugin-bff-build-extensions
+  '@bleedingdev/modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-plugin-bff-build-extensions@3.9.0-ultramodern.28.patch
+  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/cli/plugin-bff-extensions
+  '@bleedingdev/modern-js-plugin-bff-extensions@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-plugin-bff-extensions@3.9.0-ultramodern.28.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/runtime/plugin-tanstack
   '@bleedingdev/modern-js-plugin-tanstack@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-plugin-tanstack@3.9.0-ultramodern.28.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/ultramodern-create

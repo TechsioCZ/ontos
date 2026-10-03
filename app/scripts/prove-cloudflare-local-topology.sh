@@ -255,7 +255,7 @@ jar="$work/cookies"
 request() { # <output file> <curl args...>; prints the status
   local output="$1"
   shift
-  curl --silent --show-error --max-time 30 --cacert "$owner_certificate" --output "$output" --write-out '%{http_code}' \
+  curl --silent --show-error --compressed --max-time 30 --cacert "$owner_certificate" --output "$output" --write-out '%{http_code}' \
     --cookie "$jar" --cookie-jar "$jar" -H "origin: $shell_origin" "$@"
 }
 
@@ -385,7 +385,7 @@ party_search() { # <output file> [curl args...]
 anonymous_status="$(party_search "$work/party-anonymous.json" --dump-header "$work/party-anonymous.headers")"
 if [ "$anonymous_status" != 401 ]; then
   # Diagnose only: this direct owner request never replaces the required Shell gateway result.
-  direct_status="$(curl --silent --show-error --max-time 30 --cacert "$owner_certificate" \
+  direct_status="$(curl --silent --show-error --compressed --max-time 30 --cacert "$owner_certificate" \
     --output "$work/party-direct-anonymous.json" --write-out '%{http_code}' \
     -H 'content-type: application/json' -H "origin: $shell_origin" \
     -H "x-correlation-id: $(node -e 'console.log(crypto.randomUUID())')" \
@@ -436,41 +436,23 @@ check "Party Registry answers a governed read through the admitted native HTTPS 
   "$asserted_status"
 node -e '
   const fs = require("fs");
-  const raw = fs.readFileSync(process.argv[1]);
+  const decoded = fs.readFileSync(process.argv[1]);
   let results;
-  try { results = JSON.parse(raw.toString("utf8")); } catch {
+  try { results = JSON.parse(decoded.toString("utf8")); } catch {
     const headers = fs.readFileSync(process.argv[2], "utf8");
     const header = name => headers.split(/\r?\n/)
       .filter(line => line.toLowerCase().startsWith(name + ":"))
       .map(line => line.slice(line.indexOf(":") + 1).trim()).at(-1);
-    const encoding = header("content-encoding")?.toLowerCase() ?? "identity";
     const diagnostic = {
       status: headers.match(/^HTTP\/\S+\s+\d{3}[^\r\n]*/gm)?.at(-1)?.split(/\s+/)[1],
-      contentEncoding: encoding,
+      contentEncoding: header("content-encoding") ?? "identity",
       contentType: header("content-type"),
       declaredLength: header("content-length"),
-      rawByteLength: raw.length,
-      rawSha256: require("crypto").createHash("sha256").update(raw).digest("hex"),
-      rawPrefixHex: raw.subarray(0, 3).toString("hex"),
+      decodedByteLength: decoded.length,
+      decodedSha256: require("crypto").createHash("sha256").update(decoded).digest("hex"),
     };
-    try {
-      const zlib = require("zlib");
-      const options = { maxOutputLength: 1024 * 1024 };
-      const decoded = encoding === "gzip" ? zlib.gunzipSync(raw, options)
-        : encoding === "br" ? zlib.brotliDecompressSync(raw, options)
-        : encoding === "identity" ? raw : undefined;
-      if (decoded === undefined) throw new Error("Unsupported content coding");
-      const value = JSON.parse(decoded.toString("utf8"));
-      diagnostic.nativeDecode = {
-        coherent: true,
-        jsonType: Array.isArray(value) ? "array" : value === null ? "null" : typeof value,
-        arrayCount: Array.isArray(value) ? value.length : undefined,
-      };
-    } catch (error) {
-      diagnostic.nativeDecode = { coherent: false, errorName: error?.name ?? "UnknownError" };
-    }
-    console.error("Party Registry safe wire diagnostic:", JSON.stringify(diagnostic));
-    throw new Error("The native Party Registry response did not parse as JSON; safe wire diagnostic emitted");
+    console.error("Party Registry safe decoded-response diagnostic:", JSON.stringify(diagnostic));
+    throw new Error("The native Party Registry decoded response did not parse as JSON");
   }
   if (!Array.isArray(results)) {
     console.error("FAIL: the Party Registry read did not answer its result list", JSON.stringify(results));

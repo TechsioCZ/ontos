@@ -23,6 +23,7 @@ const directFile = 'src/direct.ts';
 const configurationFiles = '*.config.ts';
 const toolsPattern = 'tools/**/*.{ts,mts}';
 const sourcePattern = 'src/**/*.{ts,mts}';
+const allTypedSourcePattern = '**/*.{ts,mts}';
 const knipManifestFile = 'node_modules/knip/package.json';
 const indexFile = 'src/index.ts';
 const rstestConfigFile = 'rstest.config.ts';
@@ -33,6 +34,12 @@ const nativeRoutesWorkspace = 'apps/native-routes';
 const nativeRoutesRoot = `${nativeRoutesWorkspace}/src/routes/[lang]`;
 const nodeExecutableExpression = 'process.execPath';
 const nativeSubprocessReason = 'Native Node subprocess';
+const nativePlaywrightReason = 'Native Playwright webServer.command';
+const playwrightPackageName = '@playwright/test';
+const playwrightConfigFile = 'playwright.config.ts';
+const playwrightImportSource = `import { defineConfig } from '${playwrightPackageName}';`;
+const playwrightConfigSource = (server: string) =>
+  `${playwrightImportSource}\nexport default defineConfig({ webServer: ${server} });`;
 const scriptArgument = (name: string) => `paths.resolve('../../scripts/${name}.fixture.mts')`;
 const nativeInvocation = (name: string, executable = nodeExecutableExpression, options = '{}') =>
   `execute(${executable}, ['--experimental-strip-types', ${scriptArgument(name)}], ${options});`;
@@ -413,6 +420,133 @@ walk({ dirname: process.argv[2], rootDir: process.argv[2], entryName: 'index', i
 );
 
 it.live(
+  'native Playwright webServer commands consume only proven process sources and retain neighboring findings',
+  Effect.fn(function* nativePlaywrightConsumers() {
+    const root = yield* fixture();
+    write(root, packageFile, '{"name":"playwright-controls","type":"module","workspaces":["apps/*"]}');
+    const workspace = 'apps/native-playwright';
+    const manifestFile = `${workspace}/${packageFile}`;
+    const configFile = `${workspace}/${playwrightConfigFile}`;
+    const fixtureFile = 'tests/e2e/composition-fixture.mts';
+    const neighborFile = 'tests/e2e/unrelated.mts';
+    const unusedNeighbor = 'unusedFixtureNeighbor';
+    const manifest = {
+      devDependencies: { [playwrightPackageName]: '*' },
+      name: '@fixture/native-playwright',
+      scripts: { 'test:e2e': 'playwright test' },
+      type: 'module',
+    };
+    const manifestSource = yield* stringify(manifest);
+    write(root, manifestFile, manifestSource);
+    write(root, `${workspace}/${fixtureFile}`, `export const ${unusedNeighbor} = 1;`);
+    write(root, `${workspace}/${neighborFile}`, 'export const unused = 1;');
+    write(root, `${workspace}/--fixture.mts`, 'export const unusedOption = 1;');
+    // Parse the real native configuration without evaluating its environment or starting servers.
+    const actualSource = readFileSync(path.join(appRoot, 'apps/shell-super-app', playwrightConfigFile), 'utf-8');
+    write(root, configFile, actualSource);
+    const consumerPath = path.join(root, auditConsumersFile);
+    const base = {
+      workspaces: {
+        '.': { entry: [], node: false, project: [] },
+        'apps/*': {
+          entry: [playwrightConfigFile],
+          node: false,
+          playwright: { config: [], entry: ['tests/**/*.spec.ts'] },
+          project: [allTypedSourcePattern],
+        },
+      },
+    };
+    const native = yield* runPinnedKnip(root, consumerPath, { config: base, consumerSource: '' }).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    expect(native.status, native.stderr).toBe(1);
+    const nativeReport = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(native.stdout);
+    expect(nativeReport.issues.flatMap((issue) => issue.files.map((finding) => finding.name))).toContain(
+      `${workspace}/${fixtureFile}`,
+    );
+    const modeled = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    const processSources = modeled.evidence.filter((fact) => fact.reason.startsWith(nativePlaywrightReason));
+    expect(processSources.map((fact) => ({ owner: fact.owningManifest, target: fact.target }))).toEqual([
+      { owner: manifestFile, target: fixtureFile },
+    ]);
+    const run = yield* runPinnedKnip(root, consumerPath, modeled).pipe(Effect.provide(NodeServices.layer));
+    expect(run.status, run.stderr).toBe(1);
+    const report = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ReportSchema))(run.stdout);
+    const unusedFiles = report.issues.flatMap((issue) => issue.files.map((finding) => finding.name));
+    expect(unusedFiles).not.toContain(`${workspace}/${fixtureFile}`);
+    expect(unusedFiles).toContain(`${workspace}/${neighborFile}`);
+    expect(
+      report.issues
+        .find((issue) => issue.file === `${workspace}/${fixtureFile}`)
+        ?.exports.map((finding) => finding.name),
+    ).toContain(unusedNeighbor);
+
+    for (const server of [
+      `{ command: 'node --experimental-strip-types ${fixtureFile}' }`,
+      "{ command: 'node composition-fixture.mts', cwd: 'tests/e2e' }",
+    ]) {
+      write(root, configFile, playwrightConfigSource(server));
+      const positive = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+      expect(
+        positive.evidence.filter((fact) => fact.reason.startsWith(nativePlaywrightReason)).map((fact) => fact.target),
+      ).toEqual([fixtureFile]);
+    }
+    const command = `node ${fixtureFile}`;
+    const newlineCommand = JSON.stringify(`node\n${fixtureFile}`);
+    const invalidConfigurations = [
+      `export default { webServer: { command: '${command}' } };`,
+      `const defineConfig = (value) => value; export default defineConfig({ webServer: { command: '${command}' } });`,
+      `import { defineConfig } from './counterfeit.ts'; export default defineConfig({ webServer: { command: '${command}' } });`,
+      `import type { defineConfig } from '${playwrightPackageName}'; export default defineConfig({ webServer: { command: '${command}' } });`,
+      `${playwrightImportSource} defineConfig = (value) => value; export default defineConfig({ webServer: { command: '${command}' } });`,
+      `${playwrightImportSource} const alias = defineConfig; export default alias({ webServer: { command: '${command}' } });`,
+      `${playwrightImportSource} export default defineConfig(factory({ webServer: { command: '${command}' } }));`,
+      `${playwrightImportSource} export default defineConfig({ webServer: { command: '${command}' }, ...unknown });`,
+      `${playwrightImportSource} export default defineConfig({ webServer: { command: '${command}' }, webServer: {} });`,
+      playwrightConfigSource(`{ command: '${command}', command: 'printf ${fixtureFile}' }`),
+      playwrightConfigSource(`{ ['command']: '${command}' }`),
+      playwrightConfigSource(`{ get command() { return '${command}'; } }`),
+      playwrightConfigSource(`{ command: '${command}', ...unknown }`),
+      `${playwrightImportSource} const command = '${command}'; export default defineConfig({ webServer: { command } });`,
+      playwrightConfigSource(`{ command: 'printf ${fixtureFile}' }`),
+      playwrightConfigSource(`{ command: 'node -e ${fixtureFile}' }`),
+      playwrightConfigSource('{ command: "node --fixture.mts" }'),
+      playwrightConfigSource(`{ command: ${newlineCommand} }`),
+      playwrightConfigSource(`{ command: '${command} && echo ready' }`),
+      playwrightConfigSource(`{ command: '${command} data.mts' }`),
+      playwrightConfigSource(`{ command: '${command}', cwd: unknownDirectory }`),
+      playwrightConfigSource(`{ command: '${command}', cwd: '.', cwd: 'elsewhere' }`),
+      playwrightConfigSource(`{ command: 'node ../${fixtureFile}' }`),
+      playwrightConfigSource(`[{ command: '${command}' }, ...unknownServers]`),
+    ];
+    for (const source of invalidConfigurations) {
+      write(root, configFile, source);
+      const rejected = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+      expect(
+        rejected.evidence.some((fact) => fact.reason.startsWith(nativePlaywrightReason)),
+        source,
+      ).toBe(false);
+    }
+    write(root, configFile, actualSource);
+    for (const owner of [
+      { ...manifest, devDependencies: {} },
+      { ...manifest, scripts: { 'test:e2e': 'printf playwright test' } },
+      { ...manifest, scripts: { 'test:e2e': 'playwright\ntest' } },
+      { ...manifest, scripts: { 'test:e2e': 'playwright test --config foreign.config.ts' } },
+    ]) {
+      write(root, manifestFile, yield* stringify(owner));
+      const rejected = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+      expect(rejected.evidence.some((fact) => fact.reason.startsWith(nativePlaywrightReason))).toBe(false);
+    }
+    write(root, manifestFile, manifestSource);
+    write(root, configFile, 'export default {};');
+    write(root, `${workspace}/tests/${playwrightConfigFile}`, actualSource);
+    const foreignConfig = yield* buildKnipModel(root, base, consumerPath).pipe(Effect.provide(NodeServices.layer));
+    expect(foreignConfig.evidence.some((fact) => fact.reason.startsWith(nativePlaywrightReason))).toBe(false);
+  }),
+);
+
+it.live(
   'native subprocess consumers prove working directories and called parameter values without hiding neighbors',
   Effect.fn(function* nativeSubprocessConsumers() {
     const root = yield* fixture();
@@ -580,7 +714,7 @@ it.live(
         },
         'verticals/*': {
           entry: [indexFile, configurationFiles],
-          project: ['**/*.{ts,mts}'],
+          project: [allTypedSourcePattern],
         },
       },
     });
@@ -894,7 +1028,7 @@ it.live(
           },
           'verticals/*': {
             entry: [indexFile, configurationFiles],
-            project: ['**/*.{ts,mts}'],
+            project: [allTypedSourcePattern],
           },
         },
       }),

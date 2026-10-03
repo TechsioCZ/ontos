@@ -11,9 +11,13 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
 
-import { NodeServices } from '@effect/platform-node';
-import { DateTime, Duration, Effect, Schema } from 'effect';
+import { NodeHttpServer, NodeServices } from '@effect/platform-node';
+import { DateTime, Duration, Effect, Match, Ref, Schema } from 'effect';
+import { HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
+import { NetAddress } from 'effect/unstable/net';
+import { ChildProcess } from 'effect/unstable/process';
 import { expect, it } from 'effect-rstest';
 
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
@@ -34,6 +38,7 @@ import {
   LocalTopologyOwnerSchema,
 } from '../cloudflare-local-topology-fixture.mts';
 import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-contract.mts';
+import { collectToolingProcess } from './tooling-process-fixture.mts';
 
 const partyAppId = 'party-registry';
 const partyModuleId = 'party.registry';
@@ -420,6 +425,7 @@ it('aligns public proof roots and cleans its exact temporary directory when the 
     );
     chmodSync(nativeProof, 0o700);
     const result = spawnSync('/bin/sh', ['-c', command], {
+      cwd: path.resolve(import.meta.dirname, '../..'),
       encoding: 'utf-8',
       env: {
         PATH: `${bin}:/usr/bin:/bin`,
@@ -442,3 +448,147 @@ it('aligns public proof roots and cleans its exact temporary directory when the 
     rmSync(directory, { force: true, recursive: true });
   }
 });
+
+it.live('decodes native curl JSON while preserving independent compressed wire evidence', () =>
+  Effect.gen(function* provesStandardContentCoding() {
+    const source = readFileSync(new URL('../prove-cloudflare-local-topology.sh', import.meta.url), 'utf-8');
+    const requestStart = source.indexOf('\nrequest() {');
+    expect(requestStart).toBeGreaterThanOrEqual(0);
+    const requestEnd = source.indexOf('\n}\n', requestStart);
+    expect(requestEnd).toBeGreaterThan(requestStart);
+    const request = source.slice(requestStart + 1, requestEnd + 2);
+    const document = '[]';
+    const bytes = Buffer.from(document);
+    const cases = [
+      { bytes, coding: 'identity' },
+      { bytes: gzipSync(bytes), coding: 'gzip' },
+      { bytes: brotliCompressSync(bytes), coding: 'br' },
+    ];
+    const advertised = yield* Ref.make('');
+    const server = yield* NodeHttpServer.make(() => process.getBuiltinModule('http').createServer(), {
+      host: '127.0.0.1',
+      port: 0,
+    });
+    yield* server.serve(
+      HttpServerRequest.HttpServerRequest.use((incoming) =>
+        Effect.gen(function* servesNativeCodedFixture() {
+          const selected = cases.find(({ coding }) => incoming.url === `/${coding}`);
+          if (selected === undefined) {
+            return HttpServerResponse.empty({ status: 404 });
+          }
+          const acceptEncoding = incoming.headers['accept-encoding'];
+          yield* Ref.set(advertised, acceptEncoding ?? '');
+          const accepted = acceptEncoding?.split(',').map((value) => value.split(';')[0]?.trim());
+          if (selected.coding !== 'identity' && accepted !== undefined && !accepted.includes(selected.coding)) {
+            return HttpServerResponse.empty({ status: 406 });
+          }
+          return HttpServerResponse.uint8Array(selected.bytes, {
+            contentType: 'application/json',
+            headers: selected.coding === 'identity' ? {} : { 'content-encoding': selected.coding },
+          });
+        }),
+      ),
+    );
+    const address = yield* Match.value(server.address).pipe(
+      Match.when(NetAddress.isInetAddress, (inetAddress) => Effect.succeed(inetAddress)),
+      Match.orElse(() => Effect.die('The content-coding fixture did not bind to TCP')),
+    );
+    const origin = `http://127.0.0.1:${address.port}`;
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-curl-content-coding-'));
+    try {
+      // Probe the real curl independently, so removing --compressed from request() cannot hide coded cases.
+      const probe = yield* collectToolingProcess(
+        ChildProcess.make(
+          'curl',
+          [
+            '--silent',
+            '--show-error',
+            '--compressed',
+            '--max-time',
+            '30',
+            '--output',
+            path.join(directory, 'probe.json'),
+            '--write-out',
+            '%{http_code}',
+            `${origin}/identity`,
+          ],
+          { extendEnv: true, stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
+        ),
+      );
+      expect(probe.status).toBe(0);
+      expect(probe.stdout).toBe('200');
+      expect(readFileSync(path.join(directory, 'probe.json'), 'utf-8')).toBe(document);
+      const supported = new Set((yield* Ref.get(advertised)).split(',').map((value) => value.split(';')[0]?.trim()));
+      const supportedCases = cases.filter(({ coding }) => coding === 'identity' || supported.has(coding));
+      expect(supportedCases.length).toBeGreaterThan(1);
+      for (const fixture of supportedCases) {
+        const decodedFile = path.join(directory, `${fixture.coding}.decoded.json`);
+        const decoded = yield* collectToolingProcess(
+          ChildProcess.make(
+            '/bin/bash',
+            [
+              '-euo',
+              'pipefail',
+              '-c',
+              `work="$1"; shell_origin="$2"; owner_certificate="$work/unused-certificate"; jar="$work/cookies"\n${request}\nrequest "$3" "$4"`,
+              'fixture',
+              directory,
+              origin,
+              decodedFile,
+              `${origin}/${fixture.coding}`,
+            ],
+            { extendEnv: true, stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
+          ),
+        );
+        expect(decoded.status).toBe(0);
+        expect(decoded.stdout).toBe('200');
+        expect(readFileSync(decodedFile, 'utf-8')).toBe(document);
+        expect(
+          Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Array(Schema.Unknown)))(
+            readFileSync(decodedFile, 'utf-8'),
+          ),
+        ).toEqual([]);
+
+        const rawFile = path.join(directory, `${fixture.coding}.raw`);
+        const headerFile = path.join(directory, `${fixture.coding}.headers`);
+        const raw = yield* collectToolingProcess(
+          ChildProcess.make(
+            'curl',
+            [
+              '--silent',
+              '--show-error',
+              '--raw',
+              '--max-time',
+              '30',
+              '--dump-header',
+              headerFile,
+              '--output',
+              rawFile,
+              '--write-out',
+              '%{http_code}',
+              '--header',
+              `accept-encoding: ${fixture.coding}`,
+              `${origin}/${fixture.coding}`,
+            ],
+            { extendEnv: true, stderr: 'pipe', stdin: 'ignore', stdout: 'pipe' },
+          ),
+        );
+        expect(raw.status).toBe(0);
+        expect(raw.stdout).toBe('200');
+        expect(readFileSync(rawFile)).toEqual(fixture.bytes);
+        const headers = readFileSync(headerFile, 'utf-8').toLowerCase().split(/\r?\n/u);
+        expect(headers).toContain(`content-length: ${fixture.bytes.byteLength}`);
+        expect(headers).toContain('content-type: application/json');
+        const contentEncoding = headers.find((header) => header.startsWith('content-encoding:'));
+        if (fixture.coding === 'identity') {
+          expect(contentEncoding).toBeUndefined();
+        } else {
+          expect(contentEncoding).toBe(`content-encoding: ${fixture.coding}`);
+          expect(readFileSync(rawFile, 'utf-8')).not.toBe(document);
+        }
+      }
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

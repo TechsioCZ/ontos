@@ -2345,7 +2345,7 @@ index 0000000000000000000000000000000000000000..051848ebdfdf4a8a1bc219a113fb6b3b
 +/** Proves native instance provenance; application admission remains a separate boundary. */
 +export declare function createNativeFederationLoadingProof(ast: typeof import('typescript/unstable/ast'), checker: Checker, sourceFile: ts.SourceFile, compilerOwned: boolean, browserDefineOwned: boolean): (node: ts.Node | undefined) => boolean;
 diff --git a/templates/workspace-scripts/proof-workerd-ssr.mjs b/templates/workspace-scripts/proof-workerd-ssr.mjs
-index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f119985055133375d8ac06 100644
+index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..16417d5ea6de27426fb5a401a31ffb3fd5f786c8 100644
 --- a/templates/workspace-scripts/proof-workerd-ssr.mjs
 +++ b/templates/workspace-scripts/proof-workerd-ssr.mjs
 @@ -219,14 +219,22 @@ const readDevVars = (outputRoot) => {
@@ -2476,7 +2476,43 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
      assets: {
        binding: typeof assets.binding === "string" ? assets.binding : "ASSETS",
        directory: path.resolve(app.outputRoot, directory),
-@@ -455,6 +552,7 @@ const responseEvidence = async (app, response, check) => {
+@@ -418,7 +515,7 @@ const findReleaseMarkers = (value, markers = []) => {
+ const jsonPathValue = (value, key) =>
+   String(key).split(".").reduce((current, segment) => current?.[segment], value);
+ 
+-const responseEvidence = async (app, response, check) => {
++const responseEvidence = async (app, response, check, phase) => {
+   const bytes = Buffer.from(await response.arrayBuffer());
+   let body;
+   try {
+@@ -426,7 +523,25 @@ const responseEvidence = async (app, response, check) => {
+   } catch (error) {
+     throw new Error(`${app.id} API response is not JSON: ${error.message}`);
+   }
+-  assert(response.ok, `${app.id} API response returned HTTP ${response.status}`);
++  const problem = {};
++  for (const key of ["type", "title", "code", "_tag"]) {
++    if (typeof body?.[key] === "string") {
++      problem[key] = body[key].slice(0, 200);
++    }
++  }
++  if (typeof body?.status === "number" && Number.isFinite(body.status)) {
++    problem.status = body.status;
++  }
++  assert(
++    response.ok,
++    `${app.id} API response returned HTTP ${response.status}: ${JSON.stringify({
++      phase,
++      status: response.status,
++      contentType: response.headers.get("content-type"),
++      sha256: sha256(bytes),
++      problem,
++    })}`,
++  );
+   let marker;
+   if (app.apiProtocol === "rpc") {
+     assert(
+@@ -455,6 +570,7 @@ const responseEvidence = async (app, response, check) => {
    return {
      bodyBase64: bytes.toString("base64"),
      byteLength: bytes.byteLength,
@@ -2484,7 +2520,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
      ...(marker ? { releaseMarker: marker } : {}),
      sha256: sha256(bytes),
      status: response.status,
-@@ -488,7 +586,7 @@ const resolveApiSmokeChecks = (app, shell) => {
+@@ -488,7 +604,7 @@ const resolveApiSmokeChecks = (app, shell) => {
    return [...uniqueChecks.values()];
  };
  
@@ -2493,7 +2529,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
    const results = [];
    for (const app of apps.filter((candidate) => candidate.hasApiSurface)) {
      const jsonSmokeChecks = resolveApiSmokeChecks(app, shell);
-@@ -496,17 +594,18 @@ const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
+@@ -496,17 +612,18 @@ const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
        jsonSmokeChecks.length > 0,
        `${app.id} has no real Cloudflare API smoke check`,
      );
@@ -2517,9 +2553,11 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
        if (check.body !== undefined) {
          headers["content-type"] = "application/json";
          init.body = JSON.stringify(check.body);
-@@ -518,20 +617,36 @@ const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
+@@ -517,21 +634,39 @@ const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
+           await miniflare.getWorker(workerName(app))
          ).fetch(`https://${workerName(app)}.invalid${check.route}`, init),
          check,
++        "direct",
        );
 -      const throughShell = binding
 +      const outboundStart = recorders.outboundRequests.length;
@@ -2537,6 +2575,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
 +              },
              ),
              check,
++            "through-shell",
            )
          : undefined;
        if (throughShell) {
@@ -2559,7 +2598,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
          );
        }
        const target = {
-@@ -542,8 +657,8 @@ const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
+@@ -542,8 +677,8 @@ const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
        results.push({
          appId: app.id,
          shellId: shell.id,
@@ -2570,7 +2609,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
            : { directTarget: target }),
          direct,
          id: check.id,
-@@ -582,6 +697,7 @@ const startWorkerdTargetServers = async (
+@@ -582,6 +717,7 @@ const startWorkerdTargetServers = async (
    miniflare,
    failedServices,
    workerConfigurations,
@@ -2578,7 +2617,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
  ) => {
    const servers = [];
    const isolatedVerticalRuntimes = [];
-@@ -594,7 +710,7 @@ const startWorkerdTargetServers = async (
+@@ -594,7 +730,7 @@ const startWorkerdTargetServers = async (
        );
        const runtime =
          app.kind === "vertical"
@@ -2587,7 +2626,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
            : miniflare;
        if (runtime !== miniflare) {
          isolatedVerticalRuntimes.push(runtime);
-@@ -747,13 +863,45 @@ const decodeDistributedSsrFragmentRequest = (request) => {
+@@ -747,13 +883,45 @@ const decodeDistributedSsrFragmentRequest = (request) => {
  // requested MicroVertical its own runtime so its static assets and MF manifest
  // cannot resolve from a sibling Worker. Its service bindings still resolve
  // through the shared composition runtime.
@@ -2635,7 +2674,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
  
  const createServiceBindings = (
    caller,
-@@ -928,15 +1076,17 @@ const writeReport = (reportPath, report) => {
+@@ -928,15 +1096,17 @@ const writeReport = (reportPath, report) => {
  
  const main = async () => {
    const workspaceRoot = path.resolve(process.env.ULTRAMODERN_WORKSPACE_ROOT ?? process.cwd());
@@ -2654,7 +2693,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
  
    const recorders = {
      apiBindingRequests: [],
-@@ -950,10 +1100,32 @@ const main = async () => {
+@@ -950,10 +1120,32 @@ const main = async () => {
        serviceBindings: createServiceBindings(app, { ...recorders, composition, failedServices }),
        async outboundService(request) {
          const requestUrl = new URL(request.url);
@@ -2691,7 +2730,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
        },
      }),
    );
-@@ -972,6 +1144,7 @@ const main = async () => {
+@@ -972,6 +1164,7 @@ const main = async () => {
    const report = { executions, apiProofs: [], proofs: [], verticalProofs: [] };
  
    try {
@@ -2699,7 +2738,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
      for (const shell of shells) {
        // Shell routes compose declared server-rendered boundaries through the
        // shell's entry Worker exactly as a browser request would.
-@@ -1006,7 +1179,7 @@ const main = async () => {
+@@ -1006,7 +1199,7 @@ const main = async () => {
          );
        }
        report.apiProofs.push(
@@ -2708,7 +2747,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
        );
      }
  
-@@ -1016,7 +1189,7 @@ const main = async () => {
+@@ -1016,7 +1209,7 @@ const main = async () => {
        if (vertical.kind !== "vertical" || vertical.ssrRoutes.length === 0) {
          continue;
        }
@@ -2717,7 +2756,7 @@ index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f1199850551333
        try {
          for (const route of vertical.ssrRoutes) {
            report.verticalProofs.push({
-@@ -1042,6 +1215,7 @@ const main = async () => {
+@@ -1042,6 +1235,7 @@ const main = async () => {
          miniflare,
          failedServices,
          workers,
