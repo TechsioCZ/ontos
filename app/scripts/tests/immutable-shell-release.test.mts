@@ -727,8 +727,24 @@ for (const secretResponse of [
             readonly url: string;
           }[] = [];
           const retriedAssetUrl = `${plan.assetsOrigin}main.js`;
-          const assetInitiallyMissing = yield* Deferred.make<boolean>();
-          const notFoundResponse = new Response(text('release asset is still propagating'), { status: 404 });
+          const firstAssetResponseObserved = yield* Deferred.make<boolean>();
+          const mainAssetBytes = yield* fileSystem.readFile(nodePath.join(publicDirectory, 'main.js'));
+          const corruptedAssetFirst = secretResponse.status === 200 && secretResponse.success;
+          const initialAssetBytes = corruptedAssetFirst
+            ? text('x'.repeat(mainAssetBytes.byteLength))
+            : text('release asset is still propagating');
+          const initialAssetResponse = new Response(initialAssetBytes, {
+            headers: {
+              'access-control-allow-origin': '*',
+              'cache-control': 'public, max-age=31536000, immutable',
+              'x-content-type-options': 'nosniff',
+            },
+            status: corruptedAssetFirst ? 200 : 404,
+          });
+          if (corruptedAssetFirst) {
+            expect(initialAssetBytes.byteLength).toBe(mainAssetBytes.byteLength);
+            expect(sha256(initialAssetBytes)).not.toBe(sha256(mainAssetBytes));
+          }
           let retriedAssetRequests = 0;
           const client = HttpClient.make((request, destination) => {
             requests.push(destination.href);
@@ -753,8 +769,8 @@ for (const secretResponse of [
             if (destination.href === retriedAssetUrl) {
               retriedAssetRequests += 1;
               if (retriedAssetRequests === 1) {
-                return Deferred.succeed(assetInitiallyMissing, true).pipe(
-                  Effect.as(HttpClientResponse.fromWeb(request, notFoundResponse)),
+                return Deferred.succeed(firstAssetResponseObserved, true).pipe(
+                  Effect.as(HttpClientResponse.fromWeb(request, initialAssetResponse)),
                 );
               }
             }
@@ -832,12 +848,12 @@ for (const secretResponse of [
             ),
           );
           const deploymentFiber = yield* Effect.forkChild(deployment);
-          yield* Deferred.await(assetInitiallyMissing);
+          yield* Deferred.await(firstAssetResponseObserved);
           expect(requests.filter((url) => url === retriedAssetUrl)).toEqual([retriedAssetUrl]);
           yield* TestClock.adjust('1 second');
           const receipt = yield* Fiber.join(deploymentFiber);
           expect(requests.filter((url) => url === retriedAssetUrl)).toEqual([retriedAssetUrl, retriedAssetUrl]);
-          expect(notFoundResponse.bodyUsed).toBe(true);
+          expect(initialAssetResponse.bodyUsed).toBe(true);
           expect(receipt.plan).toEqual(plan);
           expect(receipt.assetsVersionId).toBe('shell-retained-provider-version');
           expect(receipt.artifacts.runtimeContract.url).toBe(`${plan.assetsOrigin}${CONTRACT_PATH}`);
