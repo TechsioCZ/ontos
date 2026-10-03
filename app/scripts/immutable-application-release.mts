@@ -4,9 +4,11 @@ import path from 'node:path';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import {
-  MICROVERTICAL_RELEASE_ENVELOPE_PATH,
-  verifyCloudflareReleaseEnvelopeStaging,
-} from '@modern-js/app-tools-extensions/release-envelope/framework-output';
+  MICROVERTICAL_RELEASE_ENVELOPE_KIND,
+  verifyMicroVerticalReleaseEnvelope,
+} from '@modern-js/app-tools-extensions/release-envelope';
+import type { ReleaseEnvelopeKind } from '@modern-js/app-tools-extensions/release-envelope';
+import { MICROVERTICAL_RELEASE_ENVELOPE_PATH } from '@modern-js/app-tools-extensions/release-envelope/framework-output';
 import { resolveUltramodernSourceRevision } from '@modern-js/app-tools-extensions/release-identity';
 import {
   Array as EffectArray,
@@ -58,6 +60,7 @@ export class ImmutableApplicationReleaseError extends Schema.TaggedError<Immutab
 ) {}
 
 const SHELL_APP_ID = 'shell-super-app';
+const NATIVE_ENVELOPE_MISMATCH = 'the native Cloudflare release envelope does not bind the final artifact bytes';
 
 const sourceRevision = Schema.String.check(Schema.isPattern(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u));
 const buildMarker = Schema.String.check(Schema.isPattern(/^[a-f\d]{16}$/u));
@@ -228,9 +231,16 @@ const ManifestSchema = Schema.Struct({
   ),
   metaData: Schema.Struct({
     publicPath: Schema.String,
-    remoteEntry: Schema.optionalKey(Schema.Struct({ name: Schema.String, path: Schema.optionalKey(Schema.String) })),
+    remoteEntry: Schema.optionalKey(
+      Schema.Struct({
+        name: Schema.String,
+        path: Schema.optionalKey(Schema.String),
+        type: Schema.optionalKey(Schema.String),
+      }),
+    ),
   }),
   remoteEntry: Schema.optionalKey(Schema.Struct({ name: Schema.String })),
+  remotes: Schema.optionalKey(Schema.Array(Schema.Json)),
   shared: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
@@ -250,6 +260,70 @@ const federationEntrypoints = (manifest: typeof ManifestSchema.Type): readonly s
   }
   return [`${remoteEntry.path ?? ''}${remoteEntry.name}`];
 };
+
+const ShellRouteAssetsSchema = Schema.Struct({
+  routeAssets: Schema.Record(
+    Schema.NonEmptyString,
+    Schema.Struct({
+      assets: Schema.Array(Schema.NonEmptyString),
+      referenceCssAssets: Schema.Array(Schema.NonEmptyString),
+    }),
+  ),
+});
+
+const isShellConsumerManifest = (manifest: typeof ManifestSchema.Type) => {
+  const { remoteEntry } = manifest.metaData;
+  return (
+    remoteEntry?.name === '' &&
+    remoteEntry.path === '' &&
+    remoteEntry.type === 'global' &&
+    manifest.remoteEntry === undefined &&
+    manifest.exposes?.length === 0 &&
+    manifest.remotes?.length === 0
+  );
+};
+
+const shellConsumerEntrypoints = Effect.fn('ImmutableApplicationRelease.shellConsumerEntrypoints')(
+  function* nativeShellConsumerEntrypoints(
+    assetsOrigin: string,
+    manifest: typeof ManifestSchema.Type,
+    assets: ReadonlyMap<string, ReleaseFile['bytes']>,
+  ) {
+    if (!isShellConsumerManifest(manifest)) {
+      return yield* fail('a Shell consumer manifest must not declare a remote producer or static remotes');
+    }
+    const routesBytes = assets.get('routes-manifest.json');
+    if (routesBytes === undefined) {
+      return yield* fail('a Shell consumer release requires its native route asset manifest');
+    }
+    const routes = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ShellRouteAssetsSchema))(
+      yield* decodeUtf8(routesBytes),
+    ).pipe(Effect.mapError((cause) => fail('the native Shell route asset manifest is invalid', cause)));
+    const routeAssets = Object.values(routes.routeAssets);
+    if (routeAssets.length === 0 || routeAssets.some((route) => !route.assets.some((entry) => entry.endsWith('.js')))) {
+      return yield* fail('every native Shell route must retain a compiled client entrypoint');
+    }
+    const nativeEntries = routeAssets.flatMap((route) => [...route.assets, ...route.referenceCssAssets]);
+    const { origin } = new URL(assetsOrigin);
+    const paths: string[] = [];
+    for (const entry of nativeEntries) {
+      const destination = URL.parse(entry, assetsOrigin);
+      if (
+        destination === null ||
+        destination.origin !== origin ||
+        destination.search !== '' ||
+        destination.hash !== '' ||
+        destination.username !== '' ||
+        destination.password !== '' ||
+        ![destination.href, destination.pathname, destination.pathname.slice(1)].includes(entry)
+      ) {
+        return yield* fail('native Shell route assets must identify exact files within the immutable origin');
+      }
+      paths.push(destination.pathname.slice(1));
+    }
+    return paths;
+  },
+);
 
 const validateReleaseFilePaths = Effect.fn('ImmutableApplicationRelease.filePaths')(
   function* validateReleaseFilePathsEffect(files: readonly ReleaseFile[]) {
@@ -317,7 +391,10 @@ export const validateImmutablePublicAssets = Effect.fn('ImmutableApplicationRele
       if (manifest.metaData.publicPath !== plan.assetsOrigin) {
         return yield* fail('Federation publicPath must already point at the immutable release origin');
       }
-      const entries = federationEntrypoints(manifest);
+      const entries =
+        plan.appId === SHELL_APP_ID
+          ? yield* shellConsumerEntrypoints(plan.assetsOrigin, manifest, assets)
+          : federationEntrypoints(manifest);
       const required = [
         ...entries,
         ...[...(manifest.exposes ?? []), ...(manifest.shared ?? [])].flatMap(({ assets: asset }) => [
@@ -597,13 +674,28 @@ export const verifyPinnedWrangler = Effect.fn('ImmutableApplicationRelease.nativ
 );
 
 const verifyNativeReleaseOutput = Effect.fn('ImmutableApplicationRelease.nativeEnvelope')(
-  function* verifyNativeReleaseOutputEffect(output: string, plan: ImmutableApplicationReleasePlan) {
+  function* verifyNativeReleaseOutputEffect(
+    output: string,
+    plan: ImmutableApplicationReleasePlan,
+    expectedKind: ReleaseEnvelopeKind,
+  ) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const serializedEnvelope = yield* fileSystem
+      .readFileString(path.join(output, MICROVERTICAL_RELEASE_ENVELOPE_PATH))
+      .pipe(Effect.mapError((cause) => fail(NATIVE_ENVELOPE_MISMATCH, cause)));
+    const envelopeValue = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(
+      serializedEnvelope,
+    ).pipe(Effect.mapError((cause) => fail(NATIVE_ENVELOPE_MISMATCH, cause)));
     const envelope = yield* Effect.tryPromise({
-      catch: (cause) => fail('the native Cloudflare release envelope does not bind the final artifact bytes', cause),
-      try: async () => await verifyCloudflareReleaseEnvelopeStaging(output),
+      catch: (cause) => fail(NATIVE_ENVELOPE_MISMATCH, cause),
+      try: async () =>
+        await verifyMicroVerticalReleaseEnvelope(envelopeValue, {
+          artifactRoot: output,
+          expectedKind,
+          expectedTarget: 'cloudflare',
+        }),
     });
     if (
-      envelope === undefined ||
       envelope.identity.unitId !== `app/${plan.appId}` ||
       envelope.identity.buildMarker !== plan.buildMarker ||
       envelope.identity.sourceRevision !== plan.sourceRevision
@@ -619,8 +711,9 @@ export const readVerifiedReleaseFiles = Effect.fn('ImmutableApplicationRelease.v
     output: string,
     plan: ImmutableApplicationReleasePlan,
     ownedPaths: readonly string[] = [],
+    expectedKind: ReleaseEnvelopeKind = MICROVERTICAL_RELEASE_ENVELOPE_KIND,
   ) {
-    const envelope = yield* verifyNativeReleaseOutput(output, plan);
+    const envelope = yield* verifyNativeReleaseOutput(output, plan, expectedKind);
     const boundPaths = new Set(envelope.artifacts.map(({ logicalPath }) => logicalPath));
     const temporaryPaths = ownedPaths.map((owned) => path.relative(output, owned).split(path.sep).join('/'));
     const files = (yield* readReleaseFiles(output)).filter(

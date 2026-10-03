@@ -2,6 +2,7 @@
 import path from 'node:path';
 
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
+import { SHELL_RELEASE_ENVELOPE_KIND } from '@modern-js/app-tools-extensions/release-envelope';
 import { createUltramodernReleaseBuildMarker } from '@modern-js/app-tools-extensions/release-identity';
 import { Config, Duration, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
@@ -136,7 +137,7 @@ const verifyShellOutput = Effect.fn('ImmutableShellRelease.output')(function* sh
   }
   yield* requirePlannedSourceRevision(appDirectory, plan, SOURCE_MISMATCH);
   const output = path.resolve(appDirectory, '.output');
-  yield* readVerifiedReleaseFiles(output, plan);
+  yield* readVerifiedReleaseFiles(output, plan, [], SHELL_RELEASE_ENVELOPE_KIND);
   const config = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(NativeOutputConfigSchema))(
     yield* fileSystem.readFileString(path.join(output, 'wrangler.json')),
   ).pipe(Effect.mapError((cause) => fail('the native Shell output configuration is invalid', cause)));
@@ -208,7 +209,7 @@ export const deployImmutableShellRelease = Effect.fn('ImmutableShellRelease.depl
       ),
     );
     yield* requirePlannedSourceRevision(input.appDirectory, input.plan, SOURCE_MISMATCH);
-    yield* readVerifiedReleaseFiles(output, input.plan, [retainedAssets, configFile]);
+    yield* readVerifiedReleaseFiles(output, input.plan, [retainedAssets, configFile], SHELL_RELEASE_ENVELOPE_KIND);
     yield* runCommand({
       args: ['exec', 'wrangler', 'deploy', '--config', configFile],
       command: 'pnpm',
@@ -277,7 +278,7 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
     }
     yield* verifyRetainedShellAssetBytes(receipt.plan, retainedAssets);
     yield* requirePlannedSourceRevision(input.appDirectory, receipt.plan, SOURCE_MISMATCH);
-    yield* readVerifiedReleaseFiles(output, receipt.plan);
+    yield* readVerifiedReleaseFiles(output, receipt.plan, [], SHELL_RELEASE_ENVELOPE_KIND);
     yield* assertPublishedShellIngressSnapshot({
       deployment: { appId: receipt.plan.appId, buildMarker: receipt.plan.buildMarker },
       federationManifest: receipt.artifacts.federationManifest,
@@ -303,7 +304,7 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
         assets: { ...nativeConfig.assets, directory: ingressAssets },
       }),
     );
-    yield* readVerifiedReleaseFiles(output, receipt.plan, [ingressAssets, ingressConfig]);
+    yield* readVerifiedReleaseFiles(output, receipt.plan, [ingressAssets, ingressConfig], SHELL_RELEASE_ENVELOPE_KIND);
     yield* runCommand({
       args: ['exec', 'wrangler', 'deploy', '--config', ingressConfig],
       command: 'pnpm',

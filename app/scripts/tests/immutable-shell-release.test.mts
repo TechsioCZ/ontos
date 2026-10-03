@@ -3,9 +3,11 @@ import nodePath from 'node:path';
 
 import { NodeServices } from '@effect/platform-node';
 import {
+  SHELL_RELEASE_ENVELOPE_KIND,
   canonicalSerializeMicroVerticalReleaseEnvelope,
   createMicroVerticalReleaseEnvelope,
 } from '@modern-js/app-tools-extensions/release-envelope';
+import type { ReleaseEnvelope } from '@modern-js/app-tools-extensions/release-envelope';
 import { MICROVERTICAL_RELEASE_ENVELOPE_PATH } from '@modern-js/app-tools-extensions/release-envelope/framework-output';
 import {
   Array as EffectArray,
@@ -52,6 +54,7 @@ const SOURCE_REVISION = 'a'.repeat(40);
 const APP_ID = 'shell-super-app';
 const CONTRACT_PATH = '.well-known/ontos-shell-runtime.json';
 const MANIFEST_PATH = 'mf-manifest.json';
+const ROUTES_MANIFEST_PATH = 'routes-manifest.json';
 const WRANGLER_VERSION = '4.137.0';
 const BACKEND_PATH = 'server/index.mjs';
 const WORKER_METADATA_PATH = 'server/modern-worker-manifest.json';
@@ -99,18 +102,10 @@ const inventoryFor = (plan: ImmutableApplicationReleasePlan) => ({
     file(
       MANIFEST_PATH,
       json({
-        exposes: [
-          {
-            assets: {
-              css: { async: ['async.css'], sync: ['main.css'] },
-              js: { async: ['async.js'], sync: ['main.js'] },
-            },
-            path: './ShellProof',
-          },
-        ],
-        metaData: { publicPath: plan.assetsOrigin },
+        exposes: [],
+        metaData: { publicPath: plan.assetsOrigin, remoteEntry: { name: '', path: '', type: 'global' } },
         name: 'shellSuperApp',
-        remoteEntry: { name: REMOTE_ENTRY_PATH },
+        remotes: [],
         shared: governedSharedSingletonPackages.map((name) => ({
           assets: {
             css: { async: [], sync: ['shared.css'] },
@@ -122,9 +117,15 @@ const inventoryFor = (plan: ImmutableApplicationReleasePlan) => ({
         })),
       }),
     ),
-    ...[REMOTE_ENTRY_PATH, 'main.js', 'async.js', 'shared.js', 'main.css', 'async.css', 'shared.css'].map((path) =>
-      file(path),
+    file(
+      'routes-manifest.json',
+      json({
+        routeAssets: {
+          index: { assets: ['/main.js', '/async.js', '/main.css'], referenceCssAssets: ['/async.css'] },
+        },
+      }),
     ),
+    ...['main.js', 'async.js', 'shared.js', 'main.css', 'async.css', 'shared.css'].map((path) => file(path)),
   ],
 });
 
@@ -152,6 +153,85 @@ it.effect('pins the complete Shell runtime contract and federation inventory to 
     });
     expect(changed.assetsSha256).not.toBe(artifacts.assetsSha256);
     expect(changed.runtimeContract).toEqual(artifacts.runtimeContract);
+  }),
+);
+
+it.effect('requires exact native Shell consumer routes without admitting producer, private, or foreign paths', () =>
+  Effect.gen(function* exactShellConsumerRoutes() {
+    const plan = yield* planFor();
+    const inventory = inventoryFor(plan);
+    const absolute = yield* validateImmutableShellReleaseArtifacts(plan, {
+      assets: inventory.assets.map((asset) =>
+        asset.path === ROUTES_MANIFEST_PATH
+          ? file(
+              asset.path,
+              json({
+                routeAssets: {
+                  index: {
+                    assets: [
+                      `${plan.assetsOrigin}main.js`,
+                      `${plan.assetsOrigin}async.js`,
+                      `${plan.assetsOrigin}main.css`,
+                    ],
+                    referenceCssAssets: [`${plan.assetsOrigin}async.css`],
+                  },
+                },
+              }),
+            )
+          : asset,
+      ),
+    });
+    expect(absolute.federationManifest.url).toBe(`${plan.assetsOrigin}${MANIFEST_PATH}`);
+    for (const entry of [
+      'https://foreign.example/main.js',
+      '//foreign.example/main.js',
+      '/nested/../main.js',
+      '/%6dain.js',
+      '/main.js?changed=1',
+      '/main.js#changed',
+      '/main.js.map.br',
+      '/credentials.json',
+      '/absent.js',
+    ]) {
+      const failure = yield* validateImmutableShellReleaseArtifacts(plan, {
+        assets: inventory.assets.map((asset) =>
+          asset.path === ROUTES_MANIFEST_PATH
+            ? file(asset.path, json({ routeAssets: { index: { assets: [entry], referenceCssAssets: [] } } }))
+            : asset,
+        ),
+      }).pipe(Effect.flip);
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+    }
+    const invalidRouteAssets: readonly Schema.Json[] = [
+      {},
+      { index: { assets: ['/main.css'], referenceCssAssets: [] } },
+    ];
+    for (const routeAssets of invalidRouteAssets) {
+      const failure = yield* validateImmutableShellReleaseArtifacts(plan, {
+        assets: inventory.assets.map((asset) =>
+          asset.path === ROUTES_MANIFEST_PATH ? file(asset.path, json({ routeAssets })) : asset,
+        ),
+      }).pipe(Effect.flip);
+      expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+    }
+    const producer = yield* validateImmutableShellReleaseArtifacts(plan, {
+      assets: inventory.assets.map((asset) =>
+        asset.path === MANIFEST_PATH
+          ? file(
+              asset.path,
+              json({
+                exposes: [],
+                metaData: {
+                  publicPath: plan.assetsOrigin,
+                  remoteEntry: { name: REMOTE_ENTRY_PATH, path: '', type: 'global' },
+                },
+                remotes: [],
+              }),
+            )
+          : asset,
+      ),
+    }).pipe(Effect.flip);
+    expect(Schema.is(ImmutableApplicationReleaseError)(producer)).toBe(true);
   }),
 );
 
@@ -254,7 +334,8 @@ it.effect('rejects duplicate or unsafe public paths and public secrets or source
 const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function* writeNativeShellOutputEffect(
   appDirectory: string,
   plan: ImmutableApplicationReleasePlan,
-  additionalAssets: readonly ReleaseFile[] = [],
+  additionalAssets: readonly ReleaseFile[],
+  moduleEnvelope: boolean,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const output = nodePath.join(appDirectory, '.output');
@@ -262,8 +343,12 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
   const nativeAssets = [...inventory.assets, ...additionalAssets];
   const supportFiles = [
     file(BFF_PATH, text('export const effectApi = "retained Shell API";')),
-    file(BACKEND_MANIFEST_PATH, json({ deliveryUnit: { ...plan, unitId: `app/${APP_ID}` } })),
-    file('backend-container.cjs', text('module.exports = { retainedShellBackend: true };')),
+    ...(moduleEnvelope
+      ? [
+          file(BACKEND_MANIFEST_PATH, json({ deliveryUnit: { ...plan, unitId: `app/${APP_ID}` } })),
+          file('backend-container.cjs', text('module.exports = { retainedModuleBackend: true };')),
+        ]
+      : []),
     file(
       WRANGLER_CONFIG_PATH,
       json({
@@ -305,8 +390,8 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
         cause,
         message: 'native Shell test envelope could not be created',
       }),
-    try: () =>
-      createMicroVerticalReleaseEnvelope({
+    try: (): Promise<ReleaseEnvelope> => {
+      const input = {
         artifactRoot: output,
         artifacts: [
           ...supportFiles.map(({ path }) => ({
@@ -333,18 +418,24 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
         },
         surfaces: {
           apiBackend: [BFF_PATH],
-          backendFederation: {
-            container: 'backend-container.cjs',
-            manifest: BACKEND_MANIFEST_PATH,
-          },
           ssr: [BACKEND_PATH],
           uiClient: EffectArray.sort(
             inventory.assets.filter(({ path }) => path.endsWith('.js')).map(({ path }) => `public/${path}`),
             Order.String,
           ),
         },
-        target: 'cloudflare',
-      }),
+      };
+      return moduleEnvelope
+        ? createMicroVerticalReleaseEnvelope({
+            ...input,
+            surfaces: {
+              ...input.surfaces,
+              backendFederation: { container: 'backend-container.cjs', manifest: BACKEND_MANIFEST_PATH },
+            },
+            target: 'cloudflare',
+          })
+        : createMicroVerticalReleaseEnvelope({ ...input, kind: SHELL_RELEASE_ENVELOPE_KIND, target: 'cloudflare' });
+    },
   });
   const destination = nodePath.join(output, MICROVERTICAL_RELEASE_ENVELOPE_PATH);
   yield* fileSystem.makeDirectory(nodePath.dirname(destination), {
@@ -370,7 +461,7 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
   return { output, publicDirectory: nodePath.join(output, 'public') };
 });
 
-const rejectsNativeShellTampering = (tamper: 'asset' | 'identity' | 'missing-envelope') =>
+const rejectsNativeShellTampering = (tamper: 'asset' | 'identity' | 'missing-envelope' | 'wrong-kind') =>
   Effect.scoped(
     Effect.gen(function* rejectsTamperedShellRelease() {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -379,7 +470,12 @@ const rejectsNativeShellTampering = (tamper: 'asset' | 'identity' | 'missing-env
       });
       const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
       const plan = yield* planFor();
-      const { output, publicDirectory } = yield* writeNativeShellOutput(appDirectory, plan);
+      const { output, publicDirectory } = yield* writeNativeShellOutput(
+        appDirectory,
+        plan,
+        [],
+        tamper === 'wrong-kind',
+      );
       if (tamper === 'asset') {
         yield* fileSystem.writeFileString(nodePath.join(publicDirectory, 'main.js'), 'tampered after envelope');
       } else if (tamper === 'identity') {
@@ -393,7 +489,7 @@ const rejectsNativeShellTampering = (tamper: 'asset' | 'identity' | 'missing-env
             },
           }),
         );
-      } else {
+      } else if (tamper === 'missing-envelope') {
         yield* fileSystem.remove(nodePath.join(output, MICROVERTICAL_RELEASE_ENVELOPE_PATH));
       }
       const requests: string[] = [];
@@ -449,6 +545,9 @@ it.effect('rejects changed Shell delivery identity before any provider observati
 );
 it.effect('requires the native release envelope before any provider observation or deployment', () =>
   rejectsNativeShellTampering('missing-envelope'),
+);
+it.effect('refuses a byte-valid MicroVertical envelope in place of the explicitly planned Shell kind', () =>
+  rejectsNativeShellTampering('wrong-kind'),
 );
 
 const deploymentLayer = (
@@ -536,7 +635,7 @@ it.effect(
         const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
         const plan = yield* planFor();
         const maps = ['.map', '.map.gz', '.map.br'].map((suffix) => file(`main.js${suffix}`));
-        const { output, publicDirectory } = yield* writeNativeShellOutput(appDirectory, plan, maps);
+        const { output, publicDirectory } = yield* writeNativeShellOutput(appDirectory, plan, maps, false);
         const originalOutput = yield* readReleaseFiles(output);
         const inventory = inventoryFor(plan);
         const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
@@ -675,7 +774,7 @@ it.effect('refuses an existing retained Shell asset identity before executing de
       const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-shell-release-existing-' });
       const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
       const plan = yield* planFor();
-      yield* writeNativeShellOutput(appDirectory, plan);
+      yield* writeNativeShellOutput(appDirectory, plan, [], false);
       const commands: OpsCommand[] = [];
       const requests: string[] = [];
       const events: string[] = [];
@@ -708,7 +807,7 @@ it.effect('refuses a Shell ingress receipt that substitutes mutable URLs or diff
       const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-shell-ingress-receipt-' });
       const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
       const plan = yield* planFor();
-      yield* writeNativeShellOutput(appDirectory, plan);
+      yield* writeNativeShellOutput(appDirectory, plan, [], false);
       const artifacts = yield* validateImmutableShellReleaseArtifacts(plan, inventoryFor(plan));
       const receipt = { artifacts, assetsVersionId: PROVIDER_VERSION, plan };
       const commands: OpsCommand[] = [];
@@ -757,7 +856,7 @@ it.effect('refuses ambiguous or partial retained Shell provider deployments befo
       const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-shell-release-rollout-' });
       const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
       const plan = yield* planFor();
-      yield* writeNativeShellOutput(appDirectory, plan);
+      yield* writeNativeShellOutput(appDirectory, plan, [], false);
       const artifacts = yield* validateImmutableShellReleaseArtifacts(plan, {
         assets: [...inventoryFor(plan).assets, file('_headers', text(RETAINED_HEADERS))],
       });
@@ -805,7 +904,7 @@ it.effect(
         const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-shell-release-account-' });
         const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
         const plan = yield* planFor();
-        yield* writeNativeShellOutput(appDirectory, plan);
+        yield* writeNativeShellOutput(appDirectory, plan, [], false);
         const assets = [...inventoryFor(plan).assets, file('_headers', text(RETAINED_HEADERS))];
         const artifacts = yield* validateImmutableShellReleaseArtifacts(plan, { assets });
         const receipt = { artifacts, assetsVersionId: PROVIDER_VERSION, plan };

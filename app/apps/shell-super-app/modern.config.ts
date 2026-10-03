@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 import { defineConfig } from '@modern-js/app-tools';
 import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
+import type { UltramodernAppUserConfig } from '@modern-js/ultramodern-app-tools';
 import type { AppTools, AppToolsUserConfig, CliPlugin } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
@@ -178,10 +179,12 @@ export default defineConfig(
           runtimeFramework: 'effect',
         },
         builderPlugins: [pluginTailwindcss()],
-      } satisfies AppToolsUserConfig,
+        deploy: { releaseEnvelopeRole: 'shell' },
+      } satisfies UltramodernAppUserConfig,
       cloudflareDeployEnabled,
       'deploy',
       {
+        releaseEnvelopeRole: 'shell',
         worker: {
           ...cloudflareWorkerConfig,
           compatibilityDate: '2026-06-02',
@@ -189,7 +192,7 @@ export default defineConfig(
           security: createCloudflareWorkerSecurity(),
           ssr: true,
         },
-      } satisfies NonNullable<AppToolsUserConfig['deploy']>,
+      } satisfies NonNullable<UltramodernAppUserConfig['deploy']>,
       {
         dev: {
           // Keep shell dev assets origin-relative so the shell works through
@@ -315,8 +318,8 @@ export default defineConfig(
             }
           }) satisfies RspackConfigHandler,
         },
-      } satisfies AppToolsUserConfig,
-    ) satisfies AppToolsUserConfig,
+      } satisfies UltramodernAppUserConfig,
+    ) satisfies UltramodernAppUserConfig,
     {
       appId,
       deliveryUnit: {
