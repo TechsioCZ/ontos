@@ -1,8 +1,18 @@
-import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { NodeServices } from '@effect/platform-node';
 import { DateTime, Duration, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -12,8 +22,17 @@ import {
   ONTOS_MODULE_CONTRACT_SCHEMA_VERSION,
   OntosModuleDeploymentContractSchema,
 } from '../../packages/core-runtime/src/modules/manifest.ts';
-import { deriveActiveApplicationCompositionSnapshot } from '../active-application-composition.mts';
-import { deriveLocalTopologyProofPaths, LocalTopologyOwnerSchema } from '../cloudflare-local-topology-fixture.mts';
+import {
+  decodeActiveApplicationCompositionSnapshot,
+  deriveActiveApplicationCompositionSnapshot,
+  encodeActiveApplicationCompositionSnapshot,
+} from '../active-application-composition.mts';
+import {
+  deriveLocalTopologyProofPaths,
+  deriveLocalWorkerdProofFixture,
+  discoverLocalTopologyOwners,
+  LocalTopologyOwnerSchema,
+} from '../cloudflare-local-topology-fixture.mts';
 import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-contract.mts';
 
 const partyAppId = 'party-registry';
@@ -22,6 +41,7 @@ const partyComponentKey = 'party.registry.page-people';
 const partyEntrypointKey = 'party.registry.page.people';
 const partyExpose = './People';
 const partyRemoteName = 'partyRegistry';
+const partyOwnerBaseUrl = 'https://localhost:8791/';
 const federationManifestFixtureSchema = Schema.Struct({
   exposes: Schema.Array(Schema.Struct({ path: Schema.NonEmptyString })),
   name: Schema.NonEmptyString,
@@ -49,7 +69,7 @@ const snapshot = (routePath: string) =>
       modules: [
         {
           appId: partyAppId,
-          backend: { baseUrl: 'https://localhost:8791/', transport: 'node-http' },
+          backend: { baseUrl: partyOwnerBaseUrl, transport: 'node-http' },
           contract: artifact(
             'https://localhost:8791/.well-known/ontos-module-manifest.json',
             encodeModuleContract(
@@ -143,7 +163,7 @@ it('accepts only explicit local canonical HTTPS owner mappings', () => {
   const decode = Schema.decodeUnknownSync(LocalTopologyOwnerSchema, { onExcessProperty: 'error' });
   const owner = {
     appId: partyAppId,
-    baseUrl: 'https://localhost:8791/',
+    baseUrl: partyOwnerBaseUrl,
     outputDirectory: '/owned/party/.output',
   };
   expect(decode(owner)).toEqual(owner);
@@ -260,3 +280,165 @@ it.effect('rejects changed contract bytes and routes that need unprovided parame
     ).toBe(true);
   }),
 );
+
+it.effect('seeds the exact approved snapshot and routes the native release API through its revision', () =>
+  Effect.gen(function* provesNativeWorkerdPlacement() {
+    const approved = yield* snapshot('/people');
+    const fixture = yield* deriveLocalWorkerdProofFixture(approved);
+    const value = yield* encodeActiveApplicationCompositionSnapshot(approved);
+    expect(fixture.schemaVersion).toBe(1);
+    expect(fixture.kvSeeds).toEqual([
+      {
+        appId: 'shell-super-app',
+        binding: 'ONTOS_ACTIVE_APPLICATION_COMPOSITION',
+        entries: [{ key: 'active', value }],
+      },
+      { appId: partyAppId, binding: 'ONTOS_ACTIVE_APPLICATION_COMPOSITION', entries: [{ key: 'active', value }] },
+    ]);
+    for (const seed of fixture.kvSeeds) {
+      const [entry] = seed.entries;
+      if (entry === undefined) {
+        throw new Error('Every actual Worker must receive the approved active snapshot');
+      }
+      expect(yield* decodeActiveApplicationCompositionSnapshot(entry.value)).toEqual(approved);
+    }
+    expect(fixture.ownerTargets).toEqual([{ appId: partyAppId, baseUrl: partyOwnerBaseUrl }]);
+    expect(fixture.shellApiTargets).toEqual([
+      {
+        appId: partyAppId,
+        headers: { 'x-ontos-composition-revision': approved.composition.revision },
+        routePrefix: '/shell-super-app-api/module-api/party-registry/party-local-build',
+        shellId: 'shell-super-app',
+      },
+    ]);
+  }),
+);
+
+it.effect('rejects changed artifact bytes rather than seeding an invented workerd composition', () =>
+  Effect.gen(function* rejectsUnapprovedWorkerdPlacement() {
+    const approved = yield* snapshot('/people');
+    const altered = {
+      ...approved,
+      composition: {
+        ...approved.composition,
+        modules: approved.composition.modules.map((module) => ({
+          ...module,
+          contractDocument: `${module.contractDocument} `,
+        })),
+      },
+    };
+    expect(yield* deriveLocalWorkerdProofFixture(altered).pipe(Effect.isFailure)).toBe(true);
+  }),
+);
+
+it.effect('discovers the selected artifact root without choosing stale workspace output paths', () =>
+  Effect.gen(function* selectsActualArtifactRoot() {
+    const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-workerd-owner-discovery-'));
+    try {
+      mkdirSync(path.join(directory, 'verticals', partyAppId), { recursive: true });
+      mkdirSync(path.join(directory, 'verticals', 'catalog'), { recursive: true });
+      writeFileSync(path.join(directory, 'verticals', '.DS_Store'), 'not a delivery unit');
+      const owners = yield* discoverLocalTopologyOwners(directory).pipe(Effect.provide(NodeServices.layer));
+      expect(owners).toEqual([
+        {
+          appId: 'catalog',
+          baseUrl: partyOwnerBaseUrl,
+          outputDirectory: path.join(directory, 'verticals/catalog/.output'),
+        },
+        {
+          appId: partyAppId,
+          baseUrl: 'https://localhost:8792/',
+          outputDirectory: path.join(directory, 'verticals/party-registry/.output'),
+        },
+      ]);
+    } finally {
+      rmSync(directory, { force: true, recursive: true });
+    }
+  }),
+);
+
+it('rejects missing or mixed native output selectors before observing any Worker artifacts', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-workerd-placement-selectors-'));
+  const args = [
+    path.resolve('scripts/cloudflare-local-topology-fixture.mts'),
+    'prepare',
+    '--intent-file',
+    path.resolve('topology/application-release-intent.json'),
+    '--shell-origin',
+    'http://localhost:8787',
+    '--snapshot-file',
+    path.join(directory, 'active.json'),
+    '--paths-file',
+    path.join(directory, 'paths.json'),
+  ];
+  try {
+    const missing = spawnSync(process.execPath, args, { encoding: 'utf-8' });
+    expect(missing.status).toBe(1);
+    expect(missing.stdout + missing.stderr).toContain('CloudflareLocalTopologyFixtureError');
+    expect(missing.stdout + missing.stderr).toContain('selectNativeOutputPlacement');
+    for (const explicitSelector of ['--owners-file', '--shell-output']) {
+      const mixed = spawnSync(process.execPath, [...args, '--artifact-root', directory, explicitSelector, directory], {
+        encoding: 'utf-8',
+      });
+      expect(mixed.status).toBe(1);
+      expect(mixed.stdout + mixed.stderr).toContain('CloudflareLocalTopologyFixtureError');
+      expect(mixed.stdout + mixed.stderr).toContain('selectNativeOutputPlacement');
+    }
+    expect(existsSync(path.join(directory, 'active.json'))).toBe(false);
+    expect(existsSync(path.join(directory, 'paths.json'))).toBe(false);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
+it('aligns public proof roots and cleans its exact temporary directory when the native proof fails', () => {
+  const packageSchema = Schema.Struct({ scripts: Schema.Struct({ 'cloudflare:ssr-proof': Schema.NonEmptyString }) });
+  const command = Schema.decodeUnknownSync(Schema.fromJsonString(packageSchema))(
+    readFileSync(new URL('../../package.json', import.meta.url), 'utf-8'),
+  ).scripts['cloudflare:ssr-proof'];
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-workerd-public-command-'));
+  const metadataRoot = path.join(directory, 'metadata with spaces');
+  const artifactRoot = path.join(directory, 'actual artifacts');
+  const bin = path.join(directory, 'bin');
+  const argumentsFile = path.join(directory, 'producer-arguments');
+  const invocationFile = path.join(directory, 'native-proof-invocation');
+  try {
+    mkdirSync(bin);
+    mkdirSync(metadataRoot);
+    mkdirSync(path.join(artifactRoot, 'apps/shell-super-app/.output'), { recursive: true });
+    mkdirSync(path.join(artifactRoot, 'verticals/party-registry/.output'), { recursive: true });
+    const producer = path.join(bin, 'node');
+    writeFileSync(
+      producer,
+      '#!/bin/sh\nwhile [ "$#" -gt 0 ]; do\ncase "$1" in\n--artifact-root|--intent-file) printf "%s=%s\\n" "$1" "$2" >> "$PROOF_TEST_ARGUMENTS"; shift 2;;\n*) shift;;\nesac\ndone\n',
+    );
+    chmodSync(producer, 0o700);
+    const nativeProof = path.join(bin, 'ultramodern-create');
+    writeFileSync(
+      nativeProof,
+      '#!/bin/sh\ntest -d "$(dirname "$ULTRAMODERN_WORKERD_PROOF_FIXTURE")" || exit 43\nprintf "%s\\n" "$ULTRAMODERN_WORKERD_PROOF_FIXTURE" > "$PROOF_TEST_INVOCATION"\nexit 42\n',
+    );
+    chmodSync(nativeProof, 0o700);
+    const result = spawnSync('/bin/sh', ['-c', command], {
+      encoding: 'utf-8',
+      env: {
+        PATH: `${bin}:/usr/bin:/bin`,
+        PROOF_TEST_ARGUMENTS: argumentsFile,
+        PROOF_TEST_INVOCATION: invocationFile,
+        RUNNER_TEMP: directory,
+        ULTRAMODERN_WORKERD_ARTIFACT_ROOT: artifactRoot,
+        ULTRAMODERN_WORKSPACE_ROOT: metadataRoot,
+      },
+    });
+    expect(result.status).toBe(42);
+    expect(readFileSync(argumentsFile, 'utf-8')).toBe(
+      `--intent-file=${path.join(metadataRoot, 'topology/application-release-intent.json')}\n--artifact-root=${artifactRoot}\n`,
+    );
+    expect(readFileSync(invocationFile, 'utf-8')).toContain(path.join(directory, 'ontos-workerd-proof.'));
+    expect(existsSync(path.join(artifactRoot, 'apps/shell-super-app/.output/.dev.vars'))).toBe(true);
+    expect(existsSync(path.join(artifactRoot, 'verticals/party-registry/.output/.dev.vars'))).toBe(true);
+    expect(readdirSync(directory).some((name) => name.startsWith('ontos-workerd-proof.'))).toBe(false);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});

@@ -133,26 +133,42 @@ const writeJson = (filePath, json) =>
 
 /**
  * @param {Readonly<Record<string, string>> | undefined} dependencies - Dependency section.
- * @param {Readonly<Record<string, string>>} aliases - Producer-owned package aliases.
- * @param {string} modernPackageVersion - Modern.js package version.
+ * @param {ReleaseCohort | null} cohort - Installed producer-owned package identities.
  */
-const normalizeDependencySection = (dependencies, aliases, modernPackageVersion) => {
-  if (dependencies === undefined) {
-    return null;
-  }
-  return Object.fromEntries(
-    Object.entries(dependencies).flatMap(([dependencyName, dependencyVersion]) => {
-      const officialPackageName = Object.entries(aliases).find(([, target]) => target === dependencyName)?.[0];
-      if (officialPackageName === undefined) {
-        return [[dependencyName, dependencyVersion]];
+const normalizeDependencySection = (dependencies, cohort) =>
+  Effect.gen(function* normalizeDependencySectionEffect() {
+    if (dependencies === undefined) {
+      return null;
+    }
+    /** @type {Record<string, string>} */
+    const normalized = {};
+    for (const [dependencyName, dependencyVersion] of Object.entries(dependencies)) {
+      const targetPackageName = cohort?.aliases[dependencyName];
+      const officialPackageName = Object.entries(cohort?.aliases ?? {}).find(
+        ([, target]) => target === dependencyName,
+      )?.[0];
+      const catalogDependency = dependencyVersion.startsWith('catalog:');
+      if (
+        catalogDependency &&
+        (dependencyVersion !== 'catalog:ultramodern' ||
+          cohort === null ||
+          (targetPackageName === undefined && officialPackageName === undefined))
+      ) {
+        return yield* fail(
+          `Runtime dependency ${dependencyName} has no installed release identity for ${dependencyVersion}`,
+        );
       }
-      return [
-        [dependencyName, modernPackageVersion],
-        [officialPackageName, `npm:${dependencyName}@${modernPackageVersion}`],
-      ];
-    }),
-  );
-};
+      if (catalogDependency && targetPackageName !== undefined && cohort !== null) {
+        normalized[dependencyName] = `npm:${targetPackageName}@${cohort.release.version}`;
+      } else if (officialPackageName !== undefined && cohort !== null) {
+        normalized[dependencyName] = cohort.release.version;
+        normalized[officialPackageName] = `npm:${dependencyName}@${cohort.release.version}`;
+      } else {
+        normalized[dependencyName] = dependencyVersion;
+      }
+    }
+    return normalized;
+  });
 
 /**
  * @param {RuntimePackage} runtimeManifest - Runtime package manifest.
@@ -164,20 +180,8 @@ const normalizeRuntimePackageDependencies = (runtimeManifest, workspaceRoot, pat
     const cohort = yield* readOptionalReleaseCohort(
       pathService.join(workspaceRoot, 'node_modules/@modern-js/ultramodern-create/release-cohort.json'),
     );
-    if (cohort === null) {
-      return runtimeManifest;
-    }
-
-    const dependencies = normalizeDependencySection(
-      runtimeManifest.dependencies,
-      cohort.aliases,
-      cohort.release.version,
-    );
-    const optionalDependencies = normalizeDependencySection(
-      runtimeManifest.optionalDependencies,
-      cohort.aliases,
-      cohort.release.version,
-    );
+    const dependencies = yield* normalizeDependencySection(runtimeManifest.dependencies, cohort);
+    const optionalDependencies = yield* normalizeDependencySection(runtimeManifest.optionalDependencies, cohort);
     const normalizedManifest = { ...runtimeManifest };
     if (dependencies !== null) {
       normalizedManifest.dependencies = dependencies;

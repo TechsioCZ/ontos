@@ -2344,3 +2344,384 @@ index 0000000000000000000000000000000000000000..051848ebdfdf4a8a1bc219a113fb6b3b
 +import type { Checker } from 'typescript/unstable/sync';
 +/** Proves native instance provenance; application admission remains a separate boundary. */
 +export declare function createNativeFederationLoadingProof(ast: typeof import('typescript/unstable/ast'), checker: Checker, sourceFile: ts.SourceFile, compilerOwned: boolean, browserDefineOwned: boolean): (node: ts.Node | undefined) => boolean;
+diff --git a/templates/workspace-scripts/proof-workerd-ssr.mjs b/templates/workspace-scripts/proof-workerd-ssr.mjs
+index 3a9a5c549c15ed3fafc865259b0ed3d4aef97f2d..f5b9bb0464e89db476f119985055133375d8ac06 100644
+--- a/templates/workspace-scripts/proof-workerd-ssr.mjs
++++ b/templates/workspace-scripts/proof-workerd-ssr.mjs
+@@ -219,14 +219,22 @@ const readDevVars = (outputRoot) => {
+   return fs.existsSync(devVarsPath) ? parseEnv(fs.readFileSync(devVarsPath, "utf8")) : {};
+ };
+ 
+-const loadApps = (workspaceRoot, topology, overlay) => {
++const loadApps = (topology, overlay, artifactRoot) => {
+   const { plans, rawApps } = planWorkerdSsrProof(topology);
+   return rawApps.map((rawApp, index) => {
+     const plan = plans[index];
+     const hasApiSurface = plan.kind === "vertical" && rawApp.surfaceProfile !== "ui-only";
+     const appPath = rawApp.path;
+     assert(typeof appPath === "string" && appPath.length > 0, `${plan.id} topology path is missing`);
+-    const outputRoot = path.join(workspaceRoot, appPath, ".output");
++    const outputRoot = path.resolve(artifactRoot, appPath, ".output");
++    const relativeOutput = path.relative(artifactRoot, outputRoot);
++    assert(
++      !path.posix.isAbsolute(normalizePath(appPath)) &&
++        !normalizePath(appPath).split("/").includes("..") &&
++        relativeOutput !== "" && !relativeOutput.startsWith(`..${path.sep}`) &&
++        !path.isAbsolute(relativeOutput),
++      `${plan.id} topology output path escapes the selected artifact root`,
++    );
+     const wranglerPath = path.join(outputRoot, "wrangler.json");
+     assert(
+       fs.existsSync(wranglerPath),
+@@ -308,6 +316,87 @@ const createLocalHyperdrives = (app) => {
+   );
+ };
+ 
++// The workspace supplies runtime data through its own publisher. This proof
++// knows only native KV seeds, approved HTTPS origins and Shell request mounts;
++// it must not reconstruct an application's composition schema from topology.
++export const validateWorkerdProofFixture = (fixture, apps) => {
++  assert(
++    fixture?.schemaVersion === 1 && Array.isArray(fixture.kvSeeds) &&
++      Array.isArray(fixture.ownerTargets) && Array.isArray(fixture.shellApiTargets),
++    "Invalid Workerd proof fixture",
++  );
++  const byId = new Map(apps.map((app) => [app.id, app]));
++  const seeds = new Set();
++  const sharedValues = new Map();
++  for (const seed of fixture.kvSeeds) {
++    const app = byId.get(seed?.appId);
++    const namespace = app?.wrangler.kv_namespaces?.find((candidate) => candidate.binding === seed?.binding);
++    assert(
++      app && typeof seed.binding === "string" &&
++        namespace &&
++        Array.isArray(seed.entries),
++      "Workerd proof KV seed must name an executed Worker's declared binding",
++    );
++    for (const entry of seed.entries) {
++      const identity = JSON.stringify([seed.appId, seed.binding, entry?.key]);
++      assert(
++        typeof entry?.key === "string" && entry.key.length > 0 &&
++          typeof entry.value === "string" && !seeds.has(identity),
++        "Workerd proof KV seeds must contain unique string keys and unchanged string values",
++      );
++      seeds.add(identity);
++      const sharedIdentity = JSON.stringify([namespace.id, entry.key]);
++      assert(
++        !sharedValues.has(sharedIdentity) || sharedValues.get(sharedIdentity) === entry.value,
++        "Workerd proof KV seeds must not conflict in a shared native namespace",
++      );
++      sharedValues.set(sharedIdentity, entry.value);
++    }
++  }
++  const origins = new Set();
++  const owners = new Set();
++  for (const target of fixture.ownerTargets) {
++    const app = byId.get(target?.appId);
++    const url = typeof target?.baseUrl === "string" ? URL.parse(target.baseUrl) : null;
++    assert(
++      app?.kind === "vertical" && url?.protocol === "https:" &&
++        url.username === "" && url.password === "" && url.search === "" &&
++        url.hash === "" && target.baseUrl === `${url.origin}/` &&
++        !origins.has(url.origin) && !owners.has(target.appId),
++      "Workerd proof owner targets must be unique executed MicroVerticals at canonical HTTPS origins",
++    );
++    origins.add(url.origin);
++    owners.add(target.appId);
++  }
++  const routes = new Set();
++  for (const target of fixture.shellApiTargets) {
++    const shell = byId.get(target?.shellId);
++    const app = byId.get(target?.appId);
++    const routeIdentity = JSON.stringify([target?.shellId, target?.appId]);
++    assert(
++      shell?.kind === "shell" && app?.hasApiSurface && owners.has(app.id) &&
++        typeof target.routePrefix === "string" && target.routePrefix.startsWith("/") &&
++        !target.routePrefix.endsWith("/") &&
++        !/[?#\\\\]|%(?:2f|5c)/iu.test(target.routePrefix) &&
++        !target.routePrefix.split("/").some((segment) => segment === "." || segment === "..") &&
++        target.headers && typeof target.headers === "object" && !Array.isArray(target.headers) &&
++        Object.entries(target.headers).every(([key, value]) =>
++          /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u.test(key) && typeof value === "string" &&
++          !/[\r\n]/u.test(value)) && !routes.has(routeIdentity),
++      "Workerd proof Shell API targets must name one approved owner, explicit mount and string headers",
++    );
++    routes.add(routeIdentity);
++  }
++  return fixture;
++};
++
++const readWorkerdProofFixture = (apps) => {
++  const location = process.env.ULTRAMODERN_WORKERD_PROOF_FIXTURE;
++  return location === undefined
++    ? { schemaVersion: 1, kvSeeds: [], ownerTargets: [], shellApiTargets: [] }
++    : validateWorkerdProofFixture(readJson(path.resolve(location)), apps);
++};
++
+ const createWorkerOptions = (app, workspaceRoot, extra = {}) => {
+   const main = typeof app.wrangler.main === "string" ? app.wrangler.main : "server/index.mjs";
+   const assets =
+@@ -380,6 +469,14 @@ const createWorkerOptions = (app, workspaceRoot, extra = {}) => {
+     compatibilityFlags: app.wrangler.compatibility_flags,
+     bindings: { ...app.wrangler.vars, ...app.devVars },
+     hyperdrives: createLocalHyperdrives(app),
++    kvNamespaces: Object.fromEntries((app.wrangler.kv_namespaces ?? []).map((namespace) => {
++      assert(
++        typeof namespace.binding === "string" && typeof namespace.id === "string" &&
++          namespace.id.length > 0,
++        `${app.id} has an invalid native KV namespace`,
++      );
++      return [namespace.binding, namespace.id];
++    })),
+     assets: {
+       binding: typeof assets.binding === "string" ? assets.binding : "ASSETS",
+       directory: path.resolve(app.outputRoot, directory),
+@@ -455,6 +552,7 @@ const responseEvidence = async (app, response, check) => {
+   return {
+     bodyBase64: bytes.toString("base64"),
+     byteLength: bytes.byteLength,
++    contentType: response.headers.get("content-type"),
+     ...(marker ? { releaseMarker: marker } : {}),
+     sha256: sha256(bytes),
+     status: response.status,
+@@ -488,7 +586,7 @@ const resolveApiSmokeChecks = (app, shell) => {
+   return [...uniqueChecks.values()];
+ };
+ 
+-const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
++const runApiProofs = async (apps, miniflare, shell, executionByAppId, fixture, recorders) => {
+   const results = [];
+   for (const app of apps.filter((candidate) => candidate.hasApiSurface)) {
+     const jsonSmokeChecks = resolveApiSmokeChecks(app, shell);
+@@ -496,17 +594,18 @@ const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
+       jsonSmokeChecks.length > 0,
+       `${app.id} has no real Cloudflare API smoke check`,
+     );
+-    const binding = (shell.wrangler.services ?? []).find(
+-      (candidate) => candidate.service === workerName(app),
++    const shellTarget = fixture.shellApiTargets.find(
++      (candidate) => candidate.shellId === shell.id && candidate.appId === app.id,
+     );
++    const ownerTarget = fixture.ownerTargets.find((candidate) => candidate.appId === app.id);
+     assert(
+-      binding || (app.apiOnly && !shell.verticalRefs.includes(app.id)),
+-      `${shell.id} has no service binding for ${app.id}`,
++      shellTarget || (app.apiOnly && !shell.verticalRefs.includes(app.id)),
++      `${shell.id} has no explicit native API target for ${app.id}`,
+     );
+     for (const check of jsonSmokeChecks) {
+       const method = String(check.method ?? "GET").toUpperCase();
+       const headers = {};
+-      const init = { method, headers };
++      const init = { method, headers, redirect: "manual" };
+       if (check.body !== undefined) {
+         headers["content-type"] = "application/json";
+         init.body = JSON.stringify(check.body);
+@@ -518,20 +617,36 @@ const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
+         ).fetch(`https://${workerName(app)}.invalid${check.route}`, init),
+         check,
+       );
+-      const throughShell = binding
++      const outboundStart = recorders.outboundRequests.length;
++      const shellRoute = shellTarget ? `${shellTarget.routePrefix}${check.route}` : undefined;
++      const throughShell = shellTarget
+         ? await responseEvidence(
+             app,
+             await miniflare.dispatchFetch(
+-              `https://${workerName(shell)}.invalid${check.route}`,
+-              init,
++              `https://${workerName(shell)}.invalid${shellRoute}`,
++              {
++                ...init,
++                headers: { ...headers, ...shellTarget?.headers },
++              },
+             ),
+             check,
+           )
+         : undefined;
+       if (throughShell) {
+         assert(
+-          direct.sha256 === throughShell.sha256,
+-          `${app.id} direct and service-binding API responses differ`,
++          direct.status === throughShell.status && direct.sha256 === throughShell.sha256 &&
++            direct.contentType === throughShell.contentType,
++          `${app.id} direct and Shell API responses differ`,
++        );
++      }
++      const outboundRequests = recorders.outboundRequests.slice(outboundStart);
++      if (shellTarget) {
++        const expectedUrl = new URL(check.route, ownerTarget.baseUrl).href;
++        assert(
++          outboundRequests.some((request) => request.callerId === shell.id &&
++            request.targetAppId === app.id && request.url === expectedUrl &&
++            request.method === method && request.response?.status === throughShell.status),
++          `${app.id} Shell API proof did not reach its approved HTTPS owner`,
+         );
+       }
+       const target = {
+@@ -542,8 +657,8 @@ const runApiProofs = async (apps, miniflare, shell, executionByAppId) => {
+       results.push({
+         appId: app.id,
+         shellId: shell.id,
+-        ...(binding
+-          ? { binding: binding.binding, bindingTarget: target, throughShell }
++        ...(shellTarget
++          ? { httpsTarget: { ...target, baseUrl: ownerTarget.baseUrl }, shellRoute, throughShell, outboundRequests }
+           : { directTarget: target }),
+         direct,
+         id: check.id,
+@@ -582,6 +697,7 @@ const startWorkerdTargetServers = async (
+   miniflare,
+   failedServices,
+   workerConfigurations,
++  fixture,
+ ) => {
+   const servers = [];
+   const isolatedVerticalRuntimes = [];
+@@ -594,7 +710,7 @@ const startWorkerdTargetServers = async (
+       );
+       const runtime =
+         app.kind === "vertical"
+-          ? createIsolatedRuntime(workerConfigurations[index])
++          ? await createIsolatedRuntime(workerConfigurations[index], app, apps, fixture)
+           : miniflare;
+       if (runtime !== miniflare) {
+         isolatedVerticalRuntimes.push(runtime);
+@@ -747,13 +863,45 @@ const decodeDistributedSsrFragmentRequest = (request) => {
+ // requested MicroVertical its own runtime so its static assets and MF manifest
+ // cannot resolve from a sibling Worker. Its service bindings still resolve
+ // through the shared composition runtime.
+-const createIsolatedRuntime = (workerOptions) =>
+-  new Miniflare(
++const seedWorkerdProofKv = async (miniflare, runtimeApps, allApps, fixture) => {
++  const sources = new Map();
++  for (const seed of fixture.kvSeeds) {
++    const app = allApps.find((candidate) => candidate.id === seed.appId);
++    const id = app.wrangler.kv_namespaces.find((namespace) => namespace.binding === seed.binding).id;
++    const entries = sources.get(id) ?? new Map();
++    for (const entry of seed.entries) entries.set(entry.key, entry.value);
++    sources.set(id, entries);
++  }
++  const seeded = new Set();
++  for (const app of runtimeApps) {
++    for (const binding of app.wrangler.kv_namespaces ?? []) {
++      const entries = sources.get(binding.id);
++      if (!entries || entries.size === 0 || seeded.has(binding.id)) continue;
++      const namespace = await miniflare.getKVNamespace(binding.binding, workerName(app));
++      for (const [key, value] of entries) {
++        await namespace.put(key, value);
++        assert(await namespace.get(key) === value, `${app.id} native KV fixture changed its seeded bytes`);
++      }
++      seeded.add(binding.id);
++    }
++  }
++};
++
++const createIsolatedRuntime = async (workerOptions, app, allApps, fixture) => {
++  const miniflare = new Miniflare(
+     convertV4MiniflareOptions({
+       log: new Log(LogLevel.ERROR),
+       workers: [workerOptions],
+     }),
+   );
++  try {
++    await seedWorkerdProofKv(miniflare, [app], allApps, fixture);
++    return miniflare;
++  } catch (error) {
++    await miniflare.dispose();
++    throw error;
++  }
++};
+ 
+ const createServiceBindings = (
+   caller,
+@@ -928,15 +1076,17 @@ const writeReport = (reportPath, report) => {
+ 
+ const main = async () => {
+   const workspaceRoot = path.resolve(process.env.ULTRAMODERN_WORKSPACE_ROOT ?? process.cwd());
++  const artifactRoot = path.resolve(process.env.ULTRAMODERN_WORKERD_ARTIFACT_ROOT ?? workspaceRoot);
+   const reportPath = path.join(workspaceRoot, reportRelativePath);
+   const keepWorkerd = process.env.ULTRAMODERN_KEEP_WORKERD === "1";
+   const apps = loadApps(
+-    workspaceRoot,
+     readJson(path.join(workspaceRoot, "topology/reference-topology.json")),
+     readJson(path.join(workspaceRoot, "topology/local-overlays/development.json")),
++    artifactRoot,
+   );
+   const shells = apps.filter((app) => app.kind === "shell");
+   assert(!keepWorkerd || shells.length === 1, "Browser workerd proof requires exactly one shell");
++  const fixture = readWorkerdProofFixture(apps);
+ 
+   const recorders = {
+     apiBindingRequests: [],
+@@ -950,10 +1100,32 @@ const main = async () => {
+       serviceBindings: createServiceBindings(app, { ...recorders, composition, failedServices }),
+       async outboundService(request) {
+         const requestUrl = new URL(request.url);
+-        recorders.outboundRequests.push({ callerId: app.id, url: requestUrl.href });
+-        return new Response("External network disabled by SSR proof", {
+-          status: 502,
+-        });
++        const target = fixture.ownerTargets.find(
++          (candidate) => new URL(candidate.baseUrl).origin === requestUrl.origin,
++        );
++        const recorded = {
++          callerId: app.id,
++          url: requestUrl.href,
++          method: request.method,
++          requestBody: {
++            contentLength: request.headers.get("content-length"),
++            contentType: request.headers.get("content-type"),
++            present: request.body !== null,
++          },
++        };
++        recorders.outboundRequests.push(recorded);
++        const owner = target ? apps.find((candidate) => candidate.id === target.appId) : undefined;
++        if (!owner || failedServices.has(workerName(owner))) {
++          return new Response("Unapproved or unavailable HTTPS owner in SSR proof", { status: 502 });
++        }
++        recorded.targetAppId = target.appId;
++        const worker = await composition.miniflare.getWorker(workerName(owner));
++        const response = await worker.fetch(request);
++        recorded.response = {
++          contentType: response.headers.get("content-type"),
++          status: response.status,
++        };
++        return response;
+       },
+     }),
+   );
+@@ -972,6 +1144,7 @@ const main = async () => {
+   const report = { executions, apiProofs: [], proofs: [], verticalProofs: [] };
+ 
+   try {
++    await seedWorkerdProofKv(miniflare, apps, apps, fixture);
+     for (const shell of shells) {
+       // Shell routes compose declared server-rendered boundaries through the
+       // shell's entry Worker exactly as a browser request would.
+@@ -1006,7 +1179,7 @@ const main = async () => {
+         );
+       }
+       report.apiProofs.push(
+-        ...(await runApiProofs(apps, miniflare, shell, executionByAppId)),
++        ...(await runApiProofs(apps, miniflare, shell, executionByAppId, fixture, recorders)),
+       );
+     }
+ 
+@@ -1016,7 +1189,7 @@ const main = async () => {
+       if (vertical.kind !== "vertical" || vertical.ssrRoutes.length === 0) {
+         continue;
+       }
+-      const runtime = createIsolatedRuntime(workers[index]);
++      const runtime = await createIsolatedRuntime(workers[index], vertical, apps, fixture);
+       try {
+         for (const route of vertical.ssrRoutes) {
+           report.verticalProofs.push({
+@@ -1042,6 +1215,7 @@ const main = async () => {
+         miniflare,
+         failedServices,
+         workers,
++        fixture,
+       );
+       console.log(`WORKERD_TARGET_URLS=${JSON.stringify(targetServers.targetUrls)}`);
+       console.log(`WORKERD_URL=${targetServers.targetUrls[shells[0].id]}`);

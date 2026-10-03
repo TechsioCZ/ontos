@@ -430,17 +430,53 @@ check "Shell rejects a stale composition before redeeming the owner assertion" 4
   "$(request "$work/party-stale.json" -H 'content-type: application/json' -H "authorization: Bearer $assertion" \
     -H "x-ontos-composition-revision: ${revision:0:63}$([ "${revision:63:1}" = 0 ] && echo 1 || echo 0)" \
     --data '{"query":"acme"}' "$shell_origin$party_api_base/party.registry/search/parties")"
-asserted_status="$(party_search "$work/party-asserted.json" -H "authorization: Bearer $assertion")"
+asserted_status="$(party_search "$work/party-asserted.json" --dump-header "$work/party-asserted.headers" -H "authorization: Bearer $assertion")"
 [ "$asserted_status" = 200 ] || echo "Party Registry answered: $(cat "$work/party-asserted.json")" >&2
 check "Party Registry answers a governed read through the admitted native HTTPS release gateway" 200 \
   "$asserted_status"
 node -e '
-  const results = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+  const fs = require("fs");
+  const raw = fs.readFileSync(process.argv[1]);
+  let results;
+  try { results = JSON.parse(raw.toString("utf8")); } catch {
+    const headers = fs.readFileSync(process.argv[2], "utf8");
+    const header = name => headers.split(/\r?\n/)
+      .filter(line => line.toLowerCase().startsWith(name + ":"))
+      .map(line => line.slice(line.indexOf(":") + 1).trim()).at(-1);
+    const encoding = header("content-encoding")?.toLowerCase() ?? "identity";
+    const diagnostic = {
+      status: headers.match(/^HTTP\/\S+\s+\d{3}[^\r\n]*/gm)?.at(-1)?.split(/\s+/)[1],
+      contentEncoding: encoding,
+      contentType: header("content-type"),
+      declaredLength: header("content-length"),
+      rawByteLength: raw.length,
+      rawSha256: require("crypto").createHash("sha256").update(raw).digest("hex"),
+      rawPrefixHex: raw.subarray(0, 3).toString("hex"),
+    };
+    try {
+      const zlib = require("zlib");
+      const options = { maxOutputLength: 1024 * 1024 };
+      const decoded = encoding === "gzip" ? zlib.gunzipSync(raw, options)
+        : encoding === "br" ? zlib.brotliDecompressSync(raw, options)
+        : encoding === "identity" ? raw : undefined;
+      if (decoded === undefined) throw new Error("Unsupported content coding");
+      const value = JSON.parse(decoded.toString("utf8"));
+      diagnostic.nativeDecode = {
+        coherent: true,
+        jsonType: Array.isArray(value) ? "array" : value === null ? "null" : typeof value,
+        arrayCount: Array.isArray(value) ? value.length : undefined,
+      };
+    } catch (error) {
+      diagnostic.nativeDecode = { coherent: false, errorName: error?.name ?? "UnknownError" };
+    }
+    console.error("Party Registry safe wire diagnostic:", JSON.stringify(diagnostic));
+    throw new Error("The native Party Registry response did not parse as JSON; safe wire diagnostic emitted");
+  }
   if (!Array.isArray(results)) {
     console.error("FAIL: the Party Registry read did not answer its result list", JSON.stringify(results));
     process.exit(1);
   }
-  console.log("ok: the Party Registry read answered " + results.length + " result(s)");' "$work/party-asserted.json"
+  console.log("ok: the Party Registry read answered " + results.length + " result(s)");' "$work/party-asserted.json" "$work/party-asserted.headers"
 # 5. SSR: the Shell renders the authenticated Party Registry page frame; each UI vertical Worker
 #    renders its own route.
 party_page_path="$(cat "$work/party-page-path")"

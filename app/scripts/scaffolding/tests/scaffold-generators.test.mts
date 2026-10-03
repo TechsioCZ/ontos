@@ -616,9 +616,7 @@ const esbuildPath = require.resolve('esbuild/bin/esbuild', {
 });
 const oxfmtPath = path.join(appRoot, 'node_modules', '.bin', 'oxfmt');
 const tscPath = path.join(appRoot, 'node_modules', '.bin', 'tsc');
-const modernAppEnvironmentTypes = require.resolve('@modern-js/app-tools/types', {
-  paths: [path.join(appRoot, 'apps/shell-super-app')],
-});
+const modernAppEnvironmentTypes = require.resolve('@modern-js/app-tools/types');
 
 const makeGatewayKey = (
   kid: string,

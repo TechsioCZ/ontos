@@ -4,7 +4,19 @@ import path from 'node:path';
 import { NodeRuntime, NodeServices } from '@effect/platform-node';
 import { verifyCloudflareReleaseEnvelopeStaging } from '@modern-js/app-tools-extensions/release-envelope/framework-output';
 import { and, eq } from 'drizzle-orm';
-import { Config, DateTime, Duration, Effect, FileSystem, Layer, Redacted, Schema } from 'effect';
+import {
+  Array as EffectArray,
+  Config,
+  DateTime,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Order,
+  Redacted,
+  Schema,
+} from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 
 import { CoreDatabase } from '../packages/core-runtime/src/db/client.ts';
@@ -49,7 +61,7 @@ export class CloudflareLocalTopologyFixtureError extends Schema.TaggedError<Clou
 const fail = (reason: string) => new CloudflareLocalTopologyFixtureError({ reason });
 const contractJson = Schema.fromJsonString(OntosModuleDeploymentContractSchema);
 
-export const LocalTopologyProofPathsSchema = Schema.Struct({
+const LocalTopologyProofPathsSchema = Schema.Struct({
   moduleIds: Schema.Array(OntosModuleIdSchema),
   party: Schema.Struct({
     apiBaseUrl: Schema.NonEmptyString,
@@ -97,6 +109,93 @@ export const LocalTopologyOwnerSchema = Schema.Struct({
     }),
   ),
   outputDirectory: Schema.NonEmptyString,
+});
+
+export const discoverLocalTopologyOwners = Effect.fn('CloudflareLocalTopology.discoverOwners')(function* discoverOwners(
+  artifactRoot: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const verticalsDirectory = path.resolve(artifactRoot, 'verticals');
+  const names = yield* Effect.forEach(
+    EffectArray.sort(yield* fileSystem.readDirectory(verticalsDirectory), Order.String),
+    (name) =>
+      fileSystem
+        .stat(path.join(verticalsDirectory, name))
+        .pipe(Effect.map(({ type }) => (type === 'Directory' ? Option.some(name) : Option.none()))),
+    { concurrency: 1 },
+  );
+  return yield* Schema.decodeEffect(Schema.Array(LocalTopologyOwnerSchema))(
+    names.flatMap(Option.toArray).map((appId, index) => ({
+      appId,
+      baseUrl: `https://localhost:${8791 + index}/`,
+      outputDirectory: path.join(verticalsDirectory, appId, '.output'),
+    })),
+  );
+});
+
+const LocalWorkerdProofFixtureSchema = Schema.Struct({
+  kvSeeds: Schema.Array(
+    Schema.Struct({
+      appId: OntosDeploymentAppIdSchema,
+      binding: Schema.Literal('ONTOS_ACTIVE_APPLICATION_COMPOSITION'),
+      entries: Schema.Array(Schema.Struct({ key: Schema.Literal('active'), value: Schema.NonEmptyString })),
+    }),
+  ),
+  ownerTargets: Schema.Array(
+    Schema.Struct({ appId: OntosDeploymentAppIdSchema, baseUrl: LocalTopologyOwnerSchema.fields.baseUrl }),
+  ),
+  schemaVersion: Schema.Literal(1),
+  shellApiTargets: Schema.Array(
+    Schema.Struct({
+      appId: OntosDeploymentAppIdSchema,
+      headers: Schema.Struct({ 'x-ontos-composition-revision': ApplicationCompositionSchema.fields.revision }),
+      routePrefix: Schema.NonEmptyString,
+      shellId: Schema.Literal('shell-super-app'),
+    }),
+  ),
+});
+
+/** Native workerd proof placement comes from the same approved artifact snapshot as the HTTPS proof. */
+export const deriveLocalWorkerdProofFixture = Effect.fn('CloudflareLocalTopology.workerdProof')(function* deriveFixture(
+  snapshot: ActiveApplicationCompositionSnapshot,
+) {
+  const approved = yield* validateActiveApplicationCompositionSnapshot(snapshot);
+  const value = yield* encodeActiveApplicationCompositionSnapshot(approved);
+  const ownerTargets = yield* Effect.forEach(
+    approved.composition.modules,
+    (module) =>
+      Effect.gen(function* explicitOwnerOrigin() {
+        if (module.backend.transport !== 'node-http') {
+          return yield* fail('the local workerd proof requires explicit HTTPS owner placement');
+        }
+        return {
+          appId: module.deployment.appId,
+          baseUrl: yield* Schema.decodeEffect(LocalTopologyOwnerSchema.fields.baseUrl)(module.backend.baseUrl),
+        };
+      }),
+    { concurrency: 1 },
+  );
+  if (new Set(ownerTargets.map(({ baseUrl }) => baseUrl)).size !== ownerTargets.length) {
+    return yield* fail('each local workerd owner must have a different explicit HTTPS origin');
+  }
+  const binding = 'ONTOS_ACTIVE_APPLICATION_COMPOSITION';
+  const key = 'active';
+  const schemaVersion = 1;
+  return yield* Schema.decodeEffect(LocalWorkerdProofFixtureSchema)({
+    kvSeeds: [approved.composition.shell.deployment.appId, ...ownerTargets.map(({ appId }) => appId)].map((appId) => ({
+      appId,
+      binding,
+      entries: [{ key, value }],
+    })),
+    ownerTargets,
+    schemaVersion,
+    shellApiTargets: approved.composition.modules.map(({ deployment: { appId, buildMarker } }) => ({
+      appId,
+      headers: { 'x-ontos-composition-revision': approved.composition.revision },
+      routePrefix: moduleReleaseApiBaseUrl(appId, buildMarker).slice(0, -`/${appId}-api`.length),
+      shellId: approved.composition.shell.deployment.appId,
+    })),
+  });
 });
 
 export const deriveLocalTopologyProofPaths = Effect.fn('CloudflareLocalTopology.proofPaths')(function* deriveProofPaths(
@@ -172,12 +271,14 @@ const readLocalShellIdentity = Effect.gen(function* localShellIdentity() {
 const prepareCommand = Command.make(
   'prepare',
   {
+    artifactRoot: Flag.String('artifact-root').pipe(Flag.optional),
     intentFile: Flag.String('intent-file'),
-    ownersFile: Flag.String('owners-file'),
+    ownersFile: Flag.String('owners-file').pipe(Flag.optional),
     pathsFile: Flag.String('paths-file'),
     shellOrigin: Flag.String('shell-origin'),
-    shellOutput: Flag.String('shell-output'),
+    shellOutput: Flag.String('shell-output').pipe(Flag.optional),
     snapshotFile: Flag.String('snapshot-file'),
+    workerdProofFile: Flag.String('workerd-proof-file').pipe(Flag.optional),
   },
   (input) =>
     Effect.gen(function* prepareLocalTopologyFixture() {
@@ -189,9 +290,27 @@ const prepareCommand = Command.make(
       const intent = yield* Schema.decodeEffect(Schema.fromJsonString(ApplicationReleaseIntentSchema), {
         onExcessProperty: 'error',
       })(yield* fileSystem.readFileString(input.intentFile));
-      const owners = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(LocalTopologyOwnerSchema)), {
-        onExcessProperty: 'error',
-      })(yield* fileSystem.readFileString(input.ownersFile));
+      const placement = yield* Effect.gen(function* selectNativeOutputPlacement() {
+        if (Option.isSome(input.artifactRoot)) {
+          if (Option.isSome(input.ownersFile) || Option.isSome(input.shellOutput)) {
+            return yield* fail('artifact-root cannot be combined with explicit owners-file or shell-output');
+          }
+          return {
+            owners: yield* discoverLocalTopologyOwners(input.artifactRoot.value),
+            shellOutput: path.resolve(input.artifactRoot.value, 'apps/shell-super-app/.output'),
+          };
+        }
+        if (Option.isNone(input.ownersFile) || Option.isNone(input.shellOutput)) {
+          return yield* fail('prepare requires artifact-root or both explicit owners-file and shell-output');
+        }
+        return {
+          owners: yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(LocalTopologyOwnerSchema)), {
+            onExcessProperty: 'error',
+          })(yield* fileSystem.readFileString(input.ownersFile.value)),
+          shellOutput: input.shellOutput.value,
+        };
+      });
+      const { owners, shellOutput } = placement;
       const intendedIds = new Set(intent.modules.map(({ appId }) => appId));
       if (
         intendedIds.size !== intent.modules.length ||
@@ -201,7 +320,7 @@ const prepareCommand = Command.make(
       ) {
         return yield* fail('local owners must match the complete reviewed module intent exactly');
       }
-      const shellIdentity = yield* (yield* readLocalShellIdentity)(input.shellOutput);
+      const shellIdentity = yield* (yield* readLocalShellIdentity)(shellOutput);
       const modules = yield* Effect.forEach(
         owners,
         (owner) =>
@@ -238,12 +357,8 @@ const prepareCommand = Command.make(
         modules,
         observedAt: yield* DateTime.now,
         shell: {
-          federationManifest: yield* readLocalArtifact(input.shellOutput, input.shellOrigin, '/mf-manifest.json'),
-          runtimeContract: yield* readLocalArtifact(
-            input.shellOutput,
-            input.shellOrigin,
-            ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
-          ),
+          federationManifest: yield* readLocalArtifact(shellOutput, input.shellOrigin, '/mf-manifest.json'),
+          runtimeContract: yield* readLocalArtifact(shellOutput, input.shellOrigin, ONTOS_SHELL_RUNTIME_CONTRACT_PATH),
         },
         validity: Duration.minutes(30),
       });
@@ -259,6 +374,14 @@ const prepareCommand = Command.make(
         input.pathsFile,
         yield* Schema.encodeEffect(Schema.fromJsonString(LocalTopologyProofPathsSchema))(paths),
       );
+      if (Option.isSome(input.workerdProofFile)) {
+        yield* fileSystem.writeFileString(
+          input.workerdProofFile.value,
+          yield* Schema.encodeEffect(Schema.fromJsonString(LocalWorkerdProofFixtureSchema))(
+            yield* deriveLocalWorkerdProofFixture(snapshot),
+          ),
+        );
+      }
       return yield* Effect.void;
     }),
 );
