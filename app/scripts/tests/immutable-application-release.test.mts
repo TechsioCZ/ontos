@@ -88,7 +88,10 @@ const backendFor = (plan: Parameters<typeof validateImmutableApplicationReleaseA
     workerName: plan.backendScriptName,
   });
 
-const artifactInventory = (plan: Parameters<typeof validateImmutableApplicationReleaseArtifacts>[0]) => {
+const artifactInventory = (
+  plan: Parameters<typeof validateImmutableApplicationReleaseArtifacts>[0],
+  pageJsPath = PAGE_JS_PATH,
+) => {
   const contract = {
     deployment: { appId: plan.appId, buildMarker: plan.buildMarker },
     manifest: {
@@ -134,7 +137,7 @@ const artifactInventory = (plan: Parameters<typeof validateImmutableApplicationR
       {
         assets: {
           css: { async: [DETAILS_CSS_PATH], sync: [PAGE_CSS_PATH] },
-          js: { async: [DETAILS_JS_PATH], sync: [PAGE_JS_PATH] },
+          js: { async: [DETAILS_JS_PATH], sync: [pageJsPath] },
         },
       },
     ],
@@ -154,7 +157,7 @@ const artifactInventory = (plan: Parameters<typeof validateImmutableApplicationR
       file(CONTRACT_PATH, json(contract)),
       file(FEDERATION_MANIFEST_PATH, json(manifest)),
       file(REMOTE_ENTRY_PATH),
-      file(PAGE_JS_PATH),
+      file(pageJsPath),
       file(DETAILS_JS_PATH),
       file(PAGE_CSS_PATH),
       file(DETAILS_CSS_PATH),
@@ -436,6 +439,68 @@ it.effect(
       expect(changedBytes.assetsSha256).not.toBe(approved.assetsSha256);
       expect(changedBytes.workerSha256).toBe(approved.workerSha256);
     }),
+);
+
+it.effect('retains native Modern route filenames in public and backend release inventories', () =>
+  Effect.gen(function* nativeRouteInventory() {
+    const plan = yield* planFor();
+    const pageJsPath = 'static/js/async/(lang)/$.e213690cdf.js';
+    const backendPath = 'server/bundles/(lang)/$.mjs';
+    const inventory = artifactInventory(plan, pageJsPath);
+    const artifacts = yield* validateImmutableApplicationReleaseArtifacts(plan, {
+      ...inventory,
+      backendFiles: [...inventory.backendFiles, file(backendPath)],
+    });
+    const original = yield* validateImmutableApplicationReleaseArtifacts(plan, artifactInventory(plan));
+    expect(artifacts.assetsSha256).not.toBe(original.assetsSha256);
+    expect(artifacts.workerSha256).not.toBe(original.workerSha256);
+    const assetUrl = new URL(`${plan.assetsOrigin}${pageJsPath}`);
+    expect(assetUrl.pathname).toBe(`/${pageJsPath}`);
+    expect(assetUrl.search).toBe('');
+    expect(assetUrl.hash).toBe('');
+    const missingNativeAsset = yield* validateImmutableApplicationReleaseArtifacts(plan, {
+      ...inventory,
+      assets: inventory.assets.filter(({ path }) => path !== pageJsPath),
+    }).pipe(Effect.flip);
+    expect(missingNativeAsset.message).toBe('Federation manifest references an absent release entrypoint or chunk');
+  }),
+);
+
+it.effect('rejects unsafe URL paths and duplicate native route filenames in both inventories', () =>
+  Effect.gen(function* unsafeNativeRouteInventory() {
+    const plan = yield* planFor();
+    const pageJsPath = 'static/js/async/(lang)/$.e213690cdf.js';
+    const inventory = artifactInventory(plan, pageJsPath);
+    for (const unsafePath of [
+      '',
+      './chunk.js',
+      'nested/./chunk.js',
+      'nested/../chunk.js',
+      '/absolute.js',
+      'nested//chunk.js',
+      'nested/chunk.js/',
+      String.raw`nested\chunk.js`,
+      'nested/%2e%2e/chunk.js',
+      'nested%2fchunk.js',
+      'nested%5cchunk.js',
+      `${pageJsPath}?secret=1`,
+      `${pageJsPath}#fragment`,
+      `${pageJsPath}\u0000`,
+      `${pageJsPath}\n`,
+      pageJsPath,
+    ]) {
+      const publicFailure = yield* validateImmutableApplicationReleaseArtifacts(plan, {
+        ...inventory,
+        assets: [...inventory.assets, file(unsafePath)],
+      }).pipe(Effect.flip);
+      expect(publicFailure.message).toBe('artifact inventory contains an unsafe or duplicate path');
+      const backendFailure = yield* validateImmutableApplicationReleaseArtifacts(plan, {
+        ...inventory,
+        backendFiles: [...inventory.backendFiles, file(pageJsPath), file(unsafePath)],
+      }).pipe(Effect.flip);
+      expect(backendFailure.message).toBe('artifact inventory contains an unsafe or duplicate path');
+    }
+  }),
 );
 
 it.effect('refuses missing manifest JS, CSS, remote entry, or public contract files', () =>
