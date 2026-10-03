@@ -319,6 +319,7 @@ it.effect('rejects duplicate or unsafe public paths and public secrets or source
       '../private.js',
       '/absolute.js',
       'nested/../escape.js',
+      '@mf-types/[lang]/../escape.d.ts',
       '.env',
       'credentials.json',
       'private-key.pem',
@@ -673,15 +674,25 @@ for (const secretResponse of [
             '@mf-types/(lang)/Route$.d.ts',
             text('export interface RouteParams { lang: string }\n'),
           );
+          const nativeBracketAssets = [
+            file(
+              '@mf-types/compiled-types/src/routes/[lang]/contacts/page.d.ts',
+              text('export declare const ContactsPage: () => string;\n'),
+            ),
+            file(
+              '@mf-types/compiled-types/src/routes/[lang]/contacts/route.meta.d.ts',
+              text('export declare const routeMetadata: { title: string };\n'),
+            ),
+          ];
           const { output, publicDirectory } = yield* writeNativeShellOutput(
             appDirectory,
             plan,
-            [...maps, encodedAsset],
+            [...maps, encodedAsset, ...nativeBracketAssets],
             false,
           );
           const originalOutput = yield* readReleaseFiles(output);
           const originalInventory = inventoryFor(plan);
-          const inventory = { assets: [...originalInventory.assets, encodedAsset] };
+          const inventory = { assets: [...originalInventory.assets, encodedAsset, ...nativeBracketAssets] };
           const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
             environment: 'stage',
             modules: [],
@@ -846,6 +857,12 @@ for (const secretResponse of [
             expect(requests).toContain(`${plan.assetsOrigin}${asset.path}`);
           }
           expect(requests).toContain(`${plan.assetsOrigin}%40mf-types/(lang)/Route%24.d.ts`);
+          expect(requests).toContain(
+            `${plan.assetsOrigin}%40mf-types/compiled-types/src/routes/%5Blang%5D/contacts/page.d.ts`,
+          );
+          expect(requests).toContain(
+            `${plan.assetsOrigin}%40mf-types/compiled-types/src/routes/%5Blang%5D/contacts/route.meta.d.ts`,
+          );
           expect(requests.some((url) => url.includes('%28') || url.includes('%29'))).toBe(false);
           expect(requests).not.toContain(`${plan.assetsOrigin}${encodedAsset.path}`);
           const lock = events.findIndex((event) => event.includes(PUBLICATION_LOCK));
@@ -895,6 +912,11 @@ for (const secretResponse of [
           expect(publishedInventories).toHaveLength(2);
           for (const published of publishedInventories) {
             expect(published.some(({ path }) => path === 'main.js')).toBe(true);
+            for (const bracketAsset of nativeBracketAssets) {
+              expect([...(published.find(({ path }) => path === bracketAsset.path)?.bytes ?? [])]).toEqual([
+                ...bracketAsset.bytes,
+              ]);
+            }
             expect([...(published.find(({ path }) => path === encodedAsset.path)?.bytes ?? [])]).toEqual([
               ...encodedAsset.bytes,
             ]);

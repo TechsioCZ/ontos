@@ -57,6 +57,8 @@ const FEDERATION_MANIFEST_PATH = 'mf-manifest.json';
 const REMOTE_ENTRY_PATH = 'remoteEntry.js';
 const PAGE_JS_PATH = 'page.js';
 const NATIVE_PAGE_JS_PATH = 'static/js/async/(lang)/$.e213690cdf.js';
+const NATIVE_ROUTE_TYPES_PATH = '@mf-types/compiled-types/src/routes/[lang]/contacts/page.d.ts';
+const NATIVE_ROUTE_META_TYPES_PATH = '@mf-types/compiled-types/src/routes/[lang]/contacts/route.meta.d.ts';
 const PAGE_CSS_PATH = 'page.css';
 const DETAILS_JS_PATH = 'details.js';
 const DETAILS_CSS_PATH = 'details.css';
@@ -455,7 +457,12 @@ it.effect('retains native Modern route filenames in public and backend release i
     const plan = yield* planFor();
     const pageJsPath = NATIVE_PAGE_JS_PATH;
     const backendPath = 'server/bundles/(lang)/$.mjs';
-    const inventory = artifactInventory(plan, pageJsPath);
+    const originalInventory = artifactInventory(plan, pageJsPath);
+    const inventory = {
+      ...originalInventory,
+      assets: [...originalInventory.assets, file(NATIVE_ROUTE_TYPES_PATH)],
+      backendFiles: [...originalInventory.backendFiles, file(NATIVE_ROUTE_TYPES_PATH)],
+    };
     const artifacts = yield* validateImmutableApplicationReleaseArtifacts(plan, {
       ...inventory,
       backendFiles: [...inventory.backendFiles, file(backendPath)],
@@ -479,7 +486,12 @@ it.effect('rejects unsafe URL paths and duplicate native route filenames in both
   Effect.gen(function* unsafeNativeRouteInventory() {
     const plan = yield* planFor();
     const pageJsPath = NATIVE_PAGE_JS_PATH;
-    const inventory = artifactInventory(plan, pageJsPath);
+    const originalInventory = artifactInventory(plan, pageJsPath);
+    const inventory = {
+      ...originalInventory,
+      assets: [...originalInventory.assets, file(NATIVE_ROUTE_TYPES_PATH)],
+      backendFiles: [...originalInventory.backendFiles, file(NATIVE_ROUTE_TYPES_PATH)],
+    };
     for (const unsafePath of [
       '',
       './chunk.js',
@@ -492,6 +504,16 @@ it.effect('rejects unsafe URL paths and duplicate native route filenames in both
       'nested/%2e%2e/chunk.js',
       'nested%2fchunk.js',
       'nested%5cchunk.js',
+      '[lang]/../chunk.js',
+      '@mf-types/compiled-types/src/routes/[lang]/../escape.d.ts',
+      '[lang]/./chunk.js',
+      '/[lang]/chunk.js',
+      '[lang]//chunk.js',
+      String.raw`[lang]\chunk.js`,
+      '[lang]/%2e%2e/chunk.js',
+      '%5Blang%5D/chunk.js',
+      '[lang]%2fchunk.js',
+      NATIVE_ROUTE_TYPES_PATH,
       `${pageJsPath}?secret=1`,
       `${pageJsPath}#fragment`,
       `${pageJsPath}\u0000`,
@@ -503,11 +525,13 @@ it.effect('rejects unsafe URL paths and duplicate native route filenames in both
         assets: [...inventory.assets, file(unsafePath)],
       }).pipe(Effect.flip);
       expect(publicFailure.message).toBe('artifact inventory contains an unsafe or duplicate path');
+      expect(publicFailure.cause).toEqual({ path: unsafePath });
       const backendFailure = yield* validateImmutableApplicationReleaseArtifacts(plan, {
         ...inventory,
         backendFiles: [...inventory.backendFiles, file(pageJsPath), file(unsafePath)],
       }).pipe(Effect.flip);
       expect(backendFailure.message).toBe('artifact inventory contains an unsafe or duplicate path');
+      expect(backendFailure.cause).toEqual({ path: unsafePath });
     }
   }),
 );
@@ -1359,9 +1383,13 @@ it.effect('publishes native route chunks without exposing compiler source maps o
       const nativePage = NATIVE_PAGE_JS_PATH;
       const encodedNativePage = 'static/js/async/(lang)/%24.e213690cdf.js';
       const nativeTypes = file('@mf-types/Route.d.ts', text('export declare const route: string;'));
+      const nativeRouteDeclarations = [
+        file(NATIVE_ROUTE_TYPES_PATH, text('export declare const ContactsPage: () => unknown;')),
+        file(NATIVE_ROUTE_META_TYPES_PATH, text('export declare const routeMeta: { title: string };')),
+      ];
       const maps = ['.map', '.map.gz', '.map.br'].map((suffix) => file(`${nativePage}${suffix}`));
       const fixture = yield* prepareDeployment({
-        additionalPublicFiles: [...maps, nativeTypes],
+        additionalPublicFiles: [...maps, nativeTypes, ...nativeRouteDeclarations],
         pageJsPath: nativePage,
       });
       const before = yield* readReleaseFiles(fixture.output);
@@ -1371,12 +1399,26 @@ it.effect('publishes native route chunks without exposing compiler source maps o
       for (const published of fixture.publishedInventories) {
         expect(published.some(({ path }) => path === nativePage)).toBe(true);
         expect(published).toContainEqual(nativeTypes);
+        for (const declaration of nativeRouteDeclarations) {
+          expect([...(published.find(({ path }) => path === declaration.path)?.bytes ?? [])]).toEqual([
+            ...declaration.bytes,
+          ]);
+        }
         for (const map of maps) {
           expect(published.some(({ path }) => path === map.path)).toBe(false);
         }
       }
       expect(fixture.requests).toContain(`${fixture.plan.assetsOrigin}${encodedNativePage}`);
       expect(fixture.requests).toContain(`${fixture.plan.assetsOrigin}%40mf-types/Route.d.ts`);
+      expect(fixture.requests).toContain(
+        `${fixture.plan.assetsOrigin}%40mf-types/compiled-types/src/routes/%5Blang%5D/contacts/page.d.ts`,
+      );
+      expect(fixture.requests).toContain(
+        `${fixture.plan.assetsOrigin}%40mf-types/compiled-types/src/routes/%5Blang%5D/contacts/route.meta.d.ts`,
+      );
+      for (const declaration of nativeRouteDeclarations) {
+        expect(fixture.requests).not.toContain(`${fixture.plan.assetsOrigin}${declaration.path}`);
+      }
       expect(fixture.requests.some((url) => url.includes('%28') || url.includes('%29'))).toBe(false);
       expect(fixture.requests).not.toContain(`${fixture.plan.assetsOrigin}${nativePage}`);
       expect(fixture.requests).not.toContain(`${fixture.plan.assetsOrigin}${nativeTypes.path}`);

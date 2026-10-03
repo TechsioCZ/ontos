@@ -331,11 +331,11 @@ const validateReleaseFilePaths = Effect.fn('ImmutableApplicationRelease.filePath
     const paths = new Set<string>();
     for (const file of files) {
       if (
-        !/^[\w.@$()-]+(?:\/[\w.@$()-]+)*$/u.test(file.path) ||
+        !/^[\w.@$()[\]-]+(?:\/[\w.@$()[\]-]+)*$/u.test(file.path) ||
         file.path.split('/').some((part) => part === '..' || part === '.') ||
         paths.has(file.path)
       ) {
-        return yield* fail('artifact inventory contains an unsafe or duplicate path');
+        return yield* fail('artifact inventory contains an unsafe or duplicate path', { path: file.path });
       }
       paths.add(file.path);
     }
