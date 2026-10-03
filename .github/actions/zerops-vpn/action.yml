@@ -78,7 +78,7 @@ runs:
         export ZEROPS_CLI_YAML_FILE_PATH="$VPN_STATE_DIRECTORY/.zcli.yml"
         export ZEROPS_CLI_LOG_FILE_PATH=/dev/null
         sudo --preserve-env=ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH \
-          "$VPN_CLI_PATH" vpn up --project-id "$VPN_PROJECT_ID"
+          "$VPN_CLI_PATH" vpn up --project-id "$VPN_PROJECT_ID" --mtu 1350
 
     # Native vpn up only warns when its logger ping fails. Database DNS and TCP must work before
     # any authority lock, migration, artifact upload or publication can proceed.
