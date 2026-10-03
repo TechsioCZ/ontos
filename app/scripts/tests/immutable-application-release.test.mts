@@ -1650,8 +1650,21 @@ it.effect('bounds deployed asset response bytes by the exact compiled file size'
   Effect.scoped(
     Effect.gen(function* oversizedPublicArtifact() {
       const fixture = yield* prepareDeployment({ oversizedAssetBody: true });
+      const fileSystem = yield* FileSystem.FileSystem;
+      const expectedBytes = (yield* fileSystem.readFile(nodePath.join(fixture.publicDirectory, CONTRACT_PATH)))
+        .byteLength;
       const failure = yield* fixture.deploy.pipe(Effect.flip);
       expect(failure.message).toBe(ASSET_READBACK_FAILURE);
+      const cause = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleaseError)(failure.cause);
+      expect(cause.message).toBe('the deployed asset body exceeds its compiled artifact byte length');
+      expect(cause.cause).toEqual({
+        contentEncoding: null,
+        contentType: null,
+        expectedBytes,
+        observedBytes: expectedBytes + 1,
+        path: CONTRACT_PATH,
+        status: 200,
+      });
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

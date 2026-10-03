@@ -777,7 +777,16 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
         () => 0,
         (received, chunk) => {
           if (received + chunk.byteLength > bytes.byteLength) {
-            return Effect.fail(fail('the deployed asset body exceeds its compiled artifact byte length'));
+            return Effect.fail(
+              fail('the deployed asset body exceeds its compiled artifact byte length', {
+                contentEncoding: response.headers['content-encoding'] ?? null,
+                contentType: response.headers['content-type'] ?? null,
+                expectedBytes: bytes.byteLength,
+                observedBytes: received + chunk.byteLength,
+                path: file.path,
+                status: response.status,
+              }),
+            );
           }
           return Effect.sync(() => {
             bytes.set(chunk, received);
