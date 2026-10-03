@@ -60,14 +60,16 @@ export class ImmutableApplicationReleaseError extends Schema.TaggedError<Immutab
   { cause: Schema.optional(Schema.Defect()), message: Schema.String },
 ) {}
 
-const ImmutableAssetByteMismatch = Data.TaggedError('ImmutableAssetByteMismatch')<{
+const ImmutableAssetNotReady = Data.TaggedError('ImmutableAssetNotReady')<{
   readonly cause: unknown;
   readonly message: string;
 }>;
-type ImmutableAssetByteMismatchError = InstanceType<typeof ImmutableAssetByteMismatch>;
+type ImmutableAssetNotReadyError = InstanceType<typeof ImmutableAssetNotReady>;
 
 const SHELL_APP_ID = 'shell-super-app';
 const NATIVE_ENVELOPE_MISMATCH = 'the native Cloudflare release envelope does not bind the final artifact bytes';
+const PUBLIC_ASSET_INVENTORY_MISMATCH =
+  'the deployed immutable public release does not serve the exact compiled asset inventory';
 
 const sourceRevision = Schema.String.check(Schema.isPattern(/^(?:[a-f\d]{40}|[a-f\d]{64})$/u));
 const buildMarker = Schema.String.check(Schema.isPattern(/^[a-f\d]{16}$/u));
@@ -767,7 +769,7 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
     const encodedPath = file.path.split('/').map(encodeURIComponent).join('/');
     const url = `${plan.assetsOrigin}${encodedPath}`;
     const bytes = new Uint8Array(file.bytes.byteLength);
-    let lastMismatch: ImmutableAssetByteMismatchError | null = null;
+    let lastNotReady: ImmutableAssetNotReadyError | null = null;
     const attempt = Effect.scoped(
       Effect.gen(function* readRetainedPublicAssetAttempt() {
         const response = yield* client.get(url);
@@ -781,21 +783,31 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
             status: response.status,
           });
         }
+        const headerState = {
+          hasCacheHeader: response.headers['cache-control'] !== undefined,
+          hasCorsHeader: response.headers['access-control-allow-origin'] !== undefined,
+          hasImmutableCache: response.headers['cache-control']?.includes('immutable') ?? false,
+          hasNoSniff: response.headers['x-content-type-options'] === 'nosniff',
+          hasNoSniffHeader: response.headers['x-content-type-options'] !== undefined,
+          hasPublicCors: response.headers['access-control-allow-origin'] === '*',
+          path: file.path,
+          status: response.status,
+        };
         if (
-          response.headers['access-control-allow-origin'] !== '*' ||
-          !response.headers['cache-control']?.includes('immutable') ||
-          response.headers['x-content-type-options'] !== 'nosniff'
+          file.path === 'robots.txt' &&
+          response.headers['access-control-allow-origin'] === undefined &&
+          response.headers['cache-control'] === undefined &&
+          response.headers['x-content-type-options'] === undefined
         ) {
-          return yield* fail(
-            'the deployed immutable public release does not serve the exact compiled asset inventory',
-            {
-              hasImmutableCache: response.headers['cache-control']?.includes('immutable') ?? false,
-              hasNoSniff: response.headers['x-content-type-options'] === 'nosniff',
-              hasPublicCors: response.headers['access-control-allow-origin'] === '*',
-              path: file.path,
-              status: response.status,
-            },
-          );
+          lastNotReady = new ImmutableAssetNotReady({
+            cause: headerState,
+            message: PUBLIC_ASSET_INVENTORY_MISMATCH,
+          });
+          yield* response.stream.pipe(Stream.runDrain);
+          return false;
+        }
+        if (!headerState.hasPublicCors || !headerState.hasImmutableCache || !headerState.hasNoSniff) {
+          return yield* fail(PUBLIC_ASSET_INVENTORY_MISMATCH, headerState);
         }
         const metadata = {
           contentEncoding: response.headers['content-encoding'] ?? null,
@@ -810,7 +822,7 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
             (received, chunk) => {
               if (received + chunk.byteLength > bytes.byteLength) {
                 return Effect.fail(
-                  new ImmutableAssetByteMismatch({
+                  new ImmutableAssetNotReady({
                     cause: { ...metadata, observedBytes: received + chunk.byteLength },
                     message: 'the deployed asset body exceeds its compiled artifact byte length',
                   }),
@@ -824,16 +836,16 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
           ),
         );
         if (receivedSize !== file.bytes.byteLength || hash(bytes) !== hash(file.bytes)) {
-          return yield* new ImmutableAssetByteMismatch({
+          return yield* new ImmutableAssetNotReady({
             cause: { ...metadata, observedBytes: receivedSize },
-            message: 'the deployed immutable public release does not serve the exact compiled asset inventory',
+            message: PUBLIC_ASSET_INVENTORY_MISMATCH,
           });
         }
         return true;
       }),
     ).pipe(
-      Effect.catchTag('ImmutableAssetByteMismatch', (cause) => {
-        lastMismatch = cause;
+      Effect.catchTag('ImmutableAssetNotReady', (cause) => {
+        lastNotReady = cause;
         return Effect.succeed(false);
       }),
     );
@@ -844,7 +856,7 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
     }).pipe(
       Effect.timeout(Duration.seconds(30)),
       Effect.catchTag('TimeoutError', (cause) =>
-        Effect.fail(lastMismatch === null ? cause : fail(lastMismatch.message, lastMismatch.cause)),
+        Effect.fail(lastNotReady === null ? cause : fail(lastNotReady.message, lastNotReady.cause)),
       ),
     );
   },

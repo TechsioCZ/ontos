@@ -58,6 +58,7 @@ const APP_ID = 'shell-super-app';
 const CONTRACT_PATH = '.well-known/ontos-shell-runtime.json';
 const MANIFEST_PATH = 'mf-manifest.json';
 const ROUTES_MANIFEST_PATH = 'routes-manifest.json';
+const ROOT_ROBOTS_PATH = 'robots.txt';
 const WRANGLER_VERSION = '4.137.0';
 const BACKEND_PATH = 'server/index.mjs';
 const WORKER_METADATA_PATH = 'server/modern-worker-manifest.json';
@@ -674,6 +675,7 @@ for (const secretResponse of [
             '@mf-types/(lang)/Route$.d.ts',
             text('export interface RouteParams { lang: string }\n'),
           );
+          const compiledRobots = file(ROOT_ROBOTS_PATH, text('User-agent: *\nAllow: /\n'));
           const nativeBracketAssets = [
             file(
               '@mf-types/compiled-types/src/routes/[lang]/contacts/page.d.ts',
@@ -687,12 +689,14 @@ for (const secretResponse of [
           const { output, publicDirectory } = yield* writeNativeShellOutput(
             appDirectory,
             plan,
-            [...maps, encodedAsset, ...nativeBracketAssets],
+            [...maps, encodedAsset, ...nativeBracketAssets, compiledRobots],
             false,
           );
           const originalOutput = yield* readReleaseFiles(output);
           const originalInventory = inventoryFor(plan);
-          const inventory = { assets: [...originalInventory.assets, encodedAsset, ...nativeBracketAssets] };
+          const inventory = {
+            assets: [...originalInventory.assets, encodedAsset, ...nativeBracketAssets, compiledRobots],
+          };
           const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
             environment: 'stage',
             modules: [],
@@ -713,26 +717,41 @@ for (const secretResponse of [
           const recoveryProviderPath = `/accounts/${'a'.repeat(32)}/workers/workers/${plan.assetsScriptName}`;
           const recoveryProviderUrl = `https://api.cloudflare.com/client/v4${recoveryProviderPath}`;
           const assetSubdomainUrl = `${providerUrl}/subdomain`;
-          const assetUploadFailure =
-            secretResponse.status === 200 && secretResponse.success
-              ? new OpsCommandError({
+          const assetUploadFailure = Match.value(secretResponse).pipe(
+            Match.when(
+              { status: 200, success: true },
+              () =>
+                new OpsCommandError({
                   cause: { providerCode: 10_007, providerPath: recoveryProviderPath },
                   command: 'pnpm',
                   message: 'assets uploaded before the native provider observation failed',
-                })
-              : undefined;
+                }),
+            ),
+            Match.orElse((): undefined => {
+              // Other secret responses do not trigger uploaded-assets recovery.
+            }),
+          );
           const enabledSubdomains: {
             readonly body: { readonly enabled: true; readonly previews_enabled: false };
             readonly method: string;
             readonly url: string;
           }[] = [];
           const retriedAssetUrl = `${plan.assetsOrigin}main.js`;
+          const robotsUrl = `${plan.assetsOrigin}${ROOT_ROBOTS_PATH}`;
+          const robotsReadinessFirst = Match.value(secretResponse).pipe(
+            Match.when({ status: 201, success: true }, () => true),
+            Match.orElse(() => false),
+          );
+          const firstRobotsResponseObserved = yield* Deferred.make<boolean>();
+          const initialRobotsResponse = new Response(text('User-agent: *\nDisallow: /\n'), { status: 200 });
+          let robotsRequests = 0;
           const firstAssetResponseObserved = yield* Deferred.make<boolean>();
           const mainAssetBytes = yield* fileSystem.readFile(nodePath.join(publicDirectory, 'main.js'));
-          const corruptedAssetFirst = secretResponse.status === 200 && secretResponse.success;
-          const initialAssetBytes = corruptedAssetFirst
-            ? text('x'.repeat(mainAssetBytes.byteLength))
-            : text('release asset is still propagating');
+          const corruptedAssetFirst = assetUploadFailure !== undefined;
+          const initialAssetBytes = Match.value(corruptedAssetFirst).pipe(
+            Match.when(true, () => text('x'.repeat(mainAssetBytes.byteLength))),
+            Match.orElse(() => text('release asset is still propagating')),
+          );
           const initialAssetResponse = new Response(initialAssetBytes, {
             headers: {
               'access-control-allow-origin': '*',
@@ -749,6 +768,14 @@ for (const secretResponse of [
           const client = HttpClient.make((request, destination) => {
             requests.push(destination.href);
             events.push(destination.href, request.method === 'PUT' ? 'secret-installation' : 'provider-request');
+            if (destination.href === robotsUrl) {
+              robotsRequests += 1;
+              if (robotsReadinessFirst && robotsRequests === 1) {
+                return Deferred.succeed(firstRobotsResponseObserved, true).pipe(
+                  Effect.as(HttpClientResponse.fromWeb(request, initialRobotsResponse)),
+                );
+              }
+            }
             if (destination.href === assetSubdomainUrl && request.method === 'POST') {
               return Match.value(request.body).pipe(
                 Match.tag('Uint8Array', (requestBody) =>
@@ -850,10 +877,23 @@ for (const secretResponse of [
           const deploymentFiber = yield* Effect.forkChild(deployment);
           yield* Deferred.await(firstAssetResponseObserved);
           expect(requests.filter((url) => url === retriedAssetUrl)).toEqual([retriedAssetUrl]);
+          if (robotsReadinessFirst) {
+            yield* Deferred.await(firstRobotsResponseObserved);
+            expect(requests.filter((url) => url === robotsUrl)).toEqual([robotsUrl]);
+            expect(initialRobotsResponse.headers.get('access-control-allow-origin')).toBeNull();
+            expect(initialRobotsResponse.headers.get('cache-control')).toBeNull();
+            expect(initialRobotsResponse.headers.get('x-content-type-options')).toBeNull();
+          }
           yield* TestClock.adjust('1 second');
           const receipt = yield* Fiber.join(deploymentFiber);
           expect(requests.filter((url) => url === retriedAssetUrl)).toEqual([retriedAssetUrl, retriedAssetUrl]);
           expect(initialAssetResponse.bodyUsed).toBe(true);
+          if (robotsReadinessFirst) {
+            expect(requests.filter((url) => url === robotsUrl)).toEqual([robotsUrl, robotsUrl]);
+            expect(initialRobotsResponse.bodyUsed).toBe(true);
+          } else {
+            expect(requests.filter((url) => url === robotsUrl)).toEqual([robotsUrl]);
+          }
           expect(receipt.plan).toEqual(plan);
           expect(receipt.assetsVersionId).toBe('shell-retained-provider-version');
           expect(receipt.artifacts.runtimeContract.url).toBe(`${plan.assetsOrigin}${CONTRACT_PATH}`);
@@ -928,6 +968,9 @@ for (const secretResponse of [
           expect(publishedInventories).toHaveLength(2);
           for (const published of publishedInventories) {
             expect(published.some(({ path }) => path === 'main.js')).toBe(true);
+            expect([...(published.find(({ path }) => path === ROOT_ROBOTS_PATH)?.bytes ?? [])]).toEqual([
+              ...compiledRobots.bytes,
+            ]);
             for (const bracketAsset of nativeBracketAssets) {
               expect([...(published.find(({ path }) => path === bracketAsset.path)?.bytes ?? [])]).toEqual([
                 ...bracketAsset.bytes,
