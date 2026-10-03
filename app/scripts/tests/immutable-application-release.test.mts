@@ -1105,6 +1105,15 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
         response = providerResponse(destination);
       } else {
         yield* Deferred.succeed(assetReadStarted, true);
+        if (destination.pathname.includes('%28') || destination.pathname.includes('%29')) {
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(null, {
+              headers: { location: destination.pathname.replaceAll('%28', '(').replaceAll('%29', ')') },
+              status: 307,
+            }),
+          );
+        }
         const asset = nativeAssets.find(({ path }) => decodeURIComponent(destination.pathname) === `/${path}`);
         let body: ArrayBuffer | ReadableStream<Uint8Array> | undefined =
           asset === undefined ? undefined : new Uint8Array(asset.bytes).buffer;
@@ -1218,7 +1227,7 @@ it.effect('publishes native route chunks without exposing compiler source maps o
   Effect.scoped(
     Effect.gen(function* nativePublicPartition() {
       const nativePage = NATIVE_PAGE_JS_PATH;
-      const encodedNativePage = 'static/js/async/%28lang%29/%24.e213690cdf.js';
+      const encodedNativePage = 'static/js/async/(lang)/%24.e213690cdf.js';
       const nativeTypes = file('@mf-types/Route.d.ts', text('export declare const route: string;'));
       const maps = ['.map', '.map.gz', '.map.br'].map((suffix) => file(`${nativePage}${suffix}`));
       const fixture = yield* prepareDeployment({
@@ -1238,6 +1247,7 @@ it.effect('publishes native route chunks without exposing compiler source maps o
       }
       expect(fixture.requests).toContain(`${fixture.plan.assetsOrigin}${encodedNativePage}`);
       expect(fixture.requests).toContain(`${fixture.plan.assetsOrigin}%40mf-types/Route.d.ts`);
+      expect(fixture.requests.some((url) => url.includes('%28') || url.includes('%29'))).toBe(false);
       expect(fixture.requests).not.toContain(`${fixture.plan.assetsOrigin}${nativePage}`);
       expect(fixture.requests).not.toContain(`${fixture.plan.assetsOrigin}${nativeTypes.path}`);
       for (const map of maps) {

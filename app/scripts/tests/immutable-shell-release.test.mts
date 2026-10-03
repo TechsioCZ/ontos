@@ -687,6 +687,17 @@ for (const secretResponse of [
           const client = HttpClient.make((request, destination) => {
             requests.push(destination.href);
             events.push(destination.href, request.method === 'PUT' ? 'secret-installation' : 'provider-request');
+            if (destination.pathname.includes('%28') || destination.pathname.includes('%29')) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(null, {
+                    headers: { location: destination.pathname.replaceAll('%28', '(').replaceAll('%29', ')') },
+                    status: 307,
+                  }),
+                ),
+              );
+            }
             const asset = inventory.assets.find(
               (assetFile) =>
                 `${plan.assetsOrigin}${assetFile.path}` ===
@@ -749,7 +760,8 @@ for (const secretResponse of [
           for (const asset of originalInventory.assets) {
             expect(requests).toContain(`${plan.assetsOrigin}${asset.path}`);
           }
-          expect(requests).toContain(`${plan.assetsOrigin}%40mf-types/%28lang%29/Route%24.d.ts`);
+          expect(requests).toContain(`${plan.assetsOrigin}%40mf-types/(lang)/Route%24.d.ts`);
+          expect(requests.some((url) => url.includes('%28') || url.includes('%29'))).toBe(false);
           expect(requests).not.toContain(`${plan.assetsOrigin}${encodedAsset.path}`);
           const lock = events.findIndex((event) => event.includes(PUBLICATION_LOCK));
           expect(lock).toBeGreaterThanOrEqual(0);
