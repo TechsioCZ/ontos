@@ -70,6 +70,8 @@ import type { OutboxWorkerMode } from './outbox-worker-delivery.mjs';
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 import { ZeropsPublicApi, ZeropsPublicApiLive } from './zerops-public-api.mts';
 
+const PUBLICATION_PHASE_MESSAGE = 'Application Composition publication phase';
+
 const SHELL_APP_ID = 'shell-super-app';
 const SHELL_ZEROPS_SETUP = 'shellsuperapp';
 const MF_MANIFEST_PATH = '/mf-manifest.json';
@@ -447,7 +449,9 @@ export const publishSnapshot = Effect.fn('ActiveApplicationComposition.publishSn
   yield* publishApplicationCompositionAuthoritySnapshot(
     snapshot,
     Effect.gen(function* publishProviderPointer() {
+      yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'provider-pointer-read-start' });
       const current = yield* readPublishedSnapshot;
+      yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'provider-pointer-read-returned' });
       yield* assertNoConflictingPublication(current, snapshot);
       if (retainedShellRevision !== undefined) {
         if (Option.isNone(current)) {
@@ -757,8 +761,10 @@ const publishCommand = Command.make(
   },
   ({ candidateFile, environment, snapshotFile }) =>
     readPublicationCandidate(candidateFile).pipe(
+      Effect.tap(() => Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'candidate-read-returned' })),
       Effect.flatMap((candidate) =>
         observeCandidate(environment, candidate).pipe(
+          Effect.tap(() => Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'candidate-observation-returned' })),
           Effect.flatMap((snapshot) =>
             publishSnapshot(
               snapshot,

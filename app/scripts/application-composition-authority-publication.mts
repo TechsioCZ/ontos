@@ -19,6 +19,8 @@ import {
   sealApplicationCompositionAuthority,
 } from '../packages/core-runtime/src/modules/application-composition-authority.ts';
 
+const PUBLICATION_PHASE_MESSAGE = 'Application Composition publication phase';
+
 const unavailable = (reason: string) =>
   new ApplicationCompositionAuthorityError({ code: 'application_composition_authority_unavailable', reason });
 
@@ -61,7 +63,9 @@ export const withApplicationCompositionPublicationLock = Effect.fn(
     Effect.gen(function* serializePublication() {
       // Reserve one native session without BEGIN. Incompatible ALTER statements must not wait
       // on a table lock retained by the publication serialization transaction itself.
+      yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'session-reserve-start' });
       const connection = yield* client.reserve;
+      yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'session-reserved' });
       yield* Effect.acquireRelease(
         connection.executeValues(
           "select pg_advisory_lock(hashtextextended('ontos.application-composition-publication', 0))",
@@ -87,6 +91,7 @@ export const withApplicationCompositionPublicationLock = Effect.fn(
               ),
             ),
       );
+      yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'publication-lock-returned' });
       return yield* publication;
     }),
   ).pipe(
@@ -271,6 +276,8 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
   );
   const database = yield* CoreDatabase;
   const publication = Effect.gen(function* publishIndependentTransactions() {
+    yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'authority-callback-entered' });
+    yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'authority-read-start' });
     const [current] = yield* database.executor
       .select({
         phase: applicationCompositionAuthority.phase,
@@ -279,6 +286,7 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
       })
       .from(applicationCompositionAuthority)
       .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+    yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'authority-read-returned' });
     if (current?.revision === approved.composition.revision) {
       if (DateTime.toEpochMillis(approved.validUntil) < current.validUntil.getTime()) {
         return yield* unavailable('Application Composition freshness cannot regress');
