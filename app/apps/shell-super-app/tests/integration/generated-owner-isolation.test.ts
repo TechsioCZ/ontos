@@ -10,6 +10,9 @@ import {
   TenantModuleStateService,
   getVerticalRuntimeActions,
   getVerticalRuntimeEntrypoints,
+  closeApplicationCompositionDurableAdmission,
+  drainApplicationCompositionAuthority,
+  lockApplicationCompositionPublication,
   makeActiveApplicationCompositionLayer,
   publishApplicationCompositionAuthority,
   readVerifiedGatewayCompositionRevision,
@@ -30,7 +33,8 @@ import { NodeServices } from '@effect/platform-node';
 import { defineEffectBff, HttpApiBuilder } from '@modern-js/bff-effect/effect-edge';
 import type { EffectRuntimeLayer } from '@modern-js/bff-effect/effect-edge';
 import type { PgClient } from '@effect/sql-pg';
-import { Clock, Config, ConfigProvider, Effect, Layer, Logger, Predicate, Redacted, Schema } from 'effect';
+import { eq } from 'drizzle-orm';
+import { Clock, Config, ConfigProvider, DateTime, Effect, Layer, Logger, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
 import { HttpApi } from 'effect/unstable/httpapi';
@@ -49,6 +53,7 @@ import { makeActionRepository } from '../../../../packages/core-runtime/src/acti
 import { makeActionRuntime } from '../../../../packages/core-runtime/src/actions/runtime.ts';
 import { makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
+import { applicationCompositionAuthority } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { makeModuleEntrypointGateway } from '../../../../packages/core-runtime/src/modules/module-entrypoint-gateway.ts';
 import { makeModuleStateGate } from '../../../../packages/core-runtime/src/modules/module-state-gate.ts';
 import { makeTenantModuleStateService } from '../../../../packages/core-runtime/src/modules/tenant-module-state-service.ts';
@@ -574,12 +579,34 @@ it.live(
       workspaceRoot: fixture.root,
     }).pipe(Effect.provide(NodeServices.layer));
     yield* materializeOwnerRelease(fixture.verticalRoot, contract);
-    const approvedSnapshot = yield* makeCompositionSnapshot([contract], 120_000);
-    const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(approvedSnapshot));
     const adminDatabase = yield* makeCoreDatabase(connections.admin);
-    yield* adminDatabase.executor.transaction((transaction) =>
-      publishApplicationCompositionAuthority(transaction, approvedSnapshot),
+    const approvedSnapshot = yield* adminDatabase.executor.transaction((transaction) =>
+      Effect.gen(function* publishGeneratedOwnerComposition() {
+        yield* lockApplicationCompositionPublication(transaction);
+        const [predecessor] = yield* transaction
+          .select({
+            revision: applicationCompositionAuthority.revision,
+            validUntil: applicationCompositionAuthority.validUntil,
+          })
+          .from(applicationCompositionAuthority)
+          .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+        const snapshot = yield* makeCompositionSnapshot([contract], 120_000);
+        const publicationSnapshot = {
+          ...snapshot,
+          validUntil:
+            predecessor === undefined
+              ? snapshot.validUntil
+              : DateTime.max(snapshot.validUntil, DateTime.makeUnsafe(predecessor.validUntil)),
+        };
+        if (predecessor !== undefined && predecessor.revision !== snapshot.composition.revision) {
+          yield* closeApplicationCompositionDurableAdmission(transaction, predecessor.revision);
+          yield* drainApplicationCompositionAuthority(transaction, predecessor.revision);
+        }
+        yield* publishApplicationCompositionAuthority(transaction, publicationSnapshot);
+        return publicationSnapshot;
+      }),
     );
+    const catalog = yield* makeInstalledModuleCatalogLoader(Effect.succeed(approvedSnapshot));
     const capturedLogs: string[] = [];
     const loggerLayer = capturedLoggerLayer(capturedLogs);
     const testSpiceDb = yield* TestSpiceDbConfig;
