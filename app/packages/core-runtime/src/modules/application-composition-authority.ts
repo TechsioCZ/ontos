@@ -320,10 +320,14 @@ export const publishApplicationCompositionAuthority = Effect.fn('ApplicationComp
     transaction: CoreTransaction,
     snapshot: ActiveApplicationCompositionSnapshot,
   ) {
+    yield* Effect.logInfo('Publication catalog build started');
     const catalog = yield* buildApplicationCompositionCatalog(snapshot.composition).pipe(
       Effect.mapError((cause) => unavailable('The complete Application Composition is invalid', cause)),
     );
+    yield* Effect.logInfo('Publication catalog build returned');
+    yield* Effect.logInfo('Publication authority fence started');
     yield* lockApplicationCompositionPublication(transaction);
+    yield* Effect.logInfo('Publication authority fence returned');
     const [validity] = yield* transaction.execute<{ readonly unexpired: boolean }>(
       sql`select ${DateTime.toDateUtc(snapshot.validUntil)}::timestamptz > clock_timestamp() as unexpired`,
       'objects',
