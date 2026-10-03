@@ -92,7 +92,7 @@ jobs:
               return { outcome: 'native-wire-failed-no-sensitive-output', phase, phases };
             } finally { clearTimeout(watchdog); }
           };
-          
+
           const connectionString = process.env.DATABASE_ADMIN_URL;
           if (typeof connectionString !== 'string' || connectionString.length === 0) throw Error('ADMIN_CONFIGURATION_MISSING');
           console.log(JSON.stringify({ phase: 'native-runner-start', node: process.version }));
