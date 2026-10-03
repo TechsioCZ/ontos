@@ -717,7 +717,7 @@ it('runs native VPN up and clear with the exact project and isolated credential 
   expect(connected.calls[0]).toBe(
     'preserve=--preserve-env=ZEROPS_TOKEN,ZEROPS_CLI_DATA_FILE_PATH,ZEROPS_WG_CONFIG_FILE_PATH,ZEROPS_CLI_YAML_FILE_PATH,ZEROPS_CLI_LOG_FILE_PATH',
   );
-  expect(connected.calls[1]).toBe('native=vpn up --project-id test-project');
+  expect(connected.calls[1]).toBe('native=vpn up --project-id test-project --mtu 1350');
   expect(connected.calls).toHaveLength(2);
   const cleared = runNativeVpnScript(nativeVpnScript(VPN_CLEAR_STEP));
   expect(cleared.passed).toBe(true);
