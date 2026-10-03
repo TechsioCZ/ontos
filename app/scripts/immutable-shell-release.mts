@@ -20,6 +20,8 @@ import {
   hash,
   immutableAssetsWranglerConfig,
   deriveImmutableApplicationReleasePlan,
+  materializeImmutablePublicAssets,
+  readImmutablePublicReleaseFiles,
   readReleaseFiles,
   readRetainedImmutableWorkerVersion,
   readVerifiedReleaseFiles,
@@ -149,10 +151,10 @@ const verifyShellOutput = Effect.fn('ImmutableShellRelease.output')(function* sh
     return yield* fail('native Shell assets must remain inside the verified output');
   }
   yield* validateImmutableAssetRedirects(assetsDirectory);
-  const assets = yield* readReleaseFiles(assetsDirectory);
+  const assets = yield* readImmutablePublicReleaseFiles(assetsDirectory);
   yield* validateImmutableShellReleaseArtifacts(plan, { assets });
   yield* verifyPinnedWrangler(appDirectory);
-  return { assetsDirectory, config, output };
+  return { assets, assetsDirectory, config, output };
 });
 
 const verifyRetainedShellAssetBytes = (plan: ImmutableApplicationReleasePlan, assets: readonly ReleaseFile[]) =>
@@ -174,7 +176,7 @@ export const deployImmutableShellRelease = Effect.fn('ImmutableShellRelease.depl
     if (!/^[a-f\d]{32}$/u.test(accountId)) {
       return yield* fail('Shell asset publication requires an exact provider account');
     }
-    const { assetsDirectory, config, output } = yield* verifyShellOutput(input.appDirectory, input.plan);
+    const { assets: compiledAssets, config, output } = yield* verifyShellOutput(input.appDirectory, input.plan);
     yield* verifyImmutableAssetsAccountOrigin(accountId, token, input.plan);
     const providerUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${input.plan.assetsScriptName}`;
     const execute = (request: HttpClientRequest.HttpClientRequest) =>
@@ -190,11 +192,7 @@ export const deployImmutableShellRelease = Effect.fn('ImmutableShellRelease.depl
           : 'provider Shell release absence could not be established',
       );
     }
-    const retainedAssets = yield* fileSystem.makeTempDirectoryScoped({
-      directory: output,
-      prefix: '.wrangler-immutable-shell-assets-',
-    });
-    yield* fileSystem.copy(assetsDirectory, retainedAssets);
+    const retainedAssets = yield* materializeImmutablePublicAssets(compiledAssets, output);
     yield* fileSystem.writeFileString(path.join(retainedAssets, '_headers'), IMMUTABLE_HEADERS);
     const assets = yield* readReleaseFiles(retainedAssets);
     const artifacts = yield* validateImmutableShellReleaseArtifacts(input.plan, { assets });
@@ -235,7 +233,12 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
     const receipt = yield* Schema.decodeUnknownEffect(ImmutableShellArtifactReceiptSchema, {
       onExcessProperty: 'error',
     })(input.receipt);
-    const { assetsDirectory, config, output } = yield* verifyShellOutput(input.appDirectory, receipt.plan);
+    const {
+      assets: compiledAssets,
+      assetsDirectory,
+      config,
+      output,
+    } = yield* verifyShellOutput(input.appDirectory, receipt.plan);
     const runtime = yield* fileSystem.readFile(path.join(assetsDirectory, RUNTIME_PATH));
     const federation = yield* fileSystem.readFile(path.join(assetsDirectory, FEDERATION_PATH));
     if (
@@ -257,7 +260,6 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
     if (!/^[a-f\d]{32}$/u.test(accountId)) {
       return yield* fail('Shell ingress publication requires an exact provider account');
     }
-    const compiledAssets = yield* readReleaseFiles(assetsDirectory);
     const retainedAssets = [
       ...compiledAssets.filter((file) => file.path !== '_headers'),
       { bytes: new TextEncoder().encode(IMMUTABLE_HEADERS), path: '_headers' },
@@ -281,8 +283,29 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
       federationManifest: receipt.artifacts.federationManifest,
       runtimeContract: receipt.artifacts.runtimeContract,
     });
+    const ingressAssets = yield* materializeImmutablePublicAssets(compiledAssets, output);
+    const ingressConfig = yield* fileSystem.makeTempFileScoped({
+      directory: output,
+      prefix: '.wrangler-immutable-shell-ingress-',
+      suffix: '.json',
+    });
+    const nativeConfig = yield* Schema.decodeUnknownEffect(
+      Schema.fromJsonString(
+        Schema.StructWithRest(Schema.Struct({ assets: Schema.Record(Schema.String, Schema.Json) }), [
+          Schema.Record(Schema.String, Schema.Json),
+        ]),
+      ),
+    )(yield* fileSystem.readFileString(path.join(output, 'wrangler.json')));
+    yield* fileSystem.writeFileString(
+      ingressConfig,
+      yield* Schema.encodeEffect(JsonText)({
+        ...nativeConfig,
+        assets: { ...nativeConfig.assets, directory: ingressAssets },
+      }),
+    );
+    yield* readVerifiedReleaseFiles(output, receipt.plan, [ingressAssets, ingressConfig]);
     yield* runCommand({
-      args: ['exec', 'wrangler', 'deploy', '--config', path.join(output, 'wrangler.json')],
+      args: ['exec', 'wrangler', 'deploy', '--config', ingressConfig],
       command: 'pnpm',
       cwd: input.appDirectory,
       env: { CLOUDFLARE_ACCOUNT_ID: Redacted.make(accountId), CLOUDFLARE_API_TOKEN: token },

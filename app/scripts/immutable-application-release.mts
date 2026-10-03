@@ -273,7 +273,7 @@ const validateImmutablePublicAssetInventory = Effect.fn('ImmutableApplicationRel
     yield* validateReleaseFilePaths(assets);
     if (
       assets.some((file) =>
-        /(?:\.map$|(?:^|\/)(?:\.env|worker|server|node_modules|credentials|private-key)(?:[./]|$)|\.(?:pem|key)$)/u.test(
+        /(?:\.map(?:\.(?:gz|br))?$|(?:^|\/)(?:\.env|worker|server|node_modules|credentials|private-key)(?:[./]|$)|\.(?:pem|key)$)/u.test(
           file.path,
         ),
       )
@@ -509,6 +509,31 @@ export const readReleaseFiles = (
     }
     return files;
   });
+
+export const readImmutablePublicReleaseFiles = Effect.fn('ImmutableApplicationRelease.publicFiles')(
+  function* readImmutablePublicReleaseFilesEffect(root: string) {
+    const files = yield* readReleaseFiles(root);
+    yield* validateReleaseFilePaths(files);
+    return files.filter((file) => !/\.map(?:\.(?:gz|br))?$/u.test(file.path));
+  },
+);
+
+export const materializeImmutablePublicAssets = Effect.fn('ImmutableApplicationRelease.materializePublicAssets')(
+  function* materializeImmutablePublicAssetsEffect(files: readonly ReleaseFile[], directory?: string) {
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* validateImmutablePublicAssetInventory(files);
+    const destination = yield* fileSystem.makeTempDirectoryScoped({
+      directory,
+      prefix: 'ontos-immutable-assets-',
+    });
+    for (const file of files) {
+      const location = path.join(destination, file.path);
+      yield* fileSystem.makeDirectory(path.dirname(location), { recursive: true });
+      yield* fileSystem.writeFile(location, file.bytes);
+    }
+    return destination;
+  },
+);
 
 const WranglerSchema = Schema.StructWithRest(
   Schema.Struct({
@@ -784,7 +809,7 @@ export const deployImmutableApplicationRelease = Effect.fn('ImmutableApplication
       return yield* fail('native public assets must remain inside the compiled release output');
     }
     yield* validateImmutableAssetRedirects(assetsDirectory);
-    const compiledAssets = yield* readReleaseFiles(assetsDirectory);
+    const compiledAssets = yield* readImmutablePublicReleaseFiles(assetsDirectory);
     const backendFiles = outputFiles.filter(
       (file) => !file.path.startsWith(`${path.relative(output, assetsDirectory).split(path.sep).join('/')}/`),
     );
@@ -816,10 +841,7 @@ export const deployImmutableApplicationRelease = Effect.fn('ImmutableApplication
         );
       }
     }
-    const deployedAssetsDirectory = yield* fileSystem.makeTempDirectoryScoped({
-      prefix: 'ontos-immutable-assets-',
-    });
-    yield* fileSystem.copy(assetsDirectory, deployedAssetsDirectory);
+    const deployedAssetsDirectory = yield* materializeImmutablePublicAssets(compiledAssets);
     // Native assets-only Workers apply these bytes directly; the compiled assets stay unchanged.
     yield* fileSystem.writeFileString(
       path.join(deployedAssetsDirectory, '_headers'),

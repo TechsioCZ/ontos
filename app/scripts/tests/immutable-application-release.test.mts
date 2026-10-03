@@ -31,9 +31,11 @@ import {
   immutableAssetsWranglerConfig,
   deriveImmutableApplicationReleasePlan,
   makeImmutableApplicationReleasePublicationCandidate,
+  readReleaseFiles,
   resolveCleanImmutableApplicationSourceRevision,
   validateImmutableApplicationReleaseArtifacts,
 } from '../immutable-application-release.mts';
+import type { ReleaseFile } from '../immutable-application-release.mts';
 import { governedSharedSingletonPackages } from '../../module-federation.shared.ts';
 import {
   ACTIVE_APPLICATION_COMPOSITION_POLICY,
@@ -53,6 +55,7 @@ const CONTRACT_PATH = '.well-known/ontos-module-manifest.json';
 const FEDERATION_MANIFEST_PATH = 'mf-manifest.json';
 const REMOTE_ENTRY_PATH = 'remoteEntry.js';
 const PAGE_JS_PATH = 'page.js';
+const NATIVE_PAGE_JS_PATH = 'static/js/async/(lang)/$.e213690cdf.js';
 const PAGE_CSS_PATH = 'page.css';
 const DETAILS_JS_PATH = 'details.js';
 const DETAILS_CSS_PATH = 'details.css';
@@ -221,7 +224,7 @@ const gitResult = (command: OpsCommand, directory: string, revision = SOURCE_REV
 const writeNativeEnvelope = Effect.fn('test.writeNativeReleaseEnvelope')(function* writeNativeEnvelopeEffect(
   output: string,
   plan: Parameters<typeof validateImmutableApplicationReleaseArtifacts>[0],
-  assets: ReturnType<typeof artifactInventory>['assets'],
+  assets: readonly ReleaseFile[],
   unitId?: string,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -444,7 +447,7 @@ it.effect(
 it.effect('retains native Modern route filenames in public and backend release inventories', () =>
   Effect.gen(function* nativeRouteInventory() {
     const plan = yield* planFor();
-    const pageJsPath = 'static/js/async/(lang)/$.e213690cdf.js';
+    const pageJsPath = NATIVE_PAGE_JS_PATH;
     const backendPath = 'server/bundles/(lang)/$.mjs';
     const inventory = artifactInventory(plan, pageJsPath);
     const artifacts = yield* validateImmutableApplicationReleaseArtifacts(plan, {
@@ -469,7 +472,7 @@ it.effect('retains native Modern route filenames in public and backend release i
 it.effect('rejects unsafe URL paths and duplicate native route filenames in both inventories', () =>
   Effect.gen(function* unsafeNativeRouteInventory() {
     const plan = yield* planFor();
-    const pageJsPath = 'static/js/async/(lang)/$.e213690cdf.js';
+    const pageJsPath = NATIVE_PAGE_JS_PATH;
     const inventory = artifactInventory(plan, pageJsPath);
     for (const unsafePath of [
       '',
@@ -611,6 +614,8 @@ it.effect('refuses duplicate paths, traversal paths, public source maps, and pub
       file('/absolute.js'),
       file('nested/../private.js'),
       file('page.js.map'),
+      file('page.js.map.gz'),
+      file('page.js.map.br'),
       file('.env'),
       file('credentials.json'),
       file('private-key.pem'),
@@ -940,6 +945,7 @@ it.effect('refuses an existing assets identity before commands, secret writes, o
 const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* prepareDeploymentEffect(
   options: {
     readonly accountSubdomain?: string;
+    readonly additionalPublicFiles?: readonly ReleaseFile[];
     readonly assetDeploymentPercentage?: number;
     readonly backendDeploymentVersions?: readonly { readonly percentage: number; readonly version_id: string }[];
     readonly backendSubdomainEnabled?: boolean;
@@ -954,6 +960,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly omitEnvelope?: boolean;
     readonly oversizedAssetBody?: boolean;
     readonly ownerSecrets?: Readonly<Record<string, string>>;
+    readonly pageJsPath?: string;
     readonly resolvedWranglerVersion?: string;
     readonly stallAssetBody?: boolean;
     readonly tamperWorkerAfterEnvelope?: boolean;
@@ -967,7 +974,8 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const output = nodePath.join(appDirectory, '.output');
   const publicDirectory = nodePath.join(output, 'public');
   const plan = yield* planFor();
-  const inventory = artifactInventory(plan);
+  const inventory = artifactInventory(plan, options.pageJsPath);
+  const nativeAssets = [...inventory.assets, ...(options.additionalPublicFiles ?? [])];
   const capturedMain = options.noBundle === true ? 'index.mjs' : 'index.js';
   const capturedModules = [
     file(capturedMain, text('import "./chunk.js"; export default {};')),
@@ -991,8 +999,10 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     JSON.stringify({ deliveryUnit: inventory.deliveryUnit }),
   );
   yield* fileSystem.writeFileString(nodePath.join(output, BACKEND_ENTRY_PATH), 'export default {};');
-  for (const { bytes, path: assetPath } of inventory.assets) {
-    yield* fileSystem.writeFile(nodePath.join(publicDirectory, assetPath), bytes);
+  for (const { bytes, path: assetPath } of nativeAssets) {
+    const destination = nodePath.join(publicDirectory, assetPath);
+    yield* fileSystem.makeDirectory(nodePath.dirname(destination), { recursive: true });
+    yield* fileSystem.writeFile(destination, bytes);
   }
   const originalHeaders = '/*\n  Cache-Control: no-cache\n';
   yield* fileSystem.writeFileString(nodePath.join(publicDirectory, '_headers'), originalHeaders);
@@ -1001,7 +1011,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     JSON.stringify({ devDependencies: { wrangler: WRANGLER_VERSION } }),
   );
   if (options.omitEnvelope !== true) {
-    yield* writeNativeEnvelope(output, plan, inventory.assets, options.envelopeUnitId);
+    yield* writeNativeEnvelope(output, plan, nativeAssets, options.envelopeUnitId);
   }
   if (options.tamperWorkerAfterEnvelope === true) {
     yield* fileSystem.writeFileString(nodePath.join(output, BACKEND_ENTRY_PATH), 'export default { changed: true };');
@@ -1015,6 +1025,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const assetReadStarted = yield* Deferred.make<boolean>();
   const commands: OpsCommand[] = [];
   const capturedConfigs: Readonly<Record<string, Schema.Json>>[] = [];
+  const publishedInventories: (readonly ReleaseFile[])[] = [];
   const requests: string[] = [];
   const providerWrites: { readonly method: string; readonly url: string }[] = [];
   let canceledAssetBodies = 0;
@@ -1129,11 +1140,14 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
         if (config === undefined) {
           return yield* Effect.die('a native release command must identify its Wrangler config');
         }
-        capturedConfigs.push(
-          yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)))(
-            yield* fileSystem.readFileString(config),
-          ),
-        );
+        const capturedConfig = yield* Schema.decodeUnknownEffect(
+          Schema.fromJsonString(Schema.Record(Schema.String, Schema.Json)),
+        )(yield* fileSystem.readFileString(config));
+        capturedConfigs.push(capturedConfig);
+        const assetsConfig = yield* Schema.decodeUnknownEffect(
+          Schema.Struct({ assets: Schema.Struct({ directory: Schema.String }) }),
+        )(capturedConfig);
+        publishedInventories.push(yield* readReleaseFiles(assetsConfig.assets.directory));
         if (command.args.includes('--dry-run')) {
           const directory = command.args[command.args.indexOf('--outdir') + 1];
           if (directory === undefined) {
@@ -1157,6 +1171,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
         }
         return '';
       }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.mapError(
           (cause) =>
             new OpsCommandError({ cause, command: 'native release fixture', message: 'native test packaging failed' }),
@@ -1185,9 +1200,49 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     plan,
     providerWrites,
     publicDirectory,
+    publishedInventories,
     requests,
   };
 });
+
+it.effect('publishes native route chunks without exposing compiler source maps or changing the compiled output', () =>
+  Effect.scoped(
+    Effect.gen(function* nativePublicPartition() {
+      const nativePage = NATIVE_PAGE_JS_PATH;
+      const maps = ['.map', '.map.gz', '.map.br'].map((suffix) => file(`${nativePage}${suffix}`));
+      const fixture = yield* prepareDeployment({ additionalPublicFiles: maps, pageJsPath: nativePage });
+      const before = yield* readReleaseFiles(fixture.output);
+      const receipt = yield* fixture.deploy;
+      expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+      expect(fixture.publishedInventories).toHaveLength(3);
+      for (const published of fixture.publishedInventories) {
+        expect(published.some(({ path }) => path === nativePage)).toBe(true);
+        for (const map of maps) {
+          expect(published.some(({ path }) => path === map.path)).toBe(false);
+        }
+      }
+      expect(fixture.requests).toContain(`${fixture.plan.assetsOrigin}${nativePage}`);
+      for (const map of maps) {
+        expect(fixture.requests).not.toContain(`${fixture.plan.assetsOrigin}${map.path}`);
+      }
+      expect(yield* readReleaseFiles(fixture.output)).toEqual(before);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('refuses native public private files before provider access while partitioning compiler maps', () =>
+  Effect.scoped(
+    Effect.gen(function* nativePrivateFileRefusal() {
+      const fixture = yield* prepareDeployment({
+        additionalPublicFiles: [file('page.js.map.br'), file('credentials.json')],
+      });
+      const failure = yield* fixture.deploy.pipe(Effect.flip);
+      expect(failure.message).toBe('public release assets contain private runtime files or sourcemaps');
+      expect(fixture.commands).toEqual([]);
+      expect(fixture.requests).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect('publishes the complete captured native package and leaves compiled assets unchanged', () =>
   Effect.scoped(

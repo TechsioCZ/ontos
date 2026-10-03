@@ -31,11 +31,12 @@ import {
   encodeActiveApplicationCompositionSnapshot,
 } from '../active-application-composition.mts';
 import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-contract.mts';
-import type { ImmutableApplicationReleasePlan } from '../immutable-application-release.mts';
+import type { ImmutableApplicationReleasePlan, ReleaseFile } from '../immutable-application-release.mts';
 import {
   ImmutableApplicationReleaseError,
   deriveImmutableApplicationReleasePlan,
   makeImmutableApplicationReleasePublicationCandidate,
+  readReleaseFiles,
 } from '../immutable-application-release.mts';
 import {
   deployImmutableShellIngress,
@@ -44,6 +45,7 @@ import {
 } from '../immutable-shell-release.mts';
 import type { OpsCommand } from '../ops/ops-shell.mts';
 import { OpsShell } from '../ops/ops-shell.mts';
+import { OpsCommandError } from '../ops/ops-command-error.mts';
 
 const BUILD_MARKER = '0123456789abcdef';
 const SOURCE_REVISION = 'a'.repeat(40);
@@ -238,6 +240,8 @@ it.effect('rejects duplicate or unsafe public paths and public secrets or source
       'credentials.json',
       'private-key.pem',
       'main.js.map',
+      'main.js.map.gz',
+      'main.js.map.br',
     ]) {
       const failure = yield* validateImmutableShellReleaseArtifacts(plan, {
         assets: [...inventory.assets, file(unsafe)],
@@ -250,10 +254,12 @@ it.effect('rejects duplicate or unsafe public paths and public secrets or source
 const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function* writeNativeShellOutputEffect(
   appDirectory: string,
   plan: ImmutableApplicationReleasePlan,
+  additionalAssets: readonly ReleaseFile[] = [],
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const output = nodePath.join(appDirectory, '.output');
   const inventory = inventoryFor(plan);
+  const nativeAssets = [...inventory.assets, ...additionalAssets];
   const supportFiles = [
     file(BFF_PATH, text('export const effectApi = "retained Shell API";')),
     file(BACKEND_MANIFEST_PATH, json({ deliveryUnit: { ...plan, unitId: `app/${APP_ID}` } })),
@@ -282,7 +288,7 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
   ];
   for (const asset of [
     ...supportFiles,
-    ...inventory.assets.map(({ bytes, path }) => ({
+    ...nativeAssets.map(({ bytes, path }) => ({
       bytes,
       path: `public/${path}`,
     })),
@@ -314,7 +320,7 @@ const writeNativeShellOutput = Effect.fn('test.writeNativeShellOutput')(function
               Match.orElse(() => 'commonjs-module'),
             ),
           })),
-          ...inventory.assets.map(({ path }) => ({
+          ...nativeAssets.map(({ path }) => ({
             logicalPath: `public/${path}`,
             runtime: path.endsWith('.js') ? 'browser' : 'public-asset',
           })),
@@ -452,22 +458,52 @@ const deploymentLayer = (
   events: string[],
   secrets: Readonly<Record<string, string>> = {},
   authority?: { readonly phase: string; readonly revision: string; readonly unexpired: boolean },
+  publishedInventories: (readonly ReleaseFile[])[] = [],
 ) =>
   Layer.mergeAll(
     Layer.succeed(HttpClient.HttpClient, client),
-    Layer.succeed(OpsShell, {
-      run: (command) => {
-        if (command.command === 'git') {
-          return Effect.succeed(gitResult(command, appDirectory));
-        }
-        if (command.args.join(' ') === 'exec wrangler --version') {
-          return Effect.succeed(WRANGLER_VERSION);
-        }
-        commands.push(command);
-        events.push(DEPLOY_EVENT);
-        return Effect.succeed('retained Shell deployed');
-      },
-    }),
+    Layer.effect(
+      OpsShell,
+      Effect.gen(function* shellCommandsLayer() {
+        const capturedFileSystem = yield* FileSystem.FileSystem;
+        return {
+          run: (command: OpsCommand) => {
+            if (command.command === 'git') {
+              return Effect.succeed(gitResult(command, appDirectory));
+            }
+            if (command.args.join(' ') === 'exec wrangler --version') {
+              return Effect.succeed(WRANGLER_VERSION);
+            }
+            commands.push(command);
+            events.push(DEPLOY_EVENT);
+            return Effect.gen(function* capturedShellPublicInventory() {
+              const fileSystem = yield* FileSystem.FileSystem;
+              const configPath = command.args[command.args.indexOf('--config') + 1];
+              if (configPath === undefined) {
+                return yield* Effect.die('Shell deployment must identify its native config');
+              }
+              const config = yield* Schema.decodeUnknownEffect(
+                Schema.fromJsonString(Schema.Struct({ assets: Schema.Struct({ directory: Schema.String }) })),
+              )(yield* fileSystem.readFileString(configPath));
+              publishedInventories.push(
+                yield* readReleaseFiles(nodePath.resolve(nodePath.dirname(configPath), config.assets.directory)),
+              );
+              return 'retained Shell deployed';
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, capturedFileSystem),
+              Effect.mapError(
+                (cause) =>
+                  new OpsCommandError({
+                    cause,
+                    command: 'native Shell release fixture',
+                    message: 'native Shell asset capture failed',
+                  }),
+              ),
+            );
+          },
+        };
+      }),
+    ),
     Layer.effect(
       CoreDatabase,
       makeTestDatabase((statement) =>
@@ -499,7 +535,9 @@ it.effect(
         const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-shell-release-deploy-' });
         const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
         const plan = yield* planFor();
-        const { publicDirectory } = yield* writeNativeShellOutput(appDirectory, plan);
+        const maps = ['.map', '.map.gz', '.map.br'].map((suffix) => file(`main.js${suffix}`));
+        const { output, publicDirectory } = yield* writeNativeShellOutput(appDirectory, plan, maps);
+        const originalOutput = yield* readReleaseFiles(output);
         const inventory = inventoryFor(plan);
         const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
           environment: 'stage',
@@ -516,6 +554,7 @@ it.effect(
         const commands: OpsCommand[] = [];
         const requests: string[] = [];
         const events: string[] = [];
+        const publishedInventories: (readonly ReleaseFile[])[] = [];
         const providerUrl = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`;
         const client = HttpClient.make((request, destination) => {
           requests.push(destination.href);
@@ -562,7 +601,7 @@ it.effect(
           return Effect.succeed(HttpClientResponse.fromWeb(request, response));
         });
         const receipt = yield* deployImmutableShellRelease({ appDirectory, plan }).pipe(
-          Effect.provide(deploymentLayer(appDirectory, client, commands, events)),
+          Effect.provide(deploymentLayer(appDirectory, client, commands, events, {}, undefined, publishedInventories)),
         );
         expect(receipt.plan).toEqual(plan);
         expect(receipt.assetsVersionId).toBe('shell-retained-provider-version');
@@ -601,6 +640,7 @@ it.effect(
               events,
               { TEST_OWNER_SECRET: OWNER_SECRET_VALUE },
               { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+              publishedInventories,
             ),
           ),
         );
@@ -610,13 +650,17 @@ it.effect(
         expect(events.findIndex((event) => event.includes('clock_timestamp()'))).toBeLessThan(
           events.lastIndexOf(DEPLOY_EVENT),
         );
-        expect(commands[1].args).toEqual([
-          'exec',
-          'wrangler',
-          'deploy',
-          '--config',
-          nodePath.join(appDirectory, '.output', WRANGLER_CONFIG_PATH),
-        ]);
+        expect(commands[1].args.slice(0, 4)).toEqual(['exec', 'wrangler', 'deploy', '--config']);
+        expect(commands[1].args[4]).toContain('.wrangler-immutable-shell-ingress-');
+        expect(publishedInventories).toHaveLength(2);
+        for (const published of publishedInventories) {
+          expect(published.some(({ path }) => path === 'main.js')).toBe(true);
+          for (const map of maps) {
+            expect(published.some(({ path }) => path === map.path)).toBe(false);
+            expect(requests).not.toContain(`${plan.assetsOrigin}${map.path}`);
+          }
+        }
+        expect(yield* readReleaseFiles(output)).toEqual(originalOutput);
         expect(events.filter((event) => event.includes(PUBLICATION_LOCK))).toHaveLength(3);
         expect(events.indexOf('secret-installation')).toBeGreaterThan(events.lastIndexOf(DEPLOY_EVENT));
         expect(requests.filter((url) => url.endsWith('/secrets'))).toHaveLength(1);
