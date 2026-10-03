@@ -13,13 +13,16 @@ import {
   Array as EffectArray,
   ConfigProvider,
   DateTime,
+  Deferred,
   Effect,
+  Fiber,
   FileSystem,
   Layer,
   Match,
   Order,
   Schema,
 } from 'effect';
+import { TestClock } from 'effect/testing';
 import { HttpClient, HttpClientResponse } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
 
@@ -684,9 +687,21 @@ for (const secretResponse of [
           const events: string[] = [];
           const publishedInventories: (readonly ReleaseFile[])[] = [];
           const providerUrl = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`;
+          const retriedAssetUrl = `${plan.assetsOrigin}main.js`;
+          const assetInitiallyMissing = yield* Deferred.make<boolean>();
+          const notFoundResponse = new Response(text('release asset is still propagating'), { status: 404 });
+          let retriedAssetRequests = 0;
           const client = HttpClient.make((request, destination) => {
             requests.push(destination.href);
             events.push(destination.href, request.method === 'PUT' ? 'secret-installation' : 'provider-request');
+            if (destination.href === retriedAssetUrl) {
+              retriedAssetRequests += 1;
+              if (retriedAssetRequests === 1) {
+                return Deferred.succeed(assetInitiallyMissing, true).pipe(
+                  Effect.as(HttpClientResponse.fromWeb(request, notFoundResponse)),
+                );
+              }
+            }
             if (destination.pathname.includes('%28') || destination.pathname.includes('%29')) {
               return Effect.succeed(
                 HttpClientResponse.fromWeb(
@@ -743,11 +758,18 @@ for (const secretResponse of [
             );
             return Effect.succeed(HttpClientResponse.fromWeb(request, response));
           });
-          const receipt = yield* deployImmutableShellRelease({ appDirectory, plan }).pipe(
+          const deployment = deployImmutableShellRelease({ appDirectory, plan }).pipe(
             Effect.provide(
               deploymentLayer(appDirectory, client, commands, events, {}, undefined, publishedInventories),
             ),
           );
+          const deploymentFiber = yield* Effect.forkChild(deployment);
+          yield* Deferred.await(assetInitiallyMissing);
+          expect(requests.filter((url) => url === retriedAssetUrl)).toEqual([retriedAssetUrl]);
+          yield* TestClock.adjust('1 second');
+          const receipt = yield* Fiber.join(deploymentFiber);
+          expect(requests.filter((url) => url === retriedAssetUrl)).toEqual([retriedAssetUrl, retriedAssetUrl]);
+          expect(notFoundResponse.bodyUsed).toBe(true);
           expect(receipt.plan).toEqual(plan);
           expect(receipt.assetsVersionId).toBe('shell-retained-provider-version');
           expect(receipt.artifacts.runtimeContract.url).toBe(`${plan.assetsOrigin}${CONTRACT_PATH}`);

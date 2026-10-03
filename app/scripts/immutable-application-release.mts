@@ -758,7 +758,13 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
   function* verifyRetainedPublicAssetEffect(plan: ImmutableApplicationReleasePlan, file: ReleaseFile) {
     const client = yield* HttpClient.HttpClient;
     const encodedPath = file.path.split('/').map(encodeURIComponent).join('/');
-    const response = yield* client.get(`${plan.assetsOrigin}${encodedPath}`);
+    const url = `${plan.assetsOrigin}${encodedPath}`;
+    let response = yield* client.get(url);
+    while (response.status === 404) {
+      yield* response.stream.pipe(Stream.runDrain);
+      yield* Effect.sleep(Duration.seconds(1));
+      response = yield* client.get(url);
+    }
     if (response.status !== 200) {
       return yield* fail('the deployed immutable public asset did not return HTTP 200', {
         path: file.path,

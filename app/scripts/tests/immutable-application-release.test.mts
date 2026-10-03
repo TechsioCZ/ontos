@@ -958,6 +958,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly changedSource?: boolean;
     readonly deployedEntrypoint?: string | false;
     readonly envelopeUnitId?: string;
+    readonly initialAssetNotFound?: boolean;
     readonly initialSource?: string;
     readonly noBundle?: boolean;
     readonly omitBackendSubdomainEnabled?: boolean;
@@ -973,6 +974,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly tamperWorkerDuringPackaging?: boolean;
     readonly unboundFile?: boolean;
     readonly unboundFileDuringPackaging?: boolean;
+    readonly wrongAssetBytes?: boolean;
   } = {},
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -1029,6 +1031,9 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     );
   }
   const assetReadStarted = yield* Deferred.make<boolean>();
+  const assetNotFoundStarted = yield* Deferred.make<boolean>();
+  const assetAttempts = new Map<string, number>();
+  const notFoundBodies: Response[] = [];
   const commands: OpsCommand[] = [];
   const capturedConfigs: Readonly<Record<string, Schema.Json>>[] = [];
   const publishedInventories: (readonly ReleaseFile[])[] = [];
@@ -1105,7 +1110,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
         response = providerResponse(destination);
       } else {
         yield* Deferred.succeed(assetReadStarted, true);
-        if (destination.pathname.includes('%28') || destination.pathname.includes('%29')) {
+        if (/%28|%29/u.test(destination.pathname)) {
           return HttpClientResponse.fromWeb(
             request,
             new Response(null, {
@@ -1115,6 +1120,13 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           );
         }
         const asset = nativeAssets.find(({ path }) => decodeURIComponent(destination.pathname) === `/${path}`);
+        const attempt = (assetAttempts.get(destination.href) ?? 0) + 1;
+        assetAttempts.set(destination.href, attempt);
+        const status =
+          asset === undefined ||
+          (options.initialAssetNotFound === true && asset.path === CONTRACT_PATH && attempt === 1)
+            ? 404
+            : (options.assetStatus ?? 200);
         let body: ArrayBuffer | ReadableStream<Uint8Array> | undefined =
           asset === undefined ? undefined : new Uint8Array(asset.bytes).buffer;
         if (options.stallAssetBody === true) {
@@ -1125,15 +1137,33 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
           });
         } else if (options.oversizedAssetBody === true) {
           body = new Uint8Array((asset?.bytes.byteLength ?? 0) + 1).buffer;
+        } else if (options.wrongAssetBytes === true && asset !== undefined) {
+          body = new Uint8Array(asset.bytes.byteLength).buffer;
         }
-        response = new Response(body, {
-          headers: {
-            'access-control-allow-origin': '*',
-            'cache-control': 'public, max-age=31536000, immutable',
-            'x-content-type-options': 'nosniff',
-          },
-          status: asset === undefined ? 404 : (options.assetStatus ?? 200),
+        if (status === 404) {
+          body = new ReadableStream<Uint8Array>({
+            cancel: () => {
+              canceledAssetBodies += 1;
+            },
+            start: (controller) => {
+              controller.enqueue(new Uint8Array((asset?.bytes.byteLength ?? 0) + 1));
+              controller.close();
+            },
+          });
+        }
+        const headers = new Headers({
+          'access-control-allow-origin': '*',
+          'cache-control': 'public, max-age=31536000, immutable',
+          'x-content-type-options': 'nosniff',
         });
+        if (status === 307) {
+          headers.set('location', `${plan.assetsOrigin}${PAGE_JS_PATH}`);
+        }
+        response = new Response(body, { headers, status });
+        if (status === 404) {
+          notFoundBodies.push(response);
+          yield* Deferred.succeed(assetNotFoundStarted, true);
+        }
       }
       return HttpClientResponse.fromWeb(request, response);
     }),
@@ -1208,11 +1238,13 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     ),
   );
   return {
+    assetNotFoundStarted,
     assetReadStarted,
     canceledAssetBodies: () => canceledAssetBodies,
     capturedConfigs,
     commands,
     deploy: deployImmutableApplicationRelease({ appDirectory, plan }).pipe(Effect.provide(layer)),
+    notFoundBodies,
     originalHeaders,
     output,
     plan,
@@ -1484,15 +1516,79 @@ it.effect('bounds deployed asset response bytes by the exact compiled file size'
   ).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect('reports the retained asset HTTP status before reading an oversized error response body', () =>
+it.effect('reports a nonretryable retained asset HTTP status before reading an oversized error response body', () =>
   Effect.scoped(
     Effect.gen(function* oversizedNotFoundBody() {
-      const fixture = yield* prepareDeployment({ assetStatus: 404, oversizedAssetBody: true });
+      const fixture = yield* prepareDeployment({ assetStatus: 403, oversizedAssetBody: true });
       const failure = yield* fixture.deploy.pipe(Effect.flip);
       expect(failure.message).toBe(ASSET_READBACK_FAILURE);
       const cause = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleaseError)(failure.cause);
       expect(cause.message).toBe('the deployed immutable public asset did not return HTTP 200');
-      expect(cause.cause).toEqual({ path: CONTRACT_PATH, status: 404 });
+      expect(cause.cause).toEqual({ path: CONTRACT_PATH, status: 403 });
+      expect(fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`)).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('retries a transient 404 at the exact retained module URL and accepts only its compiled bytes', () =>
+  Effect.scoped(
+    Effect.gen(function* transientPublicArtifact() {
+      const fixture = yield* prepareDeployment({ initialAssetNotFound: true });
+      const fiber = yield* fixture.deploy.pipe(Effect.forkChild);
+      yield* Deferred.await(fixture.assetNotFoundStarted);
+      expect(fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`)).toHaveLength(1);
+      yield* TestClock.adjust('1 second');
+      const receipt = yield* Fiber.join(fiber);
+      expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+      expect(fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`)).toHaveLength(2);
+      expect(fixture.notFoundBodies).toHaveLength(1);
+      expect(fixture.notFoundBodies.every((response) => response.bodyUsed)).toBe(true);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('bounds persistent retained module 404 retries by the existing overall readback deadline', () =>
+  Effect.scoped(
+    Effect.gen(function* persistentPublicArtifactNotFound() {
+      const fixture = yield* prepareDeployment({ assetStatus: 404 });
+      const fiber = yield* fixture.deploy.pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(fixture.assetNotFoundStarted);
+      yield* TestClock.adjust('30 seconds');
+      const failure = yield* Fiber.join(fiber);
+      expect(failure.message).toBe(ASSET_READBACK_FAILURE);
+      const attempts = fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`);
+      expect(attempts.length).toBeGreaterThan(1);
+      expect(attempts.length).toBeLessThanOrEqual(31);
+      expect(fixture.notFoundBodies.every((response) => response.bodyUsed)).toBe(true);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('refuses corrupt 200 retained module bytes immediately without retrying', () =>
+  Effect.scoped(
+    Effect.gen(function* corruptPublicArtifact() {
+      const fixture = yield* prepareDeployment({ wrongAssetBytes: true });
+      const failure = yield* fixture.deploy.pipe(Effect.flip);
+      expect(failure.message).toBe(ASSET_READBACK_FAILURE);
+      const cause = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleaseError)(failure.cause);
+      expect(cause.message).toBe(
+        'the deployed immutable public release does not serve the exact compiled asset inventory',
+      );
+      expect(fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`)).toHaveLength(1);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('refuses a retained module redirect immediately without following or retrying it', () =>
+  Effect.scoped(
+    Effect.gen(function* redirectedPublicArtifact() {
+      const fixture = yield* prepareDeployment({ assetStatus: 307 });
+      const failure = yield* fixture.deploy.pipe(Effect.flip);
+      expect(failure.message).toBe(ASSET_READBACK_FAILURE);
+      const cause = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleaseError)(failure.cause);
+      expect(cause.message).toBe('the deployed immutable public asset did not return HTTP 200');
+      expect(cause.cause).toEqual({ path: CONTRACT_PATH, status: 307 });
+      expect(fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`)).toHaveLength(1);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
