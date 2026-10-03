@@ -286,7 +286,11 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
       })
       .from(applicationCompositionAuthority)
       .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
-    yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'authority-read-returned' });
+    yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, {
+      currentPhase: current?.phase,
+      phase: 'authority-read-returned',
+      sameRevision: current?.revision === approved.composition.revision,
+    });
     if (current?.revision === approved.composition.revision) {
       if (DateTime.toEpochMillis(approved.validUntil) < current.validUntil.getTime()) {
         return yield* unavailable('Application Composition freshness cannot regress');
@@ -313,9 +317,12 @@ export const publishApplicationCompositionAuthoritySnapshot = Effect.fn(
         yield* prepareApplicationCompositionDrain(current);
       }
     }
+    yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'promotion-transaction-start' });
     return yield* database.executor.transaction((transaction) =>
       Effect.gen(function* promoteAndPublish() {
+        yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'promotion-transaction-entered' });
         yield* publishApplicationCompositionAuthority(transaction, approved);
+        yield* Effect.logInfo(PUBLICATION_PHASE_MESSAGE, { phase: 'promotion-authority-write-returned' });
         return yield* publishProviderPointer;
       }),
     );
