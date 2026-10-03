@@ -7,10 +7,10 @@ defaults:
   run:
     shell: bash
 jobs:
-  native-wire-probe:
-    name: Diagnose the native PostgreSQL wire boundary without domain writes
+  finish-retained-stage:
+    name: Publish and activate the retained stage release
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 30
     environment:
       name: stage-edge
       deployment: false
@@ -26,7 +26,7 @@ jobs:
       ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
       ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
       ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE: ${{ vars.ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE }}
-      ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE: .initial-composition-cutover/initial-composition-cutover-receipt.json
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
       DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
@@ -35,26 +35,12 @@ jobs:
         uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
         with:
           egress-policy: audit
-      - name: Checkout this diagnostic branch
+      - name: Checkout the native VPN transport fix
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
       - name: Install the app workspace
         uses: ./.github/actions/install-app
-      - name: Download the existing approved candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: approved-application-composition-candidate
-          path: app/.composition-candidate
-          github-token: ${{ github.token }}
-          run-id: 37155123700
-      - name: Download the existing initial quiescence receipt
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: initial-composition-cutover-receipt
-          path: app/.initial-composition-cutover
-          github-token: ${{ github.token }}
-          run-id: 37111714997
       - name: Connect the runner to the private Zerops database network
         id: composition-vpn
         uses: ./.github/actions/zerops-vpn
@@ -64,50 +50,71 @@ jobs:
           token: ${{ secrets.ZEROPS_TOKEN }}
           database-url: ${{ secrets.DATABASE_URL }}
           database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
-      - name: Reproduce the native promotion query sequence without domain writes
+      - name: Checkout the exact retained release source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: 66d6b02390cf24d6594987299fd091c3eb2d69d5
+          fetch-depth: 1
+          persist-credentials: false
+          clean: true
+      - name: Install the retained release workspace
+        uses: ./.github/actions/install-app
+      - name: Download the retained approved candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: approved-application-composition-candidate
+          path: ${{ runner.temp }}/composition-candidate
+          github-token: ${{ github.token }}
+          run-id: 37155123700
+      - name: Download the completed initial quiescence receipt
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: initial-composition-cutover-receipt
+          path: ${{ runner.temp }}/initial-composition-cutover
+          github-token: ${{ github.token }}
+          run-id: 37111714997
+      - name: Download the exact retained Shell build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: edge-unit-shell-super-app
+          path: ${{ runner.temp }}/shell-build
+          github-token: ${{ github.token }}
+          run-id: 37155123700
+      - name: Download the exact retained Shell receipt
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: shell-artifact-release-receipt
+          path: ${{ runner.temp }}/shell-receipt
+          github-token: ${{ github.token }}
+          run-id: 37155123700
+      - name: Publish the complete observed release
+        timeout-minutes: 5
+        working-directory: app
+        env:
+          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
+          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+        run: |
+          export ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE="$RUNNER_TEMP/initial-composition-cutover/initial-composition-cutover-receipt.json"
+          mise exec -- pnpm active-composition:publish publish --environment stage \
+            --candidate-file "$RUNNER_TEMP/composition-candidate/active-application-composition-candidate.json"
+      - name: Unpack the approved Shell build
         working-directory: app
         run: |
-          probe_path="$PWD/.native-promotion-sequence-probe.mts"
-          trap 'rm --force -- "$probe_path"' EXIT
-          cat >"$probe_path" <<'PROBE'
-          import { eq, sql } from 'drizzle-orm';
-          import { DateTime, Effect } from 'effect';
-          import { makeCoreDatabase } from './packages/core-runtime/src/db/client.ts';
-          import { applicationCompositionAuthority } from './packages/core-runtime/src/db/schema.ts';
-          let phase = 'start';
-          const mark = (next) => { phase = next; console.log(JSON.stringify({ phase, checkedAt: new Date().toISOString() })); };
-          const watchdog = setTimeout(() => { console.log(JSON.stringify({ phase, outcome: 'fifteen-second-deadline' })); process.exit(124); }, 15000);
-          const program = Effect.scoped(Effect.gen(function* () {
-            const connectionString = process.env.DATABASE_ADMIN_URL;
-            const parsed = URL.parse(connectionString ?? '');
-            if (parsed === null) return yield* Effect.fail(Error('admin configuration missing'));
-            const database = yield* makeCoreDatabase({ connectionString, database: decodeURIComponent(parsed.pathname.slice(1)), host: parsed.hostname, port: Number(parsed.port || '5432'), user: decodeURIComponent(parsed.username) });
-            const connection = yield* database.executor.$client.reserve;
-            const key = 'ontos.unique-native-runner.' + crypto.randomUUID();
-            yield* Effect.acquireRelease(connection.executeValues('select pg_advisory_lock(hashtextextended($1, 0))', [key]), () => connection.executeValues('select pg_advisory_unlock(hashtextextended($1, 0))', [key]));
-            yield* Effect.sync(() => mark('session-lock-returned'));
-            const previous = yield* database.executor.execute(sql`select phase from core.application_composition_authority where authority_key = 'active'`, 'objects');
-            yield* Effect.sync(() => mark('authority-read-returned'));
-            yield* database.executor.transaction((transaction) => Effect.gen(function* () {
-              yield* Effect.sync(() => mark('transaction-entered'));
-              yield* transaction.execute(sql`select current_setting('transaction_isolation') as isolation`, 'objects');
-              yield* transaction.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 1))`, 'objects');
-              yield* Effect.sync(() => mark('transaction-fence-returned'));
-              const validUntil = DateTime.makeUnsafe(Date.now() + 3600000);
-              yield* Effect.sync(() => mark('freshness-query-start'));
-              const rows = yield* transaction.execute(sql`select ${DateTime.toDateUtc(validUntil)}::timestamptz > clock_timestamp() as unexpired`, 'objects');
-              if (rows[0]?.unexpired !== true) return yield* Effect.fail(Error('freshness boolean invalid'));
-              yield* Effect.sync(() => mark('freshness-query-returned'));
-              yield* Effect.sync(() => mark('full-authority-read-start'));
-              const authority = yield* transaction.select().from(applicationCompositionAuthority).where(eq(applicationCompositionAuthority.authorityKey, 'active'));
-              if (authority.length !== 1 || !Array.isArray(authority[0].subscriptionsJson)) return yield* Effect.fail(Error('authority row shape invalid'));
-              yield* Effect.sync(() => mark('full-authority-read-returned'));
-            }), { accessMode: 'read only' });
-            yield* Effect.sync(() => mark('transaction-returned'));
-          }));
-          try { await Effect.runPromise(program); mark('scopes-closed'); } catch { console.log(JSON.stringify({ phase, outcome: 'failed-sensitive-errors-omitted' })); process.exitCode = 1; } finally { clearTimeout(watchdog); }
-          PROBE
-          timeout --signal=INT --kill-after=5s 25s mise exec -- node "$probe_path"
+          tar --extract --zstd --file "$RUNNER_TEMP/shell-build/edge-unit.tar.zst"
+          test -f apps/shell-super-app/.output/wrangler.json
+          test -f .codex/reports/releases/shell-super-app/plan.json
+          git diff --exit-code HEAD
+      - name: Activate the currently approved Shell ingress
+        timeout-minutes: 20
+        working-directory: app
+        env:
+          ALL_RELEASE_SECRETS: ${{ secrets.ONTOS_IMMUTABLE_RELEASE_SECRETS }}
+        run: |
+          export ONTOS_IMMUTABLE_RELEASE_SECRETS
+          ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer '.["shell-super-app"] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")"
+          mise exec -- pnpm exec node scripts/immutable-shell-release.mts ingress-deploy \
+            --app-directory apps/shell-super-app \
+            --receipt-file "$RUNNER_TEMP/shell-receipt/shell-super-app.json"
       - name: Clear the runner-owned Zerops VPN
         if: always() && steps.composition-vpn.outputs.state-directory != ''
         uses: ./.github/actions/zerops-vpn
