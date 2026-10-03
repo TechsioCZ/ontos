@@ -409,6 +409,7 @@ it.effect('makes an assets-only worker config with neither a backend entrypoint 
       },
       compatibility_date: COMPATIBILITY_DATE,
       name: plan.assetsScriptName,
+      preview_urls: false,
       workers_dev: true,
     });
   }),
@@ -1266,6 +1267,9 @@ it.effect('publishes the complete captured native package and leaves compiled as
       expect(fixture.commands.every(({ args }) => !args.includes('--dispatch-namespace'))).toBe(true);
       expect(fixture.capturedConfigs[0]?.workers_dev).toBe(true);
       expect(fixture.capturedConfigs[1]?.workers_dev).toBe(true);
+      expect(fixture.capturedConfigs[2]?.name).toBe(fixture.plan.assetsScriptName);
+      expect(fixture.capturedConfigs[2]?.preview_urls).toBe(false);
+      expect(fixture.capturedConfigs[2]?.workers_dev).toBe(true);
       expect(fixture.requests.some((url) => url.includes('/dispatch/'))).toBe(false);
       const backendEndpoint = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${fixture.plan.backendScriptName}`;
       expect(fixture.requests).toContain(`${backendEndpoint}/content/v2`);

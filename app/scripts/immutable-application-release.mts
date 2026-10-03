@@ -166,6 +166,7 @@ export const immutableAssetsWranglerConfig = (
   assets: { directory: assetsDirectory, html_handling: 'none', not_found_handling: 'none' },
   compatibility_date: compatibilityDate,
   name: plan.assetsScriptName,
+  preview_urls: false,
   workers_dev: true,
 });
 

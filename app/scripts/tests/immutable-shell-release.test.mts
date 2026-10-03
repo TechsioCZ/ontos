@@ -582,8 +582,20 @@ const deploymentLayer = (
                 return yield* Effect.die('Shell deployment must identify its native config');
               }
               const config = yield* Schema.decodeUnknownEffect(
-                Schema.fromJsonString(Schema.Struct({ assets: Schema.Struct({ directory: Schema.String }) })),
+                Schema.fromJsonString(
+                  Schema.Struct({
+                    assets: Schema.Struct({ directory: Schema.String }),
+                    name: Schema.String,
+                    preview_urls: Schema.optional(Schema.Boolean),
+                    workers_dev: Schema.optional(Schema.Boolean),
+                  }),
+                ),
               )(yield* fileSystem.readFileString(configPath));
+              if (configPath.includes('.wrangler-immutable-shell-config-')) {
+                expect(config.preview_urls).toBe(false);
+                expect(config.workers_dev).toBe(true);
+                expect(config.name).toBe((yield* planFor()).assetsScriptName);
+              }
               publishedInventories.push(
                 yield* readReleaseFiles(nodePath.resolve(nodePath.dirname(configPath), config.assets.directory)),
               );
