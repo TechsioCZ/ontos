@@ -70,9 +70,10 @@ jobs:
           probe_path="$PWD/.native-promotion-sequence-probe.mts"
           trap 'rm --force -- "$probe_path"' EXIT
           cat >"$probe_path" <<'PROBE'
-          import { sql } from 'drizzle-orm';
+          import { eq, sql } from 'drizzle-orm';
           import { DateTime, Effect } from 'effect';
           import { makeCoreDatabase } from './packages/core-runtime/src/db/client.ts';
+          import { applicationCompositionAuthority } from './packages/core-runtime/src/db/schema.ts';
           let phase = 'start';
           const mark = (next) => { phase = next; console.log(JSON.stringify({ phase, checkedAt: new Date().toISOString() })); };
           const watchdog = setTimeout(() => { console.log(JSON.stringify({ phase, outcome: 'fifteen-second-deadline' })); process.exit(124); }, 15000);
@@ -97,6 +98,10 @@ jobs:
               const rows = yield* transaction.execute(sql`select ${DateTime.toDateUtc(validUntil)}::timestamptz > clock_timestamp() as unexpired`, 'objects');
               if (rows[0]?.unexpired !== true) return yield* Effect.fail(Error('freshness boolean invalid'));
               yield* Effect.sync(() => mark('freshness-query-returned'));
+              yield* Effect.sync(() => mark('full-authority-read-start'));
+              const authority = yield* transaction.select().from(applicationCompositionAuthority).where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+              if (authority.length !== 1 || !Array.isArray(authority[0].subscriptionsJson)) return yield* Effect.fail(Error('authority row shape invalid'));
+              yield* Effect.sync(() => mark('full-authority-read-returned'));
             }), { accessMode: 'read only' });
             yield* Effect.sync(() => mark('transaction-returned'));
           }));

@@ -337,10 +337,12 @@ export const publishApplicationCompositionAuthority = Effect.fn('ApplicationComp
     if (validity?.unexpired !== true) {
       return yield* unavailable('Expired Application Composition authority cannot be published');
     }
+    yield* Effect.logInfo('Publication full authority read started');
     const [current] = yield* transaction
       .select()
       .from(applicationCompositionAuthority)
       .where(eq(applicationCompositionAuthority.authorityKey, 'active'));
+    yield* Effect.logInfo('Publication full authority read returned');
     if (current === undefined) {
       yield* requireDrainedWork(transaction);
     }
