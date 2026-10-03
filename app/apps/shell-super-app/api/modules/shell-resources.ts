@@ -593,8 +593,11 @@ export const makeShellResourceDetail = (...[dependencies, gateway]: ShellResourc
       return { outcome: 'unavailable' } as const;
     }
     const contract = catalogResult.value.getByModuleId(ref.moduleId);
-    const resourceType = contract?.manifest.publicSurface.resourceTypes.find(({ key }) => key === ref.resourceType);
-    if (contract === undefined || resourceType === undefined) {
+    if (contract === undefined) {
+      return { outcome: 'forbidden' } as const;
+    }
+    const resourceType = contract.manifest.publicSurface.resourceTypes.find(({ key }) => key === ref.resourceType);
+    if (resourceType === undefined) {
       return { outcome: 'not_found' } as const;
     }
     const contributions = contract.manifest.publicSurface.shellContributions;

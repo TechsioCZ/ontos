@@ -344,6 +344,13 @@ export const makeShellComposition = (sources: ShellCompositionSources) => {
     }
     const selected = resolvePageSelection(catalog, input);
     if (selected === null) {
+      if (
+        input.canonicalPath === undefined &&
+        input.moduleId !== undefined &&
+        catalog.getByModuleId(input.moduleId) === undefined
+      ) {
+        return { outcome: 'forbidden' } as const;
+      }
       return { outcome: 'not_found' } as const;
     }
     const { contract, page, routeParameters } = selected;

@@ -638,6 +638,101 @@ it.effect('expired composition authority blocks search and resource providers de
   }),
 );
 
+it.effect('resource detail denies an unadmitted module before tenant, permission or provider work', () =>
+  Effect.gen(function* resourceDetailDeniesAnUnadmittedModule() {
+    const baseline = dependencies();
+    let assertionCalls = 0;
+    let providerCalls = 0;
+    const requested = Schema.decodeUnknownSync(ResourceRefSchema)({ ...ref, moduleId: 'unknown.registry' });
+    const result = yield* makeShellResourceDetail(
+      {
+        ...baseline,
+        contextAccess: {
+          ...baseline.contextAccess,
+          modules: () => Effect.die('An unadmitted module must not check module permission'),
+          resources: () => Effect.die('An unadmitted module must not check resource permission'),
+        },
+        issueAssertion: () => {
+          assertionCalls += 1;
+          return baseline.issueAssertion();
+        },
+        moduleStates: {
+          getTenantModuleStates: () => Effect.die('An unadmitted module must not read tenant state'),
+        },
+      },
+      {
+        detail: () => {
+          providerCalls += 1;
+          return Effect.succeed({ fields: [], title: 'Unit 1' });
+        },
+        timeline: () => {
+          providerCalls += 1;
+          return Effect.succeed({ entries: [], projectionLagging: false });
+        },
+      },
+    ).resolve(context, requested);
+    expect(result).toEqual({ outcome: 'forbidden' });
+    expect(assertionCalls).toBe(0);
+    expect(providerCalls).toBe(0);
+  }),
+);
+
+it.effect('resource detail preserves not found for admitted modules with missing resource types or bindings', () =>
+  Effect.gen(function* resourceDetailPreservesNotFoundForAdmittedModules() {
+    const baseline = dependencies();
+    let assertionCalls = 0;
+    let providerCalls = 0;
+    const admittedDependencies = {
+      ...baseline,
+      issueAssertion: () => {
+        assertionCalls += 1;
+        return baseline.issueAssertion();
+      },
+    };
+    const provider = {
+      detail: () => {
+        providerCalls += 1;
+        return Effect.succeed({ fields: [], title: 'Unit 1' });
+      },
+      timeline: () => {
+        providerCalls += 1;
+        return Effect.succeed({ entries: [], projectionLagging: false });
+      },
+    };
+    const requested = Schema.decodeUnknownSync(ResourceRefSchema)({
+      ...ref,
+      resourceType: 'property.registry.missing',
+    });
+    expect(yield* makeShellResourceDetail(admittedDependencies, provider).resolve(context, requested)).toEqual({
+      outcome: 'not_found',
+    });
+    const unboundContract = {
+      ...propertyContract,
+      manifest: {
+        ...propertyContract.manifest,
+        publicSurface: {
+          ...propertyContract.manifest.publicSurface,
+          shellContributions: {
+            ...propertyContract.manifest.publicSurface.shellContributions,
+            resourceDetails: [],
+          },
+        },
+      },
+    };
+    expect(
+      yield* makeShellResourceDetail(
+        {
+          ...admittedDependencies,
+          catalog: makeInstalledModuleCatalogLoader(makeCompositionSnapshot([unboundContract])),
+        },
+        provider,
+      ).resolve(context, ref),
+    ).toEqual({ outcome: 'not_found' });
+    expect(assertionCalls).toBe(0);
+    expect(providerCalls).toBe(0);
+  }),
+);
+
 it.effect('resource detail applies catalog, state, module and resource gates before providers', () =>
   Effect.gen(function* resourceDetailAppliesCatalogStateModule() {
     let calls = 0;

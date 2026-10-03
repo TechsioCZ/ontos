@@ -420,7 +420,42 @@ it.effect('resolves direct targets independently with exhaustive safe outcomes a
     const missing = yield* composition.resolveModuleTarget(context, {
       moduleId: 'missing.module',
     });
-    expect(missing.outcome).toBe('not_found');
+    expect(missing.outcome).toBe('forbidden');
+  }),
+);
+
+it.effect('denies unadmitted direct modules and preserves missing page and canonical route outcomes', () =>
+  Effect.gen(function* deniesUnadmittedDirectModules() {
+    let stateCalls = 0;
+    let permissionCalls = 0;
+    const approvedCatalog = yield* catalog();
+    const composition = makeShellComposition({
+      catalog: Effect.succeed(approvedCatalog),
+      contextAccess: contextAccess({ 'missing.module': 'allowed' }, () => (permissionCalls += 1)),
+      moduleStates: {
+        getTenantModuleStates: (_tenantId, moduleIds) => {
+          stateCalls += 1;
+          return Effect.succeed(moduleIds.map((moduleKey) => ({ moduleKey, state: 'active' })));
+        },
+      },
+    });
+    expect(
+      yield* composition.resolveModuleTarget(context, {
+        compositionRevision: approvedCatalog.composition.revision,
+        moduleId: 'missing.module',
+      }),
+    ).toEqual({ outcome: 'forbidden' });
+    expect(
+      yield* composition.resolveModuleTarget(context, {
+        entrypointKey: 'property.registry.page.missing',
+        moduleId: 'property.registry',
+      }),
+    ).toEqual({ outcome: 'not_found' });
+    expect(yield* composition.resolveModuleTarget(context, { canonicalPath: '/missing-module' })).toEqual({
+      outcome: 'not_found',
+    });
+    expect(stateCalls).toBe(0);
+    expect(permissionCalls).toBe(0);
   }),
 );
 
