@@ -71,6 +71,7 @@ const WRANGLER_VERSION = '4.137.0';
 const WRANGLER_CONFIG_PATH = 'wrangler.json';
 const WORKER_METADATA_PATH = 'server/modern-worker-manifest.json';
 const BACKEND_ENTRY_PATH = 'server/index.mjs';
+const OWNER_SECRET_VALUE = 'owned-release-test-binding';
 const text = (value: string) => new TextEncoder().encode(value);
 const json = (value: Schema.Json) => text(JSON.stringify(value));
 const file = (path: string, bytes = text('retained release bytes')) => ({ bytes, path });
@@ -962,6 +963,8 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly ownerSecrets?: Readonly<Record<string, string>>;
     readonly pageJsPath?: string;
     readonly resolvedWranglerVersion?: string;
+    readonly secretStatus?: number;
+    readonly secretSuccess?: boolean;
     readonly stallAssetBody?: boolean;
     readonly tamperWorkerAfterEnvelope?: boolean;
     readonly tamperWorkerDuringPackaging?: boolean;
@@ -1079,7 +1082,10 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       });
     }
     if (destination.pathname.endsWith('/secrets')) {
-      return Response.json({ result: { name: 'OWNER_BINDING', type: 'secret_text' }, success: true });
+      return Response.json(
+        { result: { name: 'OWNER_BINDING', type: 'secret_text' }, success: options.secretSuccess ?? true },
+        { status: options.secretStatus ?? 200 },
+      );
     }
     const status = absentChecks < 2 ? 404 : 200;
     absentChecks += 1;
@@ -1247,7 +1253,7 @@ it.effect('refuses native public private files before provider access while part
 it.effect('publishes the complete captured native package and leaves compiled assets unchanged', () =>
   Effect.scoped(
     Effect.gen(function* completeNativeUpload() {
-      const fixture = yield* prepareDeployment({ ownerSecrets: { OWNER_BINDING: 'owned-release-test-binding' } });
+      const fixture = yield* prepareDeployment({ ownerSecrets: { OWNER_BINDING: OWNER_SECRET_VALUE } });
       const receipt = yield* fixture.deploy;
       const fileSystem = yield* FileSystem.FileSystem;
       expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
@@ -1282,6 +1288,60 @@ it.effect('publishes the complete captured native package and leaves compiled as
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
+
+it.effect('accepts a successful 201 secret creation before publishing retained module assets', () =>
+  Effect.scoped(
+    Effect.gen(function* createdOwnerSecret() {
+      const fixture = yield* prepareDeployment({
+        ownerSecrets: { OWNER_BINDING: OWNER_SECRET_VALUE },
+        secretStatus: 201,
+      });
+      const receipt = yield* fixture.deploy;
+      expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+      expect(receipt.backend.versionId).toBe(BACKEND_VERSION_ID);
+      expect(fixture.commands).toHaveLength(3);
+      expect(fixture.providerWrites).toEqual([
+        {
+          method: 'PUT',
+          url: `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${fixture.plan.backendScriptName}/secrets`,
+        },
+      ]);
+      expect(fixture.requests).toContain(`${fixture.plan.assetsOrigin}mf-manifest.json`);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+for (const response of [
+  { secretStatus: 201, secretSuccess: false },
+  { secretStatus: 403, secretSuccess: true },
+  { secretStatus: 403, secretSuccess: false },
+]) {
+  it.effect(
+    `refuses secret HTTP ${response.secretStatus} success=${response.secretSuccess} before publishing module assets`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* refusedOwnerSecret() {
+          const fixture = yield* prepareDeployment({
+            ...response,
+            ownerSecrets: { OWNER_BINDING: OWNER_SECRET_VALUE },
+          });
+          const failure = yield* fixture.deploy.pipe(Effect.flip);
+          expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+          expect(failure.message).toMatch(/secret/u);
+          expect(fixture.providerWrites).toHaveLength(1);
+          expect(fixture.providerWrites[0]?.method).toBe('PUT');
+          expect(fixture.providerWrites[0]?.url).toMatch(/\/secrets$/u);
+          expect(fixture.commands).toHaveLength(2);
+          expect(fixture.requests.some((url) => url.startsWith(fixture.plan.assetsOrigin))).toBe(false);
+          expect(
+            fixture.requests.some((url) =>
+              url.endsWith(`/workers/scripts/${fixture.plan.assetsScriptName}/deployments`),
+            ),
+          ).toBe(false);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
 
 it.effect('rejects another source revision before inspecting output or making provider requests', () =>
   Effect.scoped(

@@ -1040,7 +1040,7 @@ export const deployImmutableApplicationRelease = Effect.fn('ImmutableApplication
       const envelope = yield* Schema.decodeUnknownEffect(ApiEnvelope)(
         yield* response.json.pipe(Effect.mapError(() => fail('secret installation response is invalid'))),
       ).pipe(Effect.mapError(() => fail('secret installation response is invalid')));
-      if (response.status !== 200 || !envelope.success) {
+      if ((response.status !== 200 && response.status !== 201) || !envelope.success) {
         return yield* fail('complete backend release secret installation failed');
       }
     }

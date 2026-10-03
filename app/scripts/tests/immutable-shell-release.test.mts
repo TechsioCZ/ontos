@@ -625,147 +625,166 @@ const deploymentLayer = (
     ),
   );
 
-it.effect(
-  'publishes retained Shell assets before its public ingress and installs owner secrets under the same database lock',
-  () =>
-    Effect.scoped(
-      Effect.gen(function* retainedShellDeployment() {
-        const fileSystem = yield* FileSystem.FileSystem;
-        const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-shell-release-deploy-' });
-        const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
-        const plan = yield* planFor();
-        const maps = ['.map', '.map.gz', '.map.br'].map((suffix) => file(`main.js${suffix}`));
-        const { output, publicDirectory } = yield* writeNativeShellOutput(appDirectory, plan, maps, false);
-        const originalOutput = yield* readReleaseFiles(output);
-        const inventory = inventoryFor(plan);
-        const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
-          environment: 'stage',
-          modules: [],
-          observedAt: yield* DateTime.now,
-          shell: {
-            federationManifest: { bytes: inventory.assets[1].bytes, url: `${plan.assetsOrigin}${MANIFEST_PATH}` },
-            runtimeContract: { bytes: inventory.assets[0].bytes, url: `${plan.assetsOrigin}${CONTRACT_PATH}` },
-          },
-          validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
-        });
-        const encodedSnapshot = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
-        let publishedSnapshot: string | null = encodedSnapshot;
-        const commands: OpsCommand[] = [];
-        const requests: string[] = [];
-        const events: string[] = [];
-        const publishedInventories: (readonly ReleaseFile[])[] = [];
-        const providerUrl = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`;
-        const client = HttpClient.make((request, destination) => {
-          requests.push(destination.href);
-          events.push(destination.href, request.method === 'PUT' ? 'secret-installation' : 'provider-request');
-          const asset = inventory.assets.find(
-            (assetFile) => `${plan.assetsOrigin}${assetFile.path}` === destination.href,
-          );
-          const response = Match.value(asset).pipe(
-            Match.when(
-              Match.defined,
-              (retainedAsset) =>
-                new Response(retainedAsset.bytes, {
-                  headers: {
-                    'access-control-allow-origin': '*',
-                    'cache-control': 'public, max-age=31536000, immutable',
-                    'x-content-type-options': 'nosniff',
-                  },
-                }),
-            ),
-            Match.orElse(() =>
-              Match.value(destination.href).pipe(
-                Match.when(ACCOUNT_SUBDOMAIN_URL, () =>
-                  Response.json({ result: { subdomain: WORKERS_DEV_SUBDOMAIN }, success: true }),
-                ),
-                Match.when(KV_URL, () =>
-                  publishedSnapshot === null ? new Response(null, { status: 404 }) : new Response(publishedSnapshot),
-                ),
-                Match.when(`${providerUrl}/deployments`, () =>
-                  Response.json({
-                    result: {
-                      deployments: [{ versions: [{ percentage: 100, version_id: 'shell-retained-provider-version' }] }],
+for (const secretResponse of [
+  { status: 200, success: true },
+  { status: 201, success: true },
+  { status: 201, success: false },
+  { status: 403, success: true },
+  { status: 403, success: false },
+]) {
+  it.effect(
+    `publishes retained Shell assets before its public ingress and checks secret acknowledgement (HTTP ${secretResponse.status}, success ${secretResponse.success})`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* retainedShellDeployment() {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const workspaceRoot = yield* fileSystem.makeTempDirectoryScoped({ prefix: 'ontos-shell-release-deploy-' });
+          const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
+          const plan = yield* planFor();
+          const maps = ['.map', '.map.gz', '.map.br'].map((suffix) => file(`main.js${suffix}`));
+          const { output, publicDirectory } = yield* writeNativeShellOutput(appDirectory, plan, maps, false);
+          const originalOutput = yield* readReleaseFiles(output);
+          const inventory = inventoryFor(plan);
+          const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
+            environment: 'stage',
+            modules: [],
+            observedAt: yield* DateTime.now,
+            shell: {
+              federationManifest: { bytes: inventory.assets[1].bytes, url: `${plan.assetsOrigin}${MANIFEST_PATH}` },
+              runtimeContract: { bytes: inventory.assets[0].bytes, url: `${plan.assetsOrigin}${CONTRACT_PATH}` },
+            },
+            validity: ACTIVE_APPLICATION_COMPOSITION_POLICY.validity,
+          });
+          const encodedSnapshot = yield* encodeActiveApplicationCompositionSnapshot(snapshot);
+          let publishedSnapshot: string | null = encodedSnapshot;
+          const commands: OpsCommand[] = [];
+          const requests: string[] = [];
+          const events: string[] = [];
+          const publishedInventories: (readonly ReleaseFile[])[] = [];
+          const providerUrl = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`;
+          const client = HttpClient.make((request, destination) => {
+            requests.push(destination.href);
+            events.push(destination.href, request.method === 'PUT' ? 'secret-installation' : 'provider-request');
+            const asset = inventory.assets.find(
+              (assetFile) => `${plan.assetsOrigin}${assetFile.path}` === destination.href,
+            );
+            const response = Match.value(asset).pipe(
+              Match.when(
+                Match.defined,
+                (retainedAsset) =>
+                  new Response(retainedAsset.bytes, {
+                    headers: {
+                      'access-control-allow-origin': '*',
+                      'cache-control': 'public, max-age=31536000, immutable',
+                      'x-content-type-options': 'nosniff',
                     },
-                    success: true,
                   }),
+              ),
+              Match.orElse(() =>
+                Match.value(destination.href).pipe(
+                  Match.when(ACCOUNT_SUBDOMAIN_URL, () =>
+                    Response.json({ result: { subdomain: WORKERS_DEV_SUBDOMAIN }, success: true }),
+                  ),
+                  Match.when(KV_URL, () =>
+                    publishedSnapshot === null ? new Response(null, { status: 404 }) : new Response(publishedSnapshot),
+                  ),
+                  Match.when(`${providerUrl}/deployments`, () =>
+                    Response.json({
+                      result: {
+                        deployments: [
+                          { versions: [{ percentage: 100, version_id: 'shell-retained-provider-version' }] },
+                        ],
+                      },
+                      success: true,
+                    }),
+                  ),
+                  Match.when(
+                    `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/app-shell-super-app/secrets`,
+                    () => Response.json({ success: secretResponse.success }, { status: secretResponse.status }),
+                  ),
+                  Match.orElse(() => new Response(null, { status: 404 })),
                 ),
-                Match.when(
-                  `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/app-shell-super-app/secrets`,
-                  () => Response.json({ success: true }),
-                ),
-                Match.orElse(() => new Response(null, { status: 404 })),
+              ),
+            );
+            return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+          });
+          const receipt = yield* deployImmutableShellRelease({ appDirectory, plan }).pipe(
+            Effect.provide(
+              deploymentLayer(appDirectory, client, commands, events, {}, undefined, publishedInventories),
+            ),
+          );
+          expect(receipt.plan).toEqual(plan);
+          expect(receipt.assetsVersionId).toBe('shell-retained-provider-version');
+          expect(receipt.artifacts.runtimeContract.url).toBe(`${plan.assetsOrigin}${CONTRACT_PATH}`);
+          expect(receipt.artifacts.federationManifest.url).toBe(`${plan.assetsOrigin}${MANIFEST_PATH}`);
+          expect(commands).toHaveLength(1);
+          expect(commands[0].args.slice(0, 4)).toEqual(['exec', 'wrangler', 'deploy', '--config']);
+          expect(requests.slice(0, 2)).toEqual([ACCOUNT_SUBDOMAIN_URL, providerUrl]);
+          expect(requests.some((url) => url.includes('/dispatch/'))).toBe(false);
+          expect(requests.some((url) => url.includes('/secrets'))).toBe(false);
+          for (const asset of inventory.assets) {
+            expect(requests).toContain(`${plan.assetsOrigin}${asset.path}`);
+          }
+          const lock = events.findIndex((event) => event.includes(PUBLICATION_LOCK));
+          expect(lock).toBeGreaterThanOrEqual(0);
+          expect(lock).toBeLessThan(events.indexOf('provider-request'));
+          expect(lock).toBeLessThan(events.indexOf(DEPLOY_EVENT));
+          expect(yield* fileSystem.readFileString(nodePath.join(publicDirectory, '_headers'))).toBe(
+            '/*\n  Cache-Control: no-cache\n',
+          );
+          publishedSnapshot = null;
+          const missingPublishedRelease = yield* deployImmutableShellIngress({ appDirectory, receipt }).pipe(
+            Effect.provide(deploymentLayer(appDirectory, client, commands, events)),
+            Effect.flip,
+          );
+          expect(Schema.is(ActiveApplicationCompositionPublicationError)(missingPublishedRelease)).toBe(true);
+          expect(commands).toHaveLength(1);
+          expect(requests.some((url) => url.includes('/secrets'))).toBe(false);
+          publishedSnapshot = encodedSnapshot;
+          const ingress = deployImmutableShellIngress({ appDirectory, receipt }).pipe(
+            Effect.provide(
+              deploymentLayer(
+                appDirectory,
+                client,
+                commands,
+                events,
+                { TEST_OWNER_SECRET: OWNER_SECRET_VALUE },
+                { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
+                publishedInventories,
               ),
             ),
           );
-          return Effect.succeed(HttpClientResponse.fromWeb(request, response));
-        });
-        const receipt = yield* deployImmutableShellRelease({ appDirectory, plan }).pipe(
-          Effect.provide(deploymentLayer(appDirectory, client, commands, events, {}, undefined, publishedInventories)),
-        );
-        expect(receipt.plan).toEqual(plan);
-        expect(receipt.assetsVersionId).toBe('shell-retained-provider-version');
-        expect(receipt.artifacts.runtimeContract.url).toBe(`${plan.assetsOrigin}${CONTRACT_PATH}`);
-        expect(receipt.artifacts.federationManifest.url).toBe(`${plan.assetsOrigin}${MANIFEST_PATH}`);
-        expect(commands).toHaveLength(1);
-        expect(commands[0].args.slice(0, 4)).toEqual(['exec', 'wrangler', 'deploy', '--config']);
-        expect(requests.slice(0, 2)).toEqual([ACCOUNT_SUBDOMAIN_URL, providerUrl]);
-        expect(requests.some((url) => url.includes('/dispatch/'))).toBe(false);
-        expect(requests.some((url) => url.includes('/secrets'))).toBe(false);
-        for (const asset of inventory.assets) {
-          expect(requests).toContain(`${plan.assetsOrigin}${asset.path}`);
-        }
-        const lock = events.findIndex((event) => event.includes(PUBLICATION_LOCK));
-        expect(lock).toBeGreaterThanOrEqual(0);
-        expect(lock).toBeLessThan(events.indexOf('provider-request'));
-        expect(lock).toBeLessThan(events.indexOf(DEPLOY_EVENT));
-        expect(yield* fileSystem.readFileString(nodePath.join(publicDirectory, '_headers'))).toBe(
-          '/*\n  Cache-Control: no-cache\n',
-        );
-        publishedSnapshot = null;
-        const missingPublishedRelease = yield* deployImmutableShellIngress({ appDirectory, receipt }).pipe(
-          Effect.provide(deploymentLayer(appDirectory, client, commands, events)),
-          Effect.flip,
-        );
-        expect(Schema.is(ActiveApplicationCompositionPublicationError)(missingPublishedRelease)).toBe(true);
-        expect(commands).toHaveLength(1);
-        expect(requests.some((url) => url.includes('/secrets'))).toBe(false);
-        publishedSnapshot = encodedSnapshot;
-        yield* deployImmutableShellIngress({ appDirectory, receipt }).pipe(
-          Effect.provide(
-            deploymentLayer(
-              appDirectory,
-              client,
-              commands,
-              events,
-              { TEST_OWNER_SECRET: OWNER_SECRET_VALUE },
-              { phase: 'active', revision: snapshot.composition.revision, unexpired: true },
-              publishedInventories,
-            ),
-          ),
-        );
-        expect(commands).toHaveLength(2);
-        expect(requests).toContain(KV_URL);
-        expect(events.lastIndexOf(KV_URL)).toBeLessThan(events.lastIndexOf(DEPLOY_EVENT));
-        expect(events.findIndex((event) => event.includes('clock_timestamp()'))).toBeLessThan(
-          events.lastIndexOf(DEPLOY_EVENT),
-        );
-        expect(commands[1].args.slice(0, 4)).toEqual(['exec', 'wrangler', 'deploy', '--config']);
-        expect(commands[1].args[4]).toContain('.wrangler-immutable-shell-ingress-');
-        expect(publishedInventories).toHaveLength(2);
-        for (const published of publishedInventories) {
-          expect(published.some(({ path }) => path === 'main.js')).toBe(true);
-          for (const map of maps) {
-            expect(published.some(({ path }) => path === map.path)).toBe(false);
-            expect(requests).not.toContain(`${plan.assetsOrigin}${map.path}`);
+          if (secretResponse.success && (secretResponse.status === 200 || secretResponse.status === 201)) {
+            yield* ingress;
+          } else {
+            const failure = yield* ingress.pipe(Effect.flip);
+            expect(Schema.is(ImmutableApplicationReleaseError)(failure)).toBe(true);
+            expect(failure.message).toBe('complete Shell owner secret installation was refused');
           }
-        }
-        expect(yield* readReleaseFiles(output)).toEqual(originalOutput);
-        expect(events.filter((event) => event.includes(PUBLICATION_LOCK))).toHaveLength(3);
-        expect(events.indexOf('secret-installation')).toBeGreaterThan(events.lastIndexOf(DEPLOY_EVENT));
-        expect(requests.filter((url) => url.endsWith('/secrets'))).toHaveLength(1);
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-);
+          expect(commands).toHaveLength(2);
+          expect(requests).toContain(KV_URL);
+          expect(events.lastIndexOf(KV_URL)).toBeLessThan(events.lastIndexOf(DEPLOY_EVENT));
+          expect(events.findIndex((event) => event.includes('clock_timestamp()'))).toBeLessThan(
+            events.lastIndexOf(DEPLOY_EVENT),
+          );
+          expect(commands[1].args.slice(0, 4)).toEqual(['exec', 'wrangler', 'deploy', '--config']);
+          expect(commands[1].args[4]).toContain('.wrangler-immutable-shell-ingress-');
+          expect(publishedInventories).toHaveLength(2);
+          for (const published of publishedInventories) {
+            expect(published.some(({ path }) => path === 'main.js')).toBe(true);
+            for (const map of maps) {
+              expect(published.some(({ path }) => path === map.path)).toBe(false);
+              expect(requests).not.toContain(`${plan.assetsOrigin}${map.path}`);
+            }
+          }
+          expect(yield* readReleaseFiles(output)).toEqual(originalOutput);
+          expect(events.filter((event) => event.includes(PUBLICATION_LOCK))).toHaveLength(3);
+          expect(events.indexOf('secret-installation')).toBeGreaterThan(events.lastIndexOf(DEPLOY_EVENT));
+          expect(requests.filter((url) => url.endsWith('/secrets'))).toHaveLength(1);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
 
 it.effect('refuses an existing retained Shell asset identity before executing deployment commands', () =>
   Effect.scoped(

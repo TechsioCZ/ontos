@@ -329,7 +329,7 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
           Effect.mapError(() => fail('complete Shell owner secret acknowledgement exceeded its timeout')),
         ),
       ).pipe(Effect.mapError(() => fail('complete Shell owner secret installation was not acknowledged')));
-      if (response.status !== 200 || !result.success) {
+      if ((response.status !== 200 && response.status !== 201) || !result.success) {
         return yield* fail('complete Shell owner secret installation was refused');
       }
     }
