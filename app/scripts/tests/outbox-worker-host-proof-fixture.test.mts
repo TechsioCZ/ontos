@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
-import { Effect, FileSystem, Schema, Stream } from 'effect';
+import { Deferred, Effect, Fiber, FileSystem, Ref, Schema, Stream } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { expect, it } from 'effect-rstest';
 
@@ -14,6 +14,56 @@ import {
 
 const workspaceRoot = path.resolve(import.meta.dirname, '../..');
 const nativeControlPath = fileURLToPath(new URL('outbox-worker-host-proof-native.fixture.mts', import.meta.url));
+
+const runSignalControl = (control: 'signal' | 'signal-finalizer-failure') =>
+  Effect.gen(function* realNativeSignal() {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make(process.execPath, [nativeControlPath, '--control', control], {
+        cwd: workspaceRoot,
+      }),
+    );
+    const ready = yield* Deferred.make<boolean>();
+    const observed = yield* Ref.make('');
+    const stdoutFiber = yield* child.stdout.pipe(
+      Stream.decodeText(),
+      Stream.tap((chunk) =>
+        Ref.updateAndGet(observed, (current) => current + chunk).pipe(
+          Effect.flatMap((current) =>
+            current.includes('signal-control-ready\n') ? Deferred.succeed(ready, true) : Effect.void,
+          ),
+        ),
+      ),
+      Stream.mkString,
+      Effect.forkChild,
+    );
+    const stderrFiber = yield* child.stderr.pipe(Stream.decodeText(), Stream.mkString, Effect.forkChild);
+    yield* Deferred.await(ready).pipe(Effect.timeout('10 seconds'));
+    yield* child.kill({ forceKillAfter: '5 seconds', killSignal: 'SIGTERM' });
+    const [stdout, stderr, code] = yield* Effect.all(
+      [Fiber.join(stdoutFiber), Fiber.join(stderrFiber), child.exitCode],
+      {
+        concurrency: 'unbounded',
+      },
+    );
+    return { code, stderr, stdout };
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
+
+it.live('real SIGTERM completes scoped finalization before exiting successfully', () =>
+  Effect.gen(function* cleanSignalShutdown() {
+    const result = yield* runSignalControl('signal');
+    expect(result).toEqual({ code: 0, stderr: '', stdout: 'signal-control-ready\nsignal-control-finalized\n' });
+  }),
+);
+
+it.live('real SIGTERM retains a scoped finalizer failure as a failed process exit', () =>
+  Effect.gen(function* failedSignalFinalizer() {
+    const result = yield* runSignalControl('signal-finalizer-failure');
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('signal-control-finalized\n');
+    expect(`${result.stdout}${result.stderr}`).toContain('intentional scoped finalizer failure');
+  }),
+);
 
 it.live('rejects invalid shell proof timeouts before allocating an artifact or starting materialization', () =>
   Effect.gen(function* invalidShellTimeoutControls() {

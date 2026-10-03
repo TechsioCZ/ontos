@@ -88,6 +88,8 @@ stop_process() {
     if [ "$(date +%s)" -ge "$stop_deadline" ]; then
       kill -KILL "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
+      if [ "$host" = "$pid" ]; then host=''; fi
+      if [ "$fixture" = "$pid" ]; then fixture=''; fi
       cat "$process_log"
       echo "$name did not stop within 30s of SIGTERM" >&2
       return 1
@@ -96,6 +98,8 @@ stop_process() {
   done
   process_status=0
   wait "$pid" || process_status=$?
+  if [ "$host" = "$pid" ]; then host=''; fi
+  if [ "$fixture" = "$pid" ]; then fixture=''; fi
   if [ "$process_status" -ne 0 ]; then
     cat "$process_log"
     echo "$name exited with status $process_status" >&2

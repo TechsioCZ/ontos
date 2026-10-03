@@ -6,6 +6,7 @@ import {
 } from '@modern-js/app-tools-extensions/release-identity';
 import { Array as EffectArray, Console, Effect, FileSystem, Order, Ref, Schema } from 'effect';
 import { FetchHttpClient, HttpClient } from 'effect/unstable/http';
+import { Command, Flag } from 'effect/unstable/cli';
 import { buildApplicationCompositionCatalog } from '../../packages/core-runtime/src/modules/application-composition-catalog.ts';
 import { OntosModuleDeploymentContractSchema } from '../../packages/core-runtime/src/modules/manifest.ts';
 import {
@@ -17,6 +18,7 @@ import {
   deriveHostProofSnapshot,
   HostProofTopologySchema,
   HostWorkerArtifactSchema,
+  hostProofTeardown,
   OutboxWorkerHostProofFixtureError,
   serveHostProofSource,
   verifyHostProofOwnerIdentities,
@@ -136,6 +138,42 @@ const nativeHostAdmissionControl = Effect.gen(function* nativeHostAdmissionContr
   yield* Console.log('complete native host admission controls passed');
 }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.provide(FetchHttpClient.layer));
 
+const signalControl = (failFinalizer: boolean) =>
+  Effect.gen(function* scopedSignalControl() {
+    yield* Effect.addFinalizer(() =>
+      Console.log('signal-control-finalized').pipe(
+        Effect.andThen(
+          failFinalizer
+            ? Effect.fail(
+                new OutboxWorkerHostProofFixtureError({
+                  reason: 'intentional scoped finalizer failure',
+                }),
+              ).pipe(
+                Effect.tapError((error) => Console.error(error.reason)),
+                Effect.orDie,
+              )
+            : Effect.void,
+        ),
+      ),
+    );
+    yield* Effect.yieldNow;
+    yield* Console.log('signal-control-ready');
+    return yield* Effect.never;
+  }).pipe(Effect.scoped);
+
+const command = Command.make(
+  'outbox-worker-host-proof-native-fixture',
+  {
+    control: Flag.Literals('control', ['admission', 'signal', 'signal-finalizer-failure']).pipe(
+      Flag.withDefault('admission'),
+    ),
+  },
+  ({ control }) =>
+    control === 'admission' ? nativeHostAdmissionControl : signalControl(control === 'signal-finalizer-failure'),
+);
+
 if (import.meta.main) {
-  NodeRuntime.runMain(nativeHostAdmissionControl);
+  NodeRuntime.runMain(Command.run(command, { version: '1.0.0' }).pipe(Effect.provide(NodeServices.layer)), {
+    teardown: hostProofTeardown,
+  });
 }

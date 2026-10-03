@@ -9,7 +9,20 @@ import {
   resolveUltramodernSourceRevision,
 } from '@modern-js/app-tools-extensions/release-identity';
 import { and, eq, sql } from 'drizzle-orm';
-import { Config, DateTime, Duration, Effect, FileSystem, Layer, Redacted, Ref, Schema } from 'effect';
+import {
+  Cause,
+  Config,
+  DateTime,
+  Duration,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Redacted,
+  Ref,
+  Runtime,
+  Schema,
+} from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 import { HttpServerRequest, HttpServerResponse } from 'effect/unstable/http';
 import { NetAddress } from 'effect/unstable/net';
@@ -58,6 +71,15 @@ export class OutboxWorkerHostProofFixtureError extends Schema.TaggedError<Outbox
   'OutboxWorkerHostProofFixtureError',
   { reason: Schema.String },
 ) {}
+
+/** Expected process shutdown succeeds only after every scoped finalizer has completed successfully. */
+export const hostProofTeardown: Runtime.Teardown = (exit, onExit) => {
+  if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) {
+    onExit(0);
+    return;
+  }
+  Runtime.defaultTeardown(exit, onExit);
+};
 
 const fail = (reason: string) => new OutboxWorkerHostProofFixtureError({ reason });
 const jsonBytes = (text: string) => new TextEncoder().encode(text);
@@ -506,5 +528,6 @@ if (import.meta.main) {
     Layer.build(
       Layer.effectDiscard(Command.run(command, { version: '1.0.0' })).pipe(Layer.provide(NodeServices.layer)),
     ).pipe(Effect.scoped),
+    { teardown: hostProofTeardown },
   );
 }
