@@ -561,6 +561,7 @@ const deploymentLayer = (
   secrets: Readonly<Record<string, string>> = {},
   authority?: { readonly phase: string; readonly revision: string; readonly unexpired: boolean },
   publishedInventories: (readonly ReleaseFile[])[] = [],
+  assetUploadFailure?: OpsCommandError,
 ) =>
   Layer.mergeAll(
     Layer.succeed(HttpClient.HttpClient, client),
@@ -612,6 +613,17 @@ const deploymentLayer = (
                     command: 'native Shell release fixture',
                     message: 'native Shell asset capture failed',
                   }),
+              ),
+              Effect.flatMap((stdout) =>
+                assetUploadFailure !== undefined && commands.length === 1
+                  ? Effect.fail(
+                      new OpsCommandError({
+                        cause: assetUploadFailure.cause,
+                        command: [command.command, ...command.args].join(' '),
+                        message: assetUploadFailure.message,
+                      }),
+                    )
+                  : Effect.succeed(stdout),
               ),
             );
           },
@@ -687,6 +699,22 @@ for (const secretResponse of [
           const events: string[] = [];
           const publishedInventories: (readonly ReleaseFile[])[] = [];
           const providerUrl = `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${plan.assetsScriptName}`;
+          const recoveryProviderPath = `/accounts/${'a'.repeat(32)}/workers/workers/${plan.assetsScriptName}`;
+          const recoveryProviderUrl = `https://api.cloudflare.com/client/v4${recoveryProviderPath}`;
+          const assetSubdomainUrl = `${providerUrl}/subdomain`;
+          const assetUploadFailure =
+            secretResponse.status === 200 && secretResponse.success
+              ? new OpsCommandError({
+                  cause: { providerCode: 10_007, providerPath: recoveryProviderPath },
+                  command: 'pnpm',
+                  message: 'assets uploaded before the native provider observation failed',
+                })
+              : undefined;
+          const enabledSubdomains: {
+            readonly body: { readonly enabled: true; readonly previews_enabled: false };
+            readonly method: string;
+            readonly url: string;
+          }[] = [];
           const retriedAssetUrl = `${plan.assetsOrigin}main.js`;
           const assetInitiallyMissing = yield* Deferred.make<boolean>();
           const notFoundResponse = new Response(text('release asset is still propagating'), { status: 404 });
@@ -694,6 +722,23 @@ for (const secretResponse of [
           const client = HttpClient.make((request, destination) => {
             requests.push(destination.href);
             events.push(destination.href, request.method === 'PUT' ? 'secret-installation' : 'provider-request');
+            if (destination.href === assetSubdomainUrl && request.method === 'POST') {
+              return Match.value(request.body).pipe(
+                Match.tag('Uint8Array', (requestBody) =>
+                  Effect.sync(() => {
+                    const body = Schema.decodeUnknownSync(
+                      Schema.fromJsonString(
+                        Schema.Struct({ enabled: Schema.Literal(true), previews_enabled: Schema.Literal(false) }),
+                      ),
+                      { onExcessProperty: 'error' },
+                    )(new TextDecoder().decode(requestBody.body));
+                    enabledSubdomains.push({ body, method: request.method, url: destination.href });
+                    return HttpClientResponse.fromWeb(request, Response.json({ result: body, success: true }));
+                  }),
+                ),
+                Match.orElse(() => Effect.die('native asset subdomain publication must send its actual JSON bytes')),
+              );
+            }
             if (destination.href === retriedAssetUrl) {
               retriedAssetRequests += 1;
               if (retriedAssetRequests === 1) {
@@ -732,6 +777,9 @@ for (const secretResponse of [
               ),
               Match.orElse(() =>
                 Match.value(destination.href).pipe(
+                  Match.when(recoveryProviderUrl, () =>
+                    Response.json({ result: { name: plan.assetsScriptName }, success: true }),
+                  ),
                   Match.when(ACCOUNT_SUBDOMAIN_URL, () =>
                     Response.json({ result: { subdomain: WORKERS_DEV_SUBDOMAIN }, success: true }),
                   ),
@@ -760,7 +808,16 @@ for (const secretResponse of [
           });
           const deployment = deployImmutableShellRelease({ appDirectory, plan }).pipe(
             Effect.provide(
-              deploymentLayer(appDirectory, client, commands, events, {}, undefined, publishedInventories),
+              deploymentLayer(
+                appDirectory,
+                client,
+                commands,
+                events,
+                {},
+                undefined,
+                publishedInventories,
+                assetUploadFailure,
+              ),
             ),
           );
           const deploymentFiber = yield* Effect.forkChild(deployment);
@@ -775,6 +832,12 @@ for (const secretResponse of [
           expect(receipt.artifacts.runtimeContract.url).toBe(`${plan.assetsOrigin}${CONTRACT_PATH}`);
           expect(receipt.artifacts.federationManifest.url).toBe(`${plan.assetsOrigin}${MANIFEST_PATH}`);
           expect(commands).toHaveLength(1);
+          if (assetUploadFailure !== undefined) {
+            expect(requests.filter((url) => url === recoveryProviderUrl)).toEqual([recoveryProviderUrl]);
+            expect(enabledSubdomains).toEqual([
+              { body: { enabled: true, previews_enabled: false }, method: 'POST', url: assetSubdomainUrl },
+            ]);
+          }
           expect(commands[0].args.slice(0, 4)).toEqual(['exec', 'wrangler', 'deploy', '--config']);
           expect(requests.slice(0, 2)).toEqual([ACCOUNT_SUBDOMAIN_URL, providerUrl]);
           expect(requests.some((url) => url.includes('/dispatch/'))).toBe(false);

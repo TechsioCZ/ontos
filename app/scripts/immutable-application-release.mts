@@ -875,6 +875,112 @@ export const readRetainedImmutableWorkerVersion = Effect.fn('ImmutableApplicatio
   ),
 );
 
+const WorkerVisibilityResponse = Schema.Struct({
+  errors: Schema.optionalKey(Schema.Array(Schema.Struct({ code: Schema.Number }))),
+  result: Schema.OptionFromOptionalNullOr(Schema.Struct({ name: Schema.String })),
+  success: Schema.Boolean,
+});
+const NativeWorkerLookupFailure = Schema.Struct({ providerCode: Schema.Number, providerPath: Schema.String });
+
+const completeImmutableAssetsRouting = Effect.fn('ImmutableApplicationRelease.completeAssetsRouting')(
+  function* completeImmutableAssetsRoutingEffect(
+    accountId: string,
+    token: Redacted.Redacted,
+    plan: ImmutableApplicationReleasePlan,
+  ) {
+    const client = yield* HttpClient.HttpClient;
+    const providerPath = `/accounts/${accountId}/workers/workers/${plan.assetsScriptName}`;
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      client.execute(HttpClientRequest.bearerToken(request, Redacted.value(token)));
+    const workerReady = Effect.gen(function* observeUploadedAssetsWorker() {
+      const response = yield* execute(HttpClientRequest.get(`https://api.cloudflare.com/client/v4${providerPath}`));
+      const observed = yield* Schema.decodeUnknownEffect(WorkerVisibilityResponse)(yield* response.json);
+      if (
+        response.status === 200 &&
+        observed.success &&
+        Option.exists(observed.result, (worker) => worker.name === plan.assetsScriptName)
+      ) {
+        return true;
+      }
+      if (
+        response.status === 404 &&
+        !observed.success &&
+        observed.errors?.length === 1 &&
+        observed.errors[0]?.code === 10_007
+      ) {
+        return false;
+      }
+      return yield* fail('the uploaded immutable assets Worker could not be observed', {
+        providerPath,
+        status: response.status,
+      });
+    });
+    while (!(yield* workerReady)) {
+      yield* Effect.sleep(Duration.seconds(1));
+    }
+    yield* readRetainedImmutableWorkerVersion(accountId, token, plan.assetsScriptName);
+    const request = yield* HttpClientRequest.bodyJson(
+      HttpClientRequest.post(
+        `https://api.cloudflare.com/client/v4/accounts/${accountId}/workers/scripts/${plan.assetsScriptName}/subdomain`,
+      ),
+      { enabled: true, previews_enabled: false },
+    );
+    const response = yield* execute(
+      HttpClientRequest.setHeader(request, 'Cloudflare-Workers-Script-Api-Date', '2025-08-01'),
+    );
+    const acknowledgement = yield* Schema.decodeUnknownEffect(
+      Schema.Struct({
+        result: Schema.Struct({ enabled: Schema.Boolean, previews_enabled: Schema.Boolean }),
+        success: Schema.Boolean,
+      }),
+    )(yield* response.json);
+    if (
+      response.status !== 200 ||
+      !acknowledgement.success ||
+      !acknowledgement.result.enabled ||
+      acknowledgement.result.previews_enabled
+    ) {
+      return yield* fail('the immutable assets Worker routing was not enabled with previews disabled');
+    }
+    return yield* Effect.void;
+  },
+  Effect.timeout(Duration.seconds(30)),
+  Effect.mapError((cause) => fail('immutable assets routing completion failed or exceeded its timeout', cause)),
+);
+
+export const deployImmutableAssets = Effect.fn('ImmutableApplicationRelease.deployAssets')(
+  function* deployImmutableAssetsEffect(input: {
+    readonly accountId: string;
+    readonly appDirectory: string;
+    readonly configFile: string;
+    readonly plan: ImmutableApplicationReleasePlan;
+    readonly token: Redacted.Redacted;
+  }) {
+    const command = {
+      args: ['exec', 'wrangler', 'deploy', '--config', input.configFile],
+      captureProviderFailure: true,
+      command: 'pnpm',
+      cwd: input.appDirectory,
+      env: { CLOUDFLARE_ACCOUNT_ID: Redacted.make(input.accountId), CLOUDFLARE_API_TOKEN: input.token },
+    };
+    yield* runCommand(command).pipe(
+      Effect.catchTag('OpsCommandError', (failure) =>
+        Effect.gen(function* recoverUploadedAssetsRouting() {
+          if (
+            failure.command !== [command.command, ...command.args].join(' ') ||
+            !Schema.is(NativeWorkerLookupFailure)(failure.cause) ||
+            failure.cause.providerCode !== 10_007 ||
+            failure.cause.providerPath !== `/accounts/${input.accountId}/workers/workers/${input.plan.assetsScriptName}`
+          ) {
+            return yield* failure;
+          }
+          return yield* completeImmutableAssetsRouting(input.accountId, input.token, input.plan);
+        }),
+      ),
+    );
+  },
+);
+
 /** Called only inside the repository's environment-wide serialized publication job. Never deletes a release. */
 export const deployImmutableApplicationRelease = Effect.fn('ImmutableApplicationRelease.deploy')(
   function* deployImmutableReleaseEffect(input: {
@@ -1057,7 +1163,13 @@ export const deployImmutableApplicationRelease = Effect.fn('ImmutableApplication
         return yield* fail('complete backend release secret installation failed');
       }
     }
-    yield* deploy(assetsConfig, []);
+    yield* deployImmutableAssets({
+      accountId,
+      appDirectory: input.appDirectory,
+      configFile: assetsConfig,
+      plan,
+      token: apiToken,
+    });
     const installed = yield* execute(HttpClientRequest.get(apiUrl(backendScript)));
     if (installed.status !== 200) {
       return yield* fail('complete immutable Worker release was not retained');

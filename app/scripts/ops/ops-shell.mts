@@ -1,3 +1,5 @@
+import { stripVTControlCharacters } from 'node:util';
+
 import { Context, Effect, Layer, Redacted, Stream } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import type { ChildProcess as ChildProcessModel } from 'effect/unstable/process';
@@ -14,6 +16,8 @@ export type SecretValues = Readonly<Record<string, Redacted.Redacted>>;
 
 export interface OpsCommand {
   readonly args: readonly string[];
+  /** Capture stderr for a safe provider error pair instead of inheriting diagnostics. */
+  readonly captureProviderFailure?: boolean;
   readonly command: string;
   readonly cwd?: string;
   /** Added to the inherited environment; values are secret and never rendered. */
@@ -48,13 +52,13 @@ interface SpawnSettings {
   cwd?: string;
   env?: Record<string, string>;
   extendEnv?: boolean;
-  stderr: 'inherit';
+  stderr: 'inherit' | 'pipe';
   stdin: ChildProcessModel.CommandInput;
 }
 
 const spawnOptions = (command: OpsCommand): ChildProcessModel.CommandOptions => {
   const options: SpawnSettings = {
-    stderr: 'inherit',
+    stderr: command.captureProviderFailure === true ? 'pipe' : 'inherit',
     stdin: command.stdin === undefined ? 'ignore' : Stream.make(encoder.encode(Redacted.value(command.stdin))),
   };
   if (command.cwd !== undefined) {
@@ -67,21 +71,70 @@ const spawnOptions = (command: OpsCommand): ChildProcessModel.CommandOptions => 
   return options;
 };
 
+interface ProviderFailure {
+  providerCode: number;
+  providerPath: string;
+}
+
+interface CommandFailureDetails {
+  cause?: ProviderFailure;
+  command: string;
+  message: string;
+}
+
+/** Keeps only one unambiguous provider error pair; captured output is never exposed. */
+const parseProviderFailure = (stderr: string): ProviderFailure | undefined => {
+  const output = stripVTControlCharacters(stderr);
+  const requests = [...output.matchAll(/A request to the Cloudflare API\b/gu)];
+  const codes = [...output.matchAll(/\[code:/gu)];
+  const [request] = requests;
+  const [code] = codes;
+  if (requests.length !== 1 || codes.length !== 1 || request === undefined || code === undefined) {
+    return undefined;
+  }
+  const pathMatch = /^A request to the Cloudflare API \((?<providerPath>[^)\r\n]*)\) failed\./u.exec(
+    output.slice(request.index),
+  );
+  const providerPath = pathMatch?.groups?.providerPath;
+  const codeMatch = /^\[code: (?<providerCode>0|[1-9]\d*)\]/u.exec(output.slice(code.index));
+  if (
+    providerPath === undefined ||
+    !/^\/accounts\/[a-f\d]{32}\/workers\/workers\/[a-z\d][a-z\d-]{0,62}$/u.test(providerPath) ||
+    codeMatch === null ||
+    code.index < request.index + (pathMatch?.[0].length ?? 0)
+  ) {
+    return undefined;
+  }
+  const providerCode = Number(codeMatch.groups?.providerCode);
+  return Number.isSafeInteger(providerCode) ? { providerCode, providerPath } : undefined;
+};
+
 const makeOpsShell = Effect.gen(function* makeOpsShell() {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const run = (command: OpsCommand) =>
     Effect.scoped(
       Effect.gen(function* runSpawnedCommand() {
         const handle = yield* spawner.spawn(ChildProcess.make(command.command, command.args, spawnOptions(command)));
-        const [stdout, exitCode] = yield* Effect.all(
-          [handle.stdout.pipe(Stream.decodeText(), Stream.mkString), handle.exitCode],
-          { concurrency: 2 },
+        const [stdout, stderr, exitCode] = yield* Effect.all(
+          [
+            handle.stdout.pipe(Stream.decodeText(), Stream.mkString),
+            command.captureProviderFailure === true
+              ? handle.stderr.pipe(Stream.decodeText(), Stream.mkString)
+              : Effect.succeed(null),
+            handle.exitCode,
+          ],
+          { concurrency: 3 },
         );
         if (exitCode !== 0) {
-          return yield* new OpsCommandError({
+          const cause = stderr === null ? undefined : parseProviderFailure(stderr);
+          const failure: CommandFailureDetails = {
             command: renderCommand(command),
             message: `${renderCommand(command)} exited with ${String(exitCode)}`,
-          });
+          };
+          if (cause !== undefined) {
+            failure.cause = cause;
+          }
+          return yield* new OpsCommandError(failure);
         }
         return stdout;
       }),

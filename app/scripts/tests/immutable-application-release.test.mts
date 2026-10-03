@@ -16,6 +16,7 @@ import {
   Fiber,
   FileSystem,
   Layer,
+  Match,
   Order,
   Redacted,
   Schema,
@@ -73,6 +74,8 @@ const WORKER_METADATA_PATH = 'server/modern-worker-manifest.json';
 const BACKEND_ENTRY_PATH = 'server/index.mjs';
 const OWNER_SECRET_VALUE = 'owned-release-test-binding';
 const ASSET_READBACK_FAILURE = 'immutable release asset readback failed or exceeded its timeout';
+const ASSETS_ROUTING_FAILURE = 'immutable assets routing completion failed or exceeded its timeout';
+const READBACK_DEADLINE = '30 seconds';
 const text = (value: string) => new TextEncoder().encode(value);
 const json = (value: Schema.Json) => text(JSON.stringify(value));
 const file = (path: string, bytes = text('retained release bytes')) => ({ bytes, path });
@@ -950,7 +953,15 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly accountSubdomain?: string;
     readonly additionalPublicFiles?: readonly ReleaseFile[];
     readonly assetDeploymentPercentage?: number;
+    readonly assetsDeploymentVersions?: readonly { readonly percentage: number; readonly version_id: string }[];
+    readonly assetsSubdomainAcknowledgement?: {
+      readonly enabled: boolean;
+      readonly previews_enabled: boolean;
+      readonly success: boolean;
+    };
     readonly assetStatus?: number;
+    readonly assetsUploadCommand?: string;
+    readonly assetsUploadError?: { readonly providerCode: number; readonly providerPath?: string };
     readonly backendDeploymentVersions?: readonly { readonly percentage: number; readonly version_id: string }[];
     readonly backendSubdomainEnabled?: boolean;
     readonly backendSubdomainStatus?: number;
@@ -966,6 +977,8 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly oversizedAssetBody?: boolean;
     readonly ownerSecrets?: Readonly<Record<string, string>>;
     readonly pageJsPath?: string;
+    readonly recoveryWorkerName?: string;
+    readonly recoveryWorkerStatuses?: readonly number[];
     readonly resolvedWranglerVersion?: string;
     readonly secretStatus?: number;
     readonly secretSuccess?: boolean;
@@ -1033,6 +1046,9 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   const assetReadStarted = yield* Deferred.make<boolean>();
   const assetNotFoundStarted = yield* Deferred.make<boolean>();
   const assetAttempts = new Map<string, number>();
+  const recoveryWorkerReadStarted = yield* Deferred.make<boolean>();
+  const recoveryWorkerPath = `/accounts/${'a'.repeat(32)}/workers/workers/${plan.assetsScriptName}`;
+  let recoveryWorkerReads = 0;
   const notFoundBodies: Response[] = [];
   const commands: OpsCommand[] = [];
   const capturedConfigs: Readonly<Record<string, Schema.Json>>[] = [];
@@ -1042,63 +1058,133 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
   let canceledAssetBodies = 0;
   let checkedSource = 0;
   let absentChecks = 0;
-  const providerResponse = (destination: URL): Response => {
-    if (destination.pathname.endsWith('/workers/subdomain')) {
-      return Response.json({
-        result: { subdomain: options.accountSubdomain ?? WORKERS_SUBDOMAIN },
-        success: true,
-      });
-    }
-    if (destination.pathname.endsWith(`/workers/scripts/${plan.backendScriptName}/subdomain`)) {
-      return Response.json(
-        {
-          result:
-            options.omitBackendSubdomainEnabled === true ? {} : { enabled: options.backendSubdomainEnabled ?? true },
-          success: options.backendSubdomainSuccess ?? true,
-        },
-        { status: options.backendSubdomainStatus ?? 200 },
-      );
-    }
-    if (destination.pathname.endsWith('/content/v2')) {
-      const content = new FormData();
-      for (const module of capturedModules) {
-        content.append(module.path, new File([module.bytes], module.path));
-      }
-      return new Response(content, {
-        headers:
-          options.deployedEntrypoint === false ? {} : { 'cf-entrypoint': options.deployedEntrypoint ?? capturedMain },
-      });
-    }
-    if (destination.pathname.endsWith(`/workers/scripts/${plan.backendScriptName}/deployments`)) {
-      return Response.json({
-        result: {
-          deployments: [
-            { versions: options.backendDeploymentVersions ?? [{ percentage: 100, version_id: BACKEND_VERSION_ID }] },
-          ],
-        },
-        success: true,
-      });
-    }
-    if (destination.pathname.endsWith('/deployments')) {
-      return Response.json({
-        result: {
-          deployments: [
-            { versions: [{ percentage: options.assetDeploymentPercentage ?? 100, version_id: ASSETS_VERSION_ID }] },
-          ],
-        },
-        success: true,
-      });
-    }
-    if (destination.pathname.endsWith('/secrets')) {
-      return Response.json(
-        { result: { name: 'OWNER_BINDING', type: 'secret_text' }, success: options.secretSuccess ?? true },
-        { status: options.secretStatus ?? 200 },
-      );
-    }
-    const status = absentChecks < 2 ? 404 : 200;
-    absentChecks += 1;
-    return new Response(null, { status });
-  };
+  const providerResponse = (destination: URL) =>
+    Match.value(destination.pathname).pipe(
+      Match.when(`/client/v4${recoveryWorkerPath}`, () =>
+        Effect.gen(function* uploadedAssetsWorkerObservation() {
+          const status =
+            options.recoveryWorkerStatuses?.[recoveryWorkerReads] ?? options.recoveryWorkerStatuses?.at(-1) ?? 200;
+          recoveryWorkerReads += 1;
+          yield* Deferred.succeed(recoveryWorkerReadStarted, true);
+          return Response.json(
+            status === 404
+              ? { errors: [{ code: 10_007, message: 'Worker is still propagating' }], result: null, success: false }
+              : { result: { name: options.recoveryWorkerName ?? plan.assetsScriptName }, success: true },
+            { status },
+          );
+        }),
+      ),
+      Match.when(
+        (path) => path.endsWith(`/workers/scripts/${plan.assetsScriptName}/subdomain`),
+        () =>
+          Effect.sync(() => {
+            const acknowledgement = options.assetsSubdomainAcknowledgement ?? {
+              enabled: true,
+              previews_enabled: false,
+              success: true,
+            };
+            return Response.json({
+              result: { enabled: acknowledgement.enabled, previews_enabled: acknowledgement.previews_enabled },
+              success: acknowledgement.success,
+            });
+          }),
+      ),
+      Match.when(
+        (path) => path.endsWith('/workers/subdomain'),
+        () =>
+          Effect.sync(() =>
+            Response.json({
+              result: { subdomain: options.accountSubdomain ?? WORKERS_SUBDOMAIN },
+              success: true,
+            }),
+          ),
+      ),
+      Match.when(
+        (path) => path.endsWith(`/workers/scripts/${plan.backendScriptName}/subdomain`),
+        () =>
+          Effect.sync(() =>
+            Response.json(
+              {
+                result:
+                  options.omitBackendSubdomainEnabled === true
+                    ? {}
+                    : { enabled: options.backendSubdomainEnabled ?? true },
+                success: options.backendSubdomainSuccess ?? true,
+              },
+              { status: options.backendSubdomainStatus ?? 200 },
+            ),
+          ),
+      ),
+      Match.when(
+        (path) => path.endsWith('/content/v2'),
+        () =>
+          Effect.sync(() => {
+            const content = new FormData();
+            for (const module of capturedModules) {
+              content.append(module.path, new File([module.bytes], module.path));
+            }
+            return new Response(content, {
+              headers:
+                options.deployedEntrypoint === false
+                  ? {}
+                  : { 'cf-entrypoint': options.deployedEntrypoint ?? capturedMain },
+            });
+          }),
+      ),
+      Match.when(
+        (path) => path.endsWith(`/workers/scripts/${plan.backendScriptName}/deployments`),
+        () =>
+          Effect.sync(() =>
+            Response.json({
+              result: {
+                deployments: [
+                  {
+                    versions: options.backendDeploymentVersions ?? [
+                      { percentage: 100, version_id: BACKEND_VERSION_ID },
+                    ],
+                  },
+                ],
+              },
+              success: true,
+            }),
+          ),
+      ),
+      Match.when(
+        (path) => path.endsWith('/deployments'),
+        () =>
+          Effect.sync(() =>
+            Response.json({
+              result: {
+                deployments: [
+                  {
+                    versions: options.assetsDeploymentVersions ?? [
+                      { percentage: options.assetDeploymentPercentage ?? 100, version_id: ASSETS_VERSION_ID },
+                    ],
+                  },
+                ],
+              },
+              success: true,
+            }),
+          ),
+      ),
+      Match.when(
+        (path) => path.endsWith('/secrets'),
+        () =>
+          Effect.sync(() =>
+            Response.json(
+              { result: { name: 'OWNER_BINDING', type: 'secret_text' }, success: options.secretSuccess ?? true },
+              { status: options.secretStatus ?? 200 },
+            ),
+          ),
+      ),
+      Match.orElse(() =>
+        Effect.sync(() => {
+          const status = absentChecks < 2 ? 404 : 200;
+          absentChecks += 1;
+          return new Response(null, { status });
+        }),
+      ),
+    );
   const client = HttpClient.make((request, destination) =>
     Effect.gen(function* retainedProviderResponse() {
       requests.push(destination.href);
@@ -1107,7 +1193,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
       }
       let response: Response;
       if (destination.hostname === 'api.cloudflare.com') {
-        response = providerResponse(destination);
+        response = yield* providerResponse(destination);
       } else {
         yield* Deferred.succeed(assetReadStarted, true);
         if (/%28|%29/u.test(destination.pathname)) {
@@ -1217,12 +1303,22 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
             );
           }
         }
+        if (capturedConfig.name === plan.assetsScriptName && options.assetsUploadError !== undefined) {
+          return yield* Effect.fail({
+            providerCode: options.assetsUploadError.providerCode,
+            providerPath: options.assetsUploadError.providerPath ?? recoveryWorkerPath,
+          });
+        }
         return '';
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.mapError(
           (cause) =>
-            new OpsCommandError({ cause, command: 'native release fixture', message: 'native test packaging failed' }),
+            new OpsCommandError({
+              cause,
+              command: options.assetsUploadCommand ?? [command.command, ...command.args].join(' '),
+              message: 'native test packaging failed',
+            }),
         ),
       ),
   });
@@ -1251,6 +1347,8 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     providerWrites,
     publicDirectory,
     publishedInventories,
+    recoveryWorkerPath,
+    recoveryWorkerReadStarted,
     requests,
   };
 });
@@ -1434,7 +1532,7 @@ it.effect('times out stalled asset body readback after successful response heade
       const fixture = yield* prepareDeployment({ stallAssetBody: true });
       const fiber = yield* fixture.deploy.pipe(Effect.flip, Effect.forkChild);
       yield* Deferred.await(fixture.assetReadStarted);
-      yield* TestClock.adjust('30 seconds');
+      yield* TestClock.adjust(READBACK_DEADLINE);
       const failure = yield* Fiber.join(fiber);
       expect(failure.message).toBe(ASSET_READBACK_FAILURE);
       expect(fixture.canceledAssetBodies()).toBeGreaterThan(0);
@@ -1553,7 +1651,7 @@ it.effect('bounds persistent retained module 404 retries by the existing overall
       const fixture = yield* prepareDeployment({ assetStatus: 404 });
       const fiber = yield* fixture.deploy.pipe(Effect.flip, Effect.forkChild);
       yield* Deferred.await(fixture.assetNotFoundStarted);
-      yield* TestClock.adjust('30 seconds');
+      yield* TestClock.adjust(READBACK_DEADLINE);
       const failure = yield* Fiber.join(fiber);
       expect(failure.message).toBe(ASSET_READBACK_FAILURE);
       const attempts = fixture.requests.filter((url) => url === `${fixture.plan.assetsOrigin}${CONTRACT_PATH}`);
@@ -1601,6 +1699,153 @@ it.effect('preserves the actual native entrypoint extension when the compiled Wo
       expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
       expect(fixture.capturedConfigs[1]?.main).toMatch(/\/index\.mjs$/u);
       expect(fixture.capturedConfigs[1]?.no_bundle).toBe(true);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('completes the exact uploaded assets Worker routing without uploading its native artifact again', () =>
+  Effect.scoped(
+    Effect.gen(function* partialAssetsUpload() {
+      const fixture = yield* prepareDeployment({
+        assetsUploadError: { providerCode: 10_007 },
+        recoveryWorkerStatuses: [404, 200],
+      });
+      const fiber = yield* fixture.deploy.pipe(Effect.forkChild);
+      yield* Deferred.await(fixture.recoveryWorkerReadStarted);
+      const workerUrl = `https://api.cloudflare.com/client/v4${fixture.recoveryWorkerPath}`;
+      expect(fixture.requests.filter((url) => url === workerUrl)).toHaveLength(1);
+      yield* TestClock.adjust('1 second');
+      const receipt = yield* Fiber.join(fiber);
+      expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
+      expect(fixture.capturedConfigs.filter(({ name }) => name === fixture.plan.assetsScriptName)).toHaveLength(1);
+      expect(fixture.commands).toHaveLength(3);
+      expect(fixture.requests.filter((url) => url === workerUrl)).toHaveLength(2);
+      expect(fixture.providerWrites).toEqual([
+        {
+          method: 'POST',
+          url: `https://api.cloudflare.com/client/v4/accounts/${'a'.repeat(32)}/workers/scripts/${fixture.plan.assetsScriptName}/subdomain`,
+        },
+      ]);
+      expect(fixture.requests).toContain(`${fixture.plan.assetsOrigin}${CONTRACT_PATH}`);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+for (const options of [
+  { assetsUploadError: { providerCode: 10_006 } },
+  { assetsUploadError: { providerCode: 10_007, providerPath: '/accounts/foreign/workers/workers/another-worker' } },
+  { assetsUploadCommand: 'a different native command', assetsUploadError: { providerCode: 10_007 } },
+]) {
+  it.effect(`refuses assets upload recovery for a different native failure ${JSON.stringify(options)}`, () =>
+    Effect.scoped(
+      Effect.gen(function* foreignAssetsUploadFailure() {
+        const fixture = yield* prepareDeployment(options);
+        const failure = yield* fixture.deploy.pipe(Effect.flip);
+        const commandFailure = yield* Schema.decodeUnknownEffect(OpsCommandError)(failure);
+        expect(commandFailure.cause).toEqual({
+          providerCode: options.assetsUploadError.providerCode,
+          providerPath: options.assetsUploadError.providerPath ?? fixture.recoveryWorkerPath,
+        });
+        expect(fixture.capturedConfigs.filter(({ name }) => name === fixture.plan.assetsScriptName)).toHaveLength(1);
+        expect(fixture.requests).not.toContain(`https://api.cloudflare.com/client/v4${fixture.recoveryWorkerPath}`);
+        expect(fixture.providerWrites).toEqual([]);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect('bounds an unobserved uploaded assets Worker by the routing recovery deadline without uploading again', () =>
+  Effect.scoped(
+    Effect.gen(function* missingUploadedAssetsWorker() {
+      const fixture = yield* prepareDeployment({
+        assetsUploadError: { providerCode: 10_007 },
+        recoveryWorkerStatuses: [404],
+      });
+      const fiber = yield* fixture.deploy.pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(fixture.recoveryWorkerReadStarted);
+      yield* TestClock.adjust(READBACK_DEADLINE);
+      const failure = yield* Fiber.join(fiber);
+      expect(failure.message).toBe(ASSETS_ROUTING_FAILURE);
+      expect(fixture.capturedConfigs.filter(({ name }) => name === fixture.plan.assetsScriptName)).toHaveLength(1);
+      expect(fixture.providerWrites).toEqual([]);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  'refuses uploaded assets routing recovery with two active provider versions before enabling its subdomain',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* splitUploadedAssetsVersion() {
+        const fixture = yield* prepareDeployment({
+          assetsDeploymentVersions: [
+            { percentage: 50, version_id: ASSETS_VERSION_ID },
+            { percentage: 50, version_id: BACKEND_VERSION_ID },
+          ],
+          assetsUploadError: { providerCode: 10_007 },
+        });
+        const failure = yield* fixture.deploy.pipe(Effect.flip);
+        expect(failure.message).toBe(ASSETS_ROUTING_FAILURE);
+        expect(fixture.capturedConfigs.filter(({ name }) => name === fixture.plan.assetsScriptName)).toHaveLength(1);
+        expect(fixture.providerWrites).toEqual([]);
+        expect(fixture.requests.some((url) => url.startsWith(fixture.plan.assetsOrigin))).toBe(false);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+for (const acknowledgement of [
+  { enabled: true, previews_enabled: false, success: false },
+  { enabled: false, previews_enabled: false, success: true },
+  { enabled: true, previews_enabled: true, success: true },
+]) {
+  it.effect(
+    `requires exact successful uploaded assets routing acknowledgement ${JSON.stringify(acknowledgement)}`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* refusedUploadedAssetsRouting() {
+          const fixture = yield* prepareDeployment({
+            assetsSubdomainAcknowledgement: acknowledgement,
+            assetsUploadError: { providerCode: 10_007 },
+          });
+          const failure = yield* fixture.deploy.pipe(Effect.flip);
+          expect(failure.message).toBe(ASSETS_ROUTING_FAILURE);
+          expect(fixture.capturedConfigs.filter(({ name }) => name === fixture.plan.assetsScriptName)).toHaveLength(1);
+          expect(fixture.providerWrites).toHaveLength(1);
+          expect(fixture.providerWrites[0]?.method).toBe('POST');
+          expect(fixture.requests.some((url) => url.startsWith(fixture.plan.assetsOrigin))).toBe(false);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect('still refuses incorrect compiled assets after native routing completion', () =>
+  Effect.scoped(
+    Effect.gen(function* corruptRecoveredAssets() {
+      const fixture = yield* prepareDeployment({
+        assetsUploadError: { providerCode: 10_007 },
+        wrongAssetBytes: true,
+      });
+      const failure = yield* fixture.deploy.pipe(Effect.flip);
+      expect(failure.message).toBe(ASSET_READBACK_FAILURE);
+      expect(fixture.capturedConfigs.filter(({ name }) => name === fixture.plan.assetsScriptName)).toHaveLength(1);
+      expect(fixture.providerWrites).toHaveLength(1);
+      expect(fixture.requests).toContain(`${fixture.plan.assetsOrigin}${CONTRACT_PATH}`);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('refuses a different observed Worker identity before completing uploaded assets routing', () =>
+  Effect.scoped(
+    Effect.gen(function* foreignObservedAssetsWorker() {
+      const fixture = yield* prepareDeployment({
+        assetsUploadError: { providerCode: 10_007 },
+        recoveryWorkerName: 'a-different-uploaded-worker',
+      });
+      const failure = yield* fixture.deploy.pipe(Effect.flip);
+      expect(failure.message).toBe(ASSETS_ROUTING_FAILURE);
+      expect(fixture.capturedConfigs.filter(({ name }) => name === fixture.plan.assetsScriptName)).toHaveLength(1);
+      expect(fixture.providerWrites).toEqual([]);
+      expect(fixture.requests.some((url) => url.startsWith(fixture.plan.assetsOrigin))).toBe(false);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );

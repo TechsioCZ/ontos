@@ -18,6 +18,7 @@ import {
   ImmutableApplicationReleasePlanSchema,
   ImmutableShellArtifactReceiptSchema,
   decodeUtf8,
+  deployImmutableAssets,
   hash,
   immutableAssetsWranglerConfig,
   deriveImmutableApplicationReleasePlan,
@@ -210,12 +211,7 @@ export const deployImmutableShellRelease = Effect.fn('ImmutableShellRelease.depl
     );
     yield* requirePlannedSourceRevision(input.appDirectory, input.plan, SOURCE_MISMATCH);
     yield* readVerifiedReleaseFiles(output, input.plan, [retainedAssets, configFile], SHELL_RELEASE_ENVELOPE_KIND);
-    yield* runCommand({
-      args: ['exec', 'wrangler', 'deploy', '--config', configFile],
-      command: 'pnpm',
-      cwd: input.appDirectory,
-      env: { CLOUDFLARE_ACCOUNT_ID: Redacted.make(accountId), CLOUDFLARE_API_TOKEN: token },
-    });
+    yield* deployImmutableAssets({ accountId, appDirectory: input.appDirectory, configFile, plan: input.plan, token });
     yield* verifyRetainedShellAssetBytes(input.plan, assets);
     const assetsVersionId = yield* readRetainedImmutableWorkerVersion(accountId, token, input.plan.assetsScriptName);
     return { artifacts, assetsVersionId, plan: input.plan } satisfies ImmutableShellArtifactReceipt;
