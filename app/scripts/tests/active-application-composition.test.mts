@@ -478,26 +478,40 @@ it('leaves the refresh to the deploy while the Outbox Workers drift from the Out
         Schema.String,
         Schema.Struct({
           steps: Schema.Array(
-            Schema.Struct({ id: Schema.optional(Schema.String), if: Schema.optional(Schema.String) }),
+            Schema.Struct({
+              id: Schema.optional(Schema.String),
+              if: Schema.optional(Schema.String),
+              name: Schema.String,
+            }),
           ),
         }),
       ),
     }),
   )(parse(readFileSync(refreshWorkflowUrl, 'utf-8')));
   const steps = Object.values(workflow.jobs).flatMap((job) => job.steps);
-  const gates = steps.flatMap((step) => (step.if?.includes('steps.worker-drift') === true ? [step.if] : []));
+  const gates = steps.flatMap((step) =>
+    step.if?.includes('steps.worker-drift') === true ? [{ condition: step.if, name: step.name }] : [],
+  );
   expect(steps.some((step) => step.id === 'worker-drift')).toBe(true);
   const refreshes = "steps.worker-drift.outputs.drift != 'true'";
+  const refreshSteps = [
+    "Preserve the workflow's native VPN action",
+    'Check out the deployed revision',
+    "Install the deployed revision's app workspace",
+    'Connect the runner to the private Zerops database network',
+    'Renew the complete approved Application Composition',
+  ];
   expect(gates).toEqual([
-    "steps.worker-drift.outputs.drift == 'true'",
-    refreshes,
-    refreshes,
-    refreshes,
-    // Production waits for its own deploy the same way.
-    "steps.worker-drift.outputs.drift == 'true'",
-    `steps.base.outputs.base != '' && ${refreshes}`,
-    `steps.base.outputs.base != '' && ${refreshes}`,
-    `steps.base.outputs.base != '' && ${refreshes}`,
+    {
+      condition: "steps.worker-drift.outputs.drift == 'true'",
+      name: 'Leave the pending Outbox Worker mode switch to the stage deploy',
+    },
+    ...refreshSteps.map((name) => ({ condition: refreshes, name })),
+    {
+      condition: "steps.worker-drift.outputs.drift == 'true'",
+      name: 'Leave the pending Outbox Worker mode switch to the production deploy',
+    },
+    ...refreshSteps.map((name) => ({ condition: `steps.base.outputs.base != '' && ${refreshes}`, name })),
   ]);
 });
 

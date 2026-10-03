@@ -33,6 +33,7 @@ import type { OperationalScopeRepository, PersistedScopeRecord } from './reposit
 import { OperationalScopeRepositoryContext } from './repository-context.ts';
 import { ExternalOperationAuthentication } from './external-authentication.ts';
 import type { ExternalOperationAuthenticationRequest } from './external-authentication.ts';
+import type { LegalEntityScope } from './legal-entity-scope.ts';
 
 export type { OperationalScopeRepository } from './repository-context.ts';
 
@@ -43,9 +44,6 @@ const withOptionalProperty = <Base extends object, Key extends PropertyKey, Valu
   value: Value,
   trailing: Trailing,
 ) => (condition ? { ...base, [key]: value, ...trailing } : { ...base, ...trailing });
-
-export const LEGAL_ENTITY_SCOPES = ['required', 'optional', 'forbidden'] as const;
-export type LegalEntityScope = (typeof LEGAL_ENTITY_SCOPES)[number];
 
 export interface OperationalScopeRequest {
   /** Receiver audience used to bind an external admission to this call. */

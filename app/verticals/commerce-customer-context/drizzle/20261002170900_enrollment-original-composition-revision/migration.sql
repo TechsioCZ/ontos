@@ -99,7 +99,7 @@ RETURNS TABLE (
 )
 LANGUAGE sql
 SECURITY DEFINER
-SET search_path = pg_catalog, commerce_customer_context
+SET search_path = pg_catalog, commerce_customer_context, pg_temp
 AS $function$
   SELECT
     attempt.portal_enrollment_attempt_id,
@@ -221,7 +221,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, commerce_customer_context
+SET search_path = pg_catalog, commerce_customer_context, pg_temp
 AS $function$
 DECLARE
   existing_attempt commerce_customer_context.portal_enrollment_attempts%ROWTYPE;
@@ -337,7 +337,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, commerce_customer_context
+SET search_path = pg_catalog, commerce_customer_context, pg_temp
 AS $function$
 DECLARE
   current_attempt commerce_customer_context.portal_enrollment_attempts%ROWTYPE;
@@ -655,7 +655,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, commerce_customer_context
+SET search_path = pg_catalog, commerce_customer_context, pg_temp
 AS $function$
 DECLARE
   current_attempt commerce_customer_context.portal_enrollment_attempts%ROWTYPE;
@@ -912,7 +912,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, commerce_customer_context
+SET search_path = pg_catalog, commerce_customer_context, pg_temp
 AS $function$
 DECLARE
   current_attempt commerce_customer_context.portal_enrollment_attempts%ROWTYPE;
@@ -1136,7 +1136,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, commerce_customer_context
+SET search_path = pg_catalog, commerce_customer_context, pg_temp
 AS $function$
 DECLARE
   current_attempt commerce_customer_context.portal_enrollment_attempts%ROWTYPE;
@@ -1259,7 +1259,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, commerce_customer_context
+SET search_path = pg_catalog, commerce_customer_context, pg_temp
 AS $function$
 BEGIN
   IF p_tenant_id IS DISTINCT FROM nullif(current_setting('ontos.tenant_id', true), '')::uuid THEN
@@ -1295,7 +1295,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, commerce_customer_context
+SET search_path = pg_catalog, commerce_customer_context, pg_temp
 AS $function$
 DECLARE
   now_at timestamptz := statement_timestamp();
@@ -1412,7 +1412,7 @@ CREATE FUNCTION "commerce_customer_context"."claim_portal_enrollment_sweep"(
 RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, commerce_customer_context
+SET search_path = pg_catalog, commerce_customer_context, pg_temp
 AS $function$
 DECLARE
   now_at timestamptz := statement_timestamp();

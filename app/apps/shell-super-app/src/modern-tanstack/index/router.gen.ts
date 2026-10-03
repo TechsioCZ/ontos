@@ -34,7 +34,7 @@ export const rootRoute = createRootRouteWithContext<ModernRouterContext>()({
 
 const route__lang__page = createRoute({
   getParentRoute: () => rootRoute,
-  path: "$lang",
+  path: "$lang/",
   component: component_0,
   loader: modernLoaderToTanstack({ hasSplat: false }, loader_0),
   staticData: createRouteStaticData({

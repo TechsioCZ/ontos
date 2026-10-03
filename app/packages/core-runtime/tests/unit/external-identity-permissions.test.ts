@@ -6,12 +6,11 @@ import { Effect, FileSystem } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import type { SpiceDbPermissionClient } from '../../src/permissions/client.ts';
+import { makeContextAccess, toIdentityNamespaceAccessObjectId } from '../../src/permissions/context-access.ts';
 import {
   IDENTITY_NAMESPACE_PERMISSION_KEYS,
   TENANT_PERMISSION_KEYS,
-  makeContextAccess,
-  toIdentityNamespaceAccessObjectId,
-} from '../../src/permissions/context-access.ts';
+} from '../../src/permissions/context-permissions.ts';
 import { ONTOS_SPICEDB_SCHEMA } from '../../src/permissions/schema.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';

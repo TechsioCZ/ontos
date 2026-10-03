@@ -6,16 +6,16 @@ import type { ActionPolicy } from '../actions/policy.ts';
 import { isActionPolicy } from '../actions/policy.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { ModuleEntrypointDescriptor, ModuleEntrypointRole } from '../modules/module-entrypoint.ts';
-import { LEGAL_ENTITY_SCOPES } from '../operations/context.ts';
-import type { LegalEntityScope, OperationalScope } from '../operations/context.ts';
+import type { OperationalScope } from '../operations/context.ts';
+import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
+import type { LegalEntityScope } from '../operations/legal-entity-scope.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type {
   AssortmentPermissionAccessTarget,
   BusinessPermissionAccessTarget,
-  LegalEntityPermissionKey,
   ResourceAccessTarget,
-  TenantPermissionKey,
 } from '../permissions/context-access.ts';
+import type { LegalEntityPermissionKey, TenantPermissionKey } from '../permissions/context-permissions.ts';
 import type { ReadHandlerContext, ReadHandlerResult } from './context.ts';
 
 const registrationMarker: unique symbol = Symbol('@app/core-runtime/reads/registration');

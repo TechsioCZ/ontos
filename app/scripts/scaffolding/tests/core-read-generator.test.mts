@@ -66,7 +66,7 @@ it.effect('Core READ mode creates a fail-closed Core read and typed Shell route/
       expect(contract).toContain('FixtureReadRequestSchema');
       expect(sharedApi).toContain("HttpApiGroup.make('coreReadFixtureRead')");
       expect(server).toContain('registration: fixtureReadRead');
-      expect(server.match(/import \{[\s\S]*?\} from '@app\/core-runtime';/gu)).toHaveLength(1);
+      expect(server.match(/^import \{[^;]*\} from '@app\/core-runtime';/gmu)).toHaveLength(1);
       expect(server).toContain('fixtureReadRead,');
       expect(client).toContain('client.coreReadFixtureRead.executeFixtureRead({ payload })');
       const before = yield* Effect.all(roots.map((relative) => read(root, relative)));

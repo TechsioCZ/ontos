@@ -121,7 +121,7 @@ for (const fixture of fixtures) {
     };
 
     const actualDecoded = Schema.decodeUnknownSync(actual, { onExcessProperty: 'error' })(problem);
-    const expectedDecoded = Schema.decodeUnknownSync(expected, { onExcessProperty: 'error' })(problem);
+    const expectedDecoded = Schema.decodeSync(expected, { onExcessProperty: 'error' })(problem);
     expect(actualDecoded).toEqual(expectedDecoded);
     expect(Schema.encodeUnknownSync(actual)(actualDecoded)).toEqual(
       Schema.encodeUnknownSync(expected)(expectedDecoded),

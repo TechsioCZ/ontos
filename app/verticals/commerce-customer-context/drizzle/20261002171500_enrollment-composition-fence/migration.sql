@@ -5,7 +5,7 @@ CREATE FUNCTION "commerce_customer_context"."guard_enrollment_composition_revisi
 RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = pg_catalog, commerce_customer_context
+SET search_path = pg_catalog, commerce_customer_context, pg_temp
 AS $function$
 DECLARE
   expected_revision text;

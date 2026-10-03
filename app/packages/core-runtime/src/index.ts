@@ -185,8 +185,6 @@ export type { PostgresFailureMetadata } from './database/postgres-failure.ts';
 export {
   ContextAccess,
   ContextAccessLive,
-  LEGAL_ENTITY_PERMISSION_KEYS,
-  TENANT_PERMISSION_KEYS,
   makeContextAccess,
   makeContextAccessLive,
   assortmentPermissionTargetRequiresLegalEntity,
@@ -201,6 +199,7 @@ export {
   toModuleAccessObjectId,
   toResourceAccessObjectId,
 } from './permissions/context-access.ts';
+export { LEGAL_ENTITY_PERMISSION_KEYS, TENANT_PERMISSION_KEYS } from './permissions/context-permissions.ts';
 export type {
   AssortmentPermissionAccessTarget,
   AssortmentPermissionAccessTargetWithTrustedStorefront,
@@ -216,10 +215,9 @@ export type {
   ContextAccessResult,
   ContextAccessService,
   ContextPermissionAccessTarget,
-  LegalEntityPermissionKey,
   ResourceAccessTarget,
-  TenantPermissionKey,
 } from './permissions/context-access.ts';
+export type { LegalEntityPermissionKey, TenantPermissionKey } from './permissions/context-permissions.ts';
 export {
   OwnerAuthorizationDecisionSchema,
   OwnerAuthorizationOverlay,
@@ -419,16 +417,16 @@ export {
   trustVerifiedGatewayPrincipalContext,
 } from './auth/system-principal-context-provenance.ts';
 export {
-  LEGAL_ENTITY_SCOPES,
   OperationalScopeRepositoryLive,
   OperationalScopeResolver,
   OperationalScopeResolverFromRepositoryLive,
   makeOperationalScopeRepository,
   makeOperationalScopeResolver,
 } from './operations/context.ts';
+export { LEGAL_ENTITY_SCOPES } from './operations/legal-entity-scope.ts';
+export type { LegalEntityScope } from './operations/legal-entity-scope.ts';
 export { OperationalScopeRepositoryContext } from './operations/repository-context.ts';
 export type {
-  LegalEntityScope,
   OperationalScope,
   OperationalScopeRepository,
   OperationalScopeRequest,

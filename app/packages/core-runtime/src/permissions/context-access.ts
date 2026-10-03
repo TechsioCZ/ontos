@@ -16,25 +16,14 @@ import { loadSpiceDbConfig } from './config.ts';
 import type { SpiceDbConfigValue } from './config.ts';
 import type { BusinessPermissionCode } from './business-permission.ts';
 import type { PrincipalRef } from './principal-ref.ts';
+import type {
+  IdentityNamespacePermissionKey,
+  LegalEntityPermissionKey,
+  TenantPermissionKey,
+} from './context-permissions.ts';
 
 const ContextAccessDecisionSchema = Schema.Literals(['allowed', 'denied', 'unavailable']);
 export type ContextAccessDecision = typeof ContextAccessDecisionSchema.Type;
-
-export const TENANT_PERMISSION_KEYS = [
-  'access',
-  'impersonate',
-  'manage_identity',
-  'manage_party_identity',
-  'manage_party_relationships',
-  'merge_party_identity',
-  'read_party_identity',
-  'review_party_identity',
-] as const;
-export type TenantPermissionKey = (typeof TENANT_PERMISSION_KEYS)[number];
-export const IDENTITY_NAMESPACE_PERMISSION_KEYS = ['provision'] as const;
-type IdentityNamespacePermissionKey = (typeof IDENTITY_NAMESPACE_PERMISSION_KEYS)[number];
-export const LEGAL_ENTITY_PERMISSION_KEYS = ['access', 'manage_counterparty', 'read_counterparty'] as const;
-export type LegalEntityPermissionKey = (typeof LEGAL_ENTITY_PERMISSION_KEYS)[number];
 
 export interface ContextAccessResult {
   readonly decision: ContextAccessDecision;

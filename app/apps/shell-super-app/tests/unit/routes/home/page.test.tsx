@@ -96,7 +96,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   }),
 }));
 
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+rstest.mock('@tanstack/react-router', () => ({
   useLoaderData: rstest.fn(),
   useNavigate: () => navigateMock,
 }));

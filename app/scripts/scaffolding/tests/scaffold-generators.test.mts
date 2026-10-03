@@ -34,7 +34,12 @@ import { defineAction } from '../../../packages/core-runtime/src/actions/definit
 import { TrustedPrincipalContextSchema } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import type { TrustedPrincipalContext } from '../../../packages/core-runtime/src/actions/principal-context.ts';
 import { GatewayAssertionRedemptionService } from '../../../packages/core-runtime/src/auth/gateway-assertion-redemption.ts';
-import { ActiveApplicationCompositionService } from '../../../packages/core-runtime/src/modules/active-application-composition.ts';
+import {
+  ActiveApplicationCompositionService,
+  ActiveApplicationCompositionSnapshotSchema,
+} from '../../../packages/core-runtime/src/modules/active-application-composition.ts';
+import type { ActiveApplicationCompositionConfigLive } from '../../../packages/core-runtime/src/modules/active-application-composition.ts';
+import { ActiveApplicationCompositionSource } from '../../../packages/core-runtime/src/modules/active-application-composition-source-service.ts';
 import { defineSystemModuleEntrypoint } from '../../../packages/core-runtime/src/modules/module-entrypoint.ts';
 import { makeActionTestHarness } from '../../../packages/core-runtime/src/testing/actions.ts';
 import { makeApplicationCompositionSnapshotFixture } from '../../../packages/core-runtime/src/testing/module-contract.ts';
@@ -44,6 +49,11 @@ import {
   GATEWAY_ASSERTION_CLOCK_SKEW_SECONDS,
   GATEWAY_ASSERTION_TTL_SECONDS,
 } from '../../../packages/shared-contracts/src/gateway-context.ts';
+import { pinDocumentCompositionRevision } from '../../../packages/shared-contracts/src/document-composition-revision.ts';
+import type {
+  OperationGateway,
+  OperationGatewayIssuer,
+} from '../../../packages/shared-contracts/src/operation-gateway.ts';
 import type { bindActionHttpRunner as ActionHttpRunnerBinding } from '../../../verticals/party-registry/api/action-http-runner.ts';
 import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import {
@@ -209,11 +219,16 @@ interface GeneratedPrincipalEnvironment {
 }
 
 type StaffAuthenticationNamespaceRegistryLayer = ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>;
+type GeneratedPrincipalRuntimeLayer =
+  | typeof GatewayPrincipalVerifierLive
+  | typeof ActiveApplicationCompositionConfigLive
+  | StaffAuthenticationNamespaceRegistryLayer;
 
 interface GeneratedPrincipalModule {
   readonly ActionPrincipalVerifierLive: Layer.Layer<
-    Layer.Success<typeof GatewayPrincipalVerifierLive> | Layer.Success<StaffAuthenticationNamespaceRegistryLayer>,
-    Layer.Error<StaffAuthenticationNamespaceRegistryLayer>
+    Layer.Success<GeneratedPrincipalRuntimeLayer>,
+    Layer.Error<GeneratedPrincipalRuntimeLayer>,
+    Layer.Services<GeneratedPrincipalRuntimeLayer>
   >;
   readonly verifyActionPrincipal: (
     authorization: string | undefined,
@@ -230,11 +245,9 @@ interface GeneratedActionHttpRunnerModule {
 }
 
 interface GeneratedOperationGatewayModule {
-  readonly makeOperationGateway: (
-    acquire: (payload: { readonly audience: string }) => Effect.Effect<{ readonly token: string }>,
-  ) => {
-    readonly invoke: <Success>(attempt: (authorization: string) => Effect.Effect<Success>) => Effect.Effect<Success>;
-  };
+  readonly makeOperationGateway: <IssuerFailure>(
+    acquire: OperationGatewayIssuer<string, IssuerFailure>,
+  ) => OperationGateway<IssuerFailure>;
 }
 
 const GeneratedPrincipalModuleSchema = Schema.Struct({
@@ -378,18 +391,77 @@ const InventoryLocaleSchema = Schema.Struct({
   }),
 });
 
+const NodeConditionalPackageTargetSchema = Schema.Union([
+  Schema.Struct({ default: Schema.String, workerd: Schema.String }),
+  Schema.Struct({ node: Schema.String, workerd: Schema.String }),
+]);
+const CorePackageTargetSchema = Schema.Union([Schema.String, NodeConditionalPackageTargetSchema]);
 const CorePackageExportsSchema = Schema.Struct({
-  exports: Schema.Record(Schema.String, Schema.String),
-  imports: Schema.Record(Schema.String, Schema.Struct({ default: Schema.String })),
+  exports: Schema.Record(Schema.String, CorePackageTargetSchema),
+  imports: Schema.Record(Schema.String, NodeConditionalPackageTargetSchema),
   name: Schema.String,
 });
+const declaredNodeTarget = (target: typeof CorePackageTargetSchema.Type): string => {
+  if (Schema.is(Schema.String)(target)) {
+    return target;
+  }
+  if ('node' in target) {
+    return target.node;
+  }
+  return target.default;
+};
 
 const decodeCorePackageExports = (source: string) =>
   Schema.decodeUnknownEffect(CorePackageExportsSchema)(JSON.parse(source));
 const decodeFixturePackage = (source: string) => Schema.decodeUnknownEffect(FixturePackageSchema)(JSON.parse(source));
 const decodeInventoryLocale = (source: string) => Schema.decodeUnknownEffect(InventoryLocaleSchema)(JSON.parse(source));
+const coreRuntimePackageEntryExport = './src/index.ts';
+const coreRuntimePackageName = '@app/core-runtime';
+
+it.effect(
+  'generated contract proof selects declared Node targets and rejects Workerd-only declarations',
+  Effect.fn(function* declaredNodeContractTargets() {
+    const sourceExport = './source';
+    const onlyWorkerdPath = './src/only.workerd.ts';
+    const document = {
+      exports: {
+        '.': coreRuntimePackageEntryExport,
+        [sourceExport]: { default: './src/source.node.ts', workerd: './src/source.workerd.ts' },
+      },
+      imports: {
+        '#default': { default: './src/default.node.ts', workerd: './src/default.workerd.ts' },
+        '#node': { node: './src/named.node.ts', workerd: './src/named.workerd.ts' },
+      },
+      name: coreRuntimePackageName,
+    };
+    const decoded = yield* decodeCorePackageExports(JSON.stringify(document));
+    expect(Object.values(decoded.exports).map(declaredNodeTarget)).toEqual([
+      coreRuntimePackageEntryExport,
+      './src/source.node.ts',
+    ]);
+    expect(Object.values(decoded.imports).map(declaredNodeTarget)).toEqual([
+      './src/default.node.ts',
+      './src/named.node.ts',
+    ]);
+    for (const target of [
+      { workerd: onlyWorkerdPath },
+      { node: 1, workerd: onlyWorkerdPath },
+      { default: 1, workerd: onlyWorkerdPath },
+    ]) {
+      for (const declaration of [
+        { ...document, exports: { [sourceExport]: target } },
+        { ...document, imports: { '#source': target } },
+      ]) {
+        yield* expectFailure(decodeCorePackageExports(JSON.stringify(declaration)), (error) =>
+          expect(String(error)).toContain('SchemaError'),
+        );
+      }
+    }
+  }),
+);
 
 const inventorySlug = 'inventory-stock';
+const inventoryApiBaseUrl = '/inventory-stock-api';
 const shellAppId = 'shell-super-app';
 const fixtureGatewayIssuer = 'https://shell.example.test';
 const preservedFixtureValue = 'preserve-me';
@@ -451,7 +523,6 @@ const fixtureName = {
 const rootPackageFile = 'package.json';
 const fixtureBuildMarker = 'scaffold-build';
 const coreRuntimePackageFile = 'packages/core-runtime/package.json';
-const coreRuntimePackageEntryExport = './src/index.ts';
 const coreRuntimeIndexFile = 'packages/core-runtime/src/index.ts';
 const coreRuntimeModuleEntrypointFile = 'packages/core-runtime/src/modules/module-entrypoint.ts';
 const coreActionCatalogFile = 'packages/core-runtime/src/modules/actions/catalog.ts';
@@ -545,6 +616,9 @@ const esbuildPath = require.resolve('esbuild/bin/esbuild', {
 });
 const oxfmtPath = path.join(appRoot, 'node_modules', '.bin', 'oxfmt');
 const tscPath = path.join(appRoot, 'node_modules', '.bin', 'tsc');
+const modernAppEnvironmentTypes = require.resolve('@modern-js/app-tools/types', {
+  paths: [path.join(appRoot, 'apps/shell-super-app')],
+});
 
 const makeGatewayKey = (
   kid: string,
@@ -1102,6 +1176,7 @@ it.live(
             '--input-type=module',
             '--eval',
             `import { Effect, Match, Result } from 'effect';
+import { pinDocumentCompositionRevision } from '@app/shared-contracts';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { executeResourceDetail, executeResourceDetailWithAuthorization } from './verticals/inventory-stock/src/api/resource-detail-client.ts';
 import { loadInventoryItemsClient, loadInventoryItemsClientWithAuthorization } from './verticals/inventory-stock/src/api/inventory-items-search-client.ts';
@@ -1110,6 +1185,7 @@ import { NodeRuntime } from '${pathToFileURL(require.resolve('@effect/platform-n
 Effect.gen(function* generatedHttpProof() {
 const calls = [];
 let gatewayAttempts = 0;
+const compositionRevision = 'a'.repeat(64);
 const cases = [
         [executeResourceDetailWithAuthorization, {}, { ok: true }, executeResourceDetail],
         [loadInventoryItemsClientWithAuthorization, { query: 'chair' }, [], loadInventoryItemsClient],
@@ -1117,25 +1193,41 @@ const cases = [
       ];
 for (const [invoke, payload, response] of cases) {
         const fetch = (url, init) => {
-          calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id') });
+          calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id'), compositionRevision: new Headers(init.headers).get('x-ontos-composition-revision') });
           return Promise.resolve(Response.json(response));
         };
-        (yield* invoke(payload, 'Bearer proof', 'correlation-proof', { baseUrl: new URL('https://inventory.example.test/custom/inventory-stock-api') }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)));
+        (yield* invoke(payload, 'Bearer proof', 'correlation-proof', { baseUrl: new URL('https://inventory.example.test/custom/inventory-stock-api'), compositionRevision }).pipe(Effect.provideService(FetchHttpClient.Fetch, fetch)));
       }
 globalThis.location = { origin: 'https://shell.example.test', pathname: '/cs/inventory' };
 for (const [invoke, payload, response] of cases) {
-        (yield* invoke(payload, 'Bearer proof', 'correlation-proof').pipe(Effect.provideService(FetchHttpClient.Fetch, (url, init) => {
-          calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id') });
+        (yield* invoke(payload, 'Bearer proof', 'correlation-proof', { compositionRevision }).pipe(Effect.provideService(FetchHttpClient.Fetch, (url, init) => {
+          calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id'), compositionRevision: new Headers(init.headers).get('x-ontos-composition-revision') });
           return Promise.resolve(Response.json(response));
         })));
       }
+let requestsWithoutDocument = 0;
+const missingDocument = yield* executeResourceDetail({}, 'missing-document').pipe(
+  Effect.provideService(FetchHttpClient.Fetch, () => {
+    requestsWithoutDocument += 1;
+    return Promise.resolve(Response.json({ ok: true }));
+  }),
+  Effect.flip,
+);
+const documentUnavailable = Match.value(missingDocument).pipe(
+  Match.tag('DocumentCompositionRevisionError', ({ reason }) => reason === 'document-unavailable'),
+  Match.orElse(() => false),
+);
+globalThis.document = { querySelectorAll: () => [] };
+yield* pinDocumentCompositionRevision(compositionRevision);
 for (const [, payload, response, invoke] of cases) {
         (yield* invoke(payload, 'correlation-proof', { baseUrl: 'https://inventory.example.test/custom/inventory-stock-api' }).pipe(Effect.provideService(FetchHttpClient.Fetch, (url, init) => {
           if (String(url) === 'https://shell.example.test/shell-super-app-api/auth/gateway-context') {
             gatewayAttempts += 1;
-            return Promise.resolve(Response.json({ expiresAt: 2_000_000_000, token: 'proof' }));
+            const request = JSON.parse(String(init.body));
+            if (request.compositionRevision !== compositionRevision) throw new Error('Gateway did not request the pinned composition');
+            return Promise.resolve(Response.json({ apiBaseUrl: '/release/inventory-stock-api', compositionRevision, expiresAt: 2_000_000_000, token: 'proof' }));
           }
-          calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id') });
+          calls.push({ url: String(url), method: init.method, authorization: new Headers(init.headers).get('authorization'), correlationId: new Headers(init.headers).get('x-correlation-id'), compositionRevision: new Headers(init.headers).get('x-ontos-composition-revision') });
           return Promise.resolve(Response.json(response));
         })));
       }
@@ -1198,7 +1290,23 @@ const gatewayUnavailable = Match.value(gatewayFailure).pipe(
         Match.tag('GatewayUnavailableProblem', () => true),
         Match.orElse(() => false),
       );
-console.log(JSON.stringify({ calls, endpointRequestsAfterGatewayFailure, gatewayAttempts, gatewayUnavailable }));
+let endpointRequestsAfterRevisionMismatch = 0;
+const mismatch = yield* executeResourceDetail({}, 'revision-mismatch').pipe(
+  Effect.provideService(FetchHttpClient.Fetch, (url) => {
+    if (String(url) === 'https://shell.example.test/shell-super-app-api/auth/gateway-context') {
+      gatewayAttempts += 1;
+      return Promise.resolve(Response.json({ apiBaseUrl: '/release/inventory-stock-api', compositionRevision: 'b'.repeat(64), expiresAt: 2_000_000_000, token: 'proof' }));
+    }
+    endpointRequestsAfterRevisionMismatch += 1;
+    return Promise.resolve(Response.json({ ok: true }));
+  }),
+  Effect.flip,
+);
+const revisionMismatch = Match.value(mismatch).pipe(
+  Match.tag('DocumentCompositionRevisionError', ({ reason }) => reason === 'revision-mismatch'),
+  Match.orElse(() => false),
+);
+console.log(JSON.stringify({ calls, documentUnavailable, endpointRequestsAfterGatewayFailure, endpointRequestsAfterRevisionMismatch, gatewayAttempts, gatewayUnavailable, requestsWithoutDocument, revisionMismatch }));
 }).pipe(Effect.scoped, NodeRuntime.runMain);
 `,
           ],
@@ -1210,9 +1318,13 @@ console.log(JSON.stringify({ calls, endpointRequestsAfterGatewayFailure, gateway
           Schema.fromJsonString(
             Schema.Struct({
               calls: Schema.Array(Schema.Record(Schema.String, Schema.String)),
+              documentUnavailable: Schema.Boolean,
               endpointRequestsAfterGatewayFailure: Schema.Number,
+              endpointRequestsAfterRevisionMismatch: Schema.Number,
               gatewayAttempts: Schema.Number,
               gatewayUnavailable: Schema.Boolean,
+              requestsWithoutDocument: Schema.Number,
+              revisionMismatch: Schema.Boolean,
             }),
           ),
         )(result.stdout);
@@ -1224,19 +1336,24 @@ console.log(JSON.stringify({ calls, endpointRequestsAfterGatewayFailure, gateway
             'https://shell.example.test/inventory-stock-api/reads/resource-detail',
             'https://shell.example.test/inventory-stock-api/inventory.stock/search/inventory-items',
             'https://shell.example.test/inventory-stock-api/inventory.stock/reports/stock-levels',
-            'https://inventory.example.test/custom/inventory-stock-api/reads/resource-detail',
-            'https://inventory.example.test/custom/inventory-stock-api/inventory.stock/search/inventory-items',
-            'https://inventory.example.test/custom/inventory-stock-api/inventory.stock/reports/stock-levels',
+            'https://shell.example.test/release/inventory-stock-api/reads/resource-detail',
+            'https://shell.example.test/release/inventory-stock-api/inventory.stock/search/inventory-items',
+            'https://shell.example.test/release/inventory-stock-api/inventory.stock/reports/stock-levels',
           ].map((url) => ({
             authorization: 'Bearer proof',
+            compositionRevision: 'a'.repeat(64),
             correlationId: 'correlation-proof',
             method: 'POST',
             url,
           })),
         );
-        expect(proof.gatewayAttempts).toBe(4);
+        expect(proof.documentUnavailable).toBe(true);
+        expect(proof.requestsWithoutDocument).toBe(0);
+        expect(proof.gatewayAttempts).toBe(5);
         expect(proof.gatewayUnavailable).toBe(true);
         expect(proof.endpointRequestsAfterGatewayFailure).toBe(0);
+        expect(proof.revisionMismatch).toBe(true);
+        expect(proof.endpointRequestsAfterRevisionMismatch).toBe(0);
       }),
     );
   }),
@@ -1290,7 +1407,7 @@ it.live(
                     .replaceAll(camel, fixtureCamel)
                     .replaceAll(`${fixturePascal}SearchClientOptions`, `${fixturePascal}ClientOptions`)
                     .replaceAll('partyRegistryApi', 'fixtureApi')
-                    .replaceAll('/party-registry-api', '/inventory-stock-api'),
+                    .replaceAll('/party-registry-api', inventoryApiBaseUrl),
                 );
               const expectedServer = yield* readFixtureFile(
                 fixture.root,
@@ -1369,7 +1486,8 @@ const assertGovernedReadClients = (clients: readonly string[]): void => {
     expect(client).toMatch(/from '@app\/shared-contracts\/client-runtime'/u);
     expect(client).toMatch(/makeGovernedEffectBffClient\(/u);
     expect(client).toMatch(/defaultApiPrefix: '\/inventory-stock-api'/u);
-    expect(client).toMatch(/operationGateway\.invoke\(\(credential\) =>/u);
+    expect(client).toMatch(/operationGateway\.invoke\(\(credential, \{ apiBaseUrl, compositionRevision \}\) =>/u);
+    expect(client).toMatch(/\.\.\.options,\s+baseUrl: apiBaseUrl,\s+compositionRevision,/u);
     expect(client).toMatch(/WithAuthorization/u);
     expect(client).toMatch(/credential,\s+defaultApiPrefix: '\/inventory-stock-api',\s+requestCorrelation,/u);
     expect(client).not.toMatch(/makeEffectHttpApiClient|Context\.Reference|HttpClientRequest|HttpClient\.mapRequest/u);
@@ -2601,6 +2719,7 @@ it.live(
         const generated = yield* readFixtureFile(fixture.root, inventoryActionPrincipalFile);
         const stale = generated
           .replace(/^import \{ staffAuthenticationNamespaceRegistryLayer \}.*\n/mu, '')
+          .replaceAll(/\s*\| ReturnType<typeof staffAuthenticationNamespaceRegistryLayer>/gu, '')
           .replace(/staffAuthenticationNamespaceRegistryLayer\(\[ACTION_GATEWAY_AUDIENCE\]\)/u, 'Layer.empty');
         expect(stale).not.toMatch(/AuthenticationNamespaceRegistry/u);
         yield* write(fixture.root, inventoryActionPrincipalFile, stale);
@@ -2743,6 +2862,9 @@ it.live(
           fixtureBuildMarker,
         );
         const compositionService = { load: Effect.succeed(approvedSnapshot) };
+        const encodedComposition = yield* Schema.encodeEffect(
+          Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+        )(approvedSnapshot);
         const principal = {
           authBindingId: '30000000-0000-4000-8000-000000000001',
           authContextRef: 'better-auth-session:scaffold-test',
@@ -2974,14 +3096,45 @@ it.live(
         );
         let acquisitions = 0;
         const authorizations: string[] = [];
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        yield* Effect.acquireRelease(
+          Effect.sync(() =>
+            Object.defineProperty(globalThis, 'document', {
+              configurable: true,
+              value: { querySelectorAll: () => [] },
+            }),
+          ),
+          () =>
+            Effect.sync(() => {
+              if (originalDocument === undefined) {
+                Reflect.deleteProperty(globalThis, 'document');
+              } else {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+              }
+            }),
+        );
+        yield* pinDocumentCompositionRevision(approvedSnapshot.composition.revision);
         const idempotencyKey = 'caller-owned-idempotency-key';
-        const operationGateway = generatedClientModule.makeOperationGateway(({ audience }) => {
+        const operationGateway = generatedClientModule.makeOperationGateway(({ audience, compositionRevision }) => {
           acquisitions += 1;
           expect(audience).toBe(inventorySlug);
-          return Effect.succeed({ token: `attempt-${acquisitions}` });
+          expect(compositionRevision).toBe(approvedSnapshot.composition.revision);
+          return Effect.succeed({
+            apiBaseUrl: inventoryApiBaseUrl,
+            compositionRevision,
+            expiresAt: 2_000_000_000,
+            token: `attempt-${acquisitions}`,
+          });
         });
-        const attempt = (authorization: string) => {
+        const attempt = (
+          authorization: string,
+          target: { readonly apiBaseUrl: string; readonly compositionRevision: string },
+        ) => {
           authorizations.push(authorization);
+          expect(target).toEqual({
+            apiBaseUrl: inventoryApiBaseUrl,
+            compositionRevision: approvedSnapshot.composition.revision,
+          });
           return Effect.succeed(idempotencyKey);
         };
         expect(yield* operationGateway.invoke(attempt)).toBe(idempotencyKey);
@@ -3096,6 +3249,9 @@ it.live(
           Layer.provide(Layer.orDie(generatedModule.ActionPrincipalVerifierLive)),
           Layer.provide(Layer.succeed(GatewayAssertionRedemptionService, testRedemption)),
           Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(environment))),
+          Layer.provide(
+            Layer.succeed(ActiveApplicationCompositionSource, { load: Effect.succeed(encodedComposition) }),
+          ),
           Layer.provide(harness.layer),
         );
         const generatedBindingRuntime = defineEffectBff({
@@ -3880,7 +4036,7 @@ it.live(
             dependencies: {},
             exports: { '.': coreRuntimePackageEntryExport },
             modernjs: {},
-            name: '@app/core-runtime',
+            name: coreRuntimePackageName,
             private: true,
             scripts: {},
           }),
@@ -3946,7 +4102,7 @@ it.live(
             dependencies: {},
             exports: { '.': coreRuntimePackageEntryExport },
             modernjs: {},
-            name: '@app/core-runtime',
+            name: coreRuntimePackageName,
             private: true,
             scripts: {},
           }),
@@ -6067,12 +6223,12 @@ it.live(
           corePackage.exports,
         ).map(([subpath, target]) => [
           path.posix.join(corePackage.name, subpath),
-          [path.join(coreRuntimeDirectory, target)],
+          [path.join(coreRuntimeDirectory, declaredNodeTarget(target))],
         ]);
-        // Core's own `#` package imports resolve to their Node (`default`) target, as in the workspace.
+        // Core's own `#` package imports use their declared Node or default target, as in the workspace.
         const coreRuntimeImportPaths: (readonly [string, readonly string[]])[] = Object.entries(
           corePackage.imports,
-        ).map(([specifier, target]) => [specifier, [path.join(coreRuntimeDirectory, target.default)]]);
+        ).map(([specifier, target]) => [specifier, [path.join(coreRuntimeDirectory, declaredNodeTarget(target))]]);
         const coreRuntimePaths = Object.fromEntries([...coreRuntimeExportPaths, ...coreRuntimeImportPaths]);
         const fixtureTsconfig = path.join(fixture.root, 'tsconfig.generated.json');
         yield* Effect.promise(() =>
@@ -6109,6 +6265,7 @@ it.live(
                 types: ['node', 'react'],
               },
               include: [
+                modernAppEnvironmentTypes,
                 'packages/core-runtime/src/modules/actions/**/*.ts',
                 'packages/core-runtime/src/policies/**/*.ts',
                 inventoryManifestFile,

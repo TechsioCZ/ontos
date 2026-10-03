@@ -4,7 +4,7 @@ import { HttpApi } from 'effect/unstable/httpapi';
 
 import type { AnyActionRegistration } from '../actions/definition.ts';
 import { isActionRegistration } from '../actions/definition.ts';
-import { TENANT_PERMISSION_KEYS } from '../permissions/context-access.ts';
+import { TENANT_PERMISSION_KEYS } from '../permissions/context-permissions.ts';
 import { BusinessPermissionDescriptorSchema, defineBusinessPermission } from '../permissions/business-permission.ts';
 import type { BusinessPermissionDescriptor } from '../permissions/business-permission.ts';
 import { ModuleEntrypointSchema } from './module-entrypoint.ts';

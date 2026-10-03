@@ -33,7 +33,7 @@ rstest.mock('@modern-js/plugin-i18n/runtime', () => ({
   useModernI18n: () => ({ t: (key: string) => key }),
 }));
 
-rstest.mock('@modern-js/plugin-tanstack/runtime', () => ({
+rstest.mock('@tanstack/react-router', () => ({
   useLoaderData: useLoaderDataMock,
 }));
 

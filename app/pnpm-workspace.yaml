@@ -111,7 +111,11 @@ allowBuilds:
 patchedDependencies:
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/code-tools
   '@bleedingdev/modern-js-code-tools@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-code-tools@3.9.0-ultramodern.28.patch
+  # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/runtime/plugin-tanstack
+  '@bleedingdev/modern-js-plugin-tanstack@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-plugin-tanstack@3.9.0-ultramodern.28.patch
   # upstream: https://github.com/BleedingDev/ultramodern.js/tree/main/packages/toolkit/ultramodern-create
   '@bleedingdev/modern-js-ultramodern-create@3.9.0-ultramodern.28': patches/@bleedingdev__modern-js-ultramodern-create@3.9.0-ultramodern.28.patch
+  # upstream: https://github.com/TanStack/router/tree/84bde660a12d82e8c74859b3240157af7566f843/packages/router-core
+  '@tanstack/router-core@1.171.32': patches/@tanstack__router-core@1.171.32.patch
   # upstream: https://github.com/drizzle-team/drizzle-orm/pull/6380
   drizzle-orm@1.0.0-rc.5-ab785fc: patches/drizzle-orm-rc5-declarations.patch

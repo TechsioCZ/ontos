@@ -19,7 +19,6 @@ import type { OperationalScope, OperationalScopeResolverService } from '../opera
 import { OperationalScopeResolver } from '../operations/context.ts';
 import {
   ContextAccess,
-  LEGAL_ENTITY_PERMISSION_KEYS,
   hasCanonicalInventoryAuthorizationTarget,
   hasCanonicalPricingAuthorizationTargetIds,
   isBusinessPermissionTargetCompatible,
@@ -30,6 +29,7 @@ import {
   toBusinessPermissionAccessKey,
   toContextPermissionAccessKey,
 } from '../permissions/context-access.ts';
+import { LEGAL_ENTITY_PERMISSION_KEYS } from '../permissions/context-permissions.ts';
 import {
   OwnerAuthorizationOverlay,
   failClosedOwnerAuthorizationOverlay,

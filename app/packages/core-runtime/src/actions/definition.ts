@@ -7,15 +7,16 @@ import { isActionPolicy } from './policy.ts';
 import type { ActionPolicy } from './policy.ts';
 import type { ModuleEntrypointDescriptor } from '../modules/module-entrypoint.ts';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
-import { LEGAL_ENTITY_SCOPES } from '../operations/context.ts';
-import type { OperationalScope, LegalEntityScope } from '../operations/context.ts';
+import type { OperationalScope } from '../operations/context.ts';
+import { LEGAL_ENTITY_SCOPES } from '../operations/legal-entity-scope.ts';
+import type { LegalEntityScope } from '../operations/legal-entity-scope.ts';
 import type { OperationContextUnavailable } from '../operations/errors.ts';
 import type {
   AssortmentPermissionAccessTarget,
   BusinessPermissionAccessTarget,
   ResourceAccessTarget,
-  TenantPermissionKey,
 } from '../permissions/context-access.ts';
+import type { TenantPermissionKey } from '../permissions/context-permissions.ts';
 
 const actionRegistration: unique symbol = Symbol('@app/core-runtime/actions/registration');
 const actionResourcePermissionDeclaration: unique symbol = Symbol('@app/core-runtime/actions/resource-permission');

@@ -2,13 +2,8 @@ import { Context, Effect, Layer, Schema } from 'effect';
 import type { DateTime } from 'effect';
 import type { ScopedTransactionExecutor } from '../db/scoped-transaction.ts';
 import type { OperationalScope } from '../operations/context.ts';
-import type {
-  BusinessAccessTarget,
-  AssortmentPermissionAccessTarget,
-  LegalEntityPermissionKey,
-  ResourceAccessTarget,
-  TenantPermissionKey,
-} from './context-access.ts';
+import type { BusinessAccessTarget, AssortmentPermissionAccessTarget, ResourceAccessTarget } from './context-access.ts';
+import type { LegalEntityPermissionKey, TenantPermissionKey } from './context-permissions.ts';
 import type { BusinessPermissionCode } from './business-permission.ts';
 
 /**

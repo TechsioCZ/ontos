@@ -2,14 +2,16 @@ import { randomUUID } from 'node:crypto';
 
 import { ActionRuntime, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
 import type { ActionRuntimeService, ReadRuntimeService } from '@app/core-runtime';
+import { ActiveApplicationCompositionSnapshotSchema } from '@app/core-runtime/modules/active-application-composition';
+import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
+import { ActiveApplicationCompositionSource } from '@app/core-runtime/testing/application-composition-source';
+import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { ConfigProvider, Context, Effect, Layer, Schema } from 'effect';
 import { assert, expect, it } from 'effect-rstest';
 import { Arbitrary } from 'effect/unstable/arbitrary';
-import { exportJWK, generateKeyPair, SignJWT } from 'jose';
-
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { FetchHttpClient } from 'effect/unstable/http';
+import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 
 import { makePartyRegistryApiRuntime, partyRegistryFoundationLive } from '../../api/index.ts';
 import { partyRegistryCorsAllowedHeaders, partyRegistryCorsAllowedMethods } from '../../api/read-server-support.ts';
@@ -48,6 +50,9 @@ const makeAssertion = () =>
       [ultramodernApiMarker.appId],
       ultramodernApiMarker.buildMarker,
     );
+    const compositionDocument = yield* Schema.encodeEffect(
+      Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+    )(compositionSnapshot);
     const { privateKey, publicKey } = yield* Effect.promise(() => generateKeyPair('Ed25519'));
     const publicJwk = {
       ...(yield* Effect.promise(() => exportJWK(publicKey))),
@@ -76,6 +81,7 @@ const makeAssertion = () =>
         .sign(privateKey),
     );
     return {
+      compositionDocument,
       compositionSnapshot,
       issuer,
       publicJwks: yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
@@ -138,6 +144,7 @@ it.live(
       let partySearchCalls = 0;
       let readCalls = 0;
       let searchLayerLoads = 0;
+      let compositionLoads = 0;
       const actionRuntime: ActionRuntimeService = {
         resolveActionCommit: () =>
           Effect.suspend(() => {
@@ -215,12 +222,14 @@ it.live(
             }),
           ),
       };
-      const actionRuntimeLayer = Layer.mergeAll(
-        Layer.succeed(ActionRuntime, actionRuntime),
+      const assertionConfigurationLive = Layer.mergeAll(
         Layer.succeed(FetchHttpClient.Fetch, (input, init) => {
           const request = new Request(input, init);
           expect(request.url).toBe('https://composition.runtime-assembly.test/active');
-          return Promise.resolve(Response.json(assertion.compositionSnapshot));
+          compositionLoads += 1;
+          return Promise.resolve(
+            new Response(assertion.compositionDocument, { headers: { 'content-type': 'application/json' } }),
+          );
         }),
         ConfigProvider.layer(
           ConfigProvider.fromUnknown({
@@ -228,6 +237,24 @@ it.live(
             ONTOS_GATEWAY_ISSUER: assertion.issuer,
             ONTOS_GATEWAY_PUBLIC_JWKS: assertion.publicJwks,
           }),
+        ),
+      );
+      const compositionSourceContext = yield* Layer.build(
+        ActiveApplicationCompositionSourceLive.pipe(
+          Layer.provide(
+            FetchHttpClient.layer.pipe(
+              Layer.provide(Layer.succeed(FetchHttpClient.RequestInit, { cache: 'no-store', redirect: 'manual' })),
+            ),
+          ),
+          Layer.provide(assertionConfigurationLive),
+        ),
+      );
+      const actionRuntimeLayer = Layer.mergeAll(
+        Layer.succeed(ActionRuntime, actionRuntime),
+        assertionConfigurationLive,
+        Layer.succeed(
+          ActiveApplicationCompositionSource,
+          Context.get(compositionSourceContext, ActiveApplicationCompositionSource),
         ),
       );
       const aresSubjectLayer = Layer.effect(
@@ -503,6 +530,7 @@ it.live(
           ).toBe(callsBefore + 1);
         }
       }
+      expect(compositionLoads).toBe(1);
       assert.isOk(redemptionCalls > 0);
       assert.isOk(actionCalls > 0);
       expect(actionCommitCalls).toBe(1);

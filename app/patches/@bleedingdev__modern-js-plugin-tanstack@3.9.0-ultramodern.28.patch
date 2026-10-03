@@ -1,0 +1,102 @@
+diff --git a/dist/cjs/shared/routeDescriptor.js b/dist/cjs/shared/routeDescriptor.js
+index 5acd497a403f7d2e8cddf357424cf5f111d2c86d..9eeabda40b868b06630a972ce452667d5393d3c6 100644
+--- a/dist/cjs/shared/routeDescriptor.js
++++ b/dist/cjs/shared/routeDescriptor.js
+@@ -33,16 +33,25 @@ __webpack_require__.d(__webpack_exports__, {
+ const paths_js_namespaceObject = require("../runtime/routeTree/paths.js");
+ function describeRouteTree(routes) {
+     const root = routes.find((route)=>true === route.isRoot || '/' === route.path && true !== route.index);
+-    const describe = (route, index)=>({
++    const describe = (route, index, siblings)=>{
++        const path = true === route.index ? '/' : (0, paths_js_namespaceObject.toTanstackPath)(route.path || '');
++        const hasSplat = Boolean(route.path?.includes('*'));
++        const descendantPrefix = `${path.replace(/^\/+/, '')}/`;
++        const isFlatIndex = path.length > 0 && !path.endsWith('/') && !hasSplat && 0 === (route.children ?? []).length && siblings.some((sibling)=>{
++            const siblingPath = (0, paths_js_namespaceObject.toTanstackPath)(sibling.path || '').replace(/^\/+/, '');
++            return sibling !== route && siblingPath.startsWith(descendantPrefix) && siblingPath.length > descendantPrefix.length;
++        });
++        return {
+             source: route,
+             location: 0 === (route.path ?? '').length && true !== route.index ? {
+                 id: route.id || route.file || `pathless-${index}`
+             } : {
+-                path: true === route.index ? '/' : (0, paths_js_namespaceObject.toTanstackPath)(route.path || '')
++                path: isFlatIndex ? `${path}/` : path
+             },
+-            hasSplat: Boolean(route.path?.includes('*')),
++            hasSplat,
+             children: (route.children ?? []).map(describe)
+-        });
++        };
++    };
+     return {
+         root,
+         children: (void 0 !== root ? [
+diff --git a/dist/esm/shared/routeDescriptor.mjs b/dist/esm/shared/routeDescriptor.mjs
+index 19b40948ca2717e9a5d30c15606c2e99086d473c..49199aaa1eb9f2c4db20c57d52eeed89f9a78c5f 100644
+--- a/dist/esm/shared/routeDescriptor.mjs
++++ b/dist/esm/shared/routeDescriptor.mjs
+@@ -1,16 +1,25 @@
+ import { toTanstackPath } from "../runtime/routeTree/paths.mjs";
+ function describeRouteTree(routes) {
+     const root = routes.find((route)=>true === route.isRoot || '/' === route.path && true !== route.index);
+-    const describe = (route, index)=>({
++    const describe = (route, index, siblings)=>{
++        const path = true === route.index ? '/' : toTanstackPath(route.path || '');
++        const hasSplat = Boolean(route.path?.includes('*'));
++        const descendantPrefix = `${path.replace(/^\/+/, '')}/`;
++        const isFlatIndex = path.length > 0 && !path.endsWith('/') && !hasSplat && 0 === (route.children ?? []).length && siblings.some((sibling)=>{
++            const siblingPath = toTanstackPath(sibling.path || '').replace(/^\/+/, '');
++            return sibling !== route && siblingPath.startsWith(descendantPrefix) && siblingPath.length > descendantPrefix.length;
++        });
++        return {
+             source: route,
+             location: 0 === (route.path ?? '').length && true !== route.index ? {
+                 id: route.id || route.file || `pathless-${index}`
+             } : {
+-                path: true === route.index ? '/' : toTanstackPath(route.path || '')
++                path: isFlatIndex ? `${path}/` : path
+             },
+-            hasSplat: Boolean(route.path?.includes('*')),
++            hasSplat,
+             children: (route.children ?? []).map(describe)
+-        });
++        };
++    };
+     return {
+         root,
+         children: (void 0 !== root ? [
+diff --git a/dist/esm-node/shared/routeDescriptor.mjs b/dist/esm-node/shared/routeDescriptor.mjs
+index 5b37efcdc314f6ecb5b2f3ed0d12d27db8b2f015..07b228ca06ad3a55fa47bbe04d9a37e0796f9ad0 100644
+--- a/dist/esm-node/shared/routeDescriptor.mjs
++++ b/dist/esm-node/shared/routeDescriptor.mjs
+@@ -2,16 +2,25 @@ import "node:module";
+ import { toTanstackPath } from "../runtime/routeTree/paths.mjs";
+ function describeRouteTree(routes) {
+     const root = routes.find((route)=>true === route.isRoot || '/' === route.path && true !== route.index);
+-    const describe = (route, index)=>({
++    const describe = (route, index, siblings)=>{
++        const path = true === route.index ? '/' : toTanstackPath(route.path || '');
++        const hasSplat = Boolean(route.path?.includes('*'));
++        const descendantPrefix = `${path.replace(/^\/+/, '')}/`;
++        const isFlatIndex = path.length > 0 && !path.endsWith('/') && !hasSplat && 0 === (route.children ?? []).length && siblings.some((sibling)=>{
++            const siblingPath = toTanstackPath(sibling.path || '').replace(/^\/+/, '');
++            return sibling !== route && siblingPath.startsWith(descendantPrefix) && siblingPath.length > descendantPrefix.length;
++        });
++        return {
+             source: route,
+             location: 0 === (route.path ?? '').length && true !== route.index ? {
+                 id: route.id || route.file || `pathless-${index}`
+             } : {
+-                path: true === route.index ? '/' : toTanstackPath(route.path || '')
++                path: isFlatIndex ? `${path}/` : path
+             },
+-            hasSplat: Boolean(route.path?.includes('*')),
++            hasSplat,
+             children: (route.children ?? []).map(describe)
+-        });
++        };
++    };
+     return {
+         root,
+         children: (void 0 !== root ? [

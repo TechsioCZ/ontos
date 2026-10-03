@@ -994,6 +994,7 @@ for (const changedPath of [
   '.mise.toml',
   'scripts/generate-outbox-worker-deployment.mjs',
   'scripts/materialize-outbox-worker.mjs',
+  'scripts/materialize-zerops-environment.mts',
   'scripts/materialize-zerops-runtime.mjs',
   'scripts/locked-registry-overrides.mjs',
   'scripts/outbox-worker-delivery.mjs',

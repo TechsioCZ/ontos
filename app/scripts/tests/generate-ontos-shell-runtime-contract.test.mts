@@ -2,12 +2,16 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { NodeServices } from '@effect/platform-node';
 import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { OntosShellRuntimeContractSchema } from '../../packages/core-runtime/src/index.ts';
+import {
+  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
+  OntosShellRuntimeContractSchema,
+} from '../../packages/core-runtime/src/index.ts';
 import {
   generateOntosShellRuntimeContract,
   ShellRuntimeContractGenerationError,
@@ -22,6 +26,7 @@ const topology = {
 };
 const Json = Schema.fromJsonString(Schema.Json);
 const Contract = Schema.fromJsonString(OntosShellRuntimeContractSchema);
+const generatorPath = fileURLToPath(new URL('../generate-ontos-shell-runtime-contract.mts', import.meta.url));
 const git = (root: string, ...args: readonly string[]) =>
   Effect.try(() => execFileSync('/usr/bin/git', args, { cwd: root, encoding: 'utf-8', stdio: 'pipe' }).trim());
 
@@ -58,7 +63,21 @@ it.live('stamps both deployment targets with the actual immutable Shell release 
   Effect.gen(function* identifiesPromotedShell() {
     const { root, shellDirectory } = yield* fixture;
     const generate = (target: 'cloudflare-dist' | 'dist') =>
-      generateOntosShellRuntimeContract({ shellDirectory, target }).pipe(Effect.provide(NodeServices.layer));
+      Effect.gen(function* generateFixtureRelease() {
+        const sourceRevision = yield* git(root, 'rev-parse', 'HEAD');
+        yield* Effect.try(() =>
+          execFileSync(process.execPath, [generatorPath, '--shell-directory', shellDirectory, '--target', target], {
+            env: { ULTRAMODERN_SOURCE_REVISION: sourceRevision },
+            stdio: 'pipe',
+          }),
+        );
+        return path.join(
+          shellDirectory,
+          target === 'cloudflare-dist' ? 'dist-cloudflare' : target,
+          'public',
+          ONTOS_SHELL_RUNTIME_CONTRACT_PATH.slice(1),
+        );
+      });
     const readContract = (file: string) =>
       Effect.tryPromise(() => readFile(file, 'utf-8')).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Contract)));
     const first = yield* readContract(yield* generate('dist'));
