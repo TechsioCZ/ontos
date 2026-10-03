@@ -270,7 +270,7 @@ it.live('matches complete authority subscriptions while owner-local consumer pro
       state: 'active',
       tenantId,
     });
-    yield* insertMessage(database, tenantId);
+    const { messageId } = yield* insertMessage(database, tenantId);
     const consumerWorker = makeWorker('consumer.fixture.local');
     const reportingWorker = makeWorker('reporting.fixture.local', {
       consumerModuleKey: 'reporting.fixture',
@@ -283,7 +283,14 @@ it.live('matches complete authority subscriptions while owner-local consumer pro
       matched.deliveriesCreated,
       `Catalog matcher batch processed ${matched.messagesMatched} unmatched messages`,
     ).toBe(2);
-    const claimAt = yield* DateTime.nowAsDate;
+    const pendingDeliveries = yield* database
+      .select({ availableAt: outboxDeliveries.availableAt })
+      .from(outboxDeliveries)
+      .where(and(eq(outboxDeliveries.outboxMessageId, messageId), eq(outboxDeliveries.status, 'pending')))
+      .orderBy(asc(outboxDeliveries.availableAt));
+    const { availableAt } = Option.getOrThrow(Option.fromNullishOr(pendingDeliveries.at(-1)));
+    // PostgreSQL retains sub-millisecond precision beyond the decoded JavaScript Date.
+    const claimAt = advanceDate(availableAt, 1);
     const consumerClaim = Option.getOrNull(
       yield* repository.claimNext([consumerWorker], 'consumer-process', claimAt, compositionRevision),
     );
@@ -382,9 +389,14 @@ it.live('materializes every old subscription during draining before owner-local 
     const matched = yield* repository.matchUnmatched(compositionRevision, yield* DateTime.nowAsDate);
     expect(matched.deliveriesCreated).toBe(2);
     const deliveries = yield* database
-      .select({ consumerModuleKey: outboxDeliveries.consumerModuleKey, status: outboxDeliveries.status })
+      .select({
+        availableAt: outboxDeliveries.availableAt,
+        consumerModuleKey: outboxDeliveries.consumerModuleKey,
+        status: outboxDeliveries.status,
+      })
       .from(outboxDeliveries)
-      .where(eq(outboxDeliveries.outboxMessageId, messageId));
+      .where(eq(outboxDeliveries.outboxMessageId, messageId))
+      .orderBy(asc(outboxDeliveries.availableAt));
     expect(deliveries.map(({ consumerModuleKey }) => consumerModuleKey).toSorted()).toEqual([
       'consumer.fixture',
       'reporting.fixture',
@@ -393,12 +405,14 @@ it.live('materializes every old subscription during draining before owner-local 
     expect((yield* repository.matchUnmatched(compositionRevision, yield* DateTime.nowAsDate)).deliveriesCreated).toBe(
       0,
     );
+    const { availableAt } = Option.getOrThrow(Option.fromNullishOr(deliveries.at(-1)));
+    const claimAt = advanceDate(availableAt, 1);
     expect(
       Option.isSome(
         yield* repository.claimNext(
           [Option.getOrThrow(Option.fromNullishOr(workers[0]))],
           'draining-consumer',
-          yield* DateTime.nowAsDate,
+          claimAt,
           compositionRevision,
         ),
       ),

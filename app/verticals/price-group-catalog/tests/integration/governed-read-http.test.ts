@@ -4,6 +4,7 @@ import {
   ActionRuntime,
   ActiveApplicationCompositionConfigLive,
   ActiveApplicationCompositionService,
+  ActiveApplicationCompositionSnapshotSchema,
   DatabaseConfig,
   GatewayAssertionRedemptionService,
   GatewayAssertionRedemptionUnavailableError,
@@ -24,7 +25,7 @@ import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/module
 import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { RequestSchemaProblemSchema } from '@app/shared-contracts/problem-details';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
-import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
+import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer, defineEffectBff } from '@modern-js/bff-effect/effect-edge';
 import { Config, ConfigProvider, Context, Effect, Layer, Redacted, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 import { FetchHttpClient } from 'effect/unstable/http';
@@ -765,7 +766,28 @@ describe('Price Group governed Read HTTP integration', () => {
   it.live('redeems once through the production runtime constructor and real owner database layer', () =>
     Effect.gen(function* redeemThroughProductionComposition() {
       const connections = yield* loadDatabaseConnectionPair();
-      const assertion = yield* makeProductionAssertion();
+      const snapshot = yield* priceGroupCompositionSnapshot;
+      const snapshotDocument = yield* Schema.encodeEffect(
+        Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema),
+      )(snapshot);
+      const compositionSourceUrl = 'https://composition.price-group-read.test/active';
+      const configuration = yield* ConfigProvider.ConfigProvider;
+      const sourceRequests: string[] = [];
+      const sourceConfiguration = Layer.mergeAll(
+        ConfigProvider.layer(
+          ConfigProvider.fromUnknown({ ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: compositionSourceUrl }).pipe(
+            ConfigProvider.orElse(configuration),
+          ),
+        ),
+        Layer.succeed(FetchHttpClient.Fetch, async (input, init) => {
+          const request = new Request(input, init);
+          expect(request.url).toBe(compositionSourceUrl);
+          expect(request.method).toBe('GET');
+          sourceRequests.push(request.url);
+          return new Response(snapshotDocument, { headers: { 'content-type': 'application/json' } });
+        }),
+      );
+      const assertion = yield* makeProductionAssertion().pipe(Effect.provide(sourceConfiguration));
       const harness = makeReadRuntime();
       const readLayer = Layer.succeed(ReadRuntime, harness.readRuntime);
       const actionLayer = Layer.succeed(ActionRuntime, unusedActionRuntime);
@@ -775,7 +797,12 @@ describe('Price Group governed Read HTTP integration', () => {
       );
       const assembled = makePriceGroupCatalogApiRuntime(readLayer, actionLayer, redemptionLayer);
       const runtime = yield* Effect.acquireRelease(
-        Effect.sync(() => assembled.createHandler()),
+        Effect.sync(() =>
+          defineEffectBff({
+            ...assembled,
+            layer: assembled.layer.pipe(Layer.provide(sourceConfiguration)),
+          }).createHandler(),
+        ),
         (resource) => Effect.promise(() => resource.dispose()).pipe(Effect.orDie),
       );
       const [endpoint] = endpoints;
@@ -792,6 +819,7 @@ describe('Price Group governed Read HTTP integration', () => {
       expect(problem.status).toBe(401);
       expectSanitized(problem, [assertion.token, principalId, tenantId]);
       expect(harness.readCount()).toBe(1);
+      expect(sourceRequests).toEqual([compositionSourceUrl, compositionSourceUrl]);
     }),
   );
 
