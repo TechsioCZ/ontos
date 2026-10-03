@@ -62,6 +62,7 @@ const ShellTopologySchema = Schema.Struct({
 const NativeOutputConfigSchema = Schema.Struct({
   assets: Schema.Struct({ directory: Schema.NonEmptyString }),
   compatibility_date: Schema.NonEmptyString,
+  main: Schema.NonEmptyString,
   name: Schema.NonEmptyString,
 });
 const PlanDocumentSchema = Schema.Struct({
@@ -298,6 +299,7 @@ export const deployImmutableShellIngress = Effect.fn('ImmutableShellRelease.ingr
       yield* Schema.encodeEffect(JsonText)({
         ...nativeConfig,
         assets: { ...nativeConfig.assets, directory: ingressAssets },
+        main: path.resolve(output, config.main),
       }),
     );
     yield* readVerifiedReleaseFiles(output, receipt.plan, [ingressAssets, ingressConfig], SHELL_RELEASE_ENVELOPE_KIND);

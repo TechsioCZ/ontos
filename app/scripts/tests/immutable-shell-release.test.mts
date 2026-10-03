@@ -591,6 +591,7 @@ const deploymentLayer = (
                 Schema.fromJsonString(
                   Schema.Struct({
                     assets: Schema.Struct({ directory: Schema.String }),
+                    main: Schema.optional(Schema.String),
                     name: Schema.String,
                     preview_urls: Schema.optional(Schema.Boolean),
                     workers_dev: Schema.optional(Schema.Boolean),
@@ -598,9 +599,19 @@ const deploymentLayer = (
                 ),
               )(yield* fileSystem.readFileString(configPath));
               if (configPath.includes('.wrangler-immutable-shell-config-')) {
+                expect(config.main).toBeUndefined();
                 expect(config.preview_urls).toBe(false);
                 expect(config.workers_dev).toBe(true);
                 expect(config.name).toBe((yield* planFor()).assetsScriptName);
+              }
+              if (configPath.includes('.wrangler-immutable-shell-ingress-')) {
+                const expectedEntrypoint = nodePath.join(appDirectory, '.output', BACKEND_PATH);
+                const resolvedEntrypoint = nodePath.resolve(nodePath.dirname(configPath), config.main ?? '');
+                expect(config.main).toBe(expectedEntrypoint);
+                expect(resolvedEntrypoint).toBe(expectedEntrypoint);
+                expect(yield* fileSystem.readFileString(resolvedEntrypoint)).toBe(
+                  'export default { fetch() { return new Response("Shell"); } };',
+                );
               }
               publishedInventories.push(
                 yield* readReleaseFiles(nodePath.resolve(nodePath.dirname(configPath), config.assets.directory)),
