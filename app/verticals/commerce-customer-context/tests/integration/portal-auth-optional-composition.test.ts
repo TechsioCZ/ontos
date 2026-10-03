@@ -1,3 +1,4 @@
+import { ContextAccessLive, DatabaseConfigLive } from '@app/core-runtime';
 import { Effect, Layer } from 'effect';
 import { expect, it } from 'effect-rstest';
 
@@ -30,6 +31,8 @@ const unconfiguredRuntime = Effect.acquireRelease(
       GatewayAssertionRedemptionLive,
       commercePortalAuthRealmUnavailableLive([ORIGIN]),
       Layer.empty,
+      DatabaseConfigLive,
+      ContextAccessLive,
     ).createHandler(),
   ),
   (runtime) => Effect.promise(async () => await runtime.dispose()),

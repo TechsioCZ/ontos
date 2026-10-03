@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { ContextAccess, PrincipalResolver } from '@app/core-runtime';
+import { ContextAccess, ContextAccessLive, DatabaseConfigLive, PrincipalResolver } from '@app/core-runtime';
 import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
 import { eq } from 'drizzle-orm';
 import { Config, Effect, Layer, Redacted } from 'effect';
@@ -89,6 +89,8 @@ const portalRuntime = Effect.acquireRelease(
         ),
       ),
       Layer.empty,
+      DatabaseConfigLive,
+      ContextAccessLive,
     ).createHandler();
   }),
   (runtime) => Effect.promise(async () => await runtime.dispose()),

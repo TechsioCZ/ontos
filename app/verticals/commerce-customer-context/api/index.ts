@@ -12,7 +12,13 @@ import {
   ReadRuntimeLive,
   TenantModuleStateServiceLive,
 } from '@app/core-runtime';
-import type { ActionRuntimeService, GatewayAssertionRedemptionService, ReadRuntime } from '@app/core-runtime';
+import type {
+  ActionRuntimeService,
+  ContextAccess,
+  DatabaseConfig,
+  GatewayAssertionRedemptionService,
+  ReadRuntime,
+} from '@app/core-runtime';
 import {
   ActionPermissionLive,
   ActionRepositoryLive,
@@ -750,6 +756,10 @@ type CommerceCustomerContextApiRuntimeArguments = readonly [
    * verified against. An empty layer leaves the process configuration in place.
    */
   gatewayPrincipalVerification: Layer.Layer<never>,
+  /** The native database configuration shared by the enrollment services this root assembles. */
+  databaseConfiguration: Layer.Layer<DatabaseConfig, Layer.Error<typeof DatabaseConfigLive>>,
+  /** The native context authorization used by the enrollment owner Actions. */
+  contextAccess: Layer.Layer<ContextAccess>,
 ];
 
 export type CommerceCustomerContextApiRuntime = EffectBffDefinition<typeof commerceCustomerContextApi> &
@@ -764,6 +774,8 @@ export const makeCommerceCustomerContextApiRuntime = (
     gatewayAssertionRedemption,
     portalAuthRuntimeLive,
     gatewayVerification,
+    databaseConfiguration,
+    contextAccess,
   ] = args;
   const actionPrincipalVerifierLive = GovernedActionPrincipalVerifierLive.pipe(
     Layer.provide(governedActionRuntimeLive),
@@ -791,7 +803,7 @@ export const makeCommerceCustomerContextApiRuntime = (
       // The start route commits the Attempt and the one provider account its claim authorizes, then
       // hands the rest of the journey to the continuation. Without this the journeys never run.
       GovernedReadLayer.provide(
-        deploymentEnrollmentSweptContinuationLive.pipe(GovernedReadLayer.provide(DatabaseConfigLive)),
+        deploymentEnrollmentSweptContinuationLive.pipe(GovernedReadLayer.provide(databaseConfiguration)),
       ),
       // The Existing-account journey creates no account, so its start verifies the presented one
       // exists here instead of claiming a provider transition its journey never declares.
@@ -804,9 +816,9 @@ export const makeCommerceCustomerContextApiRuntime = (
       // inside an owner transition, so the Action's own service graph travels with it explicitly.
       // Core's relationship projection is part of that graph — the claim re-verifies the grantor's
       // current administrative authority against it — and the Action runtime keeps it private.
-      GovernedReadLayer.provide(ContextAccessLive),
+      GovernedReadLayer.provide(contextAccess),
       GovernedReadLayer.provide(
-        commerceEnrollmentOwnerTransactionRunnerProductionLive.pipe(GovernedReadLayer.provide(DatabaseConfigLive)),
+        commerceEnrollmentOwnerTransactionRunnerProductionLive.pipe(GovernedReadLayer.provide(databaseConfiguration)),
       ),
     ),
     // <generated-governed-http-handler-layers>
@@ -966,6 +978,8 @@ const apiRuntime = makeCommerceCustomerContextApiRuntime(
   GovernedGatewayAssertionRedemptionLive,
   deploymentPortalAuthRuntimeLive,
   Layer.empty,
+  DatabaseConfigLive,
+  ContextAccessLive,
 );
 
 export default apiRuntime;

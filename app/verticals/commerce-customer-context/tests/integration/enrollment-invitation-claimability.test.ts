@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import { ActionAuthorizationPreflightDatabaseLive, CorePersistenceLive, DatabaseConfigLive } from '@app/core-runtime';
+import {
+  ActionAuthorizationPreflightDatabaseLive,
+  ContextAccessLive,
+  CorePersistenceLive,
+  DatabaseConfigLive,
+} from '@app/core-runtime';
 import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
 import { eq, sql } from 'drizzle-orm';
 import { Config, Effect, Layer, Redacted, Schema } from 'effect';
@@ -170,6 +175,8 @@ const deployedRuntime = (gateway: AcceptanceGatewayIssuer) =>
         singleUseRedemptionLive,
         realmLive,
         gateway.verificationLive,
+        DatabaseConfigLive,
+        ContextAccessLive,
       ).createHandler();
     }),
     (runtime) => Effect.promise(async () => await runtime.dispose()),

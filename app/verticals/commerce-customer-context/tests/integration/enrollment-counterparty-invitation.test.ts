@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
-import { ActionAuthorizationPreflightDatabaseLive, CorePersistenceLive, DatabaseConfigLive } from '@app/core-runtime';
+import {
+  ActionAuthorizationPreflightDatabaseLive,
+  ContextAccessLive,
+  CorePersistenceLive,
+  DatabaseConfigLive,
+} from '@app/core-runtime';
 import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { eq } from 'drizzle-orm';
@@ -232,6 +237,8 @@ const deployedRuntime = (
         singleUseRedemptionLive,
         realmLive,
         gateway.verificationLive,
+        DatabaseConfigLive,
+        ContextAccessLive,
       ).createHandler();
     }),
     (runtime) => Effect.promise(async () => await runtime.dispose()),

@@ -7,7 +7,6 @@ import { STAFF_AUTHENTICATION_NAMESPACE_ID } from '@app/core-runtime/auth/staff-
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
 import { makeActiveApplicationCompositionLayer } from '@app/core-runtime/modules/active-application-composition';
 import { ActiveApplicationCompositionSourceLive } from '@app/core-runtime/modules/active-application-composition-source';
-import { makeApplicationCompositionSnapshotFixture } from '@app/core-runtime/testing/module-contract';
 import { HttpApi, HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
 import { eq } from 'drizzle-orm';
 import { ConfigProvider, Context, DateTime, Effect, Layer, Match, Option, Redacted, Schema, Predicate } from 'effect';
@@ -62,6 +61,7 @@ import {
   partyRelations,
 } from '../../src/db/schema.ts';
 import { AresSubjectServiceLive } from '../../src/integrations/ares/ares-subject.service.ts';
+import { partyCompositionSnapshot } from './application-composition.setup.ts';
 
 const subjectEvidence = [
   {
@@ -97,10 +97,7 @@ it.live(
   () =>
     Effect.gen(function* aresGovernedTestEffect() {
       const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
-      const compositionSnapshot = yield* makeApplicationCompositionSnapshotFixture(
-        [ultramodernApiMarker.appId],
-        ultramodernApiMarker.buildMarker,
-      );
+      const compositionSnapshot = yield* partyCompositionSnapshot;
       const fixture = yield* Effect.acquireRelease(
         makeLiveOperationFixture({
           actionKeys: [

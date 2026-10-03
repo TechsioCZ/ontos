@@ -7,7 +7,12 @@ import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 
 import { v1 } from '@authzed/authzed-node';
 
-import { ActionAuthorizationPreflightDatabaseLive, CorePersistenceLive, DatabaseConfigLive } from '@app/core-runtime';
+import {
+  ActionAuthorizationPreflightDatabaseLive,
+  ContextAccessLive,
+  CorePersistenceLive,
+  DatabaseConfigLive,
+} from '@app/core-runtime';
 import { ResendEmailDeliveryConfig } from '@app/email-delivery/resend';
 import { FetchHttpClient } from 'effect/unstable/http';
 import { eq, like, sql } from 'drizzle-orm';
@@ -204,6 +209,8 @@ const configuredRuntime = Effect.acquireRelease(
       GatewayAssertionRedemptionLive,
       realmLive,
       Layer.empty,
+      DatabaseConfigLive,
+      ContextAccessLive,
     ).createHandler();
   }),
   (runtime) => Effect.promise(async () => await runtime.dispose()),
@@ -884,6 +891,8 @@ const authenticatedRuntime = (
         // The verification material is a composition input of the deployed verifier, so no ambient
         // environment is touched.
         gateway.verificationLive,
+        DatabaseConfigLive,
+        ContextAccessLive,
       ).createHandler();
     }),
     (runtime) => Effect.promise(async () => await runtime.dispose()),

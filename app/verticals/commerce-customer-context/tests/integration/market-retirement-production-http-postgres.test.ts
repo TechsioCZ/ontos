@@ -1,16 +1,26 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import { v1 } from '@authzed/authzed-node';
 import {
   ActiveApplicationCompositionSnapshotSchema,
+  applicationCompositionContentRevision,
+  buildApplicationCompositionCatalog,
+  closeApplicationCompositionDurableAdmission,
+  ContextAccessLive,
+  DatabaseConfigLive,
+  drainApplicationCompositionAuthority,
   GatewayAssertionRedemptionService,
   GatewayAssertionReplayError,
   loadDatabaseConnectionPair,
+  OntosModuleDeploymentContractSchema,
+  publishApplicationCompositionAuthority,
   toContextPermissionAccessObjectId,
   toLegalEntityAccessObjectId,
   toModuleAccessObjectId,
 } from '@app/core-runtime';
 import { makeLiveOperationFixture } from '@app/core-runtime/testing/actions';
+import { makeModuleContractFixture } from '@app/core-runtime/testing/module-contract';
+import { EXTERNAL_GATEWAY_ASSERTION_VERSION, GATEWAY_ASSERTION_TTL_SECONDS } from '@app/shared-contracts';
 import {
   MarketAffectedUseAssessmentResponseSchema,
   ReserveMarketRetirementConflictProblemSchema,
@@ -24,8 +34,11 @@ import type {
 } from '@app/customer-market-retirement-contracts';
 import { sql } from 'drizzle-orm';
 import { Array as EffectArray, ConfigProvider, Effect, Layer, Order, Redacted, Schema } from 'effect';
+import { FetchHttpClient } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
+import { SignJWT } from 'jose';
 
+import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import {
@@ -41,11 +54,10 @@ import {
 import { commercePortalAuthRealmUnavailableLive } from '../../api/portal-auth/realm-unavailable.ts';
 import { commerceCustomerContextRelations } from '../../src/database/schema.ts';
 import { COMMERCE_AUTHENTICATION_NAMESPACE_ID } from '../../shared/portal-auth-contracts.ts';
-import {
-  issueAcceptanceGatewayAssertion,
-  makeAcceptanceGatewayIssuer,
-} from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
+import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
+import { makeAcceptanceGatewayIssuer } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
 import type { AcceptanceGatewayIssuer } from '../support/enrollment-acceptance-identity-gateway-assertion.ts';
+import { makeEnrollmentApplicationCompositionSnapshot } from '../support/enrollment-application-composition.ts';
 import { jsonBody } from '../support/response.ts';
 
 const ORIGIN = 'http://commerce-customer-context.retirement.test';
@@ -53,7 +65,7 @@ const AUDIENCE = 'commerce-customer-context';
 const ISSUER = 'http://market-retirement-owner-acceptance.test';
 const KEY_ID = 'market-retirement-owner-acceptance';
 const ACTION_KEY = 'commerce.customer-context.reserve-market-retirement';
-const COMPOSITION_REVISION = 'a'.repeat(64);
+const COMPOSITION_SOURCE_URL = 'https://composition.market-retirement-acceptance.test/active';
 
 type CommerceCustomerContextDatabase = TestDatabaseFromClient<typeof commerceCustomerContextRelations>;
 type VerifiedAssessment = Extract<MarketAffectedUseAssessmentResponse, { readonly outcome: 'VERIFIED' }>;
@@ -93,45 +105,53 @@ const singleUseRedemptionLive = Layer.sync(GatewayAssertionRedemptionService, ()
   };
 });
 
-const ownerModule = (moduleId: 'commerce.cart' | 'commerce.order') => ({
-  allowedContributions: [],
-  contract: { sha256: 'b'.repeat(64), url: `https://${moduleId}.example.test/contract.json` },
-  dependencies: [],
-  deployment: { appId: moduleId.replace('.', '-'), buildMarker: `${moduleId}-build-1` },
-  federation: {
-    execution: 'browser',
-    exposes: [],
-    manifest: { sha256: 'c'.repeat(64), url: `https://${moduleId}.example.test/mf-manifest.json` },
-    remoteName: moduleId === 'commerce.cart' ? 'commerceCart' : 'commerceOrder',
-  },
-  moduleId,
-  publicContract: { id: moduleId, sha256: 'd'.repeat(64), version: '1' },
-  requiredCoreCapabilities: [],
-  requiredShellAbi: { id: 'ontos.shell-contributions', version: '1' },
-  sharedSingletons: [],
-});
-
-const compositionSnapshot = (
+const compositionSnapshot = Effect.fnUntraced(function* compositionSnapshot(
   clock: AcceptanceClockRow,
   options: Readonly<{ readonly expired?: boolean; readonly installedOwner?: boolean }> = {},
-): string => {
+) {
+  const snapshot = yield* makeEnrollmentApplicationCompositionSnapshot(
+    ultramodernApiMarker.buildMarker,
+    options.installedOwner === true ? ['commerce-cart'] : [],
+  );
+  const cartContract = yield* Schema.decodeUnknownEffect(OntosModuleDeploymentContractSchema)(
+    makeModuleContractFixture({
+      appId: 'commerce-cart',
+      buildMarker: ultramodernApiMarker.buildMarker,
+      moduleId: 'commerce.cart',
+    }),
+  );
+  const contractDocument = yield* Schema.encodeEffect(Schema.fromJsonString(OntosModuleDeploymentContractSchema))(
+    cartContract,
+  );
+  const sha256 = createHash('sha256').update(contractDocument, 'utf-8').digest('hex');
+  const composition = {
+    ...snapshot.composition,
+    modules: snapshot.composition.modules.map((module) =>
+      module.deployment.appId === 'commerce-cart'
+        ? {
+            ...module,
+            contract: { ...module.contract, sha256 },
+            contractDocument,
+            moduleId: cartContract.manifest.module.id,
+            publicContract: { id: cartContract.manifest.module.id, sha256, version: cartContract.schemaVersion },
+          }
+        : module,
+    ),
+  };
   const expired = options.expired === true;
-  const snapshot = Schema.decodeUnknownSync(ActiveApplicationCompositionSnapshotSchema)({
+  const decodedSnapshot = yield* Schema.decodeUnknownEffect(ActiveApplicationCompositionSnapshotSchema)({
     composition: {
-      modules: options.installedOwner === true ? [ownerModule('commerce.cart')] : [],
-      revision: COMPOSITION_REVISION,
-      schemaVersion: '1',
-      shell: {
-        contributionAbi: { id: 'ontos.shell-contributions', version: '1' },
-        coreCapabilities: [],
-        sharedSingletons: [],
-      },
+      ...composition,
+      revision: yield* applicationCompositionContentRevision(composition),
     },
     observedAt: expired ? clock.expired_observed_at : clock.observed_at,
     validUntil: expired ? clock.expired_valid_until : clock.valid_until,
   });
-  return Schema.encodeSync(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(snapshot);
-};
+  yield* buildApplicationCompositionCatalog(decodedSnapshot.composition).pipe(
+    Effect.mapError((cause) => new Error(cause.reason, { cause })),
+  );
+  return decodedSnapshot;
+});
 
 const readAcceptanceClock = (database: CommerceCustomerContextDatabase) =>
   database.transaction((transaction) =>
@@ -279,23 +299,40 @@ const installAssessmentPermission = Effect.fnUntraced(function* installAssessmen
   return { caCertificate, endpoint: configuration.endpoint, preSharedKey: configuration.preSharedKey };
 });
 
-const configuredRuntime = (gateway: AcceptanceGatewayIssuer, environment: Readonly<Record<string, string>>) =>
+const configuredRuntime = (
+  gateway: AcceptanceGatewayIssuer,
+  environment: Readonly<Record<string, string>>,
+  snapshotDocument: string | null,
+) =>
   Effect.acquireRelease(
-    Effect.sync(() =>
-      makeCommerceCustomerContextApiRuntime(
+    Effect.sync(() => {
+      const configuration = {
+        ...environment,
+        ONTOS_GATEWAY_ISSUER: gateway.issuer,
+        ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [gateway.publicJwk] }),
+      };
+      const sourceConfiguration =
+        snapshotDocument === null
+          ? configuration
+          : { ...configuration, ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: COMPOSITION_SOURCE_URL };
+      return makeCommerceCustomerContextApiRuntime(
         productionReadRuntimeLive,
         productionActionRuntimeLive,
         singleUseRedemptionLive,
         commercePortalAuthRealmUnavailableLive([ORIGIN]),
-        ConfigProvider.layer(
-          ConfigProvider.fromUnknown({
-            ...environment,
-            ONTOS_GATEWAY_ISSUER: gateway.issuer,
-            ONTOS_GATEWAY_PUBLIC_JWKS: JSON.stringify({ keys: [gateway.publicJwk] }),
+        Layer.mergeAll(
+          ConfigProvider.layer(ConfigProvider.fromUnknown(sourceConfiguration)),
+          Layer.succeed(FetchHttpClient.Fetch, async (input, init) => {
+            const request = new Request(input, init);
+            return request.url === COMPOSITION_SOURCE_URL
+              ? new Response(snapshotDocument, { headers: { 'content-type': 'application/json' } })
+              : await fetch(request);
           }),
         ),
-      ).createHandler(),
-    ),
+        DatabaseConfigLive,
+        ContextAccessLive,
+      ).createHandler();
+    }),
     (runtime) => Effect.promise(() => runtime.dispose()).pipe(Effect.orDie),
   );
 
@@ -306,6 +343,7 @@ const send = (runtime: CommerceApiRuntime, request: Request) => Effect.promise((
 const authorizedRequest = Effect.fnUntraced(function* authorizedRequest(
   database: CommerceCustomerContextDatabase,
   gateway: AcceptanceGatewayIssuer,
+  compositionRevision: string,
   principal: Readonly<{
     readonly authBindingId: string;
     readonly legalEntityId: string;
@@ -316,7 +354,12 @@ const authorizedRequest = Effect.fnUntraced(function* authorizedRequest(
   payload: MarketAffectedUseAssessmentRequest | ReserveMarketRetirementPayload,
   idempotencyKey?: string,
 ) {
-  const assertion = yield* issueAcceptanceGatewayAssertion(database, gateway, AUDIENCE, {
+  const epochRows = yield* database.execute<{ readonly epoch: string }>(
+    sql`select floor(extract(epoch from statement_timestamp()))::bigint::text as epoch`,
+    'objects',
+  );
+  const issuedAt = Math.trunc(Number(one(epochRows, 'gateway deployment clock row').epoch));
+  const gatewayPrincipal = {
     authBindingId: principal.authBindingId,
     authContextRef: `portal-session:${principal.authBindingId}`,
     authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
@@ -324,7 +367,24 @@ const authorizedRequest = Effect.fnUntraced(function* authorizedRequest(
     legalEntityId: principal.legalEntityId,
     principalId: principal.principalId,
     tenantId: principal.tenantId,
-  });
+  };
+  const assertion = yield* Effect.promise(
+    async () =>
+      await new SignJWT({
+        compositionRevision,
+        principal: gatewayPrincipal,
+        targetBuildMarker: ultramodernApiMarker.buildMarker,
+        ver: EXTERNAL_GATEWAY_ASSERTION_VERSION,
+      })
+        .setProtectedHeader({ alg: 'EdDSA', kid: gateway.keyId, typ: 'JWT' })
+        .setAudience(AUDIENCE)
+        .setExpirationTime(issuedAt + GATEWAY_ASSERTION_TTL_SECONDS)
+        .setIssuedAt(issuedAt)
+        .setIssuer(gateway.issuer)
+        .setJti(randomUUID())
+        .setSubject(principal.principalId)
+        .sign(gateway.privateKey),
+  );
   const requestHeaders = {
     authorization: `Bearer ${assertion}`,
     'content-type': 'application/json',
@@ -365,25 +425,28 @@ it.live(
     Effect.scoped(
       Effect.gen(function* productionHttpReservation() {
         const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+        const { admin: adminClient } = yield* testDatabaseClients;
+        const database = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
+        const coreDatabase = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+        const clock = yield* readAcceptanceClock(database);
+        const snapshot = yield* compositionSnapshot(clock);
+        yield* coreDatabase.transaction((transaction) => publishApplicationCompositionAuthority(transaction, snapshot));
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-          compositionRevision: COMPOSITION_REVISION,
+          compositionRevision: snapshot.composition.revision,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
-        const { admin: adminClient } = yield* testDatabaseClients;
-        const database = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
-        yield* activateCustomerContext(database, fixture.tenantId);
         const cleanup = cleanupOwnerRows(database, fixture.tenantId);
-        yield* cleanup();
         yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
+        yield* cleanup();
+        yield* activateCustomerContext(database, fixture.tenantId);
         const spiceDb = yield* installAssessmentPermission({
           legalEntityId: fixture.legalEntityId,
           principalId: fixture.manager.principalId,
           tenantId: fixture.tenantId,
         });
-        const clock = yield* readAcceptanceClock(database);
         const marketId = randomUUID();
         yield* seedBootstrapReference(database, {
           evaluatedAt: clock.evaluated_at,
@@ -394,13 +457,16 @@ it.live(
           tenantId: fixture.tenantId,
         });
         const gateway = yield* makeAcceptanceGatewayIssuer(ISSUER, KEY_ID);
-        const runtime = yield* configuredRuntime(gateway, {
-          DATABASE_URL: connections.runtime.connectionString,
-          ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON: compositionSnapshot(clock),
-          SPICEDB_CA_CERT: spiceDb.caCertificate,
-          SPICEDB_ENDPOINT: spiceDb.endpoint,
-          SPICEDB_PRESHARED_KEY: spiceDb.preSharedKey,
-        });
+        const runtime = yield* configuredRuntime(
+          gateway,
+          {
+            DATABASE_URL: connections.runtime.connectionString,
+            SPICEDB_CA_CERT: spiceDb.caCertificate,
+            SPICEDB_ENDPOINT: spiceDb.endpoint,
+            SPICEDB_PRESHARED_KEY: spiceDb.preSharedKey,
+          },
+          yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(snapshot),
+        );
         const principal = {
           authBindingId: fixture.manager.authBindingId,
           legalEntityId: fixture.legalEntityId,
@@ -416,12 +482,19 @@ it.live(
         yield* fixture.grantResourceAccess(marketRef, fixture.manager.principalId, 'reader');
         const assessmentResponse = yield* send(
           runtime,
-          yield* authorizedRequest(database, gateway, principal, '/reads/market-affected-use-assessment', {
-            evaluatedAt: clock.evaluated_at,
-            marketRef,
-            marketRevision: 7,
-            tenantId: fixture.tenantId,
-          }),
+          yield* authorizedRequest(
+            database,
+            gateway,
+            snapshot.composition.revision,
+            principal,
+            '/reads/market-affected-use-assessment',
+            {
+              evaluatedAt: clock.evaluated_at,
+              marketRef,
+              marketRevision: 7,
+              tenantId: fixture.tenantId,
+            },
+          ),
         );
         const assessmentBody = yield* jsonBody(assessmentResponse);
         expect(assessmentResponse.status, JSON.stringify(assessmentBody)).toBe(200);
@@ -449,6 +522,7 @@ it.live(
           yield* authorizedRequest(
             database,
             gateway,
+            snapshot.composition.revision,
             principal,
             '/commerce-customer-context/actions/reserve-market-retirement',
             reservePayload(verified),
@@ -467,6 +541,7 @@ it.live(
           yield* authorizedRequest(
             database,
             gateway,
+            snapshot.composition.revision,
             principal,
             '/commerce-customer-context/actions/reserve-market-retirement',
             commitPayload(reservation),
@@ -511,30 +586,33 @@ it.live(
 );
 
 it.live(
-  'fails production composition closed for missing, invalid, installed-owner, and expired evidence',
+  'fails production composition closed for missing, invalid, installed-owner, and expired global evidence',
   () =>
     Effect.scoped(
       Effect.gen(function* failClosedComposition() {
         const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+        const { admin: adminClient } = yield* testDatabaseClients;
+        const database = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
+        const coreDatabase = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+        const clock = yield* readAcceptanceClock(database);
+        const snapshot = yield* compositionSnapshot(clock);
+        yield* coreDatabase.transaction((transaction) => publishApplicationCompositionAuthority(transaction, snapshot));
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-          compositionRevision: COMPOSITION_REVISION,
+          compositionRevision: snapshot.composition.revision,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
-        const { admin: adminClient } = yield* testDatabaseClients;
-        const database = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
-        yield* activateCustomerContext(database, fixture.tenantId);
         const cleanup = cleanupOwnerRows(database, fixture.tenantId);
-        yield* cleanup();
         yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
+        yield* cleanup();
+        yield* activateCustomerContext(database, fixture.tenantId);
         const spiceDb = yield* installAssessmentPermission({
           legalEntityId: fixture.legalEntityId,
           principalId: fixture.manager.principalId,
           tenantId: fixture.tenantId,
         });
-        const clock = yield* readAcceptanceClock(database);
         const gateway = yield* makeAcceptanceGatewayIssuer(ISSUER, `${KEY_ID}-fail-closed`);
         const principal = {
           authBindingId: fixture.manager.authBindingId,
@@ -548,21 +626,57 @@ it.live(
           SPICEDB_ENDPOINT: spiceDb.endpoint,
           SPICEDB_PRESHARED_KEY: spiceDb.preSharedKey,
         };
+        const installedSnapshot = yield* compositionSnapshot(clock, { installedOwner: true });
+        const expiredSnapshot = yield* compositionSnapshot(clock, { expired: true });
+        const snapshotJson = Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema);
         const cases = [
-          { label: 'missing', status: 503 },
-          { label: 'invalid', snapshot: '{"not":"a composition"}', status: 503 },
-          { label: 'installed owner', snapshot: compositionSnapshot(clock, { installedOwner: true }), status: 503 },
-          { label: 'expired', snapshot: compositionSnapshot(clock, { expired: true }), status: 200 },
+          {
+            authority: snapshot,
+            label: 'missing',
+            snapshotDocument: null,
+            status: 503,
+          },
+          {
+            authority: snapshot,
+            label: 'invalid',
+            snapshotDocument: '{"not":"a composition"}',
+            status: 503,
+          },
+          {
+            authority: installedSnapshot,
+            label: 'installed owner',
+            snapshotDocument: yield* Schema.encodeEffect(snapshotJson)(installedSnapshot),
+            status: 503,
+          },
+          {
+            authority: snapshot,
+            label: 'expired global composition',
+            snapshotDocument: yield* Schema.encodeEffect(snapshotJson)(expiredSnapshot),
+            status: 503,
+          },
         ] as const;
+        let admittedRevision = snapshot.composition.revision;
         for (const scenario of cases) {
-          const environment =
-            'snapshot' in scenario
-              ? {
-                  ...commonEnvironment,
-                  ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON: scenario.snapshot,
-                }
-              : commonEnvironment;
-          const runtime = yield* configuredRuntime(gateway, environment);
+          if (admittedRevision !== scenario.authority.composition.revision) {
+            const expectedRevision = admittedRevision;
+            yield* coreDatabase.transaction((transaction) =>
+              Effect.gen(function* publishCapturedOwnerCatalog() {
+                yield* closeApplicationCompositionDurableAdmission(transaction, expectedRevision);
+                yield* drainApplicationCompositionAuthority(transaction, expectedRevision);
+                yield* publishApplicationCompositionAuthority(transaction, scenario.authority);
+              }),
+            );
+            admittedRevision = scenario.authority.composition.revision;
+          }
+          const authorityRows = yield* coreDatabase.execute<{ readonly phase: string; readonly revision: string }>(
+            sql`select phase, revision from core.application_composition_authority where authority_key = 'active'`,
+            'objects',
+          );
+          expect(one(authorityRows, 'published composition authority'), scenario.label).toMatchObject({
+            phase: 'active',
+            revision: scenario.authority.composition.revision,
+          });
+          const runtime = yield* configuredRuntime(gateway, commonEnvironment, scenario.snapshotDocument);
           const marketId = randomUUID();
           const marketRef = {
             moduleId: 'commerce.market-catalog',
@@ -573,32 +687,32 @@ it.live(
           yield* fixture.grantResourceAccess(marketRef, fixture.manager.principalId, 'reader');
           const response = yield* send(
             runtime,
-            yield* authorizedRequest(database, gateway, principal, '/reads/market-affected-use-assessment', {
-              evaluatedAt: clock.evaluated_at,
-              marketRef,
-              marketRevision: 1,
-              tenantId: fixture.tenantId,
-            }),
+            yield* authorizedRequest(
+              database,
+              gateway,
+              scenario.authority.composition.revision,
+              principal,
+              '/reads/market-affected-use-assessment',
+              {
+                evaluatedAt: clock.evaluated_at,
+                marketRef,
+                marketRevision: 1,
+                tenantId: fixture.tenantId,
+              },
+            ),
           );
           expect(response.status, scenario.label).toBe(scenario.status);
-          if (scenario.label === 'expired') {
-            const assessment = yield* jsonBody(response).pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(MarketAffectedUseAssessmentResponseSchema)),
-            );
-            expect(assessment.outcome).toBe('STALE');
-            if (assessment.outcome === 'STALE') {
-              expect(assessment.staleSourceIds).toEqual([
-                'application-composition:commerce.cart:UNIMPLEMENTED',
-                'application-composition:commerce.order:UNIMPLEMENTED',
-              ]);
-            }
-          } else {
-            expect(yield* Effect.promise(() => response.clone().json())).toMatchObject({
-              retryable: true,
-              status: 503,
-              type: 'https://ontos.dev/problems/read-unavailable',
-            });
-          }
+          expect(yield* Effect.promise(() => response.clone().json())).toMatchObject({
+            retryable: true,
+            status: 503,
+            type: 'https://ontos.dev/problems/read-unavailable',
+          });
+          const reservations = yield* database.execute<{ readonly count: string }>(
+            sql`select count(*)::text as count from commerce_customer_context.market_retirement_reservations
+                where tenant_id = ${fixture.tenantId}::uuid`,
+            'objects',
+          );
+          expect(one(reservations, 'native reservation count').count, scenario.label).toBe('0');
         }
       }),
     ),
@@ -611,25 +725,28 @@ it.live(
     Effect.scoped(
       Effect.gen(function* liveReferenceRejection() {
         const connections = yield* loadDatabaseConnectionPair({ envPath: '/dev/null' });
+        const { admin: adminClient } = yield* testDatabaseClients;
+        const database = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
+        const coreDatabase = yield* makeTestDatabaseFromClient(adminClient, coreRelations);
+        const clock = yield* readAcceptanceClock(database);
+        const snapshot = yield* compositionSnapshot(clock);
+        yield* coreDatabase.transaction((transaction) => publishApplicationCompositionAuthority(transaction, snapshot));
         const fixture = yield* makeLiveOperationFixture({
           actionKeys: [ACTION_KEY],
           authenticationNamespaceId: COMMERCE_AUTHENTICATION_NAMESPACE_ID,
-          compositionRevision: COMPOSITION_REVISION,
+          compositionRevision: snapshot.composition.revision,
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
-        const { admin: adminClient } = yield* testDatabaseClients;
-        const database = yield* makeTestDatabaseFromClient(adminClient, commerceCustomerContextRelations);
-        yield* activateCustomerContext(database, fixture.tenantId);
         const cleanup = cleanupOwnerRows(database, fixture.tenantId);
-        yield* cleanup();
         yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
+        yield* cleanup();
+        yield* activateCustomerContext(database, fixture.tenantId);
         const spiceDb = yield* installAssessmentPermission({
           legalEntityId: fixture.legalEntityId,
           principalId: fixture.manager.principalId,
           tenantId: fixture.tenantId,
         });
-        const clock = yield* readAcceptanceClock(database);
         const marketId = randomUUID();
         yield* seedBootstrapReference(database, {
           evaluatedAt: clock.evaluated_at,
@@ -640,13 +757,16 @@ it.live(
           tenantId: fixture.tenantId,
         });
         const gateway = yield* makeAcceptanceGatewayIssuer(ISSUER, `${KEY_ID}-live-reference`);
-        const runtime = yield* configuredRuntime(gateway, {
-          DATABASE_URL: connections.runtime.connectionString,
-          ONTOS_ACTIVE_APPLICATION_COMPOSITION_SNAPSHOT_JSON: compositionSnapshot(clock),
-          SPICEDB_CA_CERT: spiceDb.caCertificate,
-          SPICEDB_ENDPOINT: spiceDb.endpoint,
-          SPICEDB_PRESHARED_KEY: spiceDb.preSharedKey,
-        });
+        const runtime = yield* configuredRuntime(
+          gateway,
+          {
+            DATABASE_URL: connections.runtime.connectionString,
+            SPICEDB_CA_CERT: spiceDb.caCertificate,
+            SPICEDB_ENDPOINT: spiceDb.endpoint,
+            SPICEDB_PRESHARED_KEY: spiceDb.preSharedKey,
+          },
+          yield* Schema.encodeEffect(Schema.fromJsonString(ActiveApplicationCompositionSnapshotSchema))(snapshot),
+        );
         const marketRef = {
           moduleId: 'commerce.market-catalog',
           resourceId: marketId,
@@ -659,6 +779,7 @@ it.live(
           yield* authorizedRequest(
             database,
             gateway,
+            snapshot.composition.revision,
             {
               authBindingId: fixture.manager.authBindingId,
               legalEntityId: fixture.legalEntityId,
@@ -688,6 +809,7 @@ it.live(
           yield* authorizedRequest(
             database,
             gateway,
+            snapshot.composition.revision,
             {
               authBindingId: fixture.manager.authBindingId,
               legalEntityId: fixture.legalEntityId,
