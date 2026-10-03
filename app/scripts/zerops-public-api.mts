@@ -1,5 +1,5 @@
-import { Config, Context, Duration, Effect, Layer, Option, Redacted, Schedule, Schema } from 'effect';
-import { HttpClient, HttpClientRequest } from 'effect/unstable/http';
+import { Config, Context, Duration, Effect, Layer, Match, Option, Redacted, Schedule, Schema, Stream } from 'effect';
+import { HttpClient, HttpClientError, HttpClientRequest } from 'effect/unstable/http';
 
 import { ZeropsApiError } from './zerops-public-api-error.mts';
 
@@ -19,6 +19,7 @@ const REQUEST_TIMEOUT = Duration.seconds(30);
 const PROJECT_ENV_FILE_QUERY = 'name=&overrideEnvIsolation=none&userOnly=false&reveal=false';
 const PROCESS_POLL_INTERVAL = Duration.seconds(3);
 const PROCESS_TIMEOUT = Duration.minutes(15);
+const STOP_READBACK_TIMEOUT = Duration.seconds(60);
 
 const ZeropsClientIdSchema = Schema.NonEmptyString.pipe(Schema.brand('ZeropsClientId'));
 const ZeropsEnvIdSchema = Schema.NonEmptyString.pipe(Schema.brand('ZeropsEnvId'));
@@ -44,6 +45,7 @@ const ServiceStackSchema = Schema.Struct({
   status: Schema.String,
   subdomainAccess: Schema.Boolean,
 });
+const StopServiceStackSchema = Schema.Struct({ ...ServiceStackSchema.fields, id: Schema.NonEmptyString });
 /** Native identity needed before permanently retiring an executable service. */
 const ServiceStackIdentitySchema = Schema.Struct({
   base: Schema.NonEmptyString,
@@ -117,6 +119,7 @@ export interface ZeropsPublicApiService {
    */
   readonly serviceSecrets: (serviceId: string) => Effect.Effect<ReadonlyMap<string, Redacted.Redacted>, ZeropsApiError>;
   readonly serviceStack: (serviceId: string) => Effect.Effect<ZeropsServiceStack, ZeropsApiError>;
+  /** Waits for the native stop process and independently reads the service as STOPPED. */
   readonly stopService: (serviceId: string) => Effect.Effect<void, ZeropsApiError>;
   /** Creates the project variable, or updates it in place when it exists, and waits until Zerops applied it. */
   readonly upsertProjectEnv: (
@@ -131,6 +134,101 @@ export interface ZeropsPublicApiService {
 export class ZeropsPublicApi extends Context.Service<ZeropsPublicApi, ZeropsPublicApiService>()(
   '@app/scripts/zerops-public-api/ZeropsPublicApi',
 ) {}
+
+const awaitStoppedService = Effect.fn('ZeropsPublicApi.awaitStoppedService')(function* awaitStoppedService(
+  authorizedClient: HttpClient.HttpClient.With<Config.ConfigError | HttpClientError.HttpClientError>,
+  serviceId: string,
+) {
+  let lastRead = 'no response';
+  const readStopped = Effect.gen(function* readStoppedService() {
+    const response = yield* authorizedClient
+      .execute(HttpClientRequest.get(`${ZEROPS_PUBLIC_API_URL}/service-stack/${serviceId}`))
+      .pipe(
+        Effect.map(Option.some),
+        Effect.catchIf(
+          (error) =>
+            HttpClientError.isHttpClientError(error) &&
+            Match.value(error.reason).pipe(
+              Match.tag('TransportError', () => true),
+              Match.orElse(() => false),
+            ),
+          () =>
+            Effect.sync(() => {
+              lastRead = 'transport failure';
+              return Option.none();
+            }),
+        ),
+        Effect.mapError(() => new ZeropsApiError({ message: 'Zerops service stop readback request failed' })),
+        Effect.timeoutOrElse({
+          duration: REQUEST_TIMEOUT,
+          orElse: () =>
+            Effect.sync(() => {
+              lastRead = 'request timed out';
+              return Option.none();
+            }),
+        }),
+      );
+    if (Option.isNone(response)) {
+      return false;
+    }
+    const { status } = response.value;
+    lastRead = `HTTP ${String(status)}`;
+    if (status === 429 || (status >= 500 && status <= 599)) {
+      yield* response.value.stream.pipe(
+        Stream.runDrain,
+        Effect.timeoutOrElse({ duration: REQUEST_TIMEOUT, orElse: () => Effect.void }),
+        Effect.ignore,
+      );
+      return false;
+    }
+    if (status >= 200 && status < 300) {
+      const body = yield* response.value.json.pipe(
+        Effect.mapError(() => new ZeropsApiError({ message: 'Zerops service stop readback returned invalid JSON' })),
+      );
+      const service = yield* Schema.decodeUnknownEffect(StopServiceStackSchema)(body).pipe(
+        Effect.mapError(
+          () => new ZeropsApiError({ message: 'Zerops service stop readback returned an invalid service state' }),
+        ),
+      );
+      if (service.id !== serviceId) {
+        return yield* new ZeropsApiError({
+          message: 'Zerops service stop readback returned a different service identity',
+        });
+      }
+      const lifecycle = /^[A-Z][A-Z_]{0,31}$/u.test(service.status) ? service.status : 'unknown';
+      lastRead += `; status ${lifecycle}`;
+      return service.status === 'STOPPED';
+    }
+    if (status === 400) {
+      const body = yield* response.value.json.pipe(
+        Effect.mapError(() => new ZeropsApiError({ message: 'Zerops service stop readback returned invalid JSON' })),
+      );
+      if (
+        Schema.decodeUnknownOption(ErrorBodySchema)(body).pipe(
+          Option.exists(({ error }) => error.code === SERVICE_STACK_NOT_FOUND),
+        )
+      ) {
+        return yield* new ZeropsApiError({ message: 'Zerops service disappeared while verifying its stop' });
+      }
+    }
+    return yield* new ZeropsApiError({ message: `Zerops service stop readback failed with HTTP ${String(status)}` });
+  });
+  yield* readStopped.pipe(
+    Effect.repeat({
+      schedule: Schedule.spaced(PROCESS_POLL_INTERVAL),
+      until: (stopped) => stopped,
+    }),
+    Effect.timeoutOrElse({
+      duration: STOP_READBACK_TIMEOUT,
+      orElse: () =>
+        Effect.fail(
+          new ZeropsApiError({
+            message: `Zerops service did not become STOPPED within 60 seconds; last read: ${lastRead}`,
+          }),
+        ),
+    }),
+  );
+});
 
 const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
   const baseClient = yield* HttpClient.HttpClient;
@@ -328,7 +426,8 @@ const makeZeropsPublicApi = Effect.gen(function* makeZeropsPublicApi() {
     projectEnvs,
     serviceSecrets,
     serviceStack: (serviceId) => get(`/service-stack/${serviceId}`, ServiceStackSchema, 'service read'),
-    stopService: (serviceId) => serviceAction(serviceId, 'stop'),
+    stopService: (serviceId) =>
+      serviceAction(serviceId, 'stop').pipe(Effect.andThen(awaitStoppedService(authorizedClient, serviceId))),
     upsertProjectEnv,
   });
 });

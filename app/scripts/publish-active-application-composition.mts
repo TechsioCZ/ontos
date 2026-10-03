@@ -707,15 +707,12 @@ const migrateCommand = Command.make(
             }),
           ),
         () =>
-          Effect.gen(function* stopCompletedRemoteMigrator() {
-            yield* api.stopService(serviceId);
-            const stopped = yield* api.findServiceStack(serviceId);
-            if (Option.isNone(stopped) || stopped.value.status !== 'STOPPED') {
-              return yield* providerFailure('The native migrator did not stop after its deployment')();
-            }
-            return yield* Effect.void;
-          }).pipe(
-            Effect.mapError(providerFailure('The native migrator could not be independently verified as stopped')),
+          api.stopService(serviceId).pipe(
+            Effect.mapError((failure) =>
+              providerFailure(
+                `The native migrator could not be independently verified as stopped: ${failure.message}`,
+              )(),
+            ),
             Effect.orDie,
           ),
       );
