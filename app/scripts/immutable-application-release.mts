@@ -757,7 +757,17 @@ export const validateImmutableAssetRedirects = Effect.fn('ImmutableApplicationRe
 export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.assetReadback')(
   function* verifyRetainedPublicAssetEffect(plan: ImmutableApplicationReleasePlan, file: ReleaseFile) {
     const client = yield* HttpClient.HttpClient;
-    const response = yield* client.get(`${plan.assetsOrigin}${file.path}`);
+    const encodedPath = file.path
+      .split('/')
+      .map((segment) => encodeURIComponent(segment).replaceAll('(', '%28').replaceAll(')', '%29'))
+      .join('/');
+    const response = yield* client.get(`${plan.assetsOrigin}${encodedPath}`);
+    if (response.status !== 200) {
+      return yield* fail('the deployed immutable public asset did not return HTTP 200', {
+        path: file.path,
+        status: response.status,
+      });
+    }
     const bytes = new Uint8Array(file.bytes.byteLength);
     const receivedSize = yield* response.stream.pipe(
       Stream.runFoldEffect(
@@ -774,7 +784,6 @@ export const verifyRetainedPublicAsset = Effect.fn('ImmutableApplicationRelease.
       ),
     );
     if (
-      response.status !== 200 ||
       receivedSize !== file.bytes.byteLength ||
       hash(bytes) !== hash(file.bytes) ||
       response.headers['access-control-allow-origin'] !== '*' ||

@@ -654,9 +654,19 @@ for (const secretResponse of [
           const appDirectory = nodePath.join(workspaceRoot, 'apps', APP_ID);
           const plan = yield* planFor();
           const maps = ['.map', '.map.gz', '.map.br'].map((suffix) => file(`main.js${suffix}`));
-          const { output, publicDirectory } = yield* writeNativeShellOutput(appDirectory, plan, maps, false);
+          const encodedAsset = file(
+            '@mf-types/(lang)/Route$.d.ts',
+            text('export interface RouteParams { lang: string }\n'),
+          );
+          const { output, publicDirectory } = yield* writeNativeShellOutput(
+            appDirectory,
+            plan,
+            [...maps, encodedAsset],
+            false,
+          );
           const originalOutput = yield* readReleaseFiles(output);
-          const inventory = inventoryFor(plan);
+          const originalInventory = inventoryFor(plan);
+          const inventory = { assets: [...originalInventory.assets, encodedAsset] };
           const snapshot = yield* deriveActiveApplicationCompositionSnapshot({
             environment: 'stage',
             modules: [],
@@ -678,7 +688,9 @@ for (const secretResponse of [
             requests.push(destination.href);
             events.push(destination.href, request.method === 'PUT' ? 'secret-installation' : 'provider-request');
             const asset = inventory.assets.find(
-              (assetFile) => `${plan.assetsOrigin}${assetFile.path}` === destination.href,
+              (assetFile) =>
+                `${plan.assetsOrigin}${assetFile.path}` ===
+                `${destination.origin}${decodeURIComponent(destination.pathname)}`,
             );
             const response = Match.value(asset).pipe(
               Match.when(
@@ -734,9 +746,11 @@ for (const secretResponse of [
           expect(requests.slice(0, 2)).toEqual([ACCOUNT_SUBDOMAIN_URL, providerUrl]);
           expect(requests.some((url) => url.includes('/dispatch/'))).toBe(false);
           expect(requests.some((url) => url.includes('/secrets'))).toBe(false);
-          for (const asset of inventory.assets) {
+          for (const asset of originalInventory.assets) {
             expect(requests).toContain(`${plan.assetsOrigin}${asset.path}`);
           }
+          expect(requests).toContain(`${plan.assetsOrigin}%40mf-types/%28lang%29/Route%24.d.ts`);
+          expect(requests).not.toContain(`${plan.assetsOrigin}${encodedAsset.path}`);
           const lock = events.findIndex((event) => event.includes(PUBLICATION_LOCK));
           expect(lock).toBeGreaterThanOrEqual(0);
           expect(lock).toBeLessThan(events.indexOf('provider-request'));
@@ -784,6 +798,9 @@ for (const secretResponse of [
           expect(publishedInventories).toHaveLength(2);
           for (const published of publishedInventories) {
             expect(published.some(({ path }) => path === 'main.js')).toBe(true);
+            expect([...(published.find(({ path }) => path === encodedAsset.path)?.bytes ?? [])]).toEqual([
+              ...encodedAsset.bytes,
+            ]);
             for (const map of maps) {
               expect(published.some(({ path }) => path === map.path)).toBe(false);
               expect(requests).not.toContain(`${plan.assetsOrigin}${map.path}`);

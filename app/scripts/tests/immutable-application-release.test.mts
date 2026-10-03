@@ -72,6 +72,7 @@ const WRANGLER_CONFIG_PATH = 'wrangler.json';
 const WORKER_METADATA_PATH = 'server/modern-worker-manifest.json';
 const BACKEND_ENTRY_PATH = 'server/index.mjs';
 const OWNER_SECRET_VALUE = 'owned-release-test-binding';
+const ASSET_READBACK_FAILURE = 'immutable release asset readback failed or exceeded its timeout';
 const text = (value: string) => new TextEncoder().encode(value);
 const json = (value: Schema.Json) => text(JSON.stringify(value));
 const file = (path: string, bytes = text('retained release bytes')) => ({ bytes, path });
@@ -949,6 +950,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
     readonly accountSubdomain?: string;
     readonly additionalPublicFiles?: readonly ReleaseFile[];
     readonly assetDeploymentPercentage?: number;
+    readonly assetStatus?: number;
     readonly backendDeploymentVersions?: readonly { readonly percentage: number; readonly version_id: string }[];
     readonly backendSubdomainEnabled?: boolean;
     readonly backendSubdomainStatus?: number;
@@ -1103,7 +1105,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
         response = providerResponse(destination);
       } else {
         yield* Deferred.succeed(assetReadStarted, true);
-        const asset = inventory.assets.find(({ path }) => destination.pathname === `/${path}`);
+        const asset = nativeAssets.find(({ path }) => decodeURIComponent(destination.pathname) === `/${path}`);
         let body: ArrayBuffer | ReadableStream<Uint8Array> | undefined =
           asset === undefined ? undefined : new Uint8Array(asset.bytes).buffer;
         if (options.stallAssetBody === true) {
@@ -1121,7 +1123,7 @@ const prepareDeployment = Effect.fn('test.prepareImmutableRelease')(function* pr
             'cache-control': 'public, max-age=31536000, immutable',
             'x-content-type-options': 'nosniff',
           },
-          status: asset === undefined ? 404 : 200,
+          status: asset === undefined ? 404 : (options.assetStatus ?? 200),
         });
       }
       return HttpClientResponse.fromWeb(request, response);
@@ -1216,21 +1218,33 @@ it.effect('publishes native route chunks without exposing compiler source maps o
   Effect.scoped(
     Effect.gen(function* nativePublicPartition() {
       const nativePage = NATIVE_PAGE_JS_PATH;
+      const encodedNativePage = 'static/js/async/%28lang%29/%24.e213690cdf.js';
+      const nativeTypes = file('@mf-types/Route.d.ts', text('export declare const route: string;'));
       const maps = ['.map', '.map.gz', '.map.br'].map((suffix) => file(`${nativePage}${suffix}`));
-      const fixture = yield* prepareDeployment({ additionalPublicFiles: maps, pageJsPath: nativePage });
+      const fixture = yield* prepareDeployment({
+        additionalPublicFiles: [...maps, nativeTypes],
+        pageJsPath: nativePage,
+      });
       const before = yield* readReleaseFiles(fixture.output);
       const receipt = yield* fixture.deploy;
       expect(receipt.assetsVersionId).toBe(ASSETS_VERSION_ID);
       expect(fixture.publishedInventories).toHaveLength(3);
       for (const published of fixture.publishedInventories) {
         expect(published.some(({ path }) => path === nativePage)).toBe(true);
+        expect(published).toContainEqual(nativeTypes);
         for (const map of maps) {
           expect(published.some(({ path }) => path === map.path)).toBe(false);
         }
       }
-      expect(fixture.requests).toContain(`${fixture.plan.assetsOrigin}${nativePage}`);
+      expect(fixture.requests).toContain(`${fixture.plan.assetsOrigin}${encodedNativePage}`);
+      expect(fixture.requests).toContain(`${fixture.plan.assetsOrigin}%40mf-types/Route.d.ts`);
+      expect(fixture.requests).not.toContain(`${fixture.plan.assetsOrigin}${nativePage}`);
+      expect(fixture.requests).not.toContain(`${fixture.plan.assetsOrigin}${nativeTypes.path}`);
       for (const map of maps) {
         expect(fixture.requests).not.toContain(`${fixture.plan.assetsOrigin}${map.path}`);
+        expect(fixture.requests).not.toContain(
+          `${fixture.plan.assetsOrigin}${encodedNativePage}${map.path.slice(nativePage.length)}`,
+        );
       }
       expect(yield* readReleaseFiles(fixture.output)).toEqual(before);
     }),
@@ -1380,7 +1394,7 @@ it.effect('times out stalled asset body readback after successful response heade
       yield* Deferred.await(fixture.assetReadStarted);
       yield* TestClock.adjust('30 seconds');
       const failure = yield* Fiber.join(fiber);
-      expect(failure.message).toBe('immutable release asset readback failed or exceeded its timeout');
+      expect(failure.message).toBe(ASSET_READBACK_FAILURE);
       expect(fixture.canceledAssetBodies()).toBeGreaterThan(0);
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
@@ -1455,7 +1469,20 @@ it.effect('bounds deployed asset response bytes by the exact compiled file size'
     Effect.gen(function* oversizedPublicArtifact() {
       const fixture = yield* prepareDeployment({ oversizedAssetBody: true });
       const failure = yield* fixture.deploy.pipe(Effect.flip);
-      expect(failure.message).toBe('immutable release asset readback failed or exceeded its timeout');
+      expect(failure.message).toBe(ASSET_READBACK_FAILURE);
+    }),
+  ).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('reports the retained asset HTTP status before reading an oversized error response body', () =>
+  Effect.scoped(
+    Effect.gen(function* oversizedNotFoundBody() {
+      const fixture = yield* prepareDeployment({ assetStatus: 404, oversizedAssetBody: true });
+      const failure = yield* fixture.deploy.pipe(Effect.flip);
+      expect(failure.message).toBe(ASSET_READBACK_FAILURE);
+      const cause = yield* Schema.decodeUnknownEffect(ImmutableApplicationReleaseError)(failure.cause);
+      expect(cause.message).toBe('the deployed immutable public asset did not return HTTP 200');
+      expect(cause.cause).toEqual({ path: CONTRACT_PATH, status: 404 });
     }),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
