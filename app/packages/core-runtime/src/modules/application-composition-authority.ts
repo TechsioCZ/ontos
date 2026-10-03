@@ -328,10 +328,12 @@ export const publishApplicationCompositionAuthority = Effect.fn('ApplicationComp
     yield* Effect.logInfo('Publication authority fence started');
     yield* lockApplicationCompositionPublication(transaction);
     yield* Effect.logInfo('Publication authority fence returned');
+    yield* Effect.logInfo('Publication freshness query started');
     const [validity] = yield* transaction.execute<{ readonly unexpired: boolean }>(
       sql`select ${DateTime.toDateUtc(snapshot.validUntil)}::timestamptz > clock_timestamp() as unexpired`,
       'objects',
     );
+    yield* Effect.logInfo('Publication freshness query returned');
     if (validity?.unexpired !== true) {
       return yield* unavailable('Expired Application Composition authority cannot be published');
     }
