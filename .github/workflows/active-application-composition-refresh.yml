@@ -7,120 +7,34 @@ defaults:
   run:
     shell: bash
 jobs:
-  finish-retained-stage:
-    name: Publish and activate the retained stage release
+  stage-hostnames:
+    name: Inspect the failing stage module hostname routing
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 3
     environment:
       name: stage-edge
       deployment: false
-    concurrency:
-      group: zerops-stage
-      cancel-in-progress: false
-    permissions:
-      actions: read
-      contents: read
-    env:
-      DEPLOY_TARGET: cloudflare
-      OUTBOX_WORKER_MODE: host
-      ZEROPS_PROJECT_ID: ${{ vars.ZEROPS_PROJECT_ID }}
-      ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL: ${{ vars.ONTOS_ACTIVE_APPLICATION_COMPOSITION_URL }}
-      ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE: ${{ vars.ONTOS_INITIAL_COMPOSITION_EXECUTION_INVENTORY_FILE }}
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      DATABASE_URL: ${{ secrets.DATABASE_URL }}
-      DATABASE_ADMIN_URL: ${{ secrets.DATABASE_ADMIN_URL }}
     steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5
-        with:
-          egress-policy: audit
-      - name: Checkout the native VPN transport fix
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          persist-credentials: false
-      - name: Install the app workspace
-        uses: ./.github/actions/install-app
-      - name: Connect the runner to the private Zerops database network
-        id: composition-vpn
-        uses: ./.github/actions/zerops-vpn
-        with:
-          operation: connect
-          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
-          token: ${{ secrets.ZEROPS_TOKEN }}
-          database-url: ${{ secrets.DATABASE_URL }}
-          database-admin-url: ${{ secrets.DATABASE_ADMIN_URL }}
-      - name: Checkout the exact retained release source
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
-        with:
-          ref: 66d6b02390cf24d6594987299fd091c3eb2d69d5
-          fetch-depth: 1
-          persist-credentials: false
-          clean: true
-      - name: Install the retained release workspace
-        uses: ./.github/actions/install-app
-      - name: Download the retained approved candidate
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: approved-application-composition-candidate
-          path: ${{ runner.temp }}/composition-candidate
-          github-token: ${{ github.token }}
-          run-id: 37155123700
-      - name: Download the completed initial quiescence receipt
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: initial-composition-cutover-receipt
-          path: ${{ runner.temp }}/initial-composition-cutover
-          github-token: ${{ github.token }}
-          run-id: 37111714997
-      - name: Download the exact retained Shell build
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: edge-unit-shell-super-app
-          path: ${{ runner.temp }}/shell-build
-          github-token: ${{ github.token }}
-          run-id: 37155123700
-      - name: Download the exact retained Shell receipt
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: shell-artifact-release-receipt
-          path: ${{ runner.temp }}/shell-receipt
-          github-token: ${{ github.token }}
-          run-id: 37155123700
-      - name: Publish the complete observed release
-        timeout-minutes: 5
-        working-directory: app
+      - name: Inspect the configured provider DNS and Access destinations
         env:
-          STAGE_VARIABLES_JSON: ${{ toJSON(vars) }}
-          ZEROPS_TOKEN: ${{ secrets.ZEROPS_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
-          export ONTOS_INITIAL_COMPOSITION_CUTOVER_RECEIPT_FILE="$RUNNER_TEMP/initial-composition-cutover/initial-composition-cutover-receipt.json"
-          mise exec -- pnpm active-composition:publish publish --environment stage \
-            --candidate-file "$RUNNER_TEMP/composition-candidate/active-application-composition-candidate.json"
-      - name: Unpack the approved Shell build
-        working-directory: app
-        run: |
-          tar --extract --zstd --file "$RUNNER_TEMP/shell-build/edge-unit.tar.zst"
-          test -f apps/shell-super-app/.output/wrangler.json
-          test -f .codex/reports/releases/shell-super-app/plan.json
-          git diff --exit-code HEAD
-      - name: Activate the currently approved Shell ingress
-        timeout-minutes: 20
-        working-directory: app
-        env:
-          ALL_RELEASE_SECRETS: ${{ secrets.ONTOS_IMMUTABLE_RELEASE_SECRETS }}
-        run: |
-          export ONTOS_IMMUTABLE_RELEASE_SECRETS
-          ONTOS_IMMUTABLE_RELEASE_SECRETS="$(jq -cer '.["shell-super-app"] | select(type == "object")' <<<"$ALL_RELEASE_SECRETS")"
-          mise exec -- pnpm exec node scripts/immutable-shell-release.mts ingress-deploy \
-            --app-directory apps/shell-super-app \
-            --receipt-file "$RUNNER_TEMP/shell-receipt/shell-super-app.json"
-      - name: Clear the runner-owned Zerops VPN
-        if: always() && steps.composition-vpn.outputs.state-directory != ''
-        uses: ./.github/actions/zerops-vpn
-        with:
-          operation: clear
-          project-id: ${{ vars.ZEROPS_PROJECT_ID }}
-          token: ${{ secrets.ZEROPS_TOKEN }}
-          state-directory: ${{ steps.composition-vpn.outputs.state-directory }}
-          cli-path: ${{ steps.composition-vpn.outputs.cli-path }}
+          python3 - <<'PYTHON'
+          import json, os, urllib.request, urllib.error
+          base='https://api.cloudflare.com/client/v4'
+          zone='5f2fa51dab472aea051ce9d1bc3555bd'
+          account='e8608e0073bff00c7875f171ac38b8c6'
+          endpoints=[('dns','/zones/'+zone+'/dns_records?per_page=100'),('zone-access','/zones/'+zone+'/access/apps'),('account-access','/accounts/'+account+'/access/apps')]
+          for label,path in endpoints:
+              request=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
+              try:
+                  with urllib.request.urlopen(request,timeout=12) as response: data=json.load(response)
+                  if label=='dns':
+                      records=[{k:x.get(k) for k in ['id','name','type','content','proxied','ttl']} for x in data.get('result',[]) if 'ontos-stage' in x.get('name','') or x.get('name')=='*.bleeding.dev']
+                  else:
+                      records=[{k:x.get(k) for k in ['id','name','domain','type','destinations','self_hosted_domains']} for x in data.get('result',[]) if 'ontos' in x.get('name','').lower() or 'ontos' in x.get('domain','')]
+                  print(json.dumps({'kind':label,'success':data.get('success'),'records':records}))
+              except urllib.error.HTTPError as error:
+                  data=json.load(error)
+                  print(json.dumps({'kind':label,'httpStatus':error.code,'errors':data.get('errors')}))
+          PYTHON
