@@ -151,9 +151,8 @@ it.effect('provisions every cost guard on an empty account and hands CI the zone
 );
 
 const PEOPLE_POLICY = 'ontos-stage-people';
-const FEDERATION_PATHS = ['/mf-manifest.json', '/remoteEntry.js', '/static/*', '/locales/*'];
 
-it.effect('gates every stage hostname behind one Access application only when enforced', () =>
+it.effect('gates only the Shell ingress even when the cost plan includes retired module hostnames', () =>
   Effect.gen(function* enforcesAccess() {
     const account = fakeCloudflareAccount({});
     const stage = fakeStage({});
@@ -164,7 +163,6 @@ it.effect('gates every stage hostname behind one Access application only when en
       stage,
     });
 
-    const verticals = HOSTNAMES.filter((hostname) => hostname !== SHELL_HOSTNAME);
     const app = (name: string, destinations: string[], policies: { id: string; precedence: number }[]) => ({
       body: {
         app_launcher_visible: false,
@@ -180,25 +178,22 @@ it.effect('gates every stage hostname behind one Access application only when en
     expect(writes(account).filter(({ path }) => path === ACCESS_APPS)).toStrictEqual([
       app(
         'ontos-stage-public-paths',
-        [
-          `${SHELL_HOSTNAME}/shell-super-app-api/auth/api-key/gateway-context`,
-          ...verticals.flatMap((hostname) => FEDERATION_PATHS.map((path) => `${hostname}${path}`)),
-        ],
+        [`${SHELL_HOSTNAME}/shell-super-app-api/auth/api-key/gateway-context`],
         [{ id: 'policy-3', precedence: 1 }],
       ),
       app(
         'ontos-stage-contracts',
-        [
-          `${SHELL_HOSTNAME}/.well-known/ontos-shell-runtime.json`,
-          `${SHELL_HOSTNAME}/mf-manifest.json`,
-          ...verticals.map((hostname) => `${hostname}/.well-known/ontos-module-manifest.json`),
-        ],
+        [`${SHELL_HOSTNAME}/.well-known/ontos-shell-runtime.json`, `${SHELL_HOSTNAME}/mf-manifest.json`],
         [{ id: 'policy-3', precedence: 1 }],
       ),
-      app('ontos-stage', HOSTNAMES, [
-        { id: 'policy-2', precedence: 1 },
-        { id: 'policy-1', precedence: 2 },
-      ]),
+      app(
+        'ontos-stage',
+        [SHELL_HOSTNAME],
+        [
+          { id: 'policy-2', precedence: 1 },
+          { id: 'policy-1', precedence: 2 },
+        ],
+      ),
     ]);
     expect(account.accessPolicies.find(({ name }) => name === PEOPLE_POLICY)).toMatchObject({
       decision: 'allow',
@@ -238,6 +233,40 @@ it.effect('gates every stage hostname behind one Access application only when en
       policies: [{ id: 'policy-3', precedence: 1 }],
     });
     expect((yield* accessChecks()).at(-1)).toStrictEqual(Option.some('it drifted; run cost-guards'));
+  }),
+);
+
+it.effect('detects and removes retired Access destinations while keeping application IDs and policies', () =>
+  Effect.gen(function* removesRetiredDestinations() {
+    const account = fakeCloudflareAccount({});
+    const stage = fakeStage({});
+    const enforced = { ...settings, enforceAccess: true };
+    yield* run(provisionCostGuards, { account, settings: enforced, stage });
+    const current = [...account.accessApps];
+    account.accessApps.splice(
+      0,
+      account.accessApps.length,
+      ...current.map((app) => ({
+        ...app,
+        destinations: [{ type: 'public', uri: HOSTNAMES[0] }],
+      })),
+    );
+
+    const checks = yield* run(costGuardChecks({ ...enforced, hostnames: HOSTNAMES }), { account, stage });
+    expect(
+      checks.filter(([label]) => label.includes('Access application')).map(([, failure]) => failure),
+    ).toStrictEqual(Array.from({ length: 3 }, () => Option.some('it drifted; run cost-guards')));
+
+    const before = writes(account).length;
+    yield* run(provisionCostGuards, { account, settings: enforced, stage });
+
+    expect(account.accessApps).toStrictEqual(current);
+    expect(
+      writes(account)
+        .slice(before)
+        .filter(({ path }) => path.startsWith(ACCESS_APPS))
+        .map(({ method }) => method),
+    ).toStrictEqual(['PUT', 'PUT', 'PUT']);
   }),
 );
 

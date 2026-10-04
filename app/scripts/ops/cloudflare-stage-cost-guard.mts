@@ -4,10 +4,7 @@ import { Config, Console, Context, DateTime, Effect, Layer, Option, Redacted, Sc
 import { Command } from 'effect/unstable/cli';
 import { FetchHttpClient } from 'effect/unstable/http';
 
-import {
-  ONTOS_MODULE_CONTRACT_PATH,
-  ONTOS_SHELL_RUNTIME_CONTRACT_PATH,
-} from '../../packages/core-runtime/src/index.ts';
+import { ONTOS_SHELL_RUNTIME_CONTRACT_PATH } from '../../packages/core-runtime/src/index.ts';
 import type { CloudflareApiError } from './cloudflare-api-error.mts';
 import { CloudflareApi, CloudflareApiLive, CloudflareCredentials } from './cloudflare-api.mts';
 import type {
@@ -42,9 +39,9 @@ import {
  * trips the kill switch once the billing cycle's usage crosses the threshold.
  *
  * - Access: a reusable policy admitting anyone who signs in, a CI service token whose credentials
- *   stage-edge holds, and, only with STAGE_ACCESS_ENFORCE=true, one Access application on every
- *   stage hostname plus a bypass application for the paths a browser loads cross-origin without an
- *   Access session (federated remotes) or a vertical calls with an API key (gateway context).
+ *   stage-edge holds, and, only with STAGE_ACCESS_ENFORCE=true, an Access application on the Shell
+ *   ingress plus bypass applications for its public contracts and API-key gateway context. Immutable
+ *   module artifacts use their own Workers endpoints, outside these Access applications.
  * - A WAF custom rule blocking exactly the OntOS stage hostnames, provisioned disabled. The WAF
  *   answers before a Worker runs, so blocked requests are never billed. There is no rate-limit
  *   rule: the stage zone is shared and on the Free plan, whose rate-limit expressions cannot match
@@ -63,19 +60,10 @@ export const ACCESS_SESSION_DURATION = '720h';
 /** Verticals call this route on the Shell with an API key, never with an Access session. */
 export const GATEWAY_CONTEXT_PATH = '/shell-super-app-api/auth/api-key/gateway-context';
 /**
- * What the Shell page loads from each vertical's own hostname: the federation manifest, the remote
- * entry, its chunks and styles, and its locale JSON. The browser fetches them cross-origin, where
- * the Access cookie of the vertical's hostname does not exist, so they bypass Access. They are the
- * built bundle every visitor downloads anyway; HTML, SSR and APIs stay behind Access.
- */
-export const FEDERATION_ASSET_PATHS = ['/mf-manifest.json', '/remoteEntry.js', '/static/*', '/locales/*'] as const;
-/**
- * The build-time contracts the Application Composition publisher reads from each deployed unit: the
- * Shell's runtime contract and federation manifest, and every vertical's module contract. CI publishes
- * the composition without an Access session, and the files hold build metadata, never data.
+ * Public build metadata exposed by the Shell ingress. Immutable module contracts and federation
+ * assets use the exact Workers endpoints pinned by Application Composition.
  */
 export const SHELL_CONTRACT_PATHS = [ONTOS_SHELL_RUNTIME_CONTRACT_PATH, '/mf-manifest.json'] as const;
-export const VERTICAL_CONTRACT_PATHS = [ONTOS_MODULE_CONTRACT_PATH] as const;
 export const ACCESS_CLIENT_ID_SECRET = 'CLOUDFLARE_ACCESS_CLIENT_ID';
 export const ACCESS_CLIENT_SECRET_SECRET = 'CLOUDFLARE_ACCESS_CLIENT_SECRET';
 export const ZONE_ID_VARIABLE = 'CLOUDFLARE_STAGE_ZONE_ID';
@@ -98,7 +86,7 @@ export const ENABLE_ZERO_TRUST =
 export interface CostGuardPlan {
   /** Who gets the usage notification. */
   readonly accessEmails: readonly string[];
-  /** Puts every stage hostname behind Access; off until cloudflare:proof sends the CI token. */
+  /** Puts the Shell ingress behind Access; off until cloudflare:proof sends the CI token. */
   readonly enforceAccess: boolean;
   /** Every placed unit's public stage hostname: the Shell's and one per vertical. */
   readonly hostnames: readonly string[];
@@ -386,45 +374,35 @@ const ensureServiceToken = (repository: string) =>
   });
 
 /**
- * One application covers every stage hostname, so a login on one is a login on all of them. The
- * bypass applications' paths are the more specific match, so Access lets them through.
+ * Only the Shell ingress participates in Access login. Including retired module hostnames makes
+ * Access redirect the browser to them after login. The bypass paths are the more specific match.
  */
 export const stageAccessApps = (
   plan: CostGuardPlan,
   ids: { bypass: string; ci: string; people: string },
-): AccessAppSpec[] => {
-  const verticals = plan.hostnames.filter((hostname) => hostname !== plan.shellHostname);
-  return [
-    {
-      destinations: [
-        `${plan.shellHostname}${GATEWAY_CONTEXT_PATH}`,
-        ...verticals.flatMap((hostname) => FEDERATION_ASSET_PATHS.map((path) => `${hostname}${path}`)),
-      ],
-      name: PUBLIC_PATHS_APP,
-      policies: [{ id: ids.bypass, precedence: 1 }],
-      sessionDuration: ACCESS_SESSION_DURATION,
-    },
-    // Access caps one application's destinations, so the contracts take a second bypass application.
-    {
-      destinations: [
-        ...SHELL_CONTRACT_PATHS.map((path) => `${plan.shellHostname}${path}`),
-        ...verticals.flatMap((hostname) => VERTICAL_CONTRACT_PATHS.map((path) => `${hostname}${path}`)),
-      ],
-      name: CONTRACT_PATHS_APP,
-      policies: [{ id: ids.bypass, precedence: 1 }],
-      sessionDuration: ACCESS_SESSION_DURATION,
-    },
-    {
-      destinations: [...plan.hostnames],
-      name: STAGE_ACCESS_APP,
-      policies: [
-        { id: ids.people, precedence: 1 },
-        { id: ids.ci, precedence: 2 },
-      ],
-      sessionDuration: ACCESS_SESSION_DURATION,
-    },
-  ];
-};
+): AccessAppSpec[] => [
+  {
+    destinations: [`${plan.shellHostname}${GATEWAY_CONTEXT_PATH}`],
+    name: PUBLIC_PATHS_APP,
+    policies: [{ id: ids.bypass, precedence: 1 }],
+    sessionDuration: ACCESS_SESSION_DURATION,
+  },
+  {
+    destinations: SHELL_CONTRACT_PATHS.map((path) => `${plan.shellHostname}${path}`),
+    name: CONTRACT_PATHS_APP,
+    policies: [{ id: ids.bypass, precedence: 1 }],
+    sessionDuration: ACCESS_SESSION_DURATION,
+  },
+  {
+    destinations: [plan.shellHostname],
+    name: STAGE_ACCESS_APP,
+    policies: [
+      { id: ids.people, precedence: 1 },
+      { id: ids.ci, precedence: 2 },
+    ],
+    sessionDuration: ACCESS_SESSION_DURATION,
+  },
+];
 
 const ensureAccess = (plan: CostGuardPlan) =>
   Effect.gen(function* ensureAccessEffect() {
@@ -435,12 +413,12 @@ const ensureAccess = (plan: CostGuardPlan) =>
     const ci = yield* ensureAccessPolicy(policies, ciPolicy(tokenId));
     // Who may sign in changes only together with the applications, never ahead of them.
     if (!plan.enforceAccess) {
-      return yield* Console.log('the stage hostnames stay outside Access: STAGE_ACCESS_ENFORCE is off');
+      return yield* Console.log('the Shell ingress stays outside Access: STAGE_ACCESS_ENFORCE is off');
     }
     const people = yield* ensureAccessPolicy(policies, peoplePolicy);
     const bypass = yield* ensureAccessPolicy(policies, bypassPolicy);
     const apps = yield* api.accessApps;
-    // The bypass paths must exist before the hostnames are gated.
+    // The bypass paths must exist before the Shell ingress is gated.
     for (const spec of stageAccessApps(plan, { bypass, ci, people })) {
       yield* ensureAccessApp(apps, spec);
     }
