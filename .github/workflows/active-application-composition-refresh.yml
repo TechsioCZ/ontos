@@ -61,7 +61,7 @@ jobs:
           class NoRedirect(urllib.request.HTTPRedirectHandler):
               def redirect_request(self,request,file,code,message,headers,url): return None
           opener=urllib.request.build_opener(NoRedirect())
-          headers={'CF-Access-Client-ID':os.environ['CLOUDFLARE_ACCESS_CLIENT_ID'],'CF-Access-Client-Secret':os.environ['CLOUDFLARE_ACCESS_CLIENT_SECRET']}
+          headers={'CF-Access-Client-ID':os.environ['CLOUDFLARE_ACCESS_CLIENT_ID'],'CF-Access-Client-Secret':os.environ['CLOUDFLARE_ACCESS_CLIENT_SECRET'],'User-Agent':'curl/8.7.1','Accept':'text/html'}
           assert all(headers.values()), 'Existing CI Access credential is missing'
           url='https://'+shell+'/'
           for attempt in range(6):
