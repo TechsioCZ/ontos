@@ -8,7 +8,7 @@ defaults:
     shell: bash
 jobs:
   stage-hostnames:
-    name: Correct the stage Access login destination
+    name: Reconcile stage Access and check the protected Shell
     runs-on: ubuntu-latest
     timeout-minutes: 3
     environment:
@@ -18,38 +18,67 @@ jobs:
       - name: Use the current Shell domain and preserve the Access policy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCESS_CLIENT_ID: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_ID }}
+          CLOUDFLARE_ACCESS_CLIENT_SECRET: ${{ secrets.CLOUDFLARE_ACCESS_CLIENT_SECRET }}
         run: |
           python3 - <<'PYTHON'
-          import json, os, urllib.request
+          import json, os, urllib.request, urllib.error, urllib.parse
           base='https://api.cloudflare.com/client/v4'
           account='e8608e0073bff00c7875f171ac38b8c6'
-          app_id='a2057aba-88ee-4f08-98d6-eb641aaf04c0'
-          path='/accounts/'+account+'/access/apps/'+app_id
           shell='ontos-stage.bleeding.dev'
-          expected_aud='aea669b58c0c99c2797499ad2ee5d959b8c299342ca2ac402e420901a857c1ff'
           def api(resource, method='GET', body=None):
               request=urllib.request.Request(base+resource,method=method,data=None if body is None else json.dumps(body).encode(),headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN'],'Content-Type':'application/json'})
               with urllib.request.urlopen(request,timeout=15) as response: data=json.load(response)
               assert data.get('success'), 'Provider rejected Access request'
               return data['result']
-          before=api(path)
-          policies_before=api(path+'/policies')
-          assert before['id']==app_id and before['name']=='ontos-stage' and before['type']=='self_hosted'
-          assert before['aud']==expected_aud, 'Access audience changed before repair'
-          domains=before.get('self_hosted_domains',[])
-          assert shell in domains and all(x==shell or x.startswith('ontos-stage-') and x.endswith('.bleeding.dev') for x in domains), 'Unexpected domain outside staging scope'
+          plans=[
+              ('a2057aba-88ee-4f08-98d6-eb641aaf04c0','ontos-stage',[shell]),
+              ('6021cd63-9609-4c6e-9ac1-f390d215e89a','ontos-stage-contracts',[shell+'/.well-known/ontos-shell-runtime.json',shell+'/mf-manifest.json']),
+              ('f3227224-0b79-4782-87bb-a8fd6c66ff5d','ontos-stage-public-paths',[shell+'/shell-super-app-api/auth/api-key/gateway-context']),
+          ]
           readonly={'id','aud','created_at','updated_at'}
-          body={k:v for k,v in before.items() if k not in readonly}
-          body.update(domain=shell,self_hosted_domains=[shell],destinations=[{'type':'public','uri':shell}])
-          print(json.dumps({'kind':'before','id':app_id,'domain':before['domain'],'destinations':before.get('destinations'),'policyCount':len(policies_before),'preservedFieldNames':sorted(set(body)-{'domain','self_hosted_domains','destinations'})}))
-          api(path,'PUT',body)
-          after=api(path)
-          policies_after=api(path+'/policies')
-          assert after['aud']==expected_aud
-          assert after['domain']==shell and after['self_hosted_domains']==[shell]
-          assert after['destinations']==[{'type':'public','uri':shell}]
-          assert json.dumps(policies_before,sort_keys=True)==json.dumps(policies_after,sort_keys=True), 'Access policy changed'
           ignored=readonly|{'domain','self_hosted_domains','destinations'}
-          assert {k:v for k,v in before.items() if k not in ignored}=={k:v for k,v in after.items() if k not in ignored}, 'Unrelated Access settings changed'
-          print(json.dumps({'kind':'verified','id':app_id,'domain':after['domain'],'destinations':after['destinations'],'policyCount':len(policies_after),'audienceUnchanged':True,'policiesUnchanged':True,'otherSettingsUnchanged':True}))
+          for app_id,name,domains in plans:
+              path='/accounts/'+account+'/access/apps/'+app_id
+              before=api(path)
+              policies_before=api(path+'/policies')
+              assert before['id']==app_id and before['name']==name and before['type']=='self_hosted'
+              assert all(x.split('/')[0]==shell or x.split('/')[0].startswith('ontos-stage-') and x.split('/')[0].endswith('.bleeding.dev') for x in before.get('self_hosted_domains',[])), 'Unexpected domain outside staging scope'
+              destinations=[{'type':'public','uri':x} for x in domains]
+              changed=before.get('destinations')!=destinations
+              if changed:
+                  body={k:v for k,v in before.items() if k not in readonly|{'domain','self_hosted_domains'}}
+                  body['destinations']=destinations
+                  api(path,'PUT',body)
+              after=api(path)
+              policies_after=api(path+'/policies')
+              assert after['aud']==before['aud']
+              assert after['domain']==domains[0] and after['self_hosted_domains']==domains
+              assert after['destinations']==destinations
+              assert json.dumps(policies_before,sort_keys=True)==json.dumps(policies_after,sort_keys=True), 'Access policy changed'
+              assert {k:v for k,v in before.items() if k not in ignored}=={k:v for k,v in after.items() if k not in ignored}, 'Unrelated Access settings changed'
+              print(json.dumps({'kind':'verified','id':app_id,'name':name,'changed':changed,'domain':after['domain'],'destinations':after['destinations'],'audienceUnchanged':True,'policiesUnchanged':True,'otherSettingsUnchanged':True}))
+          class NoRedirect(urllib.request.HTTPRedirectHandler):
+              def redirect_request(self,request,file,code,message,headers,url): return None
+          opener=urllib.request.build_opener(NoRedirect())
+          headers={'CF-Access-Client-ID':os.environ['CLOUDFLARE_ACCESS_CLIENT_ID'],'CF-Access-Client-Secret':os.environ['CLOUDFLARE_ACCESS_CLIENT_SECRET']}
+          assert all(headers.values()), 'Existing CI Access credential is missing'
+          url='https://'+shell+'/'
+          for attempt in range(6):
+              request=urllib.request.Request(url,headers=headers)
+              try:
+                  with opener.open(request,timeout=15) as response:
+                      body=response.read(1000000)
+                      print(json.dumps({'kind':'protected-shell','status':response.status,'path':urllib.parse.urlsplit(url).path,'contentType':response.headers.get('Content-Type'),'bytes':len(body)}))
+                      assert response.status==200 and b'<html' in body.lower()
+                      assert b'ontos-stage-assortment.bleeding.dev' not in body
+                      break
+              except urllib.error.HTTPError as error:
+                  assert error.code in [301,302,303,307,308], 'Protected Shell failed with HTTP '+str(error.code)
+                  target=urllib.parse.urljoin(url,error.headers['Location'])
+                  parsed=urllib.parse.urlsplit(target)
+                  assert parsed.scheme=='https' and parsed.hostname==shell, 'Protected Shell redirected outside the current ingress'
+                  print(json.dumps({'kind':'shell-redirect','status':error.code,'path':urllib.parse.urlsplit(url).path,'targetPath':parsed.path}))
+                  url=target
+          else: raise AssertionError('Protected Shell exceeded six redirects')
           PYTHON
