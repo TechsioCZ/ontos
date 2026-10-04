@@ -8,33 +8,48 @@ defaults:
     shell: bash
 jobs:
   stage-hostnames:
-    name: Inspect the failing stage module hostname routing
+    name: Correct the stage Access login destination
     runs-on: ubuntu-latest
     timeout-minutes: 3
     environment:
       name: stage-edge
       deployment: false
     steps:
-      - name: Inspect the configured provider DNS and Access destinations
+      - name: Use the current Shell domain and preserve the Access policy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
           python3 - <<'PYTHON'
-          import json, os, urllib.request, urllib.error
+          import json, os, urllib.request
           base='https://api.cloudflare.com/client/v4'
-          zone='5f2fa51dab472aea051ce9d1bc3555bd'
           account='e8608e0073bff00c7875f171ac38b8c6'
-          endpoints=[('dns','/zones/'+zone+'/dns_records?per_page=100'),('zone-access','/zones/'+zone+'/access/apps'),('account-access','/accounts/'+account+'/access/apps')]
-          for label,path in endpoints:
-              request=urllib.request.Request(base+path,headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN']})
-              try:
-                  with urllib.request.urlopen(request,timeout=12) as response: data=json.load(response)
-                  if label=='dns':
-                      records=[{k:x.get(k) for k in ['id','name','type','content','proxied','ttl']} for x in data.get('result',[]) if 'ontos-stage' in x.get('name','') or x.get('name')=='*.bleeding.dev']
-                  else:
-                      records=[{k:x.get(k) for k in ['id','name','domain','type','destinations','self_hosted_domains']} for x in data.get('result',[]) if 'ontos' in x.get('name','').lower() or 'ontos' in x.get('domain','')]
-                  print(json.dumps({'kind':label,'success':data.get('success'),'records':records}))
-              except urllib.error.HTTPError as error:
-                  data=json.load(error)
-                  print(json.dumps({'kind':label,'httpStatus':error.code,'errors':data.get('errors')}))
+          app_id='a2057aba-88ee-4f08-98d6-eb641aaf04c0'
+          path='/accounts/'+account+'/access/apps/'+app_id
+          shell='ontos-stage.bleeding.dev'
+          expected_aud='aea669b58c0c99c2797499ad2ee5d959b8c299342ca2ac402e420901a857c1ff'
+          def api(resource, method='GET', body=None):
+              request=urllib.request.Request(base+resource,method=method,data=None if body is None else json.dumps(body).encode(),headers={'Authorization':'Bearer '+os.environ['CLOUDFLARE_API_TOKEN'],'Content-Type':'application/json'})
+              with urllib.request.urlopen(request,timeout=15) as response: data=json.load(response)
+              assert data.get('success'), 'Provider rejected Access request'
+              return data['result']
+          before=api(path)
+          policies_before=api(path+'/policies')
+          assert before['id']==app_id and before['name']=='ontos-stage' and before['type']=='self_hosted'
+          assert before['aud']==expected_aud, 'Access audience changed before repair'
+          domains=before.get('self_hosted_domains',[])
+          assert shell in domains and all(x==shell or x.startswith('ontos-stage-') and x.endswith('.bleeding.dev') for x in domains), 'Unexpected domain outside staging scope'
+          readonly={'id','aud','created_at','updated_at'}
+          body={k:v for k,v in before.items() if k not in readonly}
+          body.update(domain=shell,self_hosted_domains=[shell],destinations=[{'type':'public','uri':shell}])
+          print(json.dumps({'kind':'before','id':app_id,'domain':before['domain'],'destinations':before.get('destinations'),'policyCount':len(policies_before),'preservedFieldNames':sorted(set(body)-{'domain','self_hosted_domains','destinations'})}))
+          api(path,'PUT',body)
+          after=api(path)
+          policies_after=api(path+'/policies')
+          assert after['aud']==expected_aud
+          assert after['domain']==shell and after['self_hosted_domains']==[shell]
+          assert after['destinations']==[{'type':'public','uri':shell}]
+          assert json.dumps(policies_before,sort_keys=True)==json.dumps(policies_after,sort_keys=True), 'Access policy changed'
+          ignored=readonly|{'domain','self_hosted_domains','destinations'}
+          assert {k:v for k,v in before.items() if k not in ignored}=={k:v for k,v in after.items() if k not in ignored}, 'Unrelated Access settings changed'
+          print(json.dumps({'kind':'verified','id':app_id,'domain':after['domain'],'destinations':after['destinations'],'policyCount':len(policies_after),'audienceUnchanged':True,'policiesUnchanged':True,'otherSettingsUnchanged':True}))
           PYTHON
