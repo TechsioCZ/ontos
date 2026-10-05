@@ -114,7 +114,8 @@
     "api:check:ontos": "node ./scripts/check-ultramodern-api-boundaries.mts",
     "zerops:providers": "node ./scripts/generate-zerops-provider-deployment.mts",
     "dev:price-group-catalog": "pnpm --filter @app/price-group-catalog dev",
-    "application-release": "node ./scripts/immutable-application-release.mts"
+    "application-release": "node ./scripts/immutable-application-release.mts",
+    "dev:availability": "pnpm --filter @app/availability dev"
   },
   "dependencies": {
     "@app/commerce-customer-context": "workspace:*",

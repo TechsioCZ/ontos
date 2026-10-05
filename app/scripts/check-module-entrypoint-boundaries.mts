@@ -39,6 +39,7 @@ import {
 } from './generated-governed-http-boundary.mts';
 import {
   toPascalCase,
+  readGeneratedReadAuthorization,
   generatedApiGroup,
   generatedProviderIdentities,
   hasExactGeneratedProviderIdentityTopology,
@@ -239,11 +240,6 @@ const resolveTopLevelStringConstant = (source: string, identifier: string): stri
   return matches.length === 1 ? matches[0]?.groups?.value : undefined;
 };
 
-const readContextPermission = (properties: ReadonlyMap<string, string>): InventoryAuthorization | undefined => {
-  const permission = properties.get('permission');
-  return properties.size === 2 && permission !== undefined ? { kind: 'context_permission', permission } : undefined;
-};
-
 const readActionExecution = (properties: ReadonlyMap<string, string>): InventoryAuthorization | undefined => {
   const provisioning = properties.get('provisioning');
   return properties.size === 2 && (provisioning === 'explicit' || provisioning === 'tenant_membership_default')
@@ -261,13 +257,20 @@ const readCapabilityIssuance = (properties: ReadonlyMap<string, string>): Invent
 const readAuthorization = (
   tokens: readonly SourceToken[],
   openBraceIndex: number,
+  entrypointOpen: number,
+  entrypointClose: number,
 ): InventoryAuthorization | undefined => {
   const properties = readObjectStringProperties(tokens, openBraceIndex).values;
   return Match.value(properties.get('kind')).pipe(
     Match.when('public', (kind) => (properties.size === 1 ? { kind } : undefined)),
     Match.when('authenticated_principal', (kind) => (properties.size === 1 ? { kind } : undefined)),
     Match.when('owner_local_background', (kind) => (properties.size === 1 ? { kind } : undefined)),
-    Match.when('context_permission', () => readContextPermission(properties)),
+    Match.when('context_permission', () => {
+      const authorization = readGeneratedReadAuthorization(tokens, entrypointOpen, entrypointClose);
+      return authorization?.kind === 'context_permission' && authorization.permission !== undefined
+        ? { kind: authorization.kind, permission: authorization.permission }
+        : undefined;
+    }),
     Match.when('action_execution', () => readActionExecution(properties)),
     Match.when('capability_issuance', () => readCapabilityIssuance(properties)),
     Match.orElse(EffectFunction.constUndefined),
@@ -344,7 +347,7 @@ const readEntrypointAuthorization = (
   let authorization: InventoryAuthorization | undefined;
   for (let cursor = start; cursor < end; cursor += 1) {
     if (tokens[cursor]?.value === 'authorization' && isPropertyValue(tokens, cursor, SyntaxKind.OpenBraceToken)) {
-      authorization = readAuthorization(tokens, cursor + 2);
+      authorization = readAuthorization(tokens, cursor + 2, start - 1, end);
     }
   }
   return authorization;

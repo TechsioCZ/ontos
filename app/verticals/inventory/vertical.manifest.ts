@@ -21,6 +21,7 @@ import { correctCatalogToStockBindingAction } from './src/actions/correct-catalo
 import { correctExternalStockCorrelationAction } from './src/actions/correct-external-stock-correlation.action.ts';
 import { correctStockPositionAction } from './src/actions/correct-stock-position.action.ts';
 import { createInventoryReservationAction } from './src/actions/create-inventory-reservation.action.ts';
+import { CurrentRelevantStockPositionSetApi } from './shared/apis/current-relevant-stock-position-set.ts';
 import { CurrentStockEvidenceForAvailabilityApi } from './shared/apis/current-stock-evidence-for-availability.ts';
 import { endCatalogToStockBindingAction } from './src/actions/end-catalog-to-stock-binding.action.ts';
 import { endExternalStockCorrelationAction } from './src/actions/end-external-stock-correlation.action.ts';
@@ -125,6 +126,7 @@ export const inventoryManifest: OntosModuleManifestInput = defineOntosModuleMani
       // <generated-module-manifest-apis>
       'catalog-to-stock-binding-resolution': CatalogToStockBindingResolutionApi,
       'commitment-protection-verification': CommitmentProtectionVerificationApi,
+      'current-relevant-stock-position-set': CurrentRelevantStockPositionSetApi,
       'current-stock-evidence-for-availability': CurrentStockEvidenceForAvailabilityApi,
       'inventory-backend-configuration-current': InventoryBackendConfigurationCurrentApi,
       'inventory-effect-outcome': InventoryEffectOutcomeApi,

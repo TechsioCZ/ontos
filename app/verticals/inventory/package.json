@@ -47,7 +47,9 @@
     "./resources/stock-position": "./shared/resources/stock-position.ts",
     "./resources/stock-sharing-eligibility": "./shared/resources/stock-sharing-eligibility.ts",
     "./Route": "./src/federation-entry.tsx",
-    "./Widget": "./src/components/inventory-widget.tsx"
+    "./Widget": "./src/components/inventory-widget.tsx",
+    "./api/current-stock-evidence-for-availability": "./shared/apis/current-stock-evidence-for-availability.ts",
+    "./api/current-relevant-stock-position-set": "./shared/apis/current-relevant-stock-position-set.ts"
   },
   "scripts": {
     "build": "modern build && node ../../scripts/generate-ontos-module-contract.mts --vertical inventory --target dist && ultramodern-create ultramodern public-surface --app inventory --target dist && cross-env MODERNJS_DEPLOY=node modern deploy --skip-build",
@@ -93,7 +95,8 @@
     "i18next": "26.4.2",
     "pg": "8.22.0",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "@app/commerce-customer-context": "workspace:*"
   },
   "devDependencies": {
     "@effect/tsgo": "0.41.0",

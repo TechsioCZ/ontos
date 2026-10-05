@@ -3037,6 +3037,321 @@
           ]
         }
       }
+    },
+    {
+      "id": "availability",
+      "kind": "vertical",
+      "surfaceProfile": "api-only",
+      "domain": "availability",
+      "package": "@app/availability",
+      "path": "verticals/availability",
+      "moduleFederation": {
+        "role": "remote",
+        "name": "verticalAvailability",
+        "manifestUrl": "http://localhost:4111/mf-manifest.json",
+        "exposes": [],
+        "ssr": true,
+        "sharedContractVersion": "mf-ssr-contract-v1"
+      },
+      "backendFederation": {
+        "role": "microvertical-server",
+        "name": "verticalAvailabilityBackend",
+        "runtimeFramework": "effect",
+        "strictEffectApproach": true,
+        "deliveryUnit": {
+          "schemaVersion": 1,
+          "kind": "microvertical-delivery-unit",
+          "unitId": "app/availability",
+          "packageName": "@app/availability",
+          "version": "0.1.0",
+          "buildMarker": "7b0e5ab486adc9c0",
+          "sourceRevision": "workspace"
+        },
+        "exposes": {
+          "./effect-api": {
+            "contract": "verticals/availability/shared/api.ts",
+            "runtime": "verticals/availability/api/index.ts",
+            "client": "verticals/availability/src/api/availability-client.ts",
+            "openapi": "/availability-api/openapi.json",
+            "readiness": "/availability-api/availability/readiness"
+          }
+        },
+        "versionBoundary": {
+          "invariant": "web-and-api-same-build",
+          "identityRoot": "deliveryUnit",
+          "packageName": "@app/availability",
+          "api": {
+            "readiness": "/availability-api/availability/readiness",
+            "buildMarker": "verticals/availability/shared/ultramodern-build.ts",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_AVAILABILITY"
+          }
+        },
+        "executionSurfaces": {
+          "cloudflare": {
+            "kind": "cloudflare-worker-snapshot",
+            "workerName": "app-availability",
+            "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_AVAILABILITY",
+            "api": {
+              "workerEntry": ".output/server/index.mjs",
+              "workerManifest": ".output/server/modern-worker-manifest.json",
+              "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+            },
+            "zephyr": {
+              "runtime": "api-worker",
+              "integration": "managed-cloudflare",
+              "snapshotIdEnv": "ZEPHYR_AVAILABILITY_SNAPSHOT_ID",
+              "versionIdEnv": "ZEPHYR_AVAILABILITY_VERSION_ID",
+              "applicationUidEnv": "ZEPHYR_AVAILABILITY_APPLICATION_UID"
+            },
+            "workerDispatch": {
+              "preferred": "service-binding",
+              "serviceBinding": "VERTICAL_AVAILABILITY_WORKER",
+              "serviceBindingEnv": "VERTICAL_AVAILABILITY_WORKER_BINDING",
+              "dispatchNamespaceEnv": "VERTICAL_AVAILABILITY_DISPATCH_NAMESPACE",
+              "dispatchWorkerNameEnv": "VERTICAL_AVAILABILITY_WORKER_NAME",
+              "requestInterface": "fetch"
+            }
+          },
+          "node": {
+            "kind": "node-mf-runtime",
+            "adapterVersion": "backend-mf-effect-v2",
+            "remoteName": "verticalAvailabilityBackend",
+            "manifestEnv": "VERTICAL_AVAILABILITY_BACKEND_MF_MANIFEST",
+            "manifestUrl": "http://localhost:4111/backend-mf-manifest.json",
+            "containerEntry": "http://localhost:4111/backendRemoteEntry.cjs",
+            "remoteType": "commonjs-module",
+            "expose": "./effect-api",
+            "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+            "expected": {
+              "unitId": "app/availability",
+              "buildMarker": "7b0e5ab486adc9c0"
+            }
+          }
+        },
+        "compatibility": {
+          "contractVersion": "microvertical-server-effect-v1",
+          "packageName": "@app/availability",
+          "effectVersion": "4.0.0-rc.117",
+          "moduleFederationVersion": "2.9.2"
+        },
+        "cache": {
+          "cloudflareSnapshot": "immutable",
+          "nodeManifest": "no-store",
+          "nodeVersionedContainer": "immutable",
+          "nodeUnpinnedContainer": "revalidate"
+        },
+        "fallback": {
+          "timeoutMs": 1500,
+          "failureEvent": "modernjs:microvertical-server-fallback",
+          "strategy": "typed-effect-error"
+        }
+      },
+      "deliveryUnit": {
+        "schemaVersion": 1,
+        "kind": "microvertical-delivery-unit",
+        "unitId": "app/availability",
+        "packageName": "@app/availability",
+        "version": "0.1.0",
+        "buildMarker": "7b0e5ab486adc9c0",
+        "sourceRevision": "workspace"
+      },
+      "api": {
+        "runtime": "effect",
+        "bff": {
+          "prefix": "/availability-api",
+          "openapi": "/openapi.json",
+          "strictEffectApproach": true
+        },
+        "contract": {
+          "export": "./api",
+          "path": "verticals/availability/shared/api.ts"
+        },
+        "client": {
+          "export": "./api/client",
+          "path": "verticals/availability/src/api/availability-client.ts"
+        },
+        "serverEntry": "verticals/availability/api/index.ts",
+        "basePath": "/availability-api/availability",
+        "consumedBy": [
+          "shell-super-app",
+          "availability"
+        ],
+        "readiness": {
+          "endpoint": "/availability/readiness",
+          "marker": {
+            "ui": "ultramodernUiMarker",
+            "api": "ultramodernApiMarker",
+            "skew": "none"
+          },
+          "checks": [
+            "moduleFederation",
+            "ssr",
+            "translations",
+            "api"
+          ]
+        },
+        "requestContext": {
+          "propagatedHeaders": [
+            "accept-language",
+            "authorization",
+            "traceparent",
+            "x-correlation-id",
+            "x-tenant-id",
+            "x-ultramodern-env",
+            "x-vertical-version-id"
+          ],
+          "source": "shell-to-vertical-api-client"
+        },
+        "domainOperations": {}
+      },
+      "cloudflare": {
+        "target": "cloudflare",
+        "workerName": "app-availability",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_AVAILABILITY",
+        "compatibilityDate": "2026-06-02",
+        "compatibilityFlags": [
+          "nodejs_compat",
+          "global_fetch_strictly_public"
+        ],
+        "assetsBinding": "ASSETS",
+        "routes": {
+          "apiReadiness": "/availability-api/availability/readiness"
+        },
+        "security": {
+          "enabled": true,
+          "headers": {
+            "referrerPolicy": "strict-origin-when-cross-origin",
+            "contentTypeOptions": "nosniff",
+            "permissionsPolicy": "camera=(), geolocation=(), microphone=(), payment=(), usb=()"
+          },
+          "contentSecurityPolicy": {
+            "mode": "report-only",
+            "directives": {
+              "base-uri": [
+                "'self'"
+              ],
+              "connect-src": [
+                "'self'",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:"
+              ],
+              "default-src": [
+                "'self'"
+              ],
+              "font-src": [
+                "'self'",
+                "data:",
+                "https:",
+                "http:"
+              ],
+              "form-action": [
+                "'self'"
+              ],
+              "frame-ancestors": [
+                "'self'"
+              ],
+              "img-src": [
+                "'self'",
+                "data:",
+                "blob:",
+                "https:",
+                "http:"
+              ],
+              "manifest-src": [
+                "'self'",
+                "https:",
+                "http:"
+              ],
+              "object-src": [
+                "'none'"
+              ],
+              "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https:",
+                "http:",
+                "blob:"
+              ],
+              "style-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "https:",
+                "http:"
+              ],
+              "worker-src": [
+                "'self'",
+                "blob:"
+              ]
+            },
+            "reason": "Report-only by default so Cloudflare Module Federation SSR can prove remote script, style, and connect compatibility before enforcement."
+          },
+          "noindex": {
+            "workersDev": true,
+            "localhost": true,
+            "previewHostnames": []
+          }
+        },
+        "qualityGates": {
+          "publicRoutes": {
+            "requireSitemapWhenPresent": true,
+            "requireRobotsSitemapConsistency": true,
+            "requireWebManifestWhenPresent": true
+          },
+          "statusCodes": {
+            "notFoundRoute": "/__ultramodern-smoke-missing/nope",
+            "unknownRouteStatus": 404
+          },
+          "indexing": {
+            "previewNoindex": true,
+            "productionPublicRoutesIndexable": true
+          },
+          "assets": {
+            "cssPreloadRequired": true,
+            "cssResponseRequired": true,
+            "cacheControlRequiredForCss": true,
+            "sourcemapsPubliclyReferenced": false
+          },
+          "budgets": {
+            "ssrHtmlMaxBytes": 250000,
+            "mfManifestMaxBytes": 500000,
+            "localeJsonMaxBytes": 100000,
+            "sitemapXmlMaxBytes": 500000,
+            "cssAssetMaxBytes": 750000
+          },
+          "csp": {
+            "finalMode": "report-only-dogfood",
+            "decision": "Report-only remains the generated final mode until public smoke proof records MF SSR script/style/connect compatibility for the deployed surface."
+          }
+        },
+        "jsonSmokeChecks": [
+          {
+            "id": "availability-readiness-smoke",
+            "route": "/availability-api/availability/readiness",
+            "expect": {
+              "status": "ready",
+              "checks.api": "ready",
+              "checks.moduleFederation": "ready",
+              "checks.ssr": "ready"
+            }
+          }
+        ]
+      },
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/availability.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#availability",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#availability"
+          ]
+        }
+      }
     }
   ],
   "sharedPackages": [

@@ -62,6 +62,7 @@ export const inventoryRegistration = defineVerticalRuntimeRegistration({
       // <generated-module-registration-apis>
       'catalog-to-stock-binding-resolution': () => import('./src/api/catalog-to-stock-binding-resolution-client.ts'),
       'commitment-protection-verification': () => import('./src/api/commitment-protection-verification-client.ts'),
+      'current-relevant-stock-position-set': () => import('./src/api/current-relevant-stock-position-set-client.ts'),
       'current-stock-evidence-for-availability': () =>
         import('./src/api/current-stock-evidence-for-availability-client.ts'),
       'inventory-backend-configuration-current': () =>
