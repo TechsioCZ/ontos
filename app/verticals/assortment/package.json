@@ -51,6 +51,7 @@
     "typecheck": "ultramodern-create ultramodern typecheck --project tsconfig.json"
   },
   "dependencies": {
+    "@app/commerce-customer-context": "workspace:*",
     "@app/core-runtime": "workspace:*",
     "@app/gateway-principal-verifier": "workspace:*",
     "@app/shared-contracts": "workspace:*",
@@ -69,8 +70,8 @@
     "@modern-js/runtime-renderer-extensions": "catalog:ultramodern",
     "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.3",
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.2",
-    "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "@tanstack/react-router": "1.170.39",
+    "drizzle-orm": "1.0.0-rc.5-ab785fc",
     "effect": "4.0.0-rc.117",
     "i18next": "26.4.2",
     "pg": "8.22.0",

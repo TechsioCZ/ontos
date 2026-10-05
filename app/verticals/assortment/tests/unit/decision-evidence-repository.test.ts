@@ -1,11 +1,12 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { Effect, Option, Schema } from 'effect';
+import { Effect, Exit, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   AssortmentDependencyFailureError,
   AssortmentGovernedDecisionSchema,
   AssortmentOwnerResourceRefSchema,
   AssortmentPurchaseRequestSchema,
+  AssortmentPurchaseConstituentSchema,
 } from '../../shared/domain/decision-contracts.ts';
 import { AssortmentConsumerDecisionEvidenceReferenceSchema } from '../../shared/domain/consumer-evidence.ts';
 import { assortmentDecisionEvidenceRepositoryFromPort } from '../../src/services/decision-evidence.repository.ts';
@@ -181,5 +182,64 @@ it.effect('fails closed for wrong reference scope, missing rows, database failur
         ),
       ),
     ).toBe(true);
+  }),
+);
+
+it.effect('persists component identity and rejects historical root-bound target substitution', () =>
+  Effect.gen(function* exactPersistedComponent() {
+    const component = Schema.decodeUnknownSync(AssortmentPurchaseConstituentSchema)({
+      ...request.constituent,
+      catalogSelection: {
+        ...request.constituent.catalogSelection,
+        variantRef: ref('catalog.owner', 'catalog.variant', 'component-variant'),
+      },
+      role: 'REQUIRED_COMPONENT',
+    });
+    const componentRequest = Schema.decodeUnknownSync(Schema.toType(AssortmentPurchaseRequestSchema))({
+      ...request,
+      constituent: component,
+    });
+    const componentDecision = Schema.decodeUnknownSync(Schema.toType(AssortmentGovernedDecisionSchema))({
+      ...decision,
+      evidence: { ...decision.evidence, target: { kind: 'CATALOG_SELECTION', selection: component.catalogSelection } },
+    });
+    const inserted: InsertCapture = {};
+    const reference = yield* repositoryFor({ inserted }).persist({
+      constituent: component,
+      decision: componentDecision,
+      request: componentRequest,
+    });
+    const row = inserted.value;
+    if (row === undefined) {
+      throw new Error('expected component evidence');
+    }
+    const resolved = yield* repositoryFor({ selected: [{ ...row, decisionEvidenceId: referenceId }] }).resolve(
+      reference.evidenceRef,
+    );
+    expect(resolved.request).toEqual(componentRequest);
+    const rejected = yield* Effect.exit(
+      repositoryFor().persist({
+        constituent: component,
+        decision: componentDecision,
+        request,
+      }),
+    );
+    expect(Exit.isFailure(rejected)).toBe(true);
+    const rootRowCapture: InsertCapture = {};
+    yield* repositoryFor({ inserted: rootRowCapture }).persist(storedInput);
+    const rootRow = rootRowCapture.value;
+    if (rootRow === undefined) {
+      throw new Error('expected root evidence');
+    }
+    const historicalMismatch = {
+      ...row,
+      decisionEvidenceId: referenceId,
+      requestFingerprint: rootRow.requestFingerprint,
+      requestJson: rootRow.requestJson,
+    };
+    const unavailable = yield* Effect.exit(
+      repositoryFor({ selected: [historicalMismatch] }).resolve(reference.evidenceRef),
+    );
+    expect(Exit.isFailure(unavailable)).toBe(true);
   }),
 );

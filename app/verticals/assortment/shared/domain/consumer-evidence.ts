@@ -164,9 +164,10 @@ export const AssortmentProspectivePurchaseEvidenceSchema = Schema.Struct({
       hasDuplicateConstituent(evidence.evaluatedConstituents) ||
       hasDuplicateEvidenceReference(evidence.evaluatedConstituents) ||
       evidence.evaluatedConstituents.some((item) => !isExpectedConstituent(item.constituent, expected)) ||
-      !evidence.evaluatedConstituents.some((item) =>
-        constituentEquivalence(item.constituent, evidence.topLevelConstituent),
-      ) ||
+      (evidence.composedOutcome !== 'INELIGIBLE' &&
+        !evidence.evaluatedConstituents.some((item) =>
+          constituentEquivalence(item.constituent, evidence.topLevelConstituent),
+        )) ||
       !evidenceReferencesUseTenant(evidence.evaluatedConstituents, evidence.trustedContext.tenantId) ||
       constituentTenant(evidence.topLevelConstituent) !== evidence.trustedContext.tenantId ||
       !subjectUsesTenant(evidence.subject, evidence.trustedContext.tenantId)

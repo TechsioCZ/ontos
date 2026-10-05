@@ -390,8 +390,11 @@ export const AssortmentPurchaseRequestSchema = Schema.Struct({
     if (!sameTenant(request.trustedContext.tenantId, references)) {
       return 'PURCHASE request references must share the trusted context tenant';
     }
-    if (request.constituent.role !== 'TOP_LEVEL') {
-      return 'the request constituent must be TOP_LEVEL';
+    if (
+      request.constituent.role === 'REQUIRED_COMPONENT' &&
+      request.constituent.catalogSelection.variantKind !== 'ATOMIC'
+    ) {
+      return 'a required-component request must target an atomic Catalog Selection';
     }
     if (isSet !== (request.setComposition !== undefined)) {
       return isSet

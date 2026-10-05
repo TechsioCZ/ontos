@@ -1,5 +1,5 @@
 import { expect, it } from 'effect-rstest';
-import { Effect, Schema } from 'effect';
+import { Array as EffectArray, DateTime, Effect, Schema } from 'effect';
 
 import {
   AssortmentDependencyFailureError,
@@ -16,6 +16,7 @@ import {
   AssortmentPurchaseEvaluationRequestSchema,
   AssortmentVisibilityEvaluationRequestSchema,
   makeAssortmentDecisionEvaluation,
+  assortmentPurchaseConstituentRequest,
   makeAssortmentDecisionEvaluationUnavailable,
 } from '../../shared/domain/ports/decision-evaluation.ts';
 import type {
@@ -184,20 +185,6 @@ const makeSetPurchaseFixture = () => {
     internalRequest,
     wireRequest,
   };
-};
-
-type SetPurchaseConstituent = ReturnType<typeof makeSetPurchaseFixture>['constituents'][number];
-const reverseConstituents = (
-  constituents: ReturnType<typeof makeSetPurchaseFixture>['constituents'],
-): SetPurchaseConstituent[] => {
-  const reversed: SetPurchaseConstituent[] = [];
-  for (let index = constituents.length - 1; index >= 0; index -= 1) {
-    const constituent = constituents[index];
-    if (constituent !== undefined) {
-      reversed.push(constituent);
-    }
-  }
-  return reversed;
 };
 
 const indeterminateDecision = () =>
@@ -404,7 +391,7 @@ it.effect('requires and persists every pinned Set constituent before positive PU
           constituents: constituents.map((constituent) => ({
             constituent,
             decision: decisionFor(internalRequest, 'ELIGIBLE', constituent),
-            request: internalRequest,
+            request: assortmentPurchaseConstituentRequest(internalRequest, constituent),
           })),
           decision: decisionFor(internalRequest, 'ELIGIBLE'),
           request: internalRequest,
@@ -436,7 +423,7 @@ it.effect('accepts an authoritative Set deny prefix without fabricating sibling 
           constituents: prefix.map((constituent, index) => ({
             constituent,
             decision: decisionFor(internalRequest, index === 0 ? 'ELIGIBLE' : 'INELIGIBLE', constituent),
-            request: internalRequest,
+            request: assortmentPurchaseConstituentRequest(internalRequest, constituent),
           })),
           decision: denied,
           request: internalRequest,
@@ -473,7 +460,7 @@ it.effect('fails closed when injected Set constituents or composed PURCHASE outc
       productRef: ref('catalog.owner', 'catalog.product', 'tampered-component'),
     });
     const source = (
-      componentDecision: 'valid' | 'outcome-drift' | 'omitted' | 'reordered',
+      componentDecision: 'valid' | 'outcome-drift' | 'omitted' | 'duplicated',
     ): AssortmentDecisionSourcePort => ({
       resolvePurchase: () =>
         Effect.succeed({
@@ -481,8 +468,8 @@ it.effect('fails closed when injected Set constituents or composed PURCHASE outc
             if (componentDecision === 'omitted') {
               return constituents.slice(0, -1);
             }
-            if (componentDecision === 'reordered') {
-              return reverseConstituents(constituents);
+            if (componentDecision === 'duplicated') {
+              return [...constituents.slice(0, 2), ...constituents.slice(1, 2)];
             }
             return constituents;
           })().map((constituent, index) => ({
@@ -495,7 +482,7 @@ it.effect('fails closed when injected Set constituents or composed PURCHASE outc
               index === 1 && componentDecision === 'outcome-drift' ? 'INELIGIBLE' : 'ELIGIBLE',
               constituent,
             ),
-            request: internalRequest,
+            request: assortmentPurchaseConstituentRequest(internalRequest, constituent),
           })),
           decision: decisionFor(internalRequest, 'ELIGIBLE'),
           request: internalRequest,
@@ -503,7 +490,7 @@ it.effect('fails closed when injected Set constituents or composed PURCHASE outc
       resolveVisibility: () => Effect.fail(dependencyFailure()),
     });
 
-    for (const componentDecision of ['valid', 'outcome-drift', 'omitted', 'reordered'] as const) {
+    for (const componentDecision of ['valid', 'outcome-drift', 'omitted', 'duplicated'] as const) {
       const result = yield* makeAssortmentDecisionEvaluation(
         dependenciesFor(source(componentDecision)),
       ).evaluatePurchase(wireRequest, scope);
@@ -683,3 +670,140 @@ it('binds Decision Evidence fingerprints to the full pinned Set composition', ()
     assortmentDecisionRequestFingerprint(requestFor('component-2')),
   );
 });
+
+it.effect('retains actual unknowns when any exact Set constituent denies the conjunction', () =>
+  Effect.gen(function* mixedSetDeny() {
+    for (const mode of ['root-unknown', 'component-unknown', 'root-unevaluated'] as const) {
+      const { constituents, internalRequest, wireRequest } = makeSetPurchaseFixture();
+      let evaluated = constituents;
+      if (mode === 'root-unknown') {
+        evaluated = constituents.slice(0, 2);
+      } else if (mode === 'root-unevaluated') {
+        evaluated = constituents.slice(1);
+      }
+      const unknownIndex = mode === 'component-unknown' ? 1 : 0;
+      const persisted: string[] = [];
+      const source: AssortmentDecisionSourcePort = {
+        resolvePurchase: () =>
+          Effect.succeed({
+            constituents: evaluated.map((constituent, index) => ({
+              constituent,
+              decision:
+                index === unknownIndex
+                  ? indeterminateDecision()
+                  : decisionFor(
+                      internalRequest,
+                      index === evaluated.length - 1 ? 'INELIGIBLE' : 'ELIGIBLE',
+                      constituent,
+                    ),
+              request: assortmentPurchaseConstituentRequest(internalRequest, constituent),
+            })),
+            decision: decisionFor(internalRequest, 'INELIGIBLE'),
+            request: internalRequest,
+          }),
+        resolveVisibility: () => Effect.fail(dependencyFailure()),
+      };
+      const result = yield* makeAssortmentDecisionEvaluation(
+        dependenciesFor(source, (input) => {
+          const id = 'constituent' in input ? input.constituent.catalogSelection.variantRef.resourceId : 'visibility';
+          persisted.push(id);
+          return Effect.succeed(evidenceReference(`mixed-${id}`));
+        }),
+      ).evaluatePurchase(wireRequest, scope);
+      expect(result.decision).toEqual({ outcome: 'INELIGIBLE', retryable: false, safeReasonCode: 'RULE_DENIED' });
+      expect(result.consumerEvidence?.evaluatedConstituents.map((item) => item.constituent)).toEqual(evaluated);
+      const unknown = result.consumerEvidence?.evaluatedConstituents[unknownIndex];
+      expect(unknown).toEqual({
+        constituent: evaluated[unknownIndex],
+        outcome: 'INDETERMINATE',
+        retryable: false,
+        safeReasonCode: 'MISSING_CONFIGURATION',
+      });
+      expect(unknown !== undefined && 'decisionEvidence' in unknown).toBe(false);
+      expect(persisted).toEqual(
+        evaluated
+          .filter((_, index) => index !== unknownIndex)
+          .map((item) => item.catalogSelection.variantRef.resourceId),
+      );
+      const failedStore = yield* makeAssortmentDecisionEvaluation(
+        dependenciesFor(source, () => Effect.fail(dependencyFailure())),
+      ).evaluatePurchase(wireRequest, scope);
+      expect(failedStore.decision.outcome).toBe('INDETERMINATE');
+      expect(failedStore.consumerEvidence).toBeUndefined();
+    }
+  }),
+);
+
+it.effect('rejects root-bound component evidence and accepts complete evaluations in either order', () =>
+  Effect.gen(function* exactComponentRequests() {
+    const { constituents, internalRequest, wireRequest } = makeSetPurchaseFixture();
+    for (const rootBound of [true, false]) {
+      const source: AssortmentDecisionSourcePort = {
+        resolvePurchase: () =>
+          Effect.succeed({
+            constituents: EffectArray.reverse(constituents).map((constituent) => ({
+              constituent,
+              decision: decisionFor(internalRequest, 'ELIGIBLE', constituent),
+              request: rootBound ? internalRequest : assortmentPurchaseConstituentRequest(internalRequest, constituent),
+            })),
+            decision: decisionFor(internalRequest, 'ELIGIBLE'),
+            request: internalRequest,
+          }),
+        resolveVisibility: () => Effect.fail(dependencyFailure()),
+      };
+      const result = yield* makeAssortmentDecisionEvaluation(dependenciesFor(source)).evaluatePurchase(
+        wireRequest,
+        scope,
+      );
+      expect(result.decision.outcome).toBe(rootBound ? 'INDETERMINATE' : 'ELIGIBLE');
+    }
+    const [, component] = constituents;
+    if (component === undefined) {
+      throw new Error('expected a pinned component');
+    }
+    const ownRequest = assortmentPurchaseConstituentRequest(internalRequest, component);
+    expect(Schema.is(AssortmentPurchaseRequestSchema)(ownRequest)).toBe(true);
+    expect(Schema.is(AssortmentPurchaseEvaluationRequestSchema)({ ...wireRequest, constituent: component })).toBe(
+      false,
+    );
+    expect(
+      Schema.is(AssortmentPurchaseRequestSchema)({ ...ownRequest, setComposition: internalRequest.setComposition }),
+    ).toBe(false);
+  }),
+);
+
+it.effect('compares separately decoded evidence instants by value for known and unknown results', () =>
+  Effect.gen(function* equivalentEvidenceInstants() {
+    const successful = decisionFor(canonicalVisibilityRequest, 'ELIGIBLE');
+    if (successful.evidence === undefined) {
+      throw new Error('expected successful fixture evidence');
+    }
+    for (const known of [true, false]) {
+      for (const changedInstant of [false, true]) {
+        const epoch = DateTime.toEpochMillis(canonicalVisibilityRequest.trustedContext.operationTime);
+        const separatelyDecodedTime = Schema.decodeUnknownSync(Schema.DateTimeUtcFromString)(
+          new Date(epoch + (changedInstant ? 1 : 0)).toISOString(),
+        );
+        expect(separatelyDecodedTime).not.toBe(canonicalVisibilityRequest.trustedContext.operationTime);
+        const actual = deepFreeze(
+          Schema.decodeUnknownSync(Schema.toType(AssortmentGovernedDecisionSchema))({
+            ...(known ? successful : indeterminateDecision()),
+            evidence: { ...successful.evidence, operationTime: separatelyDecodedTime },
+          }),
+        );
+        const result = yield* makeAssortmentDecisionEvaluation(
+          dependenciesFor(visibilitySource(actual)),
+        ).evaluateVisibility(visibilityRequest, scope);
+        if (changedInstant) {
+          expect(result).toMatchObject({ outcome: 'INDETERMINATE', safeReasonCode: 'DEPENDENCY_UNAVAILABLE' });
+        } else {
+          expect(result).toEqual(
+            known
+              ? { outcome: 'ELIGIBLE', retryable: false }
+              : { outcome: 'INDETERMINATE', retryable: false, safeReasonCode: 'MISSING_CONFIGURATION' },
+          );
+        }
+      }
+    }
+  }),
+);

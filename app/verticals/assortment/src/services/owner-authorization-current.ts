@@ -1,5 +1,12 @@
-import { DateTime, Effect, Match, Schema } from 'effect';
-import type { AssortmentPermissionAccessTarget, OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
+import { DateTime, Effect, Layer, Match, Schema } from 'effect';
+import { failClosedOwnerAuthorizationOverlay, OwnerAuthorizationOverlay } from '@app/core-runtime';
+import type {
+  AssortmentPermissionAccessTarget,
+  OperationalScope,
+  OwnerAuthorizationOverlayService,
+  OwnerAuthorizationTarget,
+  ScopedTransactionExecutor,
+} from '@app/core-runtime';
 import { AssortmentConfigurationRequestSchema } from '../../shared/domain/governed-read-contracts.ts';
 import type {
   AssortmentConfigurationRequest,
@@ -212,3 +219,47 @@ export const assortmentAuthorizationCurrentForTransaction = (
     );
   },
 });
+
+/**
+ * Core checks exact Permissions independently. Require every Assortment alternative to be
+ * Current so a grant on one target cannot borrow the Current state of another target.
+ */
+export const assortmentOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = {
+  authorize: (transaction, input) => {
+    if (input.targets.some((target) => target.kind === 'business_permission')) {
+      return failClosedOwnerAuthorizationOverlay.authorize(transaction, input);
+    }
+    const targets = input.targets.filter(
+      (target): target is Extract<OwnerAuthorizationTarget, { readonly kind: 'assortment_permission' }> =>
+        target.kind === 'assortment_permission',
+    );
+    if (targets.length === 0) {
+      return failClosedOwnerAuthorizationOverlay.authorize(transaction, input);
+    }
+    if (
+      input.owningModuleKey !== 'commerce.assortment' ||
+      transaction.scope.tenantId !== input.scope.tenantId ||
+      transaction.scope.legalEntityId !== input.scope.legalEntityId
+    ) {
+      return Effect.succeed('unavailable' as const);
+    }
+    const currentService = assortmentAuthorizationCurrentForTransaction(transaction);
+    return Effect.forEach(
+      targets,
+      (target) => currentService.assess({ operationAt: input.operationAt, scope: input.scope, target: target.target }),
+      { concurrency: 1 },
+    ).pipe(
+      Effect.map((results) => {
+        if (results.some((result) => result.status === 'UNAVAILABLE')) {
+          return 'unavailable' as const;
+        }
+        return results.every((result) => result.status === 'CURRENT') ? ('allowed' as const) : ('denied' as const);
+      }),
+    );
+  },
+};
+
+export const assortmentOwnerAuthorizationOverlayLive = Layer.succeed(
+  OwnerAuthorizationOverlay,
+  assortmentOwnerAuthorizationOverlay,
+);

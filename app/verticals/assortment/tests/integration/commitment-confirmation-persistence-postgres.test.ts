@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
 import { and, eq, sql } from 'drizzle-orm';
-import { Effect, Exit, Result, Schema } from 'effect';
+import { DateTime, Effect, Exit, Predicate, Result, Schema } from 'effect';
+import { TestClock } from 'effect/testing';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -19,12 +20,26 @@ import {
 } from '../../shared/domain/commitment-confirmation.ts';
 import {
   AssortmentCandidateSchema,
+  AssortmentDependencyFailureError,
   AssortmentGovernedDecisionSchema,
   AssortmentOwnerResourceRefSchema,
   AssortmentPurchaseRequestSchema,
   AssortmentPurchaseConstituentSchema,
+  AssortmentSetCompletenessEvidenceSchema,
 } from '../../shared/domain/decision-contracts.ts';
 import { assortmentRelations, commitmentConfirmations, decisionEvidence } from '../../src/database/schema.ts';
+import {
+  makeAssortmentDecisionEvaluation,
+  assortmentPurchaseConstituentRequest,
+} from '../../shared/domain/ports/decision-evaluation.ts';
+import { assortmentDecisionExplanationReadService } from '../../src/services/decision-explanation-read.service.ts';
+import { AssortmentPolicyPersistenceUnavailable } from '../../shared/domain/policy-errors.ts';
+import { AssortmentSuccessfulAttemptDecisionEvidenceSchema } from '../../shared/domain/decision-evidence.ts';
+import {
+  AssortmentOrdinaryResolutionInputSchema,
+  resolveAssortmentOrdinary,
+} from '../../shared/domain/ordinary-resolution.ts';
+import { makeAssortmentCommitmentConfirmationService } from '../../src/services/assortment-commitment-confirmation.service.ts';
 import { assortmentCommitmentConfirmationRepositoryForScope } from '../../src/services/assortment-commitment-confirmation.repository.ts';
 import { assortmentDecisionEvidenceRepositoryForScope } from '../../src/services/decision-evidence.repository.ts';
 
@@ -130,6 +145,71 @@ const evidenceDecision = Schema.decodeUnknownSync(AssortmentGovernedDecisionSche
   },
   outcome: 'ELIGIBLE',
 });
+
+const freeze = <Value extends object>(value: Value): Value => {
+  if (Object.isFrozen(value)) {
+    return value;
+  }
+  for (const nested of Object.values(value)) {
+    if (Predicate.isObjectOrArray(nested)) {
+      freeze(nested);
+    }
+  }
+  return Object.freeze(value);
+};
+
+const known = (request: typeof evidenceRequest, outcome: 'ELIGIBLE' | 'INELIGIBLE') =>
+  freeze(
+    Schema.decodeUnknownSync(Schema.toType(AssortmentGovernedDecisionSchema))({
+      ...evidenceDecision,
+      evidence: {
+        ...evidenceDecision.evidence,
+        target: { kind: 'CATALOG_SELECTION', selection: request.constituent.catalogSelection },
+      },
+      outcome,
+    }),
+  );
+
+const componentCandidateCompleteness = Schema.decodeUnknownSync(AssortmentSetCompletenessEvidenceSchema)({
+  predicate: 'all current Candidate-producing bindings and immutable revisions for this exact decision',
+  proof: {
+    evidenceRef: ref('commerce.assortment', 'commerce.assortment.evidence', 'component-candidate-set-proof'),
+    ownerModuleId: 'commerce.assortment',
+  },
+  scope: 'commerce.assortment.ordinary-candidates',
+  state: 'COMPLETE',
+});
+
+const positiveComponentAttemptAt = (component: typeof constituent, now: DateTime.Utc) => {
+  const request = Schema.decodeUnknownSync(Schema.toType(AssortmentPurchaseRequestSchema))({
+    ...evidenceRequest,
+    constituent: component,
+    trustedContext: { ...evidenceRequest.trustedContext, operationTime: now },
+  });
+  const decoded = Schema.decodeUnknownSync(Schema.toType(AssortmentSuccessfulAttemptDecisionEvidenceSchema))({
+    decision: {
+      evidence: {
+        candidates: [candidate],
+        factCurrentness: [candidate.bindingRef, candidate.ruleRevision.sourceRef].map((factRef, index) => ({
+          factRef,
+          proof: {
+            evidenceRef: ref('commerce.assortment', 'commerce.assortment.evidence', `component-current-proof-${index}`),
+            ownerModuleId: 'commerce.assortment',
+          },
+          state: 'CURRENT',
+        })),
+        operationTime: now,
+        setCompleteness: [componentCandidateCompleteness],
+        subject: request.subject,
+        target: { kind: 'CATALOG_SELECTION', selection: component.catalogSelection },
+        trustedContext: request.trustedContext,
+      },
+      outcome: 'ELIGIBLE',
+    },
+    request,
+  });
+  return { ...decoded, request };
+};
 
 const runScoped = <Value>(
   database: AssortmentTestDatabase,
@@ -253,6 +333,244 @@ it.live('persists immutable confirmations with replay, RLS isolation, and append
       );
       expect(persistedEvidence.request).toEqual(evidenceRequest);
       expect(persistedEvidence.evidence).toEqual(evidenceDecision.evidence);
+      // Trusted source fixtures prove the owner contract through real storage;
+      // they do not claim deployed owner provenance or Attempt/Bundle authority.
+      const component = Schema.decodeUnknownSync(AssortmentPurchaseConstituentSchema)({
+        ...evidenceRequest.constituent,
+        role: 'REQUIRED_COMPONENT',
+      });
+      const setRevision = {
+        ownerModuleId: 'catalog.owner',
+        revision: 'set-r1',
+        sourceRef: ref('catalog.owner', 'catalog.set-composition-revision', 'set-r1'),
+      };
+      const setRequest = Schema.decodeUnknownSync(Schema.toType(AssortmentPurchaseRequestSchema))({
+        ...evidenceRequest,
+        constituent: {
+          catalogSelection: {
+            configuration: { kind: 'NONE' },
+            productRef: ref('catalog.owner', 'catalog.product', 'set-product'),
+            setCompositionRevision: setRevision,
+            variantKind: 'SET',
+            variantRef: ref('catalog.owner', 'catalog.variant', 'set-variant'),
+          },
+          role: 'TOP_LEVEL',
+        },
+        setComposition: { requiredComponents: [component], setCompositionRevision: setRevision },
+      });
+      const componentRequest = assortmentPurchaseConstituentRequest(setRequest, component);
+      const { setComposition } = setRequest;
+      if (setComposition === undefined) {
+        throw new Error('expected pinned Set composition');
+      }
+      for (const composedOutcome of ['ELIGIBLE', 'INELIGIBLE'] as const) {
+        const persistenceAttempts: string[] = [];
+        let persistenceFailed = false;
+        const recordPersistenceFailure = Effect.sync(() => {
+          persistenceFailed = true;
+        });
+        const unknown = freeze(
+          Schema.decodeUnknownSync(AssortmentGovernedDecisionSchema)({
+            failure: {
+              _tag: 'AssortmentDependencyFailureError',
+              code: 'DEPENDENCY_FAILURE',
+              ownerModuleId: 'commerce.assortment',
+              retryable: true,
+              safeReasonCode: 'DEPENDENCY_UNAVAILABLE',
+            },
+            outcome: 'INDETERMINATE',
+          }),
+        );
+        const result = yield* runRepositoryScoped(runtime, scope, (transaction) =>
+          makeAssortmentDecisionEvaluation({
+            evidenceStore: {
+              persist: (input) =>
+                Effect.sync(() =>
+                  persistenceAttempts.push(
+                    input.request.decisionPurpose === 'PURCHASE'
+                      ? input.request.constituent.role
+                      : input.request.decisionPurpose,
+                  ),
+                ).pipe(
+                  Effect.andThen(assortmentDecisionEvidenceRepositoryForScope(transaction, scope).persist(input)),
+                  Effect.tapError(() => recordPersistenceFailure),
+                ),
+            },
+            source: {
+              resolvePurchase: () =>
+                Effect.succeed({
+                  constituents: [
+                    {
+                      constituent: setRequest.constituent,
+                      decision: composedOutcome === 'INELIGIBLE' ? unknown : known(setRequest, 'ELIGIBLE'),
+                      request: setRequest,
+                    },
+                    {
+                      constituent: component,
+                      decision: known(componentRequest, composedOutcome),
+                      request: componentRequest,
+                    },
+                  ],
+                  decision: known(setRequest, composedOutcome),
+                  request: setRequest,
+                }),
+              resolveVisibility: () =>
+                Effect.fail(
+                  new AssortmentDependencyFailureError({
+                    code: 'DEPENDENCY_FAILURE',
+                    ownerModuleId: setRequest.constituent.catalogSelection.productRef.moduleId,
+                    retryable: true,
+                    safeReasonCode: 'DEPENDENCY_UNAVAILABLE',
+                  }),
+                ),
+            },
+          }).evaluatePurchase(
+            {
+              constituent: setRequest.constituent,
+              decisionPurpose: 'PURCHASE',
+              setComposition,
+              subject: setRequest.subject,
+              trustedContextRef: ref('commerce.gateway', 'commerce.gateway.context', 'trusted-fixture-context'),
+            },
+            scope,
+          ),
+        );
+        // These assertions distinguish pre-store source rejection from a real
+        // typed persistence failure, without manufacturing durable references.
+        expect(persistenceFailed).toBe(false);
+        expect(persistenceAttempts).toEqual(
+          composedOutcome === 'ELIGIBLE' ? ['TOP_LEVEL', 'REQUIRED_COMPONENT'] : ['REQUIRED_COMPONENT'],
+        );
+        expect(result.decision.outcome).toBe(composedOutcome);
+        const componentEvidence = result.consumerEvidence?.evaluatedConstituents.find(
+          (item) => item.constituent.role === 'REQUIRED_COMPONENT',
+        );
+        if (componentEvidence === undefined || componentEvidence.outcome === 'INDETERMINATE') {
+          throw new Error('expected durable component evidence');
+        }
+        const explained = yield* runRepositoryScoped(runtime, scope, (transaction) =>
+          assortmentDecisionExplanationReadService(scope, (reference) =>
+            assortmentDecisionEvidenceRepositoryForScope(transaction, scope)
+              .resolve(reference)
+              .pipe(
+                Effect.mapError(
+                  () =>
+                    new AssortmentPolicyPersistenceUnavailable({
+                      code: 'assortment_policy_persistence_unavailable',
+                      reason: 'test evidence unavailable',
+                    }),
+                ),
+              ),
+          ).explain({ evidenceRef: componentEvidence.decisionEvidence, request: componentRequest }),
+        );
+        expect(explained.outcome).toBe(composedOutcome);
+        expect(explained.evidence.target).toEqual({ kind: 'CATALOG_SELECTION', selection: component.catalogSelection });
+        if (composedOutcome === 'INELIGIBLE') {
+          expect(result.consumerEvidence?.evaluatedConstituents[0]?.outcome).toBe('INDETERMINATE');
+          expect(result.consumerEvidence?.evaluatedConstituents[0]).not.toHaveProperty('decisionEvidence');
+        }
+      }
+      // Trusted complete Current and Attempt/Bundle fixtures prove Assortment's
+      // service-to-real-repository chain; the production factory remains unavailable.
+      // A scoped fixed clock binds freshly stored evidence to the issuer's exact now.
+      yield* Effect.gen(function* issuesPersistedComponentConfirmation() {
+        const now = yield* DateTime.now;
+        const attemptEvidence = positiveComponentAttemptAt(component, now);
+        const freshComponentRef = yield* runRepositoryScoped(runtime, scope, (transaction) =>
+          assortmentDecisionEvidenceRepositoryForScope(transaction, scope).persist({
+            constituent: component,
+            decision: attemptEvidence.decision,
+            request: attemptEvidence.request,
+          }),
+        );
+        const componentPayload = Schema.decodeUnknownSync(AssortmentCommitmentConfirmationPayloadSchema)({
+          ...payload,
+          constituent: component,
+          decisionEvidenceRef: freshComponentRef,
+        });
+        const issued = yield* runRepositoryScoped(runtime, scope, (transaction) =>
+          makeAssortmentCommitmentConfirmationService(
+            scope,
+            {
+              evaluate: (requested, _evaluationScope, issuedNow) => {
+                const currentAttempt = positiveComponentAttemptAt(component, issuedNow);
+                const { request: currentRequest } = currentAttempt;
+                const ordinaryInput = Schema.decodeUnknownSync(Schema.toType(AssortmentOrdinaryResolutionInputSchema))({
+                  candidates: [candidate],
+                  completeness: {
+                    evidence: componentCandidateCompleteness,
+                    scope: {
+                      commercialScope: candidate.commercialScope,
+                      decisionPurpose: 'PURCHASE',
+                      kind: 'ORDINARY_CANDIDATES',
+                      operationTime: issuedNow,
+                      subject: currentRequest.subject,
+                      target: currentAttempt.decision.evidence.target,
+                      tenantId,
+                    },
+                  },
+                  decisionPurpose: 'PURCHASE',
+                  factCurrentness: currentAttempt.decision.evidence.factCurrentness,
+                  subject: currentRequest.subject,
+                  target: currentAttempt.decision.evidence.target,
+                  tenantId,
+                  trustedContext: currentRequest.trustedContext,
+                });
+                expect(resolveAssortmentOrdinary(ordinaryInput)).toMatchObject({
+                  kind: 'RESOLVED',
+                  outcome: 'ELIGIBLE',
+                });
+                const wrongPredicate = {
+                  ...ordinaryInput,
+                  completeness: {
+                    ...ordinaryInput.completeness,
+                    evidence: { ...ordinaryInput.completeness.evidence, predicate: 'an unproven subset of candidates' },
+                  },
+                };
+                expect(resolveAssortmentOrdinary(wrongPredicate)).toEqual({
+                  kind: 'INDETERMINATE',
+                  reason: 'CANDIDATE_SET_INCOMPLETE',
+                });
+                return Effect.succeed({
+                  attemptEvidence: currentAttempt,
+                  attemptRef: requested.attemptRef,
+                  candidate,
+                  constituent: component,
+                  decisionEvidenceRef: freshComponentRef,
+                  ordinaryInput,
+                  prospectivePurchaseMeaningRef: requested.prospectivePurchaseMeaningRef,
+                });
+              },
+            },
+            assortmentCommitmentConfirmationRepositoryForScope(transaction, scope),
+          ).issue(componentPayload, {
+            actionInvocationId: randomUUID(),
+            actorPrincipalId: principalId,
+          }),
+        );
+        expect(issued.constituent).toEqual(component);
+        expect(issued.constituent.role).toBe('REQUIRED_COMPONENT');
+        expect(issued.candidate).toEqual(componentPayload.candidate);
+        expect(issued.decisionEvidenceRef).toEqual(freshComponentRef);
+        expect(DateTime.toEpochMillis(issued.issuedAt)).toBe(DateTime.toEpochMillis(now));
+        const savedComponentEvidence = yield* runRepositoryScoped(runtime, scope, (transaction) =>
+          assortmentDecisionEvidenceRepositoryForScope(transaction, scope).resolve(
+            issued.decisionEvidenceRef.evidenceRef,
+          ),
+        );
+        expect(savedComponentEvidence.request).toEqual(attemptEvidence.request);
+        expect(savedComponentEvidence.evidence).toEqual(attemptEvidence.decision.evidence);
+        const savedRows = yield* runScoped(runtime, scope, (transaction) =>
+          transaction
+            .select()
+            .from(commitmentConfirmations)
+            .where(eq(commitmentConfirmations.commitmentConfirmationId, issued.confirmationRef.resourceId)),
+        );
+        expect(savedRows).toHaveLength(1);
+        expect(savedRows[0]?.constituentJson).toEqual(component);
+        expect(savedRows[0]?.decisionEvidenceJson).toEqual(freshComponentRef);
+      }).pipe(Effect.provide(TestClock.layer()));
+
       const wrongScope = { ...scope, tenantId: foreignTenantId };
       const wrongScopeEvidence = yield* runRepositoryScoped(runtime, wrongScope, (transaction) =>
         Effect.result(

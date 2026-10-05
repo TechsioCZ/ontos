@@ -669,7 +669,6 @@ const queryOrdinaryCandidateRows = (
         audienceMatches,
         lte(applicabilityBindings.effectiveFrom, operationAt),
         or(isNull(applicabilityBindingEndFacts.effectiveAt), gt(applicabilityBindingEndFacts.effectiveAt, operationAt)),
-        or(isNull(ruleRetirementFacts.effectiveAt), gt(ruleRetirementFacts.effectiveAt, operationAt)),
       ),
     )
     .orderBy(

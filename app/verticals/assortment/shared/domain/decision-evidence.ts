@@ -6,10 +6,12 @@ import {
   AssortmentDecisionRequestSchema,
   AssortmentDecisionSubjectSchema,
   AssortmentPurchaseRequestSchema,
+  AssortmentRevisionReferenceSchema,
   AssortmentSetCompletenessEvidenceSchema,
   AssortmentSetPurchaseCompositionSchema,
   AssortmentTrustedCommerceContextSchema,
   AssortmentVisibilityRequestSchema,
+  composeAssortmentPurchaseOutcome,
 } from './decision-contracts.ts';
 import type {
   AssortmentCandidate,
@@ -23,7 +25,10 @@ import type {
   AssortmentPurchaseRequest,
 } from './decision-contracts.ts';
 import { AssortmentSetPurchaseCompositionResolutionSchema } from './set-purchase-composition.ts';
-import type { AssortmentSetPurchaseCompositionResolution } from './set-purchase-composition.ts';
+import type {
+  AssortmentEvaluatedConstituent,
+  AssortmentSetPurchaseCompositionResolution,
+} from './set-purchase-composition.ts';
 
 const SuccessfulDecisionSchema = Schema.Struct({
   evidence: AssortmentDecisionEvidenceSchema,
@@ -65,6 +70,8 @@ const selectionEquivalence = Schema.toEquivalence(AssortmentCatalogSelectionSche
 const subjectEquivalence = Schema.toEquivalence(AssortmentDecisionSubjectSchema);
 const contextEquivalence = Schema.toEquivalence(AssortmentTrustedCommerceContextSchema);
 const compositionEquivalence = Schema.toEquivalence(AssortmentSetPurchaseCompositionSchema);
+const decisionEvidenceEquivalence = Schema.toEquivalence(AssortmentDecisionEvidenceSchema);
+const revisionEquivalence = Schema.toEquivalence(AssortmentRevisionReferenceSchema);
 const completenessEquivalence = Schema.toEquivalence(AssortmentSetCompletenessEvidenceSchema);
 
 const sourceReference = (reference: {
@@ -287,8 +294,11 @@ const proofSetIsComplete = (evidence: AssortmentDecisionEvidence): boolean =>
   evidence.setCompleteness.every((proof) => proof.state === 'COMPLETE') &&
   evidence.factCurrentness.every((fact) => fact.state === 'CURRENT');
 
-const decisionMatchesRequest = (request: AssortmentDecisionRequest, decision: AssortmentGovernedDecision): boolean => {
-  if (decision.outcome === 'INDETERMINATE' || decision.evidence === undefined) {
+export const assortmentDecisionMatchesRequest = (
+  request: AssortmentDecisionRequest,
+  decision: AssortmentGovernedDecision,
+): boolean => {
+  if (decision.evidence === undefined) {
     return false;
   }
   const { evidence } = decision;
@@ -305,56 +315,106 @@ const decisionMatchesRequest = (request: AssortmentDecisionRequest, decision: As
   );
 };
 
+const constituentProofMatchesRequest = (
+  request: AssortmentPurchaseRequest,
+  item: AssortmentEvaluatedConstituent,
+  outcome: 'ELIGIBLE' | 'INELIGIBLE',
+): boolean => {
+  const { evidence } = item.decision;
+  const constituentRequest: AssortmentPurchaseRequest = {
+    constituent: item.constituent,
+    decisionPurpose: 'PURCHASE',
+    subject: request.subject,
+    trustedContext: request.trustedContext,
+  };
+  if (item.decision.outcome === 'INDETERMINATE') {
+    return (
+      outcome === 'INELIGIBLE' &&
+      (evidence === undefined || assortmentDecisionMatchesRequest(constituentRequest, item.decision))
+    );
+  }
+  return (
+    assortmentDecisionMatchesRequest(constituentRequest, item.decision) &&
+    evidence !== undefined &&
+    proofSetIsComplete(evidence) &&
+    boundaryCompletenessIsRetained(evidence) &&
+    candidatePathIsValid(evidence)
+  );
+};
+
+const sameConstituent = (
+  left: AssortmentEvaluatedConstituent['constituent'],
+  right: AssortmentEvaluatedConstituent['constituent'],
+): boolean => left.role === right.role && selectionEquivalence(left.catalogSelection, right.catalogSelection);
+
+const summaryRetainsRootEvidence = (
+  summary: AssortmentDecisionEvidence,
+  rootEvidence: AssortmentDecisionEvidence | undefined,
+): boolean =>
+  rootEvidence === undefined
+    ? summary.candidates === undefined &&
+      summary.boundaryPath === undefined &&
+      summary.factCurrentness.length === 0 &&
+      summary.setCompleteness.length === 0
+    : decisionEvidenceEquivalence(summary, rootEvidence);
+
 const setResolutionMatchesRequest = (
   request: AssortmentPurchaseRequest,
   resolution: AssortmentSetPurchaseCompositionResolution,
-  outcome: 'ELIGIBLE' | 'INELIGIBLE',
+  decision: typeof SuccessfulDecisionSchema.Type,
 ): boolean => {
+  const { outcome } = decision;
   if (request.constituent.catalogSelection.variantKind !== 'SET' || request.setComposition === undefined) {
     return false;
   }
-  if (resolution.kind !== outcome || !('evidence' in resolution)) {
+  if (resolution.kind === 'INDETERMINATE' || resolution.kind !== outcome) {
     return false;
   }
-  if (!compositionEquivalence(resolution.evidence.composition, request.setComposition)) {
+  const { compositionSource } = resolution.evidence;
+  const revision = request.setComposition.setCompositionRevision;
+  if (
+    !compositionEquivalence(resolution.evidence.composition, request.setComposition) ||
+    !compositionEquivalence(compositionSource.composition, request.setComposition) ||
+    compositionSource.source.ownerModuleId !== revision.ownerModuleId ||
+    compositionSource.source.evidenceRef.moduleId !== revision.sourceRef.moduleId ||
+    compositionSource.source.sourceRevision === undefined ||
+    !revisionEquivalence(compositionSource.source.sourceRevision, revision)
+  ) {
     return false;
   }
   const { requiredComponents } = request.setComposition;
   const expected = [request.constituent, ...requiredComponents];
   const { evaluated } = resolution.evidence;
-  for (const item of evaluated) {
-    const { evidence } = item.decision;
-    if (
-      !expected.some(
-        (candidate) =>
-          candidate.role === item.constituent.role &&
-          selectionEquivalence(candidate.catalogSelection, item.constituent.catalogSelection),
-      ) ||
-      evaluated.some(
-        (other) =>
-          other !== item &&
-          other.constituent.role === item.constituent.role &&
-          selectionEquivalence(other.constituent.catalogSelection, item.constituent.catalogSelection),
-      ) ||
-      !decisionMatchesRequest(
-        {
-          constituent: item.constituent,
-          decisionPurpose: 'PURCHASE',
-          subject: request.subject,
-          trustedContext: request.trustedContext,
-        },
-        item.decision,
-      ) ||
-      evidence === undefined ||
-      !proofSetIsComplete(evidence) ||
-      !boundaryCompletenessIsRetained(evidence) ||
-      !candidatePathIsValid(evidence)
-    ) {
-      return false;
-    }
+  const evaluatedRoot = evaluated.find(
+    (item) =>
+      item.constituent.role === 'TOP_LEVEL' &&
+      selectionEquivalence(item.constituent.catalogSelection, request.constituent.catalogSelection),
+  );
+  const rootEvidence = evaluatedRoot?.decision.evidence;
+  // Retain an actual root path, or only summary identity when it was unknown
+  // without evidence or never evaluated. Do not invent a successful root path.
+  if (!summaryRetainsRootEvidence(decision.evidence, rootEvidence)) {
+    return false;
+  }
+
+  if (
+    !evaluated.every(
+      (item, index) =>
+        expected.some((candidate) => sameConstituent(candidate, item.constituent)) &&
+        !evaluated.slice(0, index).some((other) => sameConstituent(other.constituent, item.constituent)) &&
+        constituentProofMatchesRequest(request, item, outcome),
+    )
+  ) {
+    return false;
   }
   return (
     evaluated.length > 0 &&
+    composeAssortmentPurchaseOutcome(
+      evaluated.map((item) => ({
+        constituent: item.constituent,
+        outcome: item.decision.outcome,
+      })),
+    ) === outcome &&
     (outcome === 'ELIGIBLE'
       ? evaluated.length === expected.length
       : evaluated.some((item) => item.decision.outcome === 'INELIGIBLE'))
@@ -391,18 +451,22 @@ export const constructAssortmentSuccessfulAttemptEvidence = Effect.fn(
     return yield* invalid('successful-attempt evidence input is not schema-valid');
   }
   const { decision, request } = input;
-  if (!decisionMatchesRequest(request, decision)) {
+  if (!assortmentDecisionMatchesRequest(request, decision)) {
     return yield* invalid('decision evidence does not match the exact request');
   }
   const references = [...evidenceReferences(decision.evidence), ...resolutionReferences(input.setResolution)];
   if (!sameTenant(request.trustedContext.tenantId, references)) {
     return yield* invalid('decision evidence contains a cross-tenant reference');
   }
-  if (!proofSetIsComplete(decision.evidence) || !boundaryCompletenessIsRetained(decision.evidence)) {
-    return yield* invalid('successful decision is missing current fact or complete set proof evidence');
-  }
-  if (!candidatePathIsValid(decision.evidence)) {
-    return yield* invalid('ordinary Candidate evidence is not an exact applicable Current path');
+  // A composed deny is proved by its known constituent, even if the root was
+  // unknown or was never evaluated. Each known path is validated below.
+  if (input.setResolution === undefined) {
+    if (!proofSetIsComplete(decision.evidence) || !boundaryCompletenessIsRetained(decision.evidence)) {
+      return yield* invalid('successful decision is missing current fact or complete set proof evidence');
+    }
+    if (!candidatePathIsValid(decision.evidence)) {
+      return yield* invalid('ordinary Candidate evidence is not an exact applicable Current path');
+    }
   }
   if (request.decisionPurpose === 'VISIBILITY') {
     if (input.setResolution !== undefined || !Schema.is(AssortmentVisibilityRequestSchema)(request)) {
@@ -419,7 +483,7 @@ export const constructAssortmentSuccessfulAttemptEvidence = Effect.fn(
     if (
       isSet &&
       input.setResolution !== undefined &&
-      !setResolutionMatchesRequest(request, input.setResolution, decision.outcome)
+      !setResolutionMatchesRequest(request, input.setResolution, decision)
     ) {
       return yield* invalid('Set evidence does not contain the exact pinned and evaluated constituents');
     }

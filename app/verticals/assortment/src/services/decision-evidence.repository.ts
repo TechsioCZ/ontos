@@ -7,6 +7,8 @@ import {
   AssortmentGovernedDecisionSchema,
   AssortmentDependencyFailureError,
   AssortmentOwnerModuleIdSchema,
+  AssortmentPurchaseConstituentSchema,
+  AssortmentPurchaseRequestSchema,
 } from '../../shared/domain/decision-contracts.ts';
 import type {
   AssortmentDecisionEvidence,
@@ -25,11 +27,17 @@ import {
   makeUnavailableAssortmentDecisionSource,
 } from '../../shared/domain/ports/decision-evaluation.ts';
 import type { AssortmentOwnerFailure } from '../../shared/domain/ports/owner-evidence.ts';
+import { assortmentDecisionMatchesRequest } from '../../shared/domain/decision-evidence.ts';
 import { assortmentMeaningFingerprint } from './policy-administration.service.ts';
 import { decisionEvidence } from '../database/schema.ts';
 
 const DecisionJsonCodec = Schema.toCodecJson(AssortmentGovernedDecisionSchema);
 const RequestJsonCodec = Schema.toCodecJson(AssortmentDecisionRequestSchema);
+const constituentEquivalence = Schema.toEquivalence(AssortmentPurchaseConstituentSchema);
+const PurchaseInputIdentitySchema = Schema.Struct({
+  constituent: AssortmentPurchaseConstituentSchema,
+  request: AssortmentPurchaseRequestSchema,
+});
 const MODULE_ID = 'commerce.assortment' as const;
 const EVIDENCE_RESOURCE_TYPE = 'commerce.assortment.decision-evidence' as const;
 
@@ -121,6 +129,11 @@ const requestOf = (input: PersistableDecision): AssortmentDecisionRequest => inp
 
 const evidenceOf = (input: PersistableDecision): AssortmentGovernedDecision => input.decision;
 
+const inputHasExactConstituent = (input: PersistableDecision): boolean =>
+  input.request.decisionPurpose === 'VISIBILITY' ||
+  (Schema.is(PurchaseInputIdentitySchema)(input) &&
+    constituentEquivalence(input.constituent, input.request.constituent));
+
 const encodeDecision = (decision: AssortmentGovernedDecision) =>
   Schema.encodeUnknownEffect(DecisionJsonCodec)(decision).pipe(Effect.mapError(unavailable));
 
@@ -143,7 +156,8 @@ const storedEvidence = (
     row.outcome !== decision.outcome ||
     row.requestFingerprint !== assortmentDecisionRequestFingerprint(request) ||
     decision.evidence === undefined ||
-    !Schema.is(AssortmentDecisionEvidenceSchema)(decision.evidence)
+    !Schema.is(AssortmentDecisionEvidenceSchema)(decision.evidence) ||
+    !assortmentDecisionMatchesRequest(request, decision)
   ) {
     return Effect.fail(unavailable());
   }
@@ -201,7 +215,10 @@ export const assortmentDecisionEvidenceRepositoryFromPort = (
       legalEntityId === undefined ||
       !isScopedRequest(request, scope) ||
       decision.outcome === 'INDETERMINATE' ||
-      decision.evidence === undefined
+      decision.evidence === undefined ||
+      !Schema.is(AssortmentDecisionRequestSchema)(request) ||
+      !assortmentDecisionMatchesRequest(request, decision) ||
+      !inputHasExactConstituent(input)
     ) {
       return yield* unavailable();
     }

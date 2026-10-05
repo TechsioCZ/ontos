@@ -85,14 +85,14 @@ it('accepts exact visibility and purchase contracts with owner-qualified refs', 
     trustedContext: context,
   });
   expect(purchase.constituent.catalogSelection).toEqual(atomicSelection);
-  expect(() =>
-    Schema.decodeUnknownSync(AssortmentPurchaseRequestSchema)({
-      constituent: { catalogSelection: atomicSelection, role: 'REQUIRED_COMPONENT' },
-      decisionPurpose: 'PURCHASE',
-      subject: profileSubject,
-      trustedContext: context,
-    }),
-  ).toThrow();
+  const componentPurchase = Schema.decodeUnknownSync(AssortmentPurchaseRequestSchema)({
+    constituent: { catalogSelection: atomicSelection, role: 'REQUIRED_COMPONENT' },
+    decisionPurpose: 'PURCHASE',
+    subject: profileSubject,
+    trustedContext: context,
+  });
+  expect(componentPurchase.constituent.role).toBe('REQUIRED_COMPONENT');
+  expect(componentPurchase.constituent.catalogSelection).toEqual(atomicSelection);
 });
 
 it('rejects VISIBILITY variant/package-option selectors while allowing PURCHASE selectors', () => {
