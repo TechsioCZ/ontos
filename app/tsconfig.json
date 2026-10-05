@@ -60,6 +60,9 @@
     },
     {
       "path": "verticals/inventory"
+    },
+    {
+      "path": "verticals/availability"
     }
   ]
 }

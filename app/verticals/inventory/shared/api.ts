@@ -16,6 +16,7 @@ import { CorrectCatalogToStockBindingActionApi } from './apis/correct-catalog-to
 import { CorrectExternalStockCorrelationActionApi } from './apis/correct-external-stock-correlation-action.ts';
 import { CorrectStockPositionActionApi } from './apis/correct-stock-position-action.ts';
 import { CreateInventoryReservationActionApi } from './apis/create-inventory-reservation-action.ts';
+import { CurrentRelevantStockPositionSetApi } from './apis/current-relevant-stock-position-set.ts';
 import { CurrentStockEvidenceForAvailabilityApi } from './apis/current-stock-evidence-for-availability.ts';
 import { EndCatalogToStockBindingActionApi } from './apis/end-catalog-to-stock-binding-action.ts';
 import { EndExternalStockCorrelationActionApi } from './apis/end-external-stock-correlation-action.ts';
@@ -72,6 +73,7 @@ type InventoryApiGroups = GroupsOf<
   | typeof CorrectExternalStockCorrelationActionApi
   | typeof CorrectStockPositionActionApi
   | typeof CreateInventoryReservationActionApi
+  | typeof CurrentRelevantStockPositionSetApi
   | typeof CurrentStockEvidenceForAvailabilityApi
   | typeof EndCatalogToStockBindingActionApi
   | typeof EndExternalStockCorrelationActionApi
@@ -109,6 +111,7 @@ export const inventoryApi: InventoryApi = HttpApi.make('InventoryApi')
   .addHttpApi(CorrectExternalStockCorrelationActionApi)
   .addHttpApi(CorrectStockPositionActionApi)
   .addHttpApi(CreateInventoryReservationActionApi)
+  .addHttpApi(CurrentRelevantStockPositionSetApi)
   .addHttpApi(CurrentStockEvidenceForAvailabilityApi)
   .addHttpApi(EndCatalogToStockBindingActionApi)
   .addHttpApi(EndExternalStockCorrelationActionApi)

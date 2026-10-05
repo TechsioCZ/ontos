@@ -9,7 +9,8 @@
     "pricing": "http://localhost:4106/.well-known/ontos-module-manifest.json",
     "storefront-registry": "http://localhost:4107/.well-known/ontos-module-manifest.json",
     "price-group-catalog": "http://localhost:4108/.well-known/ontos-module-manifest.json",
-    "inventory": "http://localhost:4110/.well-known/ontos-module-manifest.json"
+    "inventory": "http://localhost:4110/.well-known/ontos-module-manifest.json",
+    "availability": "http://localhost:4111/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -25,7 +26,8 @@
     "pricing": 4106,
     "storefront-registry": 4107,
     "price-group-catalog": 4108,
-    "inventory": 4110
+    "inventory": 4110,
+    "availability": 4111
   },
   "manifests": {
     "assortment": "http://localhost:4104/mf-manifest.json",
@@ -545,6 +547,54 @@
           "buildMarker": "26e7bfcc7c19d1d4"
         }
       }
+    },
+    "availability": {
+      "apiBaseUrl": "http://localhost:4111/availability-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/availability",
+        "buildMarker": "7b0e5ab486adc9c0"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-availability",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_AVAILABILITY",
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+        },
+        "zephyr": {
+          "runtime": "api-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_AVAILABILITY_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_AVAILABILITY_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_AVAILABILITY_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_AVAILABILITY_WORKER",
+          "serviceBindingEnv": "VERTICAL_AVAILABILITY_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_AVAILABILITY_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_AVAILABILITY_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v2",
+        "remoteName": "verticalAvailabilityBackend",
+        "manifestEnv": "VERTICAL_AVAILABILITY_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4111/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4111/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/availability",
+          "buildMarker": "7b0e5ab486adc9c0"
+        }
+      }
     }
   },
   "apis": {
@@ -557,6 +607,7 @@
     "storefront-registry": "http://localhost:4107/storefront-registry-api",
     "price-group-catalog": "http://localhost:4108/price-group-catalog-api",
     "assortment": "http://localhost:4104/assortment-api",
-    "inventory": "http://localhost:4110/inventory-api"
+    "inventory": "http://localhost:4110/inventory-api",
+    "availability": "http://localhost:4111/availability-api"
   }
 }

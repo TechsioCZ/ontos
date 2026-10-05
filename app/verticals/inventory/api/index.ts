@@ -38,6 +38,7 @@ import { correctCatalogToStockBindingActionApiLive } from './correct-catalog-to-
 import { correctExternalStockCorrelationActionApiLive } from './correct-external-stock-correlation-action-server.ts';
 import { correctStockPositionActionApiLive } from './correct-stock-position-action-server.ts';
 import { createInventoryReservationActionApiLive } from './create-inventory-reservation-action-server.ts';
+import { currentRelevantStockPositionSetReadApiLive } from './current-relevant-stock-position-set-read-server.ts';
 import { currentStockEvidenceForAvailabilityReadApiLive } from './current-stock-evidence-for-availability-read-server.ts';
 import { endCatalogToStockBindingActionApiLive } from './end-catalog-to-stock-binding-action-server.ts';
 import { endExternalStockCorrelationActionApiLive } from './end-external-stock-correlation-action-server.ts';
@@ -155,6 +156,7 @@ export const makeInventoryApiRuntime = (
     correctExternalStockCorrelationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     correctStockPositionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     createInventoryReservationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+    currentRelevantStockPositionSetReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     currentStockEvidenceForAvailabilityReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     endCatalogToStockBindingActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     endExternalStockCorrelationActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

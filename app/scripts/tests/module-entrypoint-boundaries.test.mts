@@ -12,7 +12,11 @@ import {
   hasGeneratedActionRegistrationBinding,
   hasGeneratedGovernedServerContract,
 } from '../generated-governed-http-boundary.mts';
-import { hasGeneratedGovernedClientContract, hasGeneratedSourceHeader } from '../generated-module-api-boundary.mts';
+import {
+  hasGeneratedGovernedClientContract,
+  hasGeneratedModuleApiReadContract,
+  hasGeneratedSourceHeader,
+} from '../generated-module-api-boundary.mts';
 import {
   assertPublishedCrossMicroVerticalContractUsage,
   assertPublishedOutboxContractSource,
@@ -23,6 +27,8 @@ import {
 } from '../published-outbox-contracts.mts';
 
 const EXPECTED_EFFECT_FAILURE = 'Expected the Effect to fail';
+const ALIASED_PERMISSION_PROPERTY = 'permission: INVENTORY_READ_PERMISSION';
+const FixtureEntrypointKeySchema = Schema.String.pipe(Schema.brand('EntrypointKey'));
 const acceptsTypedGtinBinding = (source: string) =>
   hasGeneratedActionRegistrationBinding(source, 'confirmGtin', 'ConfirmGtin', 'commerce.catalog');
 
@@ -2868,3 +2874,235 @@ for (const outcome of ['success', EARLY_FAILURE, PARTIAL_FAILURE, 'interruption'
     }),
   );
 }
+
+it('resolves only immutable literal permission aliases and preserves exact authorization comparison', () => {
+  const base = moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList');
+  const declaration = "const INVENTORY_READ_PERMISSION = 'module.access' as const;\n";
+  const aliased = `${declaration}${base.replace("permission: 'module.access'", ALIASED_PERMISSION_PROPERTY)}`;
+  const expectation = { kind: 'context_permission', permission: 'module.access' } as const;
+  const accepts = (source: string) =>
+    hasGeneratedModuleApiReadContract(source, 'inventory.stock', STOCK_LIST_STEM, expectation);
+  expect(accepts(aliased)).toBe(true);
+  expect(accepts(aliased.replace(' as const;', ';'))).toBe(true);
+  expect(accepts(aliased.replace('const INVENTORY_READ_PERMISSION', 'let INVENTORY_READ_PERMISSION'))).toBe(false);
+  expect(accepts(aliased.replace(declaration, ''))).toBe(false);
+  expect(accepts(aliased.replace(declaration, `for (${declaration.trim()} false;) {}\n`))).toBe(false);
+  expect(accepts(aliased.replace(declaration, "const INVENTORY_READ_PERMISSION = 'module.other' as const;\n"))).toBe(
+    false,
+  );
+  expect(
+    accepts(`${aliased}\nfunction shadow(INVENTORY_READ_PERMISSION: string) { return INVENTORY_READ_PERMISSION; }`),
+  ).toBe(false);
+  expect(accepts(`${aliased}\nfunction shadow({permission: INVENTORY_READ_PERMISSION}) {}`)).toBe(false);
+  expect(accepts(`${aliased}\n({permission: INVENTORY_READ_PERMISSION} = attacker);`)).toBe(false);
+  expect(accepts(`${aliased}\nconst shadow = ({permission: INVENTORY_READ_PERMISSION}) => true;`)).toBe(false);
+  expect(accepts(`${aliased}\nfunction shadow({nested: {permission: INVENTORY_READ_PERMISSION}}) {}`)).toBe(false);
+  const property = '{permission: INVENTORY_READ_PERMISSION}';
+  const nestedTargets = [property, `[${property}]`, `{nested: [${property}]}`, `[{nested: [${property}]}]`];
+  for (const target of nestedTargets) {
+    const invalidUses = [
+      `${target} = attacker;`,
+      `(${target} = attacker);`,
+      `(${target}) = attacker;`,
+      `const ${target} = attacker;`,
+      `let ${target}: unknown = attacker;`,
+      `var first, ${target} = attacker;`,
+      `function shadow(${target}) {}`,
+      `declare function shadow(${target});`,
+      `declare function shadow<T>(${target});`,
+      `declare function shadow<T extends {nested: unknown}>(${target});`,
+      `declare class Shadow { method(${target}); }`,
+      `declare class Shadow<T extends {nested: unknown}> { method(${target}); }`,
+      `interface Shadow { method(${target}) }`,
+      `interface Shadow { method(${target}), other(): void }`,
+      `function shadow(${target} = attacker) {}`,
+      `const shadow = (${target}) => true;`,
+      `const shadow = (${target}): boolean => true;`,
+      `const shadow = { method(${target}) {} };`,
+      `try {} catch (${target}) {}`,
+      `for (${target} of attacker) {}`,
+      `for (${target} in attacker) {}`,
+      `for (const ${target} of attacker) {}`,
+    ];
+    for (const invalidUse of invalidUses) {
+      expect(accepts(`${aliased}\n${invalidUse}`), invalidUse).toBe(false);
+    }
+    const valueReads = [
+      `const copied = ${target};`,
+      `consume(${target});`,
+      `const copied = () => (${target});`,
+      `function copied() { return ${target}; }`,
+      `const copied = [${target}];`,
+      `class Copied { value = consume(${target}); }`,
+      `class Copied { method() { consume(${target}); } }`,
+    ];
+    for (const valueRead of valueReads) {
+      expect(accepts(`${aliased}\n${valueRead}`), valueRead).toBe(true);
+    }
+  }
+  for (const invalidUse of [
+    `[{...${property}}] = attacker;`,
+    `[{permission: INVENTORY_READ_PERMISSION = fallback}] = attacker;`,
+    `const [...[${property}]] = attacker;`,
+    `function shadow(...[${property}]) {}`,
+    `([{nested: [${property}]}] as unknown) = attacker;`,
+  ]) {
+    expect(accepts(`${aliased}\n${invalidUse}`), invalidUse).toBe(false);
+  }
+  expect(accepts(`${aliased}\nconst copied = {permission: INVENTORY_READ_PERMISSION};`)).toBe(true);
+  expect(accepts(`${aliased}\nconst copied = () => ({permission: INVENTORY_READ_PERMISSION});`)).toBe(true);
+  expect(accepts(`${aliased}\n{ const INVENTORY_READ_PERMISSION = 'module.other'; }`)).toBe(false);
+  expect(accepts(`${aliased}\nINVENTORY_READ_PERMISSION = 'module.other';`)).toBe(false);
+  expect(accepts(aliased.replace(declaration, 'const INVENTORY_READ_PERMISSION = getPermission();\n'))).toBe(false);
+  expect(
+    accepts(aliased.replace(ALIASED_PERMISSION_PROPERTY, "permission: INVENTORY_READ_PERMISSION || 'module.other'")),
+  ).toBe(false);
+  expect(accepts(aliased.replace(declaration, "const INVENTORY_READ_PERMISSION = 'module.' + 'access';\n"))).toBe(
+    false,
+  );
+});
+
+it.live(
+  'accepts additional Effect Layer alias provisions while preserving the canonical runtime and import proof',
+  Effect.fn(function* importedLayerProvisionScenario() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const handlerPath = `${INVENTORY_VERTICAL_PATH}/api/index.ts`;
+    const original = yield* Effect.promise(() => readFile(path.join(root, handlerPath), 'utf-8'));
+    const importLine = "import { Layer as GovernedReadLayer } from 'effect';\n";
+    const ownerProvision = 'GovernedReadLayer.provide(ownerDependenciesLive)';
+    const first = 'stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive))';
+    const provisioned = `${importLine}${original.replace(
+      first,
+      'stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), GovernedReadLayer.provide(ownerDependenciesLive))',
+    )}`;
+    yield* write(root, handlerPath, provisioned);
+    yield* checkModuleEntrypointBoundaries(root);
+    yield* write(root, handlerPath, provisioned.replace(ownerProvision, 'Layer.provide(ownerDependenciesLive)'));
+    yield* checkModuleEntrypointBoundaries(root);
+    const invalidSources = [
+      provisioned.replace(importLine, ''),
+      provisioned.replace("from 'effect'", "from './fake-layer.ts'"),
+      provisioned.replace('import { Layer as GovernedReadLayer }', 'import type { Layer as GovernedReadLayer }'),
+      provisioned.replace(importLine, 'const GovernedReadLayer = fakeLayer;\n'),
+      `${provisioned}\nfunction shadow(GovernedReadLayer) {}`,
+      `${provisioned}\n({namespace: GovernedReadLayer} = attacker);`,
+      `${provisioned}\nGovernedReadLayer.provide = attacker;`,
+      `${provisioned}\n({member: GovernedReadLayer.provide} = attacker);`,
+      `${provisioned}\n[GovernedReadLayer.provide] = attacker;`,
+      `${provisioned}\n[{member: GovernedReadLayer.provide}] = attacker;`,
+      `${provisioned}\nGovernedReadLayer.provide++;`,
+      `${provisioned}\ndelete GovernedReadLayer.provide;`,
+      `${provisioned}\nimport { Layer as GovernedReadLayer } from './fake-layer.ts';`,
+      provisioned.replace(ownerProvision, 'UnknownLayer.provide(ownerDependenciesLive)'),
+      provisioned.replace(ownerProvision, 'GovernedReadLayer.provide(makeDependencies())'),
+      provisioned.replace(ownerProvision, 'GovernedReadLayer.provide(ownerDependenciesLive, attacker)'),
+      provisioned.replace(ownerProvision, 'ownerDependenciesLive'),
+      provisioned.replace('GovernedReadLayer.provide(governedReadRuntimeLive), ', ''),
+      provisioned.replace(
+        'GovernedReadLayer.provide(governedReadRuntimeLive)',
+        'Layer.provide(governedReadRuntimeLive)',
+      ),
+    ];
+    for (const invalid of invalidSources) {
+      yield* write(root, handlerPath, invalid);
+      yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
+        onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/module APIs require/u),
+        onSuccess: () => {
+          throw new Error(EXPECTED_EFFECT_FAILURE);
+        },
+      });
+    }
+  }),
+);
+
+it.live(
+  'records immutable permission aliases in the authorization inventory using the reviewed descriptor parser',
+  Effect.fn(function* immutablePermissionInventoryScenario() {
+    const root = yield* makeFixture();
+    const declaration = "const INVENTORY_READ_PERMISSION = 'module.access' as const;\n";
+    const source = `${declaration}${moduleReadFixture(STOCK_LIST_STEM, 'StockList', 'stockList').replace(
+      "permission: 'module.access'",
+      ALIASED_PERMISSION_PROPERTY,
+    )}`;
+    const inventorySchema = Schema.fromJsonString(
+      Schema.Struct({
+        entries: Schema.Array(
+          Schema.Struct({
+            authorization: Schema.Struct({ kind: Schema.String, permission: Schema.optionalKey(Schema.String) }),
+            entrypointKey: FixtureEntrypointKeySchema,
+          }),
+        ),
+      }),
+    );
+    for (const permission of ['module.access', 'module.other']) {
+      yield* write(root, STOCK_LIST_READ_FILE, source.replace("'module.access' as const", `'${permission}' as const`));
+      yield* checkModuleEntrypointBoundaries(root);
+      const report = yield* Effect.promise(() =>
+        readFile(path.join(root, '.codex/reports/authorization/protected-entrypoints.json'), 'utf-8'),
+      );
+      const inventory = yield* Schema.decodeUnknownEffect(inventorySchema)(report);
+      expect(
+        inventory.entries.find((entry) => entry.entrypointKey === 'inventory.stock.api.stock-list')?.authorization,
+      ).toEqual({ kind: 'context_permission', permission });
+    }
+    const invalidSources = [
+      source.replace(declaration, ''),
+      source.replace('const INVENTORY_READ_PERMISSION', 'let INVENTORY_READ_PERMISSION'),
+      source.replace(declaration, "const INVENTORY_READ_PERMISSION = 'MODULE.INVALID';\n"),
+      source.replace(declaration, 'const INVENTORY_READ_PERMISSION = resolvePermission();\n'),
+      source.replace(ALIASED_PERMISSION_PROPERTY, 'permission: INVENTORY_READ_PERMISSION || fallback'),
+      `${source}\nINVENTORY_READ_PERMISSION = attacker;`,
+      `${source}\nfunction shadow({permission: INVENTORY_READ_PERMISSION}) {}`,
+      `${source}\n[{permission: INVENTORY_READ_PERMISSION}] = attacker;`,
+      source.replace(ALIASED_PERMISSION_PROPERTY, 'permission: INVENTORY_READ_PERMISSION, ...override'),
+      source.replace(ALIASED_PERMISSION_PROPERTY, "permission: INVENTORY_READ_PERMISSION, permission: 'module.other'"),
+      source.replace(
+        "authorization: { kind: 'context_permission', permission: INVENTORY_READ_PERMISSION }",
+        "authorization: { kind: 'context_permission', permission: INVENTORY_READ_PERMISSION }, authorization: { kind: 'context_permission', permission: 'module.other' }",
+      ),
+    ];
+    yield* assertRejectedSources(
+      root,
+      STOCK_LIST_READ_FILE,
+      invalidSources,
+      /every runtime entrypoint must declare exactly one valid authorization/u,
+    );
+  }),
+);
+
+it.live(
+  'accepts the exact optional canonical request-schema error while retaining all required governed errors',
+  Effect.fn(function* canonicalRequestSchemaProblemScenario() {
+    const root = yield* makeFixture();
+    yield* writeGovernedModuleApi(root);
+    const contractPath = `${INVENTORY_VERTICAL_PATH}/shared/apis/stock-list.ts`;
+    const original = yield* Effect.promise(() => readFile(path.join(root, contractPath), 'utf-8'));
+    const canonicalName = 'RequestSchemaProblemSchema';
+    const factoryImport =
+      "import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema } from '@app/shared-contracts/problem-details';\n";
+    const canonicalImport = `import { makeProblemDetailsSchema, makeRetryableProblemDetailsSchema, ${canonicalName} } from '@app/shared-contracts/problem-details';\n`;
+    const withError = original.replace('error: [', `error: [${canonicalName}, `);
+    const withCanonical = withError.replace(factoryImport, canonicalImport);
+    yield* write(root, contractPath, withCanonical);
+    yield* checkModuleEntrypointBoundaries(root);
+    const invalidSources = [
+      withError,
+      withCanonical.replace(canonicalImport, `${factoryImport}import { ${canonicalName} } from './fake-problem.ts';\n`),
+      withCanonical.replace(
+        canonicalImport,
+        `${factoryImport}import type { ${canonicalName} } from '@app/shared-contracts/problem-details';\n`,
+      ),
+      withCanonical.replace(canonicalImport, `${factoryImport}const ${canonicalName} = fakeProblem;\n`),
+      `${withCanonical}\nfunction shadow(${canonicalName}) {}`,
+      `${withCanonical}\nfunction shadow({error: [${canonicalName}]}) {}`,
+      `${withCanonical}\n[{error: [${canonicalName}]}] = attacker;`,
+      `${withCanonical}\n${canonicalName}.make = attacker;`,
+      `${withCanonical}\nimport { ${canonicalName} } from './fake-problem.ts';`,
+      withCanonical.replace(`error: [${canonicalName}, `, `error: [${canonicalName}, ${canonicalName}, `),
+      withCanonical.replace(`error: [${canonicalName}, `, 'error: [UnknownProblemSchema, '),
+      withCanonical.replace('StockListInvalidProblemSchema, ', ''),
+    ];
+    yield* assertRejectedSources(root, contractPath, invalidSources, /module APIs require/u);
+  }),
+);

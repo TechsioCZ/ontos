@@ -6,6 +6,7 @@ import { NodeServices } from '@effect/platform-node';
 import { Cause, Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
+import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { privateOwnerImportViolation } from '../../ultramodern-api-boundary-rules.mts';
 import { getHelpText, runScaffoldEffect } from '../cli.mts';
 import type { JsonValue } from '../shared.mts';
@@ -40,6 +41,8 @@ const MODULE_CONTRACT_COMMAND = 'module-contract';
 const MODULE_ID = 'property.registry';
 const PROPERTY_MANIFEST_PATH = 'verticals/property-registry/vertical.manifest.ts';
 const PROPERTY_PACKAGE_PATH = 'verticals/property-registry/package.json';
+const PROPERTY_API_PATH = 'verticals/property-registry/shared/api.ts';
+const PROPERTY_RUNTIME_PATH = 'verticals/property-registry/api/index.ts';
 const VERTICAL_FLAG = '--vertical';
 
 const AppIdSchema = Schema.String.pipe(Schema.brand('AppId'));
@@ -369,6 +372,16 @@ it.live(
         const result = yield* scaffold(root);
         expect(result.kind).toBe('generated');
         const manifest = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_MANIFEST_PATH), 'utf-8'));
+        for (const schema of [
+          'ShellNavigationContributionSchema',
+          'ShellPageContributionSchema',
+          'ShellPublicComponentContributionSchema',
+          'ShellReportContributionSchema',
+          'ShellSearchContributionSchema',
+        ]) {
+          expect(manifest).toContain(`Schema.decodeResult(${schema})(value)`);
+          expect(manifest).not.toContain(`Schema.decodeUnknownResult(${schema})(value)`);
+        }
         const registration = yield* Effect.promise(() =>
           readFile(path.join(root, 'verticals/property-registry/vertical.registration.ts'), 'utf-8'),
         );
@@ -658,11 +671,9 @@ export const fixtureApi = HttpApi.make('Fixture;Api')
   .pipe((api) => { const label = ';'; return api; });
 export const untouched = true;
 `;
-        yield* write(root, 'verticals/property-registry/shared/api.ts', source);
+        yield* write(root, PROPERTY_API_PATH, source);
         yield* scaffold(root);
-        const generated = yield* Effect.promise(() =>
-          readFile(path.join(root, 'verticals/property-registry/shared/api.ts'), 'utf-8'),
-        );
+        const generated = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_API_PATH), 'utf-8'));
         expect(generated).toMatch(/HttpApi\.make\('Fixture;Api'\)/u);
         expect(generated).toMatch(/return api;\s*\}\)\s*\/\/ <generated-governed-http-api-additions>/u);
         expect(generated).toMatch(
@@ -683,7 +694,7 @@ it.live(
       Effect.fn(function* mergedScenario7(root) {
         yield* write(
           root,
-          'verticals/property-registry/api/index.ts',
+          PROPERTY_RUNTIME_PATH,
           `const layer = HttpApiBuilder.layer(fixtureApi).pipe(
   identity,
 ) satisfies EffectRuntimeLayer;
@@ -691,12 +702,93 @@ export default defineEffectBff({ api: fixtureApi, layer });
 `,
         );
         yield* scaffold(root);
-        const generated = yield* Effect.promise(() =>
-          readFile(path.join(root, 'verticals/property-registry/api/index.ts'), 'utf-8'),
-        );
+        const generated = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_RUNTIME_PATH), 'utf-8'));
         expect(generated).toMatch(/GovernedReadLayer\.provide\(governedReadApiHandlersLive\)/u);
         expect(generated).toMatch(/GovernedReadLayer\.orDie/u);
         expect(generated).not.toMatch(/\bLayer\./u);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'module-contract preserves pinned foundation APIs and merges governed assembler handlers',
+  Effect.fn(function* assemblerCompositionScenario() {
+    yield* withFixture(
+      Effect.fn(function* assemblerCompositionFixture(root) {
+        yield* write(
+          root,
+          PROPERTY_API_PATH,
+          `
+import { HttpApi, HttpApiGroup } from '@modern-js/bff-effect/effect-client';
+export const fixtureFoundationApi = HttpApi.make('FixtureFoundation').add(HttpApiGroup.make('foundation'));
+export const fixtureApi = HttpApi.make('FixtureApi').addHttpApi(fixtureFoundationApi).add(HttpApiGroup.make('fixture'));
+`,
+        );
+        yield* write(
+          root,
+          PROPERTY_RUNTIME_PATH,
+          `
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
+import { fixtureApi } from '../shared/api.ts';
+const originalHandlers = Layer.mergeAll(HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers));
+export const makeFixtureApiRuntime = () => assembleEffectBffRuntime({ api: fixtureApi, handlers: originalHandlers });
+const apiRuntime = makeFixtureApiRuntime();
+export default apiRuntime;
+`,
+        );
+        yield* scaffold(root);
+        const shared = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_API_PATH), 'utf-8'));
+        const runtime = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_RUNTIME_PATH), 'utf-8'));
+        expect(shared).toContain("export const fixtureFoundationApi = HttpApi.make('FixtureFoundation')");
+        expect(shared).toContain('export const governedHttpApi = fixtureApi;');
+        expect(runtime).toContain('GovernedReadLayer.mergeAll(originalHandlers, governedReadApiHandlersLive)');
+        expect(runtime).toContain('GovernedReadLayer.provide(governedApplicationCompositionSourceLive)');
+        expect(runtime).toContain('GovernedReadLayer.provide(GovernedDatabaseConfigLive)');
+        expect(runtime).toContain('GovernedReadLayer.orDie');
+        expect(runtime).not.toContain('const layer = HttpApiBuilder.layer(');
+        expect(hasValidGovernedHttpCompositionRoot(shared, runtime)).toBe(true);
+        expect(
+          hasValidGovernedHttpCompositionRoot(shared, runtime.replace(', governedReadApiHandlersLive)', ')')),
+        ).toBe(false);
+      }),
+    );
+  }),
+);
+
+it.live(
+  'module-contract rejects ambiguous API roots and fake assemblers without partial writes',
+  Effect.fn(function* invalidAssemblerScenario() {
+    yield* withFixture(
+      Effect.fn(function* invalidAssemblerFixture(root) {
+        const sharedPath = PROPERTY_API_PATH;
+        const runtimePath = PROPERTY_RUNTIME_PATH;
+        const shared = "export const fixtureApi = HttpApi.make('FixtureApi');\n";
+        const runtime = `
+import { assembleEffectBffRuntime } from '@modern-js/bff-effect/assembly';
+import { HttpApiBuilder, Layer } from '@modern-js/bff-effect/effect-edge';
+import { fixtureApi } from '../shared/api.ts';
+const originalHandlers = Layer.mergeAll(HttpApiBuilder.group(fixtureApi, 'fixture', handlers => handlers));
+export const makeFixtureApiRuntime = () => assembleEffectBffRuntime({ api: fixtureApi, handlers: originalHandlers });
+const apiRuntime = makeFixtureApiRuntime();
+export default apiRuntime;
+`;
+        yield* write(root, sharedPath, `${shared}export const unrelatedApi = HttpApi.make('Unrelated');\n`);
+        yield* write(root, runtimePath, runtime);
+        yield* expectFailure(scaffold(root), (error) => expect(String(error)).toMatch(/exactly one/u));
+        expect(yield* Effect.promise(() => readFile(path.join(root, PROPERTY_PACKAGE_PATH), 'utf-8'))).not.toContain(
+          'ontosModule',
+        );
+        yield* write(root, sharedPath, shared);
+        yield* write(root, runtimePath, runtime.replace("'@modern-js/bff-effect/assembly'", "'./fake-assembly.ts'"));
+        yield* expectFailure(scaffold(root), (error) =>
+          expect(String(error)).toMatch(/invalid pinned assembler composition/u),
+        );
+        expect(yield* Effect.promise(() => readFile(path.join(root, sharedPath), 'utf-8'))).toBe(shared);
+        expect(yield* Effect.promise(() => readFile(path.join(root, PROPERTY_PACKAGE_PATH), 'utf-8'))).not.toContain(
+          'ontosModule',
+        );
       }),
     );
   }),

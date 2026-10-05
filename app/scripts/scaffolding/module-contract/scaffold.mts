@@ -1,6 +1,7 @@
 import { Array as EffectArray, Effect, FileSystem, Option, Schema } from 'effect';
 
-import { topLevelSeparators } from '../../boundary-source-structure.mts';
+import { matchingDelimiter, topLevelSeparators } from '../../boundary-source-structure.mts';
+import { hasValidGovernedHttpCompositionRoot } from '../../generated-governed-http-boundary.mts';
 import { createCodesmithGenerator } from '../generator-adapter.mts';
 import {
   MODULE_CONTRACT_GENERATOR_HEADER,
@@ -122,7 +123,11 @@ const initializeGovernedHttpApiRoot = (source: string, vertical: VerticalMetadat
     return raiseScaffoldFailure(`vertical ${vertical.slug} shared API already uses reserved governed-read composition`);
   }
   const structure = maskNonCode(source);
-  const declarations = [...structure.matchAll(/export const (?<api>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApi\.make\(/gu)];
+  const declarations = [
+    ...structure.matchAll(/export const (?<api>[A-Za-z][A-Za-z0-9]*)\s*=\s*HttpApi\.make\(/gu),
+  ].filter(
+    (declaration) => !new RegExp(`\\.addHttpApi\\(\\s*${declaration.groups?.['api']}\\s*\\)`, 'u').test(structure),
+  );
   if (declarations.length !== 1) {
     return raiseScaffoldFailure(`vertical ${vertical.slug} shared API must contain exactly one generated HttpApi root`);
   }
@@ -168,13 +173,36 @@ const initializeGovernedHttpHandlerRoot = (source: string, vertical: VerticalMet
       );
     }
   }
+  const structure = maskNonCode(source);
+  const assemblerCalls = [...structure.matchAll(/\bassembleEffectBffRuntime\(\s*\{/gu)];
+  const assembler = assemblerCalls.length === 1 ? assemblerCalls[0] : undefined;
+  const assemblerOpening = assembler?.index === undefined ? undefined : structure.indexOf('{', assembler.index);
+  const assemblerClosing =
+    assemblerOpening === undefined ? undefined : matchingDelimiter(structure, assemblerOpening, '{', '}');
+  const assemblerProperties =
+    assemblerOpening === undefined || assemblerClosing === undefined
+      ? []
+      : topLevelSeparators(structure, ',', assemblerOpening + 1, assemblerClosing);
+  const propertyStarts =
+    assemblerOpening === undefined
+      ? []
+      : [assemblerOpening + 1, ...assemblerProperties.map((position) => position + 1)];
+  const handlerProperty = propertyStarts
+    .map((start, index) => ({ end: assemblerProperties[index] ?? assemblerClosing ?? start, start }))
+    .find(({ end, start }) => /^\s*handlers:\s*[A-Za-z][A-Za-z0-9]*\s*$/u.test(structure.slice(start, end)));
+  const assemblerMode = assemblerCalls.length > 0;
+  if (assemblerMode && (assembler === undefined || handlerProperty === undefined)) {
+    return raiseScaffoldFailure(
+      `vertical ${vertical.slug} API root must contain one pinned assembler with explicit handlers`,
+    );
+  }
   const runtimeLayerNeedle = ') satisfies EffectRuntimeLayer;';
   const runtimeLayerEnd = source.lastIndexOf(runtimeLayerNeedle);
-  if (runtimeLayerEnd === -1) {
+  if (!assemblerMode && runtimeLayerEnd === -1) {
     return raiseScaffoldFailure(`vertical ${vertical.slug} API root must expose the pinned Effect runtime layer`);
   }
   const runtimeLayerStart = source.lastIndexOf('const layer = HttpApiBuilder.layer(', runtimeLayerEnd);
-  if (runtimeLayerStart === -1) {
+  if (!assemblerMode && runtimeLayerStart === -1) {
     return raiseScaffoldFailure(`vertical ${vertical.slug} API root must contain the pinned HttpApiBuilder layer`);
   }
   const generatedRoot = `import {
@@ -237,6 +265,18 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   GovernedReadLayer.provide(GovernedReadLayer.empty),
 );
 `;
+  if (assemblerMode && handlerProperty !== undefined) {
+    const handlers = source
+      .slice(handlerProperty.start, handlerProperty.end)
+      .trim()
+      .replace(/^handlers:\s*/u, '');
+    return `${generatedRoot}\n${source.slice(0, handlerProperty.start)}
+    handlers: GovernedReadLayer.mergeAll(${handlers}, governedReadApiHandlersLive).pipe(
+      GovernedReadLayer.provide(governedApplicationCompositionSourceLive),
+      GovernedReadLayer.provide(GovernedDatabaseConfigLive),
+      GovernedReadLayer.orDie,
+    )${source.slice(handlerProperty.end)}`;
+  }
   return `${generatedRoot}\n${source.slice(0, runtimeLayerStart)}${source.slice(
     runtimeLayerStart,
     runtimeLayerEnd,
@@ -329,15 +369,15 @@ type ReportContributionInput = typeof ShellReportContributionSchema.Encoded;
 type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
 
 const navigationContribution = (value: NavigationContributionInput) =>
-  Result.getOrThrow(Schema.decodeUnknownResult(ShellNavigationContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
-  Result.getOrThrow(Schema.decodeUnknownResult(ShellPageContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
 const publicComponentContribution = (value: PublicComponentContributionInput) =>
-  Result.getOrThrow(Schema.decodeUnknownResult(ShellPublicComponentContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeResult(ShellPublicComponentContributionSchema)(value));
 const reportContribution = (value: ReportContributionInput) =>
-  Result.getOrThrow(Schema.decodeUnknownResult(ShellReportContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeResult(ShellReportContributionSchema)(value));
 const searchContribution = (value: SearchContributionInput) =>
-  Result.getOrThrow(Schema.decodeUnknownResult(ShellSearchContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
 
 export const ${valueName} = defineOntosModuleManifest({
   activation: {
@@ -579,20 +619,31 @@ const planModuleContractScaffold = (
       .pipe(
         Effect.mapError((cause) => scaffoldError(`failed to inspect vertical ${vertical.slug} shared API root`, cause)),
       );
+    let generatedSharedApi = renderGovernedHttpApiRoot(vertical);
     const sharedApiMutation = sharedApiExists
       ? yield* fileSystem.readFileString(sharedApiPath).pipe(
           Effect.mapError((cause) => scaffoldError(`failed to read vertical ${vertical.slug} shared API root`, cause)),
           Effect.flatMap((content) =>
-            trySync(() => updateMutation(sharedApiPath, content, initializeGovernedHttpApiRoot(content, vertical))),
+            trySync(() => {
+              generatedSharedApi = initializeGovernedHttpApiRoot(content, vertical);
+              return updateMutation(sharedApiPath, content, generatedSharedApi);
+            }),
           ),
         )
       : yield* createMutationEffect(sharedApiPath, renderGovernedHttpApiRoot(vertical));
     const apiRootContent = yield* fileSystem
       .readFileString(apiRootPath)
       .pipe(Effect.mapError((cause) => scaffoldError(`failed to read vertical ${vertical.slug} API root`, cause)));
-    const apiRootMutation = yield* trySync(() =>
-      updateMutation(apiRootPath, apiRootContent, initializeGovernedHttpHandlerRoot(apiRootContent, vertical)),
-    );
+    const apiRootMutation = yield* trySync(() => {
+      const generatedRoot = initializeGovernedHttpHandlerRoot(apiRootContent, vertical);
+      if (
+        maskNonCode(apiRootContent).includes('assembleEffectBffRuntime(') &&
+        !hasValidGovernedHttpCompositionRoot(generatedSharedApi, generatedRoot)
+      ) {
+        return raiseScaffoldFailure(`vertical ${vertical.slug} API root has invalid pinned assembler composition`);
+      }
+      return updateMutation(apiRootPath, apiRootContent, generatedRoot);
+    });
     const packageContent = yield* patchPackage(vertical, moduleId);
     const packageMutation = yield* trySync(() =>
       Option.fromNullishOr(updateMutation(vertical.packagePath, vertical.packageContent, packageContent)),

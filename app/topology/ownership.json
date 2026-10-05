@@ -394,6 +394,24 @@
           ]
         }
       }
+    },
+    {
+      "id": "availability",
+      "package": "@app/availability",
+      "path": "verticals/availability",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/availability.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#availability",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": [
+            "docs/super-app-rfc-adr/blast-radius.md#availability"
+          ]
+        }
+      }
     }
   ]
 }
