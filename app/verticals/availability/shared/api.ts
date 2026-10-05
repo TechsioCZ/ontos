@@ -1,5 +1,4 @@
 // <generated-governed-http-api-imports>
-import { CurrentAvailabilityApi } from './apis/current-availability.ts';
 // </generated-governed-http-api-imports>
 
 import { identity } from 'effect';
@@ -13,9 +12,7 @@ import {
 import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microvertical-api';
 
 export const availabilityMarkerSchema = MicroVerticalBuildMarkerSchema;
-export type AvailabilityMarker = typeof availabilityMarkerSchema.Type;
 
-export type AvailabilityReadiness = typeof availabilityReadinessSchema.Type;
 export const availabilityReadinessSchema = Schema.Struct({
   ...MicroVerticalReadinessSchema.fields,
   marker: availabilityMarkerSchema,
@@ -31,7 +28,6 @@ export const availabilityFoundationApi = HttpApi.make('AvailabilityApiFoundation
 export const availabilityApi = HttpApi.make('AvailabilityApi')
   .addHttpApi(availabilityFoundationApi)
   // <generated-governed-http-api-additions>
-  .addHttpApi(CurrentAvailabilityApi)
   // </generated-governed-http-api-additions>
   .annotate(HttpApi.ParseOptions, { onExcessProperty: 'error' })
   .pipe(identity);

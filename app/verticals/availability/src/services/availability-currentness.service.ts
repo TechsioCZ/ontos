@@ -17,7 +17,11 @@ import type {
 } from '../../shared/domain/availability-currentness.ts';
 import { AvailabilityEvaluationInputSchema } from '../../shared/domain/availability-decision.ts';
 import type { AvailabilityEvaluationInput } from '../../shared/domain/availability-decision.ts';
-import { AvailabilityUseBoundarySchema, sameAvailabilitySubject } from '../../shared/domain/availability-subject.ts';
+import {
+  AvailabilityUseBoundarySchema,
+  sameAvailabilitySubject,
+  sameAvailabilitySubjectEvidence,
+} from '../../shared/domain/availability-subject.ts';
 import type { AvailabilitySubject, AvailabilityUseBoundary } from '../../shared/domain/availability-subject.ts';
 import { availabilityEvaluationService } from './availability-evaluation.service.ts';
 import { availabilityPromisePolicyService } from './availability-promise-policy.service.ts';
@@ -30,7 +34,15 @@ export const availabilityCurrentnessOwnerLayer = Layer.mergeAll(
 
 const sameInput = Schema.toEquivalence(AvailabilityEvaluationInputSchema);
 const sameBoundary = Schema.toEquivalence(AvailabilityUseBoundarySchema);
-const sameMaterial = Schema.toEquivalence(AvailabilityCurrentDecisionSchema.fields.materialEvidence);
+const sameMaterialArray = Schema.toEquivalence(AvailabilityCurrentDecisionSchema.fields.materialEvidence);
+const sameMaterial = (
+  left: AvailabilityCurrentDecision['materialEvidence'],
+  right: AvailabilityCurrentDecision['materialEvidence'],
+) =>
+  sameMaterialArray(
+    availabilityMaterialOwners.flatMap((owner) => left.filter((entry) => entry.owner === owner)),
+    availabilityMaterialOwners.flatMap((owner) => right.filter((entry) => entry.owner === owner)),
+  );
 const immutableSnapshot = <Value>(value: Value): Value => {
   if (Predicate.isObject(value) || Array.isArray(value)) {
     for (const child of Object.values(value)) {
@@ -62,7 +74,7 @@ const validProof = (
   const requiredAt = DateTime.toEpochMillis(DateTime.makeUnsafe(useBoundary.requiredAt));
   return (
     sameInput(proof.evidence, evidence) &&
-    sameAvailabilitySubject(proof.subject, subject) &&
+    sameAvailabilitySubjectEvidence(proof.subject, subject) &&
     sameBoundary(proof.useBoundary, useBoundary) &&
     proof.materialEvidence.length === availabilityMaterialOwners.length &&
     availabilityMaterialOwners.every(
@@ -112,7 +124,7 @@ export const availabilityCurrentnessService = Effect.fn('availabilityCurrentness
         if (state.verified !== undefined) {
           return state;
         }
-        const evidence =
+        const rawEvidence =
           attempt === 0
             ? state.candidate
             : yield* reader.readCurrent(request).pipe(
@@ -122,6 +134,19 @@ export const availabilityCurrentnessService = Effect.fn('availabilityCurrentness
                 }),
                 Effect.flatMap(copyEvaluationInput),
               );
+        const currentPolicy = yield* policy.resolveCurrent(request);
+        // Resolve the policy and use binding before the owner attests this exact immutable candidate.
+        const evidence = yield* copyEvaluationInput({
+          ...rawEvidence,
+          ownerQualification: {
+            ...rawEvidence.ownerQualification,
+            subject: request.subject,
+            useBoundary: request.useBoundary,
+          },
+          policy: currentPolicy,
+          subject: request.subject,
+          useBoundary: request.useBoundary,
+        });
         const proof = yield* verifier
           .verify({ evidence, subject: request.subject, useBoundary: request.useBoundary })
           .pipe(
@@ -155,20 +180,14 @@ export const availabilityCurrentnessService = Effect.fn('availabilityCurrentness
       }),
     );
     const { reasons, verified } = checked;
-    const currentPolicy = yield* policy.resolveCurrent(request);
-    // Verification authorizes reuse at this boundary; raw owner facts and original history stay unchanged.
-    const evidence: AvailabilityEvaluationInput = {
-      ...checked.candidate,
-      ownerQualification: {
-        ...checked.candidate.ownerQualification,
-        currentness: verified === undefined ? 'INDETERMINATE' : checked.candidate.ownerQualification.currentness,
-        subject: request.subject,
-        useBoundary: request.useBoundary,
-      },
-      policy: currentPolicy,
-      subject: request.subject,
-      useBoundary: request.useBoundary,
-    };
+    // Evaluate the verified snapshot verbatim; failed verification can only weaken Currentness.
+    const evidence: AvailabilityEvaluationInput =
+      verified === undefined
+        ? {
+            ...checked.candidate,
+            ownerQualification: { ...checked.candidate.ownerQualification, currentness: 'INDETERMINATE' },
+          }
+        : checked.candidate;
     const decision = yield* evaluator.evaluate(evidence);
     const currentDecision: AvailabilityCurrentDecision = yield* copyDecision({
       currentness: verified === undefined ? 'INDETERMINATE' : 'OWNER_VERIFIED_CURRENT',
@@ -177,11 +196,22 @@ export const availabilityCurrentnessService = Effect.fn('availabilityCurrentness
       evaluatedAt: request.evaluatedAt,
       materialEvidence: verified?.materialEvidence ?? [],
     });
-    // Owner-issued revision/evidence identity is material even when numeric values/outcome are equal.
+    // A newly authorized use does not change represented facts. All policy identity and evidence lineage remain material.
     const unchanged =
       original !== undefined &&
       verified !== undefined &&
-      sameInput(original.decision.evidence, checked.candidate) &&
+      sameInput(
+        {
+          ...original.decision.evidence,
+          ownerQualification: {
+            ...original.decision.evidence.ownerQualification,
+            useBoundary: checked.candidate.useBoundary,
+          },
+          policy: { ...original.decision.evidence.policy, useBoundary: checked.candidate.useBoundary },
+          useBoundary: checked.candidate.useBoundary,
+        },
+        checked.candidate,
+      ) &&
       sameMaterial(original.materialEvidence, verified.materialEvidence);
     let bundleDisposition: AvailabilityRevalidationResult['bundleDisposition'] = 'NOT_REPRESENTED';
     if (request.representedInBundle) {

@@ -1,8 +1,9 @@
+import { InventoryBackendConfigurationSchema } from '@app/inventory/backend-configuration';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { Schema } from 'effect';
 import { AvailabilityStockInputSchema } from '../../shared/domain/availability-source-authority.ts';
 import type { AvailabilityEvaluationInput } from '../../shared/domain/availability-decision.ts';
-import { position, stockInput, subject } from './availability-decision.ts';
+import { configuration, position, stockInput, subject } from './availability-decision.ts';
 
 const predicateRef = 'owner-predicate-1';
 const changedAt = '2026-10-05T12:05:00.000Z';
@@ -54,6 +55,7 @@ export const makeCurrentnessInput = (amounts: readonly string[], requested = '10
         },
         usability: 'USABLE',
       })),
+      selectedBackendAuthority: { _tag: 'PROVEN', configuration },
       set: complete,
       stockInput: stock,
       subject: exactSubject,
@@ -82,14 +84,14 @@ const inventoryRef = (resourceType: string, resourceId: string) => ({
 /** Controlled public Inventory contract values, never imported owner fixtures or private persistence. */
 export const makeRichExternalCurrentnessInput = (): AvailabilityEvaluationInput => {
   const base = makeCurrentnessInput(['3'], '2');
-  const authority = {
+  const authority = Schema.decodeUnknownSync(Schema.toType(InventoryBackendConfigurationSchema))({
     ...base.stockInput.selectedBackendConfiguration,
     selection: {
       ...base.stockInput.selectedBackendConfiguration.selection,
       backend: 'external_business_system',
       backendId: 'erp',
     },
-  };
+  });
   const effectId = '12121212-1212-4212-8212-121212121212';
   const assertionId = '13131313-1313-4313-8313-131313131313';
   const onHand = {
@@ -259,6 +261,7 @@ export const makeRichExternalCurrentnessInput = (): AvailabilityEvaluationInput 
           usability: 'USABLE',
         },
       ],
+      selectedBackendAuthority: { _tag: 'PROVEN', configuration: authority },
       stockInput: stock,
     },
     stockInput: stock,

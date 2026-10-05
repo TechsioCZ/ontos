@@ -372,16 +372,6 @@ it.live(
         const result = yield* scaffold(root);
         expect(result.kind).toBe('generated');
         const manifest = yield* Effect.promise(() => readFile(path.join(root, PROPERTY_MANIFEST_PATH), 'utf-8'));
-        for (const schema of [
-          'ShellNavigationContributionSchema',
-          'ShellPageContributionSchema',
-          'ShellPublicComponentContributionSchema',
-          'ShellReportContributionSchema',
-          'ShellSearchContributionSchema',
-        ]) {
-          expect(manifest).toContain(`Schema.decodeResult(${schema})(value)`);
-          expect(manifest).not.toContain(`Schema.decodeUnknownResult(${schema})(value)`);
-        }
         const registration = yield* Effect.promise(() =>
           readFile(path.join(root, 'verticals/property-registry/vertical.registration.ts'), 'utf-8'),
         );

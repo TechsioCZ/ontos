@@ -3,8 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "exports": {
-    "./api": "./shared/api.ts",
-    "./api/client": "./src/api/availability-client.ts",
     "./domain/availability-consumer-contract": "./shared/domain/availability-consumer-contract.ts",
     "./api/current-availability-client": "./src/api/current-availability-client.ts",
     "./api/current-availability": "./shared/apis/current-availability.ts"
@@ -41,7 +39,6 @@
     "@module-federation/modern-js-v3": "npm:@bleedingdev/mf-modern-js-v3@2.9.3",
     "@module-federation/runtime": "npm:@bleedingdev/mf-runtime@2.9.2",
     "effect": "4.0.0-rc.117",
-    "i18next": "26.4.2",
     "react": "19.2.8",
     "react-dom": "19.2.8"
   },

@@ -1,3 +1,4 @@
+import { AvailabilityCurrentnessPolicy } from '../../shared/domain/availability-currentness-policy-port.ts';
 import { AvailabilityCurrentnessEvidence } from '../../shared/domain/availability-currentness-evidence-port.ts';
 import { AvailabilityOwnerValidityVerifier } from '../../shared/domain/availability-currentness-owner-port.ts';
 import type { AvailabilityOwnerVerificationRequest } from '../../shared/domain/availability-currentness-owner-port.ts';
@@ -99,6 +100,61 @@ describe('owner-defined Availability Currentness and revalidation', () => {
     }),
   );
 
+  it.effect('keeps represented owner evidence unchanged when its array order changes', () =>
+    Effect.gen(function* ownerOrder() {
+      const previous = (yield* run(request(), valid)).currentDecision;
+      const result = yield* run(request(previous), (input) => {
+        const unchanged = proof(input.evidence, input.useBoundary);
+        return Effect.succeed({
+          ...unchanged,
+          materialEvidence: [...unchanged.materialEvidence.slice(2), ...unchanged.materialEvidence.slice(0, 2)],
+        });
+      });
+      expect(result.bundleDisposition).toBe('UNCHANGED');
+      expect(result.originalDecision).toEqual(previous);
+      expect(previous.materialEvidence.map((entry) => entry.owner)).toEqual(availabilityMaterialOwners);
+    }),
+  );
+
+  it.effect('resolves the exact policy before each bounded owner verification attempt', () =>
+    Effect.gen(function* policyCoherence() {
+      const stages: string[] = [];
+      let attempts = 0;
+      const result = yield* availabilityCurrentnessService(request()).pipe(
+        Effect.provideService(AvailabilityCurrentnessPolicy, {
+          resolveCurrent: (input) => {
+            stages.push('policy');
+            return Effect.succeed({ ...base.policy, subject: input.subject, useBoundary: input.useBoundary });
+          },
+        }),
+        Effect.provide(
+          Layer.mergeAll(
+            availabilityCurrentnessOwnerLayer,
+            Layer.succeed(AvailabilityCurrentnessEvidence, { readCurrent: () => Effect.succeed(base) }),
+            Layer.succeed(AvailabilityOwnerValidityVerifier, {
+              verify: (input) => {
+                stages.push('verify');
+                attempts += 1;
+                expect(input.evidence.policy.useBoundary).toEqual(request().useBoundary);
+                return Effect.succeed(
+                  attempts === 1
+                    ? { _tag: 'UNPROVEN' as const, reason: 'POLICY_OWNER_CHANGED' }
+                    : proof(input.evidence, input.useBoundary, 'P2'),
+                );
+              },
+            }),
+          ),
+        ),
+      );
+      expect(stages).toEqual(['policy', 'verify', 'policy', 'verify']);
+      expect(result.currentDecision.currentness).toBe('OWNER_VERIFIED_CURRENT');
+      expect(
+        result.currentDecision.materialEvidence.find((entry) => entry.owner === 'AVAILABILITY_POLICY')
+          ?.sourceRevisionRefs,
+      ).toEqual(['P2']);
+    }),
+  );
+
   it.effect('never accepts expired owner validity or generic recent checkout as actual commitment authority', () =>
     Effect.gen(function* expiry() {
       const expired = yield* run(request(), (input) => {
@@ -153,7 +209,9 @@ describe('owner-defined Availability Currentness and revalidation', () => {
               expect(input.evidence).toEqual(previous.decision.evidence);
               return Effect.succeed({ _tag: 'INVALID' as const, reason: change });
             }
-            expect(input.evidence).toEqual(r2);
+            expect(input.evidence.stockInput).toEqual(r2.stockInput);
+            expect(input.evidence.ownerQualification.set).toEqual(r2.ownerQualification.set);
+            expect(input.evidence.policy.useBoundary).toEqual(request().useBoundary);
             return Effect.succeed(proof(input.evidence, input.useBoundary, 'R2'));
           },
           r2,
@@ -246,6 +304,41 @@ describe('owner-defined Availability Currentness and revalidation', () => {
         expect(result.bundleDisposition).toBe('UNCHANGED');
         expect(result.originalDecision?.decision.useBoundary.kind).toBe('INFORMATIONAL');
       }),
+  );
+
+  it.effect('rejects duplicate owners and fresh proof lineage bound to a different exact snapshot', () =>
+    Effect.gen(function* exactProofBinding() {
+      const duplicate = yield* run(request(), (input) => {
+        const completeProof = proof(input.evidence, input.useBoundary);
+        const [first] = completeProof.materialEvidence;
+        return Effect.succeed({
+          ...completeProof,
+          materialEvidence:
+            first === undefined
+              ? []
+              : completeProof.materialEvidence.map((entry) => (entry.owner === 'ASSORTMENT' ? first : entry)),
+        });
+      });
+      expect(duplicate.currentDecision.currentness).toBe('INDETERMINATE');
+      const freshButDifferent = yield* run(request(), (input) => {
+        const completeProof = proof(input.evidence, input.useBoundary);
+        const verification = completeProof.subject.purchasingContext.contextVerification;
+        return Effect.succeed({
+          ...completeProof,
+          subject: {
+            ...completeProof.subject,
+            purchasingContext: {
+              contextVerification: {
+                ...verification,
+                evidence: { ...verification.evidence, verificationRef: 'other-proof' },
+              },
+            },
+          },
+        });
+      });
+      expect(freshButDifferent.currentDecision.currentness).toBe('INDETERMINATE');
+      expect(freshButDifferent.currentDecision.currentnessReasons).toContain('OWNER_PROOF_SCOPE_OR_VALIDITY_MISMATCH');
+    }),
   );
 
   it.effect('requires all five material owner contracts, not only Inventory rows', () =>

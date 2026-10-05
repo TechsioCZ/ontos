@@ -369,15 +369,15 @@ type ReportContributionInput = typeof ShellReportContributionSchema.Encoded;
 type SearchContributionInput = typeof ShellSearchContributionSchema.Encoded;
 
 const navigationContribution = (value: NavigationContributionInput) =>
-  Result.getOrThrow(Schema.decodeResult(ShellNavigationContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeUnknownResult(ShellNavigationContributionSchema)(value));
 const pageContribution = (value: PageContributionInput) =>
-  Result.getOrThrow(Schema.decodeResult(ShellPageContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeUnknownResult(ShellPageContributionSchema)(value));
 const publicComponentContribution = (value: PublicComponentContributionInput) =>
-  Result.getOrThrow(Schema.decodeResult(ShellPublicComponentContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeUnknownResult(ShellPublicComponentContributionSchema)(value));
 const reportContribution = (value: ReportContributionInput) =>
-  Result.getOrThrow(Schema.decodeResult(ShellReportContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeUnknownResult(ShellReportContributionSchema)(value));
 const searchContribution = (value: SearchContributionInput) =>
-  Result.getOrThrow(Schema.decodeResult(ShellSearchContributionSchema)(value));
+  Result.getOrThrow(Schema.decodeUnknownResult(ShellSearchContributionSchema)(value));
 
 export const ${valueName} = defineOntosModuleManifest({
   activation: {
