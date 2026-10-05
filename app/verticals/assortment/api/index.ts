@@ -27,6 +27,7 @@ import { FetchHttpClient } from 'effect/unstable/http';
 import { assortmentApi, assortmentMarkerSchema, assortmentOperationContexts } from '../shared/api.ts';
 import type { OperationContext } from '../shared/api.ts';
 import { ultramodernApiMarker, ultramodernDeliveryUnit } from '../shared/ultramodern-build.ts';
+import { assortmentOwnerAuthorizationOverlayLive } from '../src/services/owner-authorization-current.ts';
 // <generated-governed-http-handler-support-imports>
 import { ActionPrincipalVerifierLive as GovernedActionPrincipalVerifierLive } from './auth/action-principal.ts';
 import { GatewayAssertionRedemptionLive as GovernedGatewayAssertionRedemptionLive } from './auth/gateway-assertion-redemption.ts';
@@ -100,7 +101,11 @@ const readRuntimeDependenciesLive = Layer.mergeAll(
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
 );
-const productionReadRuntimeLive = ReadRuntimeLive.pipe(
+
+/** Installs owner Current checks without replacing Core's separate exact Permission checks. */
+export const withAssortmentOwnerAuthorizationOverlay = Layer.provide(assortmentOwnerAuthorizationOverlayLive);
+
+const productionReadRuntimeLive = withAssortmentOwnerAuthorizationOverlay(ReadRuntimeLive).pipe(
   Layer.provide(readRuntimeDependenciesLive),
   Layer.provide(DatabaseConfigLive),
 );
@@ -116,7 +121,9 @@ const actionRuntimeDependenciesLive = Layer.mergeAll(
   moduleEntrypointGatewayLive,
   operationalScopeResolverLive,
 );
-const actionRuntimeCoreLive = makeActionRuntimeLive(ultramodernDeliveryUnit).pipe(
+const actionRuntimeCoreLive = withAssortmentOwnerAuthorizationOverlay(
+  makeActionRuntimeLive(ultramodernDeliveryUnit),
+).pipe(
   Layer.provide(
     Layer.mergeAll(
       actionAuthorizationPreflightDatabaseLive,

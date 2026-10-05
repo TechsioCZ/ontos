@@ -32,6 +32,7 @@ import type { BoundaryAdministrationService } from '../../src/services/boundary-
 import {
   boundaryIntervalsOverlap,
   boundaryAdministrationPersistenceForScope,
+  boundaryResultingStateConflict,
   boundaryScopeConflict,
   matchesBoundaryCreateReplay,
   matchesBoundaryEndReplay,
@@ -304,6 +305,12 @@ it('emits ordered end then create targets for replacement', () => {
   const targets = replaceBoundaryPermissionTargets(replacement, scope);
   expect(targets[0]?.permission).toStrictEqual('assortment.boundary.end');
   expect(targets[1]?.permission).toStrictEqual('assortment.boundary.create');
+  expect(() =>
+    Schema.decodeUnknownSync(ReplaceClosedAssortmentBoundaryPayloadSchema)({
+      ...Schema.encodeSync(ReplaceClosedAssortmentBoundaryPayloadSchema)(replacement),
+      proposedEffectiveFrom: '2026-09-22T10:00:01.000Z',
+    }),
+  ).toThrow();
 });
 it('rejects equal and incomparable maximal scopes but permits a narrower scope', () => {
   const broad = { marketResourceId: null, storefrontResourceId: null };
@@ -568,20 +575,28 @@ it.effect('uses one transaction seam for replace and propagates create rollback 
         insertResults: [[{ id: 'end-fact-1' }], Effect.fail('create failed')],
         selectResults: [
           [],
-          [],
           [
             {
+              boundaryId,
               channel: 'channel-1',
+              effectiveFrom: new Date('2026-09-22T09:00:00.000Z'),
+              marketResourceId: null,
               purpose: 'PURCHASE',
               semanticFingerprint: endInput.expectedBasisFingerprint,
+              storefrontResourceId: null,
               subjectKind: 'RETAIL_CUSTOMER_PROFILE',
               subjectResourceId: 'profile-1',
             },
           ],
           [],
-          [],
-          [],
-          [],
+          [
+            {
+              boundaryId,
+              effectiveFrom: new Date('2026-09-22T09:00:00.000Z'),
+              marketResourceId: null,
+              storefrontResourceId: null,
+            },
+          ],
           [],
         ],
       }),
@@ -592,5 +607,169 @@ it.effect('uses one transaction seam for replace and propagates create rollback 
     expect(events[0]).toStrictEqual('select:1');
     expect(events).toContain('lock');
     expect(events).toContain('insert:2');
+  }),
+);
+
+const t0 = Date.parse('2030-01-01T00:00:00.000Z');
+const t1 = Date.parse('2030-02-01T00:00:00.000Z');
+const t2 = Date.parse('2030-03-01T00:00:00.000Z');
+const marketScope = { marketResourceId: 'cz', storefrontResourceId: null };
+const storefrontScope = { marketResourceId: null, storefrontResourceId: 'x' };
+const combinedScope = { marketResourceId: 'cz', storefrontResourceId: 'x' };
+const stateRow = (
+  id: string,
+  commercialScope: { marketResourceId: string | null; storefrontResourceId: string | null },
+  from = t0,
+  to?: number,
+) => {
+  const value = { ...commercialScope, boundaryId: id, effectiveFrom: new Date(from) };
+  return to === undefined ? value : { ...value, effectiveTo: new Date(to) };
+};
+
+it('permits a complete narrower cover across incomparable scopes and rejects uncovered or equal maxima', () => {
+  const a = stateRow('a', marketScope);
+  const b = stateRow('b', storefrontScope);
+  const c = stateRow('c', combinedScope);
+  expect(boundaryResultingStateConflict([a, c, b], [storefrontScope], t0)).toBe(false);
+  expect(boundaryResultingStateConflict([b, a, c], [storefrontScope], t0)).toBe(false);
+  expect(boundaryResultingStateConflict([a, b], [storefrontScope], t0)).toBe(true);
+  expect(boundaryResultingStateConflict([a, b, c, stateRow('d', combinedScope)], [combinedScope], t0)).toBe(true);
+  expect(
+    boundaryResultingStateConflict(
+      [
+        stateRow('broad-a', { marketResourceId: null, storefrontResourceId: null }),
+        stateRow('broad-b', { marketResourceId: null, storefrontResourceId: null }),
+        c,
+      ],
+      [{ marketResourceId: null, storefrontResourceId: null }],
+      t0,
+    ),
+  ).toBe(true);
+});
+
+it('validates complete future segments and half-open cover endpoints', () => {
+  const a = stateRow('a', marketScope);
+  const b = stateRow('b', storefrontScope, t1);
+  expect(boundaryResultingStateConflict([a, b, stateRow('late', combinedScope, t2)], [storefrontScope], t1)).toBe(true);
+  expect(
+    boundaryResultingStateConflict([a, b, stateRow('early-end', combinedScope, t0, t2)], [storefrontScope], t1),
+  ).toBe(true);
+  expect(
+    boundaryResultingStateConflict(
+      [a, stateRow('b', storefrontScope, t1, t2), stateRow('cover', combinedScope, t0, t2)],
+      [storefrontScope],
+      t1,
+    ),
+  ).toBe(false);
+  expect(
+    boundaryResultingStateConflict(
+      [a, b, stateRow('old-cover', combinedScope, t0, t2), stateRow('new-cover', combinedScope, t2)],
+      [combinedScope],
+      t2,
+    ),
+  ).toBe(false);
+});
+
+it('checks End coverage for immediate and later exposed conflicts without blocking unrelated broken cells', () => {
+  const a = stateRow('a', marketScope);
+  const ended = stateRow('c', combinedScope, t0, t1);
+  expect(boundaryResultingStateConflict([a, ended, stateRow('b', storefrontScope)], [combinedScope], t1)).toBe(true);
+  expect(
+    boundaryResultingStateConflict([a, ended, stateRow('future-b', storefrontScope, t2)], [combinedScope], t1),
+  ).toBe(true);
+  expect(
+    boundaryResultingStateConflict(
+      [stateRow('a', marketScope, t0, t1), stateRow('b', storefrontScope)],
+      [marketScope],
+      t1,
+    ),
+  ).toBe(false);
+  const other = { marketResourceId: 'sk', storefrontResourceId: 'y' };
+  expect(
+    boundaryResultingStateConflict([a, stateRow('b', storefrontScope), stateRow('other', other)], [other], t1),
+  ).toBe(false);
+  expect(
+    boundaryResultingStateConflict(
+      [
+        stateRow('past-a', combinedScope, t0, t1),
+        stateRow('past-b', combinedScope, t0, t1),
+        stateRow('new', combinedScope, t1),
+      ],
+      [combinedScope],
+      t1,
+    ),
+  ).toBe(false);
+});
+
+it.effect('rejects an End that exposes crossing scopes before writing a lifecycle fact', () =>
+  Effect.gen(function* rejectEnd() {
+    const events: string[] = [];
+    const service = boundaryAdministrationPersistenceForScope(
+      fakeTransaction({
+        events,
+        selectResults: [
+          [],
+          [
+            {
+              boundaryId,
+              channel: 'channel-1',
+              purpose: 'PURCHASE',
+              semanticFingerprint: endInput.expectedBasisFingerprint,
+              subjectKind: 'RETAIL_CUSTOMER_PROFILE',
+              subjectResourceId: 'profile-1',
+            },
+          ],
+          [],
+          [stateRow('a', marketScope), stateRow(boundaryId, combinedScope), stateRow('b', storefrontScope)],
+          [],
+        ],
+      }),
+      scope,
+    );
+    expect(yield* service.end({ ...endInput, effectiveAt: DateTime.makeUnsafe(new Date(t1)) })).toEqual({
+      conflict: 'CONCURRENT_OVERLAP',
+      kind: 'conflict',
+    });
+    expect(events).toContain('lock');
+    expect(events.some((event) => event.startsWith('insert:'))).toBe(false);
+  }),
+);
+
+it.effect('replaces the covering Boundary against the combined resulting state before either insert', () =>
+  Effect.gen(function* replaceCover() {
+    const proposedCommercialScope = Schema.decodeUnknownSync(AssortmentCommercialScopeSchema)({
+      ...replaceInput.proposedCommercialScope,
+      commerceMarketRef: ref('commerce.market', 'commerce.market.market', 'cz'),
+      storefrontRef: ref('commerce.storefront', 'commerce.storefront.application', 'x'),
+    });
+    const events: string[] = [];
+    const service = boundaryAdministrationPersistenceForScope(
+      fakeTransaction({
+        events,
+        insertResults: [[{ id: 'end' }], [{ id: 'new-cover' }], [{ id: 'revision' }], [{ id: 'set' }]],
+        selectResults: [
+          [],
+          [
+            {
+              boundaryId,
+              channel: 'channel-1',
+              purpose: 'PURCHASE',
+              semanticFingerprint: replaceInput.expectedExistingBasisFingerprint,
+              subjectKind: 'RETAIL_CUSTOMER_PROFILE',
+              subjectResourceId: 'profile-1',
+            },
+          ],
+          [],
+          [stateRow('a', marketScope), stateRow(boundaryId, combinedScope), stateRow('b', storefrontScope)],
+          [],
+        ],
+      }),
+      scope,
+    );
+    const at = DateTime.makeUnsafe(new Date(t1));
+    expect(
+      yield* service.replace({ ...replaceInput, effectiveAt: at, proposedCommercialScope, proposedEffectiveFrom: at }),
+    ).toEqual({ createdBoundaryId: 'new-cover', replaced: true });
+    expect(events.indexOf('insert:1')).toBeGreaterThan(events.indexOf('select:5'));
   }),
 );

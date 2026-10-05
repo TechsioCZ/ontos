@@ -1,6 +1,14 @@
 import { expect, it } from 'effect-rstest';
-import { Schema } from 'effect';
+import { Effect, Schema } from 'effect';
 
+import { adaptCommerceCustomerGroupMemberships } from '../../src/adapters/commerce-customer-group-memberships.ts';
+import {
+  AssortmentCommerceMembershipPredicate,
+  AssortmentCommerceMembershipScopeTokenSchema,
+  AssortmentCustomerGroupMembershipRequestSchema,
+  AssortmentCustomerGroupMembershipSetSchema,
+  AssortmentSetCompletenessRequestSchema,
+} from '../../shared/domain/ports/owner-evidence.ts';
 import { AssortmentCandidateSchema, AssortmentOwnerResourceRefSchema } from '../../shared/domain/decision-contracts.ts';
 import {
   AssortmentOrdinaryResolutionInputSchema,
@@ -551,3 +559,170 @@ it('rejects purpose/target mismatches, stale facts, proof mismatches, and foreig
     reason: 'CROSS_TENANT_INPUT',
   });
 });
+
+it.effect('consumes native Membership adapter proof without translating its digest or scope', () =>
+  Effect.gen(function* nativeMembershipResolverProof() {
+    const sellerId = '10000000-0000-4000-8000-000000000001';
+    const nativeSeller = ref('commerce.legal-entity', 'commerce.legal-entity', sellerId);
+    const nativeProfileRef = ref(
+      'commerce.customer-context',
+      'commerce.customer-context.retail-customer-profile',
+      '20000000-0000-4000-8000-000000000001',
+    );
+    const nativeGroup = groupRef('30000000-0000-4000-8000-000000000001');
+    const nativeProfile = { profileKind: 'RETAIL' as const, profileRef: nativeProfileRef };
+    const row = {
+      assignedAt: '2026-01-01T00:00:00.000Z',
+      assignmentReason: 'owner-fixture',
+      effectiveFrom: '2026-01-01T00:00:00.000Z',
+      effectiveTo: null,
+      groupRef: nativeGroup,
+      membershipRef: membershipRef('40000000-0000-4000-8000-000000000001'),
+      profile: nativeProfile,
+      removal: null,
+      revision: 3,
+      state: 'VALID' as const,
+    };
+    const commercialScope = { channelRef, sellingLegalEntityRef: nativeSeller };
+    const sharedAllow = candidate({ commercialScope });
+    const groupDeny = candidate({
+      audience: { groupRef: nativeGroup, kind: 'COMMERCE_CUSTOMER_GROUP' },
+      bindingRef: ref('commerce.assortment', 'commerce.assortment.applicability-binding', 'native-group-deny'),
+      commercialScope,
+      effect: 'DENY',
+      ruleRevision: {
+        ownerModuleId: 'commerce.assortment',
+        revision: 'native-group-deny-r1',
+        sourceRef: ref('commerce.assortment', 'commerce.assortment.rule-revision', 'native-group-deny-revision'),
+      },
+      selector: { kind: 'PRODUCT', productRef },
+    });
+    const request = Schema.decodeUnknownSync(AssortmentCustomerGroupMembershipRequestSchema)({
+      asOf: operationTime,
+      profileRef: nativeProfileRef,
+      tenantId,
+    });
+    const context = { ...trustedContext, sellingLegalEntityRef: nativeSeller };
+    const decisionSubject = {
+      kind: 'IDENTIFIED' as const,
+      subject: { kind: 'RETAIL_CUSTOMER_PROFILE' as const, profileRef: nativeProfileRef },
+    };
+    for (const rows of [[row], []]) {
+      const digest = rows.length === 0 ? 'b'.repeat(64) : 'a'.repeat(64);
+      const port = adaptCommerceCustomerGroupMemberships({
+        observe: () =>
+          Effect.succeed({
+            asOf: operationTime,
+            legalEntityId: sellerId,
+            memberships: rows,
+            predicateRef: AssortmentCommerceMembershipPredicate,
+            profile: nativeProfile,
+            proof: { complete: true, digestAlgorithm: 'SHA-256', itemCount: rows.length, membershipSetSha256: digest },
+          }),
+        requestCorrelation: 'native-membership-resolution-test',
+        trustedLegalEntityId: sellerId,
+        trustedTenantId: tenantId,
+        verify: () =>
+          Effect.succeed({
+            asOf: operationTime,
+            itemCount: rows.length,
+            legalEntityId: sellerId,
+            membershipSetSha256: digest,
+            predicateRef: AssortmentCommerceMembershipPredicate,
+            profile: nativeProfile,
+            status: 'CURRENT',
+          }),
+      });
+      const observed = yield* port.resolveCustomerGroupMemberships(request);
+      const encodedObserved = yield* Schema.encodeEffect(AssortmentCustomerGroupMembershipSetSchema)(observed);
+      const expectedOutcome = rows.length === 0 ? 'ELIGIBLE' : 'INELIGIBLE';
+      expect(
+        resolveAssortmentOrdinary(
+          input([sharedAllow, groupDeny], {
+            memberships: encodedObserved,
+            subject: decisionSubject,
+            trustedContext: context,
+          }),
+        ),
+      ).toMatchObject({ kind: 'RESOLVED', outcome: expectedOutcome });
+      const current = yield* port.verifySetCompleteness(
+        Schema.decodeUnknownSync(AssortmentSetCompletenessRequestSchema)({
+          asOf: operationTime,
+          predicate: observed.completeness.predicate,
+          scope: observed.completeness.scope,
+          scopeRef: observed.profileRef,
+          tenantId,
+        }),
+      );
+      expect(current.evidence).toEqual(observed.completeness);
+      expect(observed.completeness.proof.evidenceRef).toEqual(nativeProfileRef);
+      const token = Schema.decodeUnknownSync(Schema.fromJsonString(AssortmentCommerceMembershipScopeTokenSchema))(
+        observed.completeness.scope,
+      );
+      expect(token.proof.membershipSetSha256).toBe(digest);
+      const invalidScopes = [
+        '{}',
+        JSON.stringify({ ...token, legalEntityId: '10000000-0000-4000-8000-000000000002' }),
+        JSON.stringify({ ...token, proof: { ...token.proof, itemCount: token.proof.itemCount + 1 } }),
+        JSON.stringify({ ...token, proof: { ...token.proof, complete: false } }),
+        JSON.stringify({ ...token, proof: { ...token.proof, membershipSetSha256: 'not-an-owner-digest' } }),
+        JSON.stringify({ ...token, version: 2 }),
+        JSON.stringify({ ...token, unrecognized: true }),
+      ];
+      for (const scope of invalidScopes) {
+        expect(
+          resolveAssortmentOrdinary(
+            input([sharedAllow, groupDeny], {
+              memberships: { ...encodedObserved, completeness: { ...observed.completeness, scope } },
+              subject: decisionSubject,
+              trustedContext: context,
+            }),
+          ),
+        ).toEqual({ kind: 'INDETERMINATE', reason: 'MEMBERSHIP_SET_INCOMPLETE' });
+      }
+      const [first] = encodedObserved.items;
+      if (first !== undefined) {
+        const invalidRows = [
+          {
+            ...encodedObserved,
+            completeness: {
+              ...encodedObserved.completeness,
+              scope: JSON.stringify({ ...token, proof: { ...token.proof, itemCount: 2 } }),
+            },
+            items: [first, first],
+          },
+          { ...encodedObserved, items: [{ ...first, state: 'CANCELLED' as const }] },
+        ];
+        for (const invalidMemberships of invalidRows) {
+          expect(
+            resolveAssortmentOrdinary(
+              input([sharedAllow, groupDeny], {
+                memberships: invalidMemberships,
+                subject: decisionSubject,
+                trustedContext: context,
+              }),
+            ),
+          ).toEqual({ kind: 'INDETERMINATE', reason: 'MEMBERSHIP_SET_INCOMPLETE' });
+        }
+      }
+      for (const completeness of [
+        { ...observed.completeness, predicate: 'unrecognized-owner-predicate' },
+        { ...observed.completeness, state: 'STALE' as const },
+        {
+          ...observed.completeness,
+          proof: { ...observed.completeness.proof, evidenceRef: groupRef('another-anchor') },
+        },
+      ]) {
+        expect(
+          resolveAssortmentOrdinary(
+            input([sharedAllow, groupDeny], {
+              memberships: { ...encodedObserved, completeness },
+              subject: decisionSubject,
+              trustedContext: context,
+            }),
+          ),
+        ).toEqual({ kind: 'INDETERMINATE', reason: 'MEMBERSHIP_SET_INCOMPLETE' });
+      }
+    }
+  }),
+);

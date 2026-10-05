@@ -8,6 +8,7 @@ import type {
 } from '../../shared/domain/decision-contracts.ts';
 import {
   AssortmentCatalogSelectionSchema,
+  AssortmentDecisionRequestSchema,
   AssortmentDecisionSubjectSchema,
   AssortmentTrustedCommerceContextSchema,
   AssortmentOwnerResourceRefSchema,
@@ -36,6 +37,7 @@ export interface AssortmentDecisionEvidenceResolver {
   ) => Effect.Effect<AssortmentStoredDecisionEvidence, Failure>;
 }
 
+const requestEquivalent = Schema.toEquivalence(AssortmentDecisionRequestSchema);
 const subjectEquivalent = Schema.toEquivalence(AssortmentDecisionSubjectSchema);
 const contextEquivalent = Schema.toEquivalence(AssortmentTrustedCommerceContextSchema);
 const selectionEquivalent = Schema.toEquivalence(AssortmentCatalogSelectionSchema);
@@ -115,7 +117,7 @@ export const assortmentDecisionExplanationReadService = (
       return yield* invalid('Decision explanation evidence reference is not owned by this tenant and module');
     }
     const stored = yield* resolveEvidence(input.evidenceRef.evidenceRef, scope);
-    if (!isExactDecisionEvidence(input.request, stored.evidence)) {
+    if (!requestEquivalent(input.request, stored.request) || !isExactDecisionEvidence(input.request, stored.evidence)) {
       return yield* invalid('Decision explanation evidence does not belong to the exact request');
     }
     if (!isExactDecisionEvidence(stored.request, stored.evidence)) {

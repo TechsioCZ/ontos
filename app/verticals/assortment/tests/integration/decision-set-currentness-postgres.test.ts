@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { OperationalScope, ScopedTransactionExecutor } from '@app/core-runtime';
-import { DateTime, Effect, Result, Schema } from 'effect';
+import { DateTime, Effect, Match, Result, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
@@ -12,7 +12,10 @@ import { installOperationalScope } from '../../../../packages/core-runtime/src/d
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
 import {
   CreateApplicabilityBindingPayloadSchema,
+  CreateRuleRevisionPayloadSchema,
   CreateRulePayloadSchema,
+  EndApplicabilityBindingPayloadSchema,
+  RetireRulePayloadSchema,
 } from '../../shared/actions/policy-administration.ts';
 import { CreateClosedAssortmentBoundaryPayloadSchema } from '../../shared/actions/boundary-administration.ts';
 import {
@@ -21,7 +24,31 @@ import {
 } from '../../shared/domain/decision-set-query.ts';
 import { readAssortmentDecisionSetV1, verifyAssortmentDecisionSetV1 } from '../../src/services/decision-set-reader.ts';
 import { boundaryAdministrationPersistenceForScope } from '../../src/services/boundary-administration.service.ts';
-import { assortmentPolicyPersistenceForScope } from '../../src/services/policy-administration.service.ts';
+import {
+  assortmentMeaningFingerprint,
+  assortmentPolicyPersistenceForScope,
+  bindingRef,
+  ruleRevisionRef,
+  stableRuleRef,
+} from '../../src/services/policy-administration.service.ts';
+import {
+  AssortmentOrdinaryResolutionInputSchema,
+  resolveAssortmentOrdinary,
+} from '../../shared/domain/ordinary-resolution.ts';
+import { AssortmentCustomerGroupMembershipSetSchema } from '../../shared/domain/ports/owner-evidence.ts';
+import {
+  AssortmentGovernedDecisionSchema,
+  AssortmentVisibilityRequestSchema,
+} from '../../shared/domain/decision-contracts.ts';
+import { AssortmentPolicyPersistenceUnavailable } from '../../shared/domain/policy-errors.ts';
+import { assortmentDecisionEvidenceRepositoryForScope } from '../../src/services/decision-evidence.repository.ts';
+import { assortmentDecisionExplanationReadService } from '../../src/services/decision-explanation-read.service.ts';
+
+const historicalEvidenceUnavailable = () =>
+  new AssortmentPolicyPersistenceUnavailable({
+    code: 'assortment_policy_persistence_unavailable',
+    reason: 'Historical fixture evidence unavailable',
+  });
 
 const tenantId = randomUUID();
 const legalEntityId = randomUUID();
@@ -289,3 +316,423 @@ it.live('invalidates empty Assortment Candidate and Boundary sets when matching 
     }),
   ),
 );
+
+for (const audienceKind of ['SHARED', 'COMMERCE_CUSTOMER_GROUP', 'SUBJECT'] as const) {
+  it.live(`preserves ${audienceKind} Product DENY after Rule retirement until explicit Binding End`, () =>
+    Effect.scoped(
+      Effect.gen(function* retirementPreservesApplicability() {
+        const { admin } = yield* testDatabaseClients;
+        const database = yield* makeTestDatabaseFromClient(admin, coreRelations);
+        const scenarioTenantId = randomUUID();
+        const scenarioLegalEntityId = randomUUID();
+        const scenarioPrincipalId = randomUUID();
+        const scenarioScope = {
+          authContextRef: `job:retirement:${randomUUID()}`,
+          authMethod: 'system',
+          correlationId: randomUUID(),
+          legalEntityId: scenarioLegalEntityId,
+          principalId: scenarioPrincipalId,
+          tenantId: scenarioTenantId,
+        } satisfies OperationalScope;
+        const scenarioRef = (moduleId: string, resourceType: string, resourceId: string) => ({
+          moduleId,
+          resourceId,
+          resourceType,
+          tenantId: scenarioTenantId,
+        });
+        const scenarioProduct = scenarioRef('commerce.catalog', 'catalog.product', randomUUID());
+        const scenarioProfile = scenarioRef(
+          'commerce.customer-context',
+          'commerce.customer-context.retail-customer-profile',
+          randomUUID(),
+        );
+        const scenarioGroup = scenarioRef(
+          'commerce.customer-context',
+          'commerce.customer-context.customer-group',
+          randomUUID(),
+        );
+        const scenarioChannel = scenarioRef('commerce.channel', 'commerce.channel.channel', randomUUID());
+        const scenarioSeller = scenarioRef('party.registry', 'party.registry.legal-entity', scenarioLegalEntityId);
+        const scenarioCommercialScope = { channelRef: scenarioChannel, sellingLegalEntityRef: scenarioSeller };
+        const scenarioSubject = {
+          kind: 'IDENTIFIED',
+          subject: { kind: 'RETAIL_CUSTOMER_PROFILE', profileRef: scenarioProfile },
+        } as const;
+        const startedAt = '2030-01-01T00:00:00.000Z';
+        const beforeRetirementAt = '2030-02-01T00:00:00.000Z';
+        const retiredAt = '2030-03-01T00:00:00.000Z';
+        const afterRetirementAt = '2030-03-01T00:00:01.000Z';
+        const beforeEndAt = '2030-03-31T23:59:59.999Z';
+        const endedAt = '2030-04-01T00:00:00.000Z';
+        const runScoped = <Value, Failure>(
+          operation: (transaction: ScopedTransactionExecutor) => Effect.Effect<Value, Failure>,
+        ) =>
+          database.transaction((transaction) =>
+            Effect.gen(function* retirementScopedOperation() {
+              const scoped = yield* installOperationalScope(transaction, scenarioScope);
+              return yield* operation(scoped);
+            }),
+          );
+        const queryAt = (instant: string) =>
+          Schema.decodeUnknownSync(AssortmentOrdinaryCandidateQueryV1Schema)({
+            decisionPurpose: 'VISIBILITY',
+            kind: 'ORDINARY_CANDIDATES',
+            legalEntityId: scenarioLegalEntityId,
+            operationTime: instant,
+            subject: scenarioSubject,
+            target: { kind: 'PRODUCT', productRef: scenarioProduct },
+            tenantId: scenarioTenantId,
+            trustedContext: { ...scenarioCommercialScope, operationTime: instant, tenantId: scenarioTenantId },
+            version: 1,
+          });
+        const readAt = (instant: string) =>
+          runScoped((transaction) => readAssortmentDecisionSetV1(transaction, queryAt(instant))).pipe(
+            Effect.map((set) => {
+              if (set.kind !== 'COMPLETE_ORDINARY_CANDIDATE_SET') {
+                throw new Error('Expected the complete persisted ordinary Candidate set');
+              }
+              return set;
+            }),
+          );
+        const broadInput = Schema.decodeUnknownSync(CreateRulePayloadSchema)({
+          effect: 'ALLOW',
+          provenanceRef: 'retirement:baseline',
+          purpose: 'VISIBILITY',
+          reason: 'Broad baseline for the retirement regression',
+          selector: { kind: 'ALL' },
+          stableCode: `retirement.allow.${scenarioTenantId}`,
+        });
+        const specificCode = `retirement.deny.${scenarioTenantId}`;
+        const specificInput = Schema.decodeUnknownSync(CreateRulePayloadSchema)({
+          effect: 'DENY',
+          provenanceRef: 'retirement:specific-deny',
+          purpose: 'VISIBILITY',
+          reason: 'Retirement must preserve existing exact Product exclusion',
+          selector: { kind: 'PRODUCT', productRef: scenarioProduct },
+          stableCode: specificCode,
+        });
+        const broad = yield* runScoped((transaction) =>
+          assortmentPolicyPersistenceForScope(transaction, scenarioScope).createRule({
+            ...broadInput,
+            actionInvocationId: randomUUID(),
+            actorPrincipalId: scenarioPrincipalId,
+            tenantId: scenarioTenantId,
+          }),
+        ).pipe(
+          Effect.map((created) => {
+            if (!('initialRuleRevisionId' in created)) {
+              throw new Error('Expected broad Rule');
+            }
+            return created;
+          }),
+        );
+        const specific = yield* runScoped((transaction) =>
+          assortmentPolicyPersistenceForScope(transaction, scenarioScope).createRule({
+            ...specificInput,
+            actionInvocationId: randomUUID(),
+            actorPrincipalId: scenarioPrincipalId,
+            tenantId: scenarioTenantId,
+          }),
+        ).pipe(
+          Effect.map((created) => {
+            if (!('initialRuleRevisionId' in created)) {
+              throw new Error('Expected specific Rule');
+            }
+            return created;
+          }),
+        );
+        const specificAudience = Match.value(audienceKind).pipe(
+          Match.when('SHARED', () => ({ kind: 'SHARED' as const })),
+          Match.when('COMMERCE_CUSTOMER_GROUP', () => ({
+            groupRef: scenarioGroup,
+            kind: 'COMMERCE_CUSTOMER_GROUP' as const,
+          })),
+          Match.when('SUBJECT', () => ({ kind: 'SUBJECT' as const, subject: scenarioSubject.subject })),
+          Match.exhaustive,
+        );
+        const broadBindingInput = Schema.decodeUnknownSync(CreateApplicabilityBindingPayloadSchema)({
+          audience: { kind: 'SHARED' },
+          commercialScope: scenarioCommercialScope,
+          effectiveFrom: startedAt,
+          provenanceRef: 'retirement:baseline-binding',
+          reason: 'Make the broad baseline applicable',
+          ruleRevisionRef: ruleRevisionRef(scenarioTenantId, broad.initialRuleRevisionId, 1),
+        });
+        yield* runScoped((transaction) =>
+          assortmentPolicyPersistenceForScope(transaction, scenarioScope).createBinding({
+            ...broadBindingInput,
+            actionInvocationId: randomUUID(),
+            actorPrincipalId: scenarioPrincipalId,
+            legalEntityId: scenarioLegalEntityId,
+            tenantId: scenarioTenantId,
+          }),
+        );
+        const specificBindingInput = Schema.decodeUnknownSync(CreateApplicabilityBindingPayloadSchema)({
+          ...broadBindingInput,
+          audience: specificAudience,
+          effectiveFrom: startedAt,
+          provenanceRef: 'retirement:specific-binding',
+          reason: 'Persist a live specific DENY Binding',
+          ruleRevisionRef: ruleRevisionRef(scenarioTenantId, specific.initialRuleRevisionId, 1),
+        });
+        const specificBinding = yield* runScoped((transaction) =>
+          assortmentPolicyPersistenceForScope(transaction, scenarioScope).createBinding({
+            ...specificBindingInput,
+            actionInvocationId: randomUUID(),
+            actorPrincipalId: scenarioPrincipalId,
+            legalEntityId: scenarioLegalEntityId,
+            tenantId: scenarioTenantId,
+          }),
+        ).pipe(
+          Effect.map((created) => {
+            if (!('bindingId' in created)) {
+              throw new Error('Expected specific Binding');
+            }
+            return created;
+          }),
+        );
+        const resolve = (set: Effect.Success<ReturnType<typeof readAt>>) => {
+          const setQuery = set.query;
+          // This test translates only the Assortment owner's equivalent v1 predicate vocabulary.
+          // Candidates, fact proofs, exact query scope and the actual PostgreSQL set proof are retained.
+          const completeness = {
+            ...set.completeness,
+            evidence: {
+              ...set.completeness.evidence,
+              predicate: 'all current Candidate-producing bindings and immutable revisions for this exact decision',
+              scope: 'commerce.assortment.ordinary-candidates',
+            },
+          };
+          const membershipProof = {
+            evidenceRef: scenarioRef(
+              'commerce.customer-context',
+              'commerce.customer-context.membership-set-proof',
+              'fixture-proof',
+            ),
+            ownerModuleId: 'commerce.customer-context',
+          };
+          // Injected GROUP proof is a resolver fixture, not evidence of a production Membership source.
+          const memberships = Schema.decodeUnknownSync(Schema.toType(AssortmentCustomerGroupMembershipSetSchema))({
+            asOf: setQuery.operationTime,
+            completeness: {
+              predicate: 'all current customer-group memberships',
+              proof: membershipProof,
+              scope: 'customer-context.memberships',
+              state: 'COMPLETE',
+            },
+            items: [
+              {
+                effectiveFrom: DateTime.makeUnsafe(startedAt),
+                effectiveTo: null,
+                groupRef: scenarioGroup,
+                membershipRef: scenarioRef(
+                  'commerce.customer-context',
+                  'commerce.customer-context.customer-group-membership',
+                  'fixture-membership',
+                ),
+                profileRef: scenarioProfile,
+                revision: '1',
+                state: 'VALID',
+              },
+            ],
+            profileRef: scenarioProfile,
+          });
+          return resolveAssortmentOrdinary(
+            Schema.decodeUnknownSync(Schema.toType(AssortmentOrdinaryResolutionInputSchema))({
+              candidates: set.candidates,
+              completeness,
+              decisionPurpose: setQuery.decisionPurpose,
+              factCurrentness: set.factCurrentness,
+              memberships,
+              subject: setQuery.subject,
+              target: setQuery.target,
+              tenantId: setQuery.tenantId,
+              trustedContext: setQuery.trustedContext,
+            }),
+          );
+        };
+        const verify = (set: Effect.Success<ReturnType<typeof readAt>>) =>
+          runScoped((transaction) =>
+            verifyAssortmentDecisionSetV1(transaction, {
+              expectedProofRef: set.completeness.evidence.proof.evidenceRef,
+              query: set.query,
+              version: 1,
+            }),
+          );
+        const before = yield* readAt(beforeRetirementAt);
+        expect(before.candidates).toHaveLength(2);
+        expect(resolve(before)).toMatchObject({
+          evidence: {
+            maximalCandidates: [
+              {
+                bindingRef: bindingRef(scenarioTenantId, specificBinding.bindingId),
+                effect: 'DENY',
+                ruleRevision: { revision: '1', sourceRef: { resourceId: specific.initialRuleRevisionId } },
+                stableRuleRef: stableRuleRef(scenarioTenantId, specific.stableRuleId),
+              },
+            ],
+          },
+          kind: 'RESOLVED',
+          outcome: 'INELIGIBLE',
+        });
+        const preservedCandidates = JSON.stringify(before.candidates);
+        const historicalRequest = Schema.decodeUnknownSync(Schema.toType(AssortmentVisibilityRequestSchema))({
+          decisionPurpose: 'VISIBILITY',
+          productRef: scenarioProduct,
+          subject: before.query.subject,
+          trustedContext: before.query.trustedContext,
+        });
+        const historicalDecision = Schema.decodeUnknownSync(Schema.toType(AssortmentGovernedDecisionSchema))({
+          evidence: {
+            candidates: before.candidates,
+            factCurrentness: before.factCurrentness,
+            operationTime: before.query.operationTime,
+            setCompleteness: [before.completeness.evidence],
+            subject: before.query.subject,
+            target: before.query.target,
+            trustedContext: before.query.trustedContext,
+          },
+          outcome: 'INELIGIBLE',
+        });
+        const historicalReference = yield* runScoped((transaction) =>
+          assortmentDecisionEvidenceRepositoryForScope(transaction, scenarioScope).persist({
+            decision: historicalDecision,
+            request: historicalRequest,
+          }),
+        );
+        const explainHistory = () =>
+          runScoped((transaction) =>
+            assortmentDecisionExplanationReadService(scenarioScope, (reference) =>
+              assortmentDecisionEvidenceRepositoryForScope(transaction, scenarioScope)
+                .resolve(reference)
+                .pipe(Effect.mapError(historicalEvidenceUnavailable)),
+            ).explain({ evidenceRef: historicalReference, request: historicalRequest }),
+          );
+        const explanationBeforeRetirement = yield* explainHistory();
+        expect(explanationBeforeRetirement.outcome).toBe('INELIGIBLE');
+        expect(explanationBeforeRetirement.evidence.candidates).toEqual(before.candidates);
+        const fixedBeforeRetirementProof = yield* readAt(afterRetirementAt);
+        expect(yield* verify(fixedBeforeRetirementProof)).toEqual({ state: 'CURRENT', version: 1 });
+        const retirement = {
+          ...Schema.decodeUnknownSync(RetireRulePayloadSchema)({
+            effectiveAt: retiredAt,
+            expectedBasisFingerprint: assortmentMeaningFingerprint({
+              latestRevisionId: specific.initialRuleRevisionId,
+              latestRevisionNumber: 1,
+              retired: false,
+              stableCode: specificCode,
+            }),
+            provenanceRef: 'retirement:retire-lineage',
+            reason: 'Prevent new applicability without ending existing Bindings',
+            stableRuleRef: stableRuleRef(scenarioTenantId, specific.stableRuleId),
+          }),
+          actionInvocationId: randomUUID(),
+          actorPrincipalId: scenarioPrincipalId,
+          tenantId: scenarioTenantId,
+        };
+        expect(
+          yield* runScoped((transaction) =>
+            assortmentPolicyPersistenceForScope(transaction, scenarioScope).retireRule(retirement),
+          ),
+        ).toEqual({ retired: true });
+        expect(yield* verify(fixedBeforeRetirementProof)).toEqual({ state: 'STALE', version: 1 });
+        const atRetirement = yield* readAt(retiredAt);
+        const afterRetirement = yield* readAt(afterRetirementAt);
+        expect(atRetirement.candidates).toEqual(before.candidates);
+        expect(afterRetirement.candidates).toEqual(before.candidates);
+        expect(resolve(atRetirement)).toMatchObject({ kind: 'RESOLVED', outcome: 'INELIGIBLE' });
+        expect(resolve(afterRetirement)).toMatchObject({ kind: 'RESOLVED', outcome: 'INELIGIBLE' });
+        expect(yield* explainHistory()).toEqual(explanationBeforeRetirement);
+        expect(yield* verify(afterRetirement)).toEqual({ state: 'CURRENT', version: 1 });
+        expect(
+          yield* runScoped((transaction) =>
+            assortmentPolicyPersistenceForScope(transaction, scenarioScope).retireRule(retirement),
+          ),
+        ).toEqual({ retired: false });
+        expect(yield* verify(afterRetirement)).toEqual({ state: 'CURRENT', version: 1 });
+        expect((yield* readAt(afterRetirementAt)).completeness.evidence.proof).toEqual(
+          afterRetirement.completeness.evidence.proof,
+        );
+        expect(
+          yield* runScoped((transaction) =>
+            assortmentPolicyPersistenceForScope(transaction, scenarioScope).retireRule({
+              ...retirement,
+              reason: 'Changed intent under the same invocation',
+            }),
+          ),
+        ).toEqual({ conflict: 'IDEMPOTENCY_REUSED', kind: 'conflict' });
+        const revisionInput = Schema.decodeUnknownSync(CreateRuleRevisionPayloadSchema)({
+          effect: 'ALLOW',
+          expectedLatestRevision: 1,
+          provenanceRef: 'retirement:forbidden-revision',
+          purpose: 'VISIBILITY',
+          reason: 'A retired lineage must reject fresh Revision creation',
+          selector: { kind: 'ALL' },
+          stableRuleRef: retirement.stableRuleRef,
+        });
+        expect(
+          yield* runScoped((transaction) =>
+            assortmentPolicyPersistenceForScope(transaction, scenarioScope).createRuleRevision({
+              ...revisionInput,
+              actionInvocationId: randomUUID(),
+              actorPrincipalId: scenarioPrincipalId,
+              tenantId: scenarioTenantId,
+            }),
+          ),
+        ).toEqual({ conflict: 'LIFECYCLE', kind: 'conflict' });
+        expect(
+          yield* runScoped((transaction) =>
+            assortmentPolicyPersistenceForScope(transaction, scenarioScope).createBinding({
+              ...specificBindingInput,
+              actionInvocationId: randomUUID(),
+              actorPrincipalId: scenarioPrincipalId,
+              legalEntityId: scenarioLegalEntityId,
+              tenantId: scenarioTenantId,
+            }),
+          ),
+        ).toEqual({ conflict: 'LIFECYCLE', kind: 'conflict' });
+        expect(yield* verify(afterRetirement)).toEqual({ state: 'CURRENT', version: 1 });
+        const specificBindingBasis = assortmentMeaningFingerprint({
+          bindingKind: audienceKind,
+          channelResourceId: scenarioChannel.resourceId,
+          customerGroupResourceId: audienceKind === 'COMMERCE_CUSTOMER_GROUP' ? scenarioGroup.resourceId : null,
+          effectiveFrom: startedAt,
+          marketResourceId: null,
+          ruleRevisionId: specific.initialRuleRevisionId,
+          storefrontResourceId: null,
+          subjectKind: audienceKind === 'SUBJECT' ? 'RETAIL_CUSTOMER_PROFILE' : null,
+          subjectResourceId: audienceKind === 'SUBJECT' ? scenarioProfile.resourceId : null,
+        });
+        const endInput = Schema.decodeUnknownSync(EndApplicabilityBindingPayloadSchema)({
+          applicabilityBindingRef: bindingRef(scenarioTenantId, specificBinding.bindingId),
+          effectiveAt: endedAt,
+          expectedBasisFingerprint: specificBindingBasis,
+          provenanceRef: 'retirement:explicit-end',
+          reason: 'Only explicit Binding End stops existing applicability',
+        });
+        expect(
+          yield* runScoped((transaction) =>
+            assortmentPolicyPersistenceForScope(transaction, scenarioScope).endBinding({
+              ...endInput,
+              actionInvocationId: randomUUID(),
+              actorPrincipalId: scenarioPrincipalId,
+              legalEntityId: scenarioLegalEntityId,
+              tenantId: scenarioTenantId,
+            }),
+          ),
+        ).toEqual({ ended: true });
+        expect(yield* verify(afterRetirement)).toEqual({ state: 'STALE', version: 1 });
+        const justBeforeEnd = yield* readAt(beforeEndAt);
+        expect(justBeforeEnd.candidates).toEqual(before.candidates);
+        expect(resolve(justBeforeEnd)).toMatchObject({ kind: 'RESOLVED', outcome: 'INELIGIBLE' });
+        const atEnd = yield* readAt(endedAt);
+        expect(atEnd.candidates).toHaveLength(1);
+        expect(atEnd.candidates[0]).toMatchObject({ effect: 'ALLOW', selector: { kind: 'ALL' } });
+        expect(resolve(atEnd)).toMatchObject({ kind: 'RESOLVED', outcome: 'ELIGIBLE' });
+        expect(yield* verify(atEnd)).toEqual({ state: 'CURRENT', version: 1 });
+        expect(JSON.stringify(before.candidates)).toBe(preservedCandidates);
+        expect(yield* explainHistory()).toEqual(explanationBeforeRetirement);
+      }),
+    ),
+  );
+}

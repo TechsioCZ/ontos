@@ -1,4 +1,4 @@
-import { DateTime, Schema } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 
 import {
   AssortmentCandidateSchema,
@@ -27,6 +27,8 @@ import type {
 } from './decision-contracts.ts';
 import {
   AssortmentCategoryClassificationSchema,
+  AssortmentCommerceMembershipPredicate,
+  AssortmentCommerceMembershipScopeTokenJsonSchema,
   AssortmentCustomerGroupMembershipSetSchema,
 } from './ports/owner-evidence.ts';
 import type { AssortmentCategoryClassification, AssortmentCustomerGroupMembershipSet } from './ports/owner-evidence.ts';
@@ -330,10 +332,35 @@ const catalogSelectorMatches = (
   );
 };
 
+const membershipCompletenessMatches = (
+  memberships: AssortmentCustomerGroupMembershipSet,
+  sellingLegalEntityId: string,
+): boolean => {
+  if (memberships.completeness.predicate === MembershipCompletenessPredicate) {
+    return memberships.completeness.scope === MembershipCompletenessScope;
+  }
+  if (memberships.completeness.predicate !== AssortmentCommerceMembershipPredicate) {
+    return false;
+  }
+  const token = Schema.decodeOption(AssortmentCommerceMembershipScopeTokenJsonSchema, {
+    onExcessProperty: 'error',
+  })(memberships.completeness.scope);
+  return (
+    Option.isSome(token) &&
+    token.value.legalEntityId === sellingLegalEntityId &&
+    token.value.proof.itemCount === memberships.items.length &&
+    memberships.items.every((membership) => membership.state === 'VALID') &&
+    new Set(memberships.items.map((membership) => membership.membershipRef.resourceId)).size ===
+      memberships.items.length &&
+    refEquals(memberships.completeness.proof.evidenceRef, memberships.profileRef)
+  );
+};
+
 const groupMembershipsAreComplete = (
   memberships: AssortmentCustomerGroupMembershipSet | undefined,
   subject: AssortmentDecisionSubject,
   operationTime: DateTime.Utc,
+  sellingLegalEntityId: string,
 ): boolean => {
   if (
     memberships === undefined ||
@@ -344,8 +371,7 @@ const groupMembershipsAreComplete = (
   }
   return (
     memberships.completeness.state === 'COMPLETE' &&
-    memberships.completeness.predicate === MembershipCompletenessPredicate &&
-    memberships.completeness.scope === MembershipCompletenessScope &&
+    membershipCompletenessMatches(memberships, sellingLegalEntityId) &&
     memberships.completeness.proof.ownerModuleId === memberships.profileRef.moduleId &&
     refEquals(memberships.profileRef, subject.subject.profileRef) &&
     DateTime.toEpochMillis(memberships.asOf) === DateTime.toEpochMillis(operationTime)
@@ -366,7 +392,14 @@ const audienceMatches = (
   if (audience.kind === 'SUBJECT') {
     return refEquals(subjectRef(audience.subject), subjectRef(input.subject.subject));
   }
-  if (!groupMembershipsAreComplete(memberships, input.subject, input.trustedContext.operationTime)) {
+  if (
+    !groupMembershipsAreComplete(
+      memberships,
+      input.subject,
+      input.trustedContext.operationTime,
+      input.trustedContext.sellingLegalEntityRef.resourceId,
+    )
+  ) {
     return false;
   }
   if (memberships === undefined) {
@@ -643,7 +676,12 @@ export const resolveAssortmentOrdinary = (input: AssortmentOrdinaryResolutionInp
   );
   if (
     groupCandidateExists &&
-    !groupMembershipsAreComplete(input.memberships, input.subject, input.trustedContext.operationTime)
+    !groupMembershipsAreComplete(
+      input.memberships,
+      input.subject,
+      input.trustedContext.operationTime,
+      input.trustedContext.sellingLegalEntityRef.resourceId,
+    )
   ) {
     return indeterminate('MEMBERSHIP_SET_INCOMPLETE');
   }

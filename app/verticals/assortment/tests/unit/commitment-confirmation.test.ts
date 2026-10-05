@@ -371,3 +371,47 @@ it.effect('rejects stale positive evidence and fails closed without an evaluator
     expect(Exit.isFailure(unavailableExit)).toBe(true);
   }),
 );
+
+it.effect('issues a required-component proof only for its own exact selection and role', () =>
+  Effect.gen(function* confirmsExactComponent() {
+    const componentPayload = {
+      ...payload,
+      constituent: { ...payload.constituent, role: 'REQUIRED_COMPONENT' as const },
+    };
+    const { persisted, repository } = makeInMemoryRepository();
+    const service = makeAssortmentCommitmentConfirmationService(
+      confirmationScope,
+      makeAuthoritativeEvaluation(),
+      repository,
+    );
+    const result = yield* service.issue(componentPayload, {
+      actionInvocationId: 'component-issue-1',
+      actorPrincipalId: confirmationScope.principalId,
+    });
+    expect(result.constituent.role).toBe('REQUIRED_COMPONENT');
+    expect(persisted).toHaveLength(1);
+    expect(
+      assortmentCommitmentConfirmationMatchesExactScope(
+        result,
+        { ...componentPayload, constituent: payload.constituent },
+        result.issuedAt,
+      ),
+    ).toBe(false);
+    const wrongRoleEvaluation: AssortmentCommitmentConfirmationEvaluationPort = {
+      evaluate: (requested, scope, now) =>
+        makeAuthoritativeEvaluation().evaluate(
+          { ...requested, constituent: { ...requested.constituent, role: 'TOP_LEVEL' } },
+          scope,
+          now,
+        ),
+    };
+    const refused = yield* Effect.exit(
+      makeAssortmentCommitmentConfirmationService(confirmationScope, wrongRoleEvaluation, repository).issue(
+        componentPayload,
+        { actionInvocationId: 'component-issue-2', actorPrincipalId: confirmationScope.principalId },
+      ),
+    );
+    expect(Exit.isFailure(refused)).toBe(true);
+    expect(persisted).toHaveLength(1);
+  }),
+);

@@ -1,3 +1,4 @@
+import { EffectiveCustomerGroupMembershipSetV1ResponseSchema } from '@app/commerce-customer-context/api/effective-customer-group-membership-set-v1';
 import { Context, Effect, Layer, Schema } from 'effect';
 
 import {
@@ -19,6 +20,18 @@ import type {
 } from '../decision-contracts.ts';
 
 const NonEmptyTextSchema = Schema.Trim.check(Schema.isMinLength(1), Schema.isMaxLength(500));
+
+/** Retains the native owner witness in the existing completeness scope field. */
+export const AssortmentCommerceMembershipPredicate =
+  'commerce.customer-context.customer-group-memberships.effective.v1';
+export const AssortmentCommerceMembershipScopeTokenSchema = Schema.Struct({
+  legalEntityId: EffectiveCustomerGroupMembershipSetV1ResponseSchema.fields.legalEntityId,
+  proof: EffectiveCustomerGroupMembershipSetV1ResponseSchema.fields.proof,
+  version: Schema.Literal(1),
+});
+export const AssortmentCommerceMembershipScopeTokenJsonSchema = Schema.fromJsonString(
+  AssortmentCommerceMembershipScopeTokenSchema,
+);
 
 const TenantIdSchema = AssortmentTenantIdSchema;
 const CustomerContextModuleId = 'commerce.customer-context';

@@ -1,9 +1,10 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { Effect, Schema } from 'effect';
+import { Effect, Exit, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import {
   AssortmentDecisionEvidenceSchema,
   AssortmentVisibilityRequestSchema,
+  AssortmentPurchaseRequestSchema,
 } from '../../shared/domain/decision-contracts.ts';
 import {
   AssortmentConfigurationRequestSchema,
@@ -202,3 +203,44 @@ it('derives exact decision permission target from trusted request scope', () => 
   expect(target.catalogSelection.resourceId).toStrictEqual('product-1');
   expect(target.subject.kind).toStrictEqual('RETAIL_CUSTOMER_PROFILE');
 });
+
+it.effect('keeps explanation bound to the stored component role as well as its selection', () =>
+  Effect.gen(function* explainsComponentIdentity() {
+    const componentRequest = Schema.decodeUnknownSync(AssortmentPurchaseRequestSchema)({
+      constituent: {
+        catalogSelection: {
+          configuration: { kind: 'NONE' },
+          productRef,
+          variantKind: 'ATOMIC',
+          variantRef: ref('catalog.owner', 'catalog.variant', 'component-1'),
+        },
+        role: 'REQUIRED_COMPONENT',
+      },
+      decisionPurpose: 'PURCHASE',
+      subject: request.subject,
+      trustedContext: {
+        ...request.trustedContext,
+        operationTime: '2026-09-23T09:00:00.000Z',
+      },
+    });
+    const componentEvidence = {
+      ...evidence,
+      target: { kind: 'CATALOG_SELECTION' as const, selection: componentRequest.constituent.catalogSelection },
+    };
+    const service = assortmentDecisionExplanationReadService(scope, () =>
+      Effect.succeed({
+        evidence: componentEvidence,
+        outcome: 'ELIGIBLE',
+        request: componentRequest,
+      }),
+    );
+    const input = { evidenceRef: explanationRequest.evidenceRef, request: componentRequest };
+    expect((yield* service.explain(input)).outcome).toBe('ELIGIBLE');
+    const forged = {
+      ...input,
+      request: { ...componentRequest, constituent: { ...componentRequest.constituent, role: 'TOP_LEVEL' as const } },
+    };
+    const refused = yield* Effect.exit(service.explain(forged));
+    expect(Exit.isFailure(refused)).toBe(true);
+  }),
+);

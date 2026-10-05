@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
+import { Context, DateTime, Effect, Layer, Option, Predicate, Result, Schema } from 'effect';
 
 import {
   AssortmentDecisionSubjectSchema,
@@ -32,6 +32,7 @@ import {
   AssortmentProspectivePurchaseEvidenceSchema,
 } from '../consumer-evidence.ts';
 import type {
+  AssortmentConsumerConstituentEvidence,
   AssortmentConsumerDecisionEvidenceReference,
   AssortmentProspectivePurchaseEvidence,
 } from '../consumer-evidence.ts';
@@ -73,7 +74,11 @@ export const AssortmentPurchaseEvaluationRequestSchema = Schema.Struct({
   setComposition: Schema.optionalKey(AssortmentSetPurchaseCompositionSchema),
   subject: AssortmentDecisionSubjectSchema,
   trustedContextRef: AssortmentOwnerResourceRefSchema,
-});
+}).check(
+  Schema.makeFilter((request) =>
+    request.constituent.role === 'TOP_LEVEL' ? undefined : 'composed PURCHASE requests must target TOP_LEVEL',
+  ),
+);
 export type AssortmentPurchaseEvaluationRequest = typeof AssortmentPurchaseEvaluationRequestSchema.Type;
 
 /** The trusted portion copied from ReadHandlerContext.scope. */
@@ -236,7 +241,8 @@ const evidenceMatchesRequest = (
       decision.evidence === undefined ||
       (subjectEquivalence(decision.evidence.subject, request.subject) &&
         contextEquivalence(decision.evidence.trustedContext, request.trustedContext) &&
-        decision.evidence.operationTime === request.trustedContext.operationTime &&
+        DateTime.toEpochMillis(decision.evidence.operationTime) ===
+          DateTime.toEpochMillis(request.trustedContext.operationTime) &&
         (target.kind === 'PRODUCT'
           ? decision.evidence.target.kind === 'PRODUCT' &&
             resourceEquivalence(decision.evidence.target.productRef, target.productRef)
@@ -248,7 +254,8 @@ const evidenceMatchesRequest = (
     decision.evidence !== undefined &&
     subjectEquivalence(decision.evidence.subject, request.subject) &&
     contextEquivalence(decision.evidence.trustedContext, request.trustedContext) &&
-    decision.evidence.operationTime === request.trustedContext.operationTime &&
+    DateTime.toEpochMillis(decision.evidence.operationTime) ===
+      DateTime.toEpochMillis(request.trustedContext.operationTime) &&
     (target.kind === 'PRODUCT'
       ? decision.evidence.target.kind === 'PRODUCT' &&
         resourceEquivalence(decision.evidence.target.productRef, target.productRef)
@@ -272,6 +279,26 @@ const visibilityOwnedOutputMatches = (
   subjectEquivalence(owned.request.subject, request.subject) &&
   trustedContextMatchesScope(owned.request.trustedContext, scope) &&
   evidenceMatchesRequest(owned.decision, owned.request, { kind: 'PRODUCT', productRef: request.productRef });
+
+/** Keep composition on the root while addressing each atomic component truthfully. */
+export const assortmentPurchaseConstituentRequest = (
+  request: AssortmentPurchaseRequest,
+  constituent: AssortmentPurchaseConstituent,
+): AssortmentPurchaseRequest => {
+  if (constituent.role === 'TOP_LEVEL') {
+    return request;
+  }
+  const componentRequest: AssortmentPurchaseRequest = {
+    constituent,
+    decisionPurpose: 'PURCHASE',
+    subject: request.subject,
+    trustedContext: request.trustedContext,
+  };
+  if (request.principalRef !== undefined) {
+    return { ...componentRequest, principalRef: request.principalRef };
+  }
+  return componentRequest;
+};
 
 const purchaseOwnedOutputMatches = (
   owned: AssortmentOwnedPurchaseDecision,
@@ -310,12 +337,11 @@ const purchaseOwnedOutputMatches = (
   if (owned.decision.outcome === 'INDETERMINATE' && owned.constituents.length === 0) {
     return true;
   }
-  const endedWithAuthoritativeDeny =
+  const hasAuthoritativeDeny =
     owned.decision.outcome === 'INELIGIBLE' &&
-    owned.constituents.at(-1)?.decision.outcome === 'INELIGIBLE' &&
-    owned.constituents.slice(0, -1).every((item) => item.decision.outcome !== 'INELIGIBLE');
+    owned.constituents.some((item) => item.decision.outcome === 'INELIGIBLE');
   if (
-    (endedWithAuthoritativeDeny
+    (hasAuthoritativeDeny
       ? owned.constituents.length > expectedConstituents.length
       : owned.constituents.length !== expectedConstituents.length) ||
     owned.constituents.length === 0
@@ -323,23 +349,20 @@ const purchaseOwnedOutputMatches = (
     return false;
   }
   if (
-    owned.constituents.some((item, index) => {
-      const expected = expectedConstituents[index];
-      return (
-        expected === undefined ||
-        (endedWithAuthoritativeDeny &&
-          item.decision.outcome === 'INELIGIBLE' &&
-          index !== owned.constituents.length - 1) ||
+    owned.constituents.some(
+      (item, index) =>
+        !expectedConstituents.some((expected) => constituentEquivalence(item.constituent, expected)) ||
+        owned.constituents
+          .slice(0, index)
+          .some((previous) => constituentEquivalence(previous.constituent, item.constituent)) ||
         !Schema.is(AssortmentPurchaseRequestSchema)(item.request) ||
-        !requestEquivalence(item.request, owned.request) ||
-        !constituentEquivalence(item.constituent, expected) ||
+        !requestEquivalence(item.request, assortmentPurchaseConstituentRequest(owned.request, item.constituent)) ||
         !immutable(item.decision) ||
         !evidenceMatchesRequest(item.decision, item.request, {
           kind: 'CATALOG_SELECTION',
           selection: item.constituent.catalogSelection,
-        })
-      );
-    })
+        }),
+    )
   ) {
     return false;
   }
@@ -451,9 +474,14 @@ export const makeAssortmentDecisionEvaluation = (
       const persistedReferences = yield* Effect.forEach(
         owned.constituents,
         Effect.fn('AssortmentDecisionEvaluation.persistConstituentEvidence')(
-          function* persistConstituentEvidence(item) {
+          function* persistConstituentEvidence(
+            item,
+          ): Effect.fn.Return<Option.Option<AssortmentConsumerConstituentEvidence>> {
             if (item.decision.outcome === 'INDETERMINATE') {
-              return Option.none();
+              const constituentResponse = responseFor(item.decision);
+              return constituentResponse.outcome === 'INDETERMINATE'
+                ? Option.some({ ...constituentResponse, constituent: item.constituent })
+                : Option.none();
             }
             const referenceOption = yield* dependencies.evidenceStore.persist(item).pipe(
               Effect.asSome,

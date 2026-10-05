@@ -1,10 +1,11 @@
 import { expect, it } from 'effect-rstest';
-import { Effect, Schema } from 'effect';
+import { Effect, Exit, Schema } from 'effect';
 
 import {
   AssortmentCandidateSchema,
   AssortmentCatalogSelectionSchema,
   AssortmentDecisionEvidenceSchema,
+  AssortmentGovernedDecisionSchema,
   AssortmentOwnerResourceRefSchema,
   AssortmentPurchaseRequestSchema,
   AssortmentSetPurchaseCompositionSchema,
@@ -259,6 +260,7 @@ it.effect('requires the exact pinned Set composition and preserves only evaluate
       source: {
         evidenceRef: ref('catalog.owner', 'catalog.set-composition-evidence', 'composition-proof'),
         ownerModuleId: 'catalog.owner',
+        sourceRevision: setComposition.setCompositionRevision,
       },
     });
     const setResolution = {
@@ -282,6 +284,133 @@ it.effect('requires the exact pinned Set composition and preserves only evaluate
     expect(
       acceptedResolution !== undefined && 'evidence' in acceptedResolution ? acceptedResolution.evidence.evaluated : [],
     ).toHaveLength(2);
+
+    const unknownRoot = Schema.decodeUnknownSync(AssortmentGovernedDecisionSchema)({
+      failure: {
+        _tag: 'AssortmentDependencyFailureError',
+        code: 'DEPENDENCY_FAILURE',
+        ownerModuleId: 'commerce.assortment',
+        retryable: true,
+        safeReasonCode: 'DEPENDENCY_UNAVAILABLE',
+      },
+      outcome: 'INDETERMINATE',
+    });
+    const deniedComponent = {
+      ...componentDecision,
+      evidence: { ...componentDecision.evidence, candidates: [{ ...componentCandidate, effect: 'DENY' as const }] },
+      outcome: 'INELIGIBLE' as const,
+    };
+    const summary = {
+      evidence: Schema.decodeUnknownSync(Schema.toType(AssortmentDecisionEvidenceSchema))({
+        factCurrentness: [],
+        operationTime: request.trustedContext.operationTime,
+        setCompleteness: [],
+        subject: request.subject,
+        target: { kind: 'CATALOG_SELECTION', selection: topLevelSelection },
+        trustedContext: request.trustedContext,
+      }),
+      outcome: 'INELIGIBLE' as const,
+    };
+    const repeatedComponent = { constituent: component, decision: componentDecision };
+    for (const evaluated of [[repeatedComponent], [repeatedComponent, repeatedComponent]]) {
+      const incompletePositive = yield* Effect.exit(
+        constructAssortmentSuccessfulAttemptEvidence({
+          ...valid,
+          decision: { ...summary, outcome: 'ELIGIBLE' },
+          setResolution: { ...setResolution, evidence: { ...setResolution.evidence, evaluated } },
+        }),
+      );
+      expect(Exit.isFailure(incompletePositive)).toBe(true);
+    }
+    const deniedResolution = {
+      ...setResolution,
+      evidence: {
+        ...setResolution.evidence,
+        evaluated: [
+          { constituent: request.constituent, decision: unknownRoot },
+          { constituent: component, decision: deniedComponent },
+        ],
+      },
+      kind: 'INELIGIBLE' as const,
+    };
+    const denied = yield* constructAssortmentSuccessfulAttemptEvidence({
+      ...valid,
+      decision: summary,
+      setResolution: deniedResolution,
+    });
+    expect(denied.setResolution).toEqual(deniedResolution);
+    const componentOnly = yield* constructAssortmentSuccessfulAttemptEvidence({
+      ...valid,
+      decision: summary,
+      setResolution: {
+        ...deniedResolution,
+        evidence: { ...deniedResolution.evidence, evaluated: [{ constituent: component, decision: deniedComponent }] },
+      },
+    });
+    expect(componentOnly.setResolution?.kind).toBe('INELIGIBLE');
+    const forgedSummary = yield* Effect.exit(
+      constructAssortmentSuccessfulAttemptEvidence({
+        ...valid,
+        decision: { ...summary, evidence: { ...summary.evidence, candidates: [topLevelCandidate] } },
+        setResolution: {
+          ...deniedResolution,
+          evidence: {
+            ...deniedResolution.evidence,
+            evaluated: [{ constituent: component, decision: deniedComponent }],
+          },
+        },
+      }),
+    );
+    expect(Exit.isFailure(forgedSummary)).toBe(true);
+    const wrongSource = yield* Effect.exit(
+      constructAssortmentSuccessfulAttemptEvidence({
+        ...valid,
+        setResolution: {
+          ...setResolution,
+          evidence: {
+            ...setResolution.evidence,
+            compositionSource: {
+              ...compositionSource,
+              source: {
+                ...compositionSource.source,
+                sourceRevision: { ...setComposition.setCompositionRevision, revision: 'another-revision' },
+              },
+            },
+          },
+        },
+      }),
+    );
+    expect(Exit.isFailure(wrongSource)).toBe(true);
+    const foreignComposition = yield* Effect.exit(
+      constructAssortmentSuccessfulAttemptEvidence({
+        ...valid,
+        setResolution: {
+          ...setResolution,
+          evidence: {
+            ...setResolution.evidence,
+            compositionSource: { ...compositionSource, composition: { ...setComposition, requiredComponents: [] } },
+          },
+        },
+      }),
+    );
+    expect(Exit.isFailure(foreignComposition)).toBe(true);
+
+    const falsePositive = yield* Effect.exit(
+      constructAssortmentSuccessfulAttemptEvidence({
+        ...valid,
+        setResolution: {
+          ...setResolution,
+          evidence: {
+            ...setResolution.evidence,
+            evaluated: [
+              { constituent: request.constituent, decision: unknownRoot },
+              { constituent: component, decision: componentDecision },
+            ],
+          },
+        },
+      }),
+    );
+    expect(Exit.isFailure(falsePositive)).toBe(true);
 
     const fabricated = {
       ...valid,
