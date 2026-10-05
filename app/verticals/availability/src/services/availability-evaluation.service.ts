@@ -13,7 +13,10 @@ import type {
 } from '../../shared/domain/availability-decision.ts';
 import { availabilityDeliveryBoundary } from '../../shared/domain/availability-delivery-boundary.ts';
 import { AvailabilityStockInputSchema } from '../../shared/domain/availability-source-authority.ts';
-import { AvailabilityUseBoundarySchema, sameAvailabilitySubject } from '../../shared/domain/availability-subject.ts';
+import {
+  AvailabilityUseBoundarySchema,
+  sameAvailabilitySubjectEvidence,
+} from '../../shared/domain/availability-subject.ts';
 import { validateAvailabilitySourceAuthority } from '../domain/availability-source-authority.ts';
 
 const sameStock = Schema.toEquivalence(AvailabilityStockInputSchema);
@@ -96,13 +99,23 @@ const hasIndependentLowerBound = (
 ) =>
   uncertainty.length > 0 || proof.positions.some((position) => position.constraintSupport === 'INDEPENDENTLY_PROVEN');
 
+const hasCurrentZeroEvidence = (input: AvailabilityEvaluationInput, quantities: readonly string[]): boolean =>
+  quantities.length > 0 &&
+  input.stockInput.positions.every(({ position }) =>
+    Match.value(position.onHand).pipe(
+      Match.tag('CURRENT', ({ quantity }) => !/[1-9]/u.test(quantity.amount)),
+      Match.tag('UNKNOWN', 'MISSING', 'STALE', 'INDETERMINATE', () => false),
+      Match.exhaustive,
+    ),
+  );
+
 const evaluateQualified = (input: AvailabilityEvaluationInput): AvailabilityEvaluatedDecision => {
   const { ownerQualification: proof, policy, stockInput, subject, useBoundary } = input;
   const reasons: AvailabilityDecisionReason[] = [];
   const quantities: string[] = [];
   const independentUncertainty: AvailabilityDecisionReason[] = [];
   if (
-    !sameAvailabilitySubject(subject, proof.subject) ||
+    !sameAvailabilitySubjectEvidence(subject, proof.subject) ||
     !sameBoundary(useBoundary, proof.useBoundary) ||
     !sameStock(stockInput, proof.stockInput)
   ) {
@@ -146,7 +159,7 @@ const evaluateQualified = (input: AvailabilityEvaluationInput): AvailabilityEval
       evaluatePosition(entry, qualification, subject.quantity.unitRef, reasons, quantities, independentUncertainty);
     }
   }
-  if (!sameAvailabilitySubject(policy.subject, subject) || !sameBoundary(policy.useBoundary, useBoundary)) {
+  if (!sameAvailabilitySubjectEvidence(policy.subject, subject) || !sameBoundary(policy.useBoundary, useBoundary)) {
     reasons.push('POLICY_INDETERMINATE');
   }
   let outcome: AvailabilityEvaluatedDecision['outcome'] = 'INDETERMINATE';
@@ -161,7 +174,7 @@ const evaluateQualified = (input: AvailabilityEvaluationInput): AvailabilityEval
       let reason: AvailabilityDecisionReason = 'INSUFFICIENT_REUSABLE_QUANTITY';
       if (stockInput.positions.length === 0) {
         reason = 'COMPLETE_EMPTY_SET';
-      } else if (quantities.every((amount) => !/[1-9]/u.test(amount))) {
+      } else if (hasCurrentZeroEvidence(input, quantities)) {
         reason = 'CURRENT_ZERO';
       }
       reasons.push(reason);
@@ -183,8 +196,23 @@ export const availabilityEvaluationService = Effect.fn('availabilityEvaluationSe
     const decoded = yield* Schema.decodeEffect(Schema.toType(AvailabilityEvaluationInputSchema), {
       onExcessProperty: 'error',
     })(input).pipe(Effect.mapError((cause) => new AvailabilityEvaluationInputRejected({ cause })));
+    const selectedAuthority = Match.value(decoded.ownerQualification.selectedBackendAuthority).pipe(
+      Match.tag('PROVEN', ({ configuration }) => configuration),
+      Match.tag('UNPROVEN', () => null),
+      Match.exhaustive,
+    );
+    if (selectedAuthority === null) {
+      return {
+        deliveryBoundary: availabilityDeliveryBoundary,
+        evidence: decoded,
+        outcome: 'INDETERMINATE' as const,
+        reasons: ['SELECTED_AUTHORITY_UNPROVEN' as const],
+        subject: decoded.subject,
+        useBoundary: decoded.useBoundary,
+      };
+    }
     const authority = yield* validateAvailabilitySourceAuthority(decoded.stockInput, {
-      configuration: decoded.stockInput.selectedBackendConfiguration,
+      configuration: selectedAuthority,
       subject: decoded.subject,
     }).pipe(Effect.result);
     if (Result.isFailure(authority)) {
@@ -192,7 +220,14 @@ export const availabilityEvaluationService = Effect.fn('availabilityEvaluationSe
         deliveryBoundary: availabilityDeliveryBoundary,
         evidence: decoded,
         outcome: 'INDETERMINATE' as const,
-        reasons: ['POSITION_SCOPE_MISMATCH' as const],
+        reasons: [
+          Match.value(authority.failure.reason).pipe(
+            Match.when('INVALID_OWNER_EVIDENCE', () => 'OWNER_EVIDENCE_INVALID' as const),
+            Match.when('SELECTED_AUTHORITY_MISMATCH', () => 'SELECTED_AUTHORITY_MISMATCH' as const),
+            Match.when('EVIDENCE_SCOPE_MISMATCH', () => 'POSITION_SCOPE_MISMATCH' as const),
+            Match.exhaustive,
+          ),
+        ],
         subject: decoded.subject,
         useBoundary: decoded.useBoundary,
       };

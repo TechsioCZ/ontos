@@ -2963,40 +2963,25 @@ it('resolves only immutable literal permission aliases and preserves exact autho
 });
 
 it.live(
-  'accepts additional Effect Layer alias provisions while preserving the canonical runtime and import proof',
-  Effect.fn(function* importedLayerProvisionScenario() {
+  'accepts canonical additional Layer provisions and rejects unsupported aliases without dropping the governed runtime',
+  Effect.fn(function* canonicalLayerProvisionScenario() {
     const root = yield* makeFixture();
     yield* writeGovernedModuleApi(root);
     const handlerPath = `${INVENTORY_VERTICAL_PATH}/api/index.ts`;
     const original = yield* Effect.promise(() => readFile(path.join(root, handlerPath), 'utf-8'));
-    const importLine = "import { Layer as GovernedReadLayer } from 'effect';\n";
-    const ownerProvision = 'GovernedReadLayer.provide(ownerDependenciesLive)';
     const first = 'stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive))';
-    const provisioned = `${importLine}${original.replace(
+    const ownerProvision = 'Layer.provide(ownerDependenciesLive)';
+    const provisioned = original.replace(
       first,
-      'stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), GovernedReadLayer.provide(ownerDependenciesLive))',
-    )}`;
+      `stockListReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive), ${ownerProvision})`,
+    );
     yield* write(root, handlerPath, provisioned);
     yield* checkModuleEntrypointBoundaries(root);
-    yield* write(root, handlerPath, provisioned.replace(ownerProvision, 'Layer.provide(ownerDependenciesLive)'));
-    yield* checkModuleEntrypointBoundaries(root);
     const invalidSources = [
-      provisioned.replace(importLine, ''),
-      provisioned.replace("from 'effect'", "from './fake-layer.ts'"),
-      provisioned.replace('import { Layer as GovernedReadLayer }', 'import type { Layer as GovernedReadLayer }'),
-      provisioned.replace(importLine, 'const GovernedReadLayer = fakeLayer;\n'),
-      `${provisioned}\nfunction shadow(GovernedReadLayer) {}`,
-      `${provisioned}\n({namespace: GovernedReadLayer} = attacker);`,
-      `${provisioned}\nGovernedReadLayer.provide = attacker;`,
-      `${provisioned}\n({member: GovernedReadLayer.provide} = attacker);`,
-      `${provisioned}\n[GovernedReadLayer.provide] = attacker;`,
-      `${provisioned}\n[{member: GovernedReadLayer.provide}] = attacker;`,
-      `${provisioned}\nGovernedReadLayer.provide++;`,
-      `${provisioned}\ndelete GovernedReadLayer.provide;`,
-      `${provisioned}\nimport { Layer as GovernedReadLayer } from './fake-layer.ts';`,
+      provisioned.replace(ownerProvision, 'GovernedReadLayer.provide(ownerDependenciesLive)'),
       provisioned.replace(ownerProvision, 'UnknownLayer.provide(ownerDependenciesLive)'),
-      provisioned.replace(ownerProvision, 'GovernedReadLayer.provide(makeDependencies())'),
-      provisioned.replace(ownerProvision, 'GovernedReadLayer.provide(ownerDependenciesLive, attacker)'),
+      provisioned.replace(ownerProvision, 'Layer.provide(makeDependencies())'),
+      provisioned.replace(ownerProvision, 'Layer.provide(ownerDependenciesLive, attacker)'),
       provisioned.replace(ownerProvision, 'ownerDependenciesLive'),
       provisioned.replace('GovernedReadLayer.provide(governedReadRuntimeLive), ', ''),
       provisioned.replace(
@@ -3004,15 +2989,7 @@ it.live(
         'Layer.provide(governedReadRuntimeLive)',
       ),
     ];
-    for (const invalid of invalidSources) {
-      yield* write(root, handlerPath, invalid);
-      yield* Effect.matchCause(checkModuleEntrypointBoundaries(root), {
-        onFailure: (cause) => expect(String(Cause.squash(cause))).toMatch(/module APIs require/u),
-        onSuccess: () => {
-          throw new Error(EXPECTED_EFFECT_FAILURE);
-        },
-      });
-    }
+    yield* assertRejectedSources(root, handlerPath, invalidSources, /module APIs require/u);
   }),
 );
 

@@ -2422,71 +2422,6 @@ const publishesSharedApiContribution = (sharedApi: string, apiValue: string, con
   );
 };
 
-const isReadOfLayerNamespace = (
-  tokens: ReturnType<typeof tokenizeGovernedClient>,
-  index: number,
-  parent: number | undefined,
-): boolean => {
-  const before = tokens[index - 1]?.kind ?? SyntaxKind.Unknown;
-  const member = tokens[index + 2];
-  if (
-    tokens[index + 1]?.kind !== SyntaxKind.DotToken ||
-    member?.kind !== SyntaxKind.Identifier ||
-    [SyntaxKind.DeleteKeyword, SyntaxKind.PlusPlusToken, SyntaxKind.MinusMinusToken].includes(before)
-  ) {
-    return false;
-  }
-  const after = tokens[index + 3]?.kind ?? SyntaxKind.Unknown;
-  // Callable members and Layer type references cannot be assignment targets.
-  if (after === SyntaxKind.OpenParenToken || (member.value === 'Layer' && after === SyntaxKind.LessThanToken)) {
-    return true;
-  }
-  // A bare member is proven only as a direct call argument (empty/orDie in
-  // generated composition), never as a property/array binding target.
-  return (
-    parent !== undefined &&
-    tokens[parent]?.kind === SyntaxKind.OpenParenToken &&
-    tokens[parent - 1]?.kind === SyntaxKind.Identifier &&
-    [SyntaxKind.OpenParenToken, SyntaxKind.CommaToken].includes(before) &&
-    [SyntaxKind.CloseParenToken, SyntaxKind.CommaToken].includes(after)
-  );
-};
-
-/** The generated namespace alias must remain the imported Effect Layer value,
- * not a local binding, reassigned member or an executable alias expression.
- */
-const hasImportedGovernedReadLayer = (source: string): boolean => {
-  if (!hasExactValueImport(source, 'Layer as GovernedReadLayer', 'effect', true)) {
-    return false;
-  }
-  const tokens = tokenizeGovernedClient(source);
-  let importBindings = 0;
-  const containers: number[] = [];
-  const closings = new Map([
-    [SyntaxKind.CloseBraceToken, SyntaxKind.OpenBraceToken],
-    [SyntaxKind.CloseBracketToken, SyntaxKind.OpenBracketToken],
-    [SyntaxKind.CloseParenToken, SyntaxKind.OpenParenToken],
-  ]);
-  const safeUses = tokens.every((token, index) => {
-    if ([SyntaxKind.OpenBraceToken, SyntaxKind.OpenBracketToken, SyntaxKind.OpenParenToken].includes(token.kind)) {
-      containers.push(index);
-    }
-    const opening = closings.get(token.kind);
-    if (opening !== undefined && tokens[containers.pop() ?? -1]?.kind !== opening) {
-      return false;
-    }
-    if (token.kind !== SyntaxKind.Identifier || token.value !== 'GovernedReadLayer') {
-      return true;
-    }
-    if (tokens[index - 1]?.kind === SyntaxKind.AsKeyword && tokens[index - 2]?.value === 'Layer') {
-      importBindings += 1;
-      return true;
-    }
-    return isReadOfLayerNamespace(tokens, index, containers.at(-1));
-  });
-  return safeUses && importBindings === 1 && containers.length === 0;
-};
-
 const hasPublishedContract = (
   sharedApi: string,
   manifest: string,
@@ -2521,11 +2456,7 @@ const hasPublishedContract = (
       if (argument === '') {
         return callArgument(entry, new RegExp(`^${escapedCamel}ReadApiLive\\.pipe\\(`, 'u'), index + 1) === undefined;
       }
-      const canonicalProvision = /^Layer\.provide\([A-Za-z][A-Za-z0-9]*\)$/u.test(argument);
-      const importedAliasProvision =
-        /^GovernedReadLayer\.provide\([A-Za-z][A-Za-z0-9]*\)$/u.test(argument) &&
-        hasImportedGovernedReadLayer(handlerRoot);
-      if (!canonicalProvision && !importedAliasProvision) {
+      if (!/^Layer\.provide\([A-Za-z][A-Za-z0-9]*\)$/u.test(argument)) {
         return false;
       }
       index += 1;

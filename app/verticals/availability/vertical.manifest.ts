@@ -3,7 +3,6 @@
 // @ontos-module-id commerce.availability
 import { defineOntosModuleManifest } from '@app/core-runtime';
 // <generated-module-manifest-imports>
-import { CurrentAvailabilityApi } from './shared/apis/current-availability.ts';
 // </generated-module-manifest-imports>
 
 export const availabilityManifest = defineOntosModuleManifest({
@@ -27,7 +26,6 @@ export const availabilityManifest = defineOntosModuleManifest({
     ],
     api: {
       // <generated-module-manifest-apis>
-      'current-availability': CurrentAvailabilityApi,
       // </generated-module-manifest-apis>
     },
     businessPermissions: [

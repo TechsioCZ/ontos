@@ -1,3 +1,4 @@
+import { InventoryBackendConfigurationSchema } from '@app/inventory/backend-configuration';
 import { StockPositionRefSchema } from '@app/inventory/resources/stock-position';
 import { OwnerVerifiableSetCompletenessEvidenceSchema } from '@app/shared-contracts';
 import { Schema } from 'effect';
@@ -32,6 +33,10 @@ export const AvailabilityOwnerQualificationSchema = Schema.Struct({
       usability: Schema.Literals(['USABLE', 'UNUSABLE', 'INDETERMINATE']),
     }),
   ),
+  selectedBackendAuthority: Schema.Union([
+    Schema.TaggedStruct('PROVEN', { configuration: InventoryBackendConfigurationSchema }),
+    Schema.TaggedStruct('UNPROVEN', {}),
+  ]),
   set: Schema.Union([
     Schema.TaggedStruct('COMPLETE', {
       evidence: OwnerVerifiableSetCompletenessEvidenceSchema,
@@ -75,6 +80,9 @@ export const AvailabilityDecisionReasonSchema = Schema.Literals([
   'POSITION_USABILITY_UNCERTAIN',
   'DUPLICATE_POSITION',
   'POSITION_SCOPE_MISMATCH',
+  'OWNER_EVIDENCE_INVALID',
+  'SELECTED_AUTHORITY_MISMATCH',
+  'SELECTED_AUTHORITY_UNPROVEN',
   'POLICY_DENIED',
   'POLICY_INDETERMINATE',
 ]);

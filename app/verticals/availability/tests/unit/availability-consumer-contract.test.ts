@@ -1,3 +1,4 @@
+import { AvailabilityEvaluationInputSchema } from '../../shared/domain/availability-decision.ts';
 import { RequestSchemaProblemSchema } from '@app/shared-contracts/problem-details';
 import { RequestSchemaProblemLive } from '@app/shared-contracts/server/http-error-seam';
 import { HttpApiBuilder, HttpRouter, HttpServer } from '@modern-js/bff-effect/effect-edge';
@@ -309,6 +310,81 @@ describe('Availability public consumer handoff', () => {
       expect(result.currentDecision.reservationProof).toBe('NOT_PROVIDED');
     }),
   );
+  it.effect('fresh same-context verification reaches current owner authority without rewriting history', () =>
+    Effect.gen(function* freshContext() {
+      const previous = yield* previousDecision();
+      const later = '2026-10-05T12:05:00.000Z';
+      const context = subject.purchasingContext.contextVerification;
+      const freshSubject = {
+        ...subject,
+        purchasingContext: {
+          contextVerification: {
+            ...context,
+            evidence: {
+              ...context.evidence,
+              currentness: { ...context.evidence.currentness, evaluatedAt: later, observedAt: later },
+              verificationRef: 'fresh-verification',
+            },
+            request: { ...context.request, operationTime: later },
+          },
+        },
+      };
+      let verifications = 0;
+      const freshOwner = {
+        ...owner,
+        resolve: (value: typeof request) =>
+          owner.resolve(value, scope).pipe(
+            Effect.map((resolved) => ({
+              ...resolved,
+              evaluatedAt: later,
+              previous,
+              subject: freshSubject,
+              useBoundary: { ...resolved.useBoundary, requiredAt: later },
+            })),
+          ),
+        verify: (value: Parameters<typeof owner.verify>[0]) => {
+          verifications += 1;
+          return owner.verify(value);
+        },
+      };
+      const response = yield* run(
+        { ...request, previousResultRef: 'cart-prior', representedInBundle: true },
+        freshOwner,
+      );
+      expect(verifications).toBe(1);
+      expect(response.currentDecision.outcome).toBe('AVAILABLE');
+      expect(response.currentDecision.authority).toBe('CURRENT_EXACT_USE');
+      expect(response.originalDecision?.authority).toBe('HISTORICAL_ONLY');
+      expect(previous.decision.subject.purchasingContext.contextVerification.evidence.verificationRef).not.toBe(
+        'fresh-verification',
+      );
+      expect(response.bundleDisposition).toBe('REPLACEMENT_REQUIRED');
+    }),
+  );
+
+  it.effect('preserves independently selected authority failure in provider-neutral handoff', () =>
+    Effect.gen(function* publicAuthorityReason() {
+      const mismatched = Schema.decodeUnknownSync(Schema.toType(AvailabilityEvaluationInputSchema))({
+        ...input,
+        ownerQualification: {
+          ...input.ownerQualification,
+          selectedBackendAuthority: {
+            _tag: 'PROVEN' as const,
+            configuration: {
+              ...input.stockInput.selectedBackendConfiguration,
+              configurationId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+            },
+          },
+        },
+      });
+      const response = yield* run(request, { ...owner, readCurrent: () => Effect.succeed(mismatched) });
+      expect(response.currentDecision.outcome).toBe('INDETERMINATE');
+      expect(response.currentDecision.reasons).toContain('SELECTED_AUTHORITY_MISMATCH');
+      expect(response.currentDecision.reasons).not.toContain('POSITION_SCOPE_MISMATCH');
+      expect(JSON.stringify(response)).not.toContain('configurationId');
+    }),
+  );
+
   it.effect('foreign-context history is rejected before any owner read or public disclosure', () =>
     Effect.gen(function* crossContextHistory() {
       const previous = yield* previousDecision();

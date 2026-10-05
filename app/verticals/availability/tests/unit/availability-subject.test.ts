@@ -1,7 +1,11 @@
 import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { AvailabilitySubjectSchema, sameAvailabilitySubject } from '../../shared/domain/availability-subject.ts';
+import {
+  AvailabilitySubjectSchema,
+  sameAvailabilitySubject,
+  sameAvailabilitySubjectEvidence,
+} from '../../shared/domain/availability-subject.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
 const foreignTenantId = '99999999-9999-4999-8999-999999999999';
@@ -58,6 +62,196 @@ const decode = Schema.decodeUnknownSync(AvailabilitySubjectSchema, { onExcessPro
 describe('Availability exact subject', () => {
   it('retains exact decimal quantity and Catalog identity without converting or substituting', () => {
     expect(decode(input)).toEqual(input);
+  });
+
+  it('recognizes fresh owner verification as the same business subject', () => {
+    const prior = decode(input);
+    const later = '2026-10-05T12:05:00.000Z';
+    const verification = purchasingContext.contextVerification;
+    const fresh = decode({
+      ...input,
+      purchasingContext: {
+        contextVerification: {
+          ...verification,
+          evidence: {
+            ...verification.evidence,
+            currentness: { evaluatedAt: later, observedAt: later, validFrom: later, validTo: null },
+            verificationRef: 'verification-2',
+          },
+          request: { ...verification.request, operationTime: later },
+        },
+      },
+    });
+    expect(sameAvailabilitySubject(prior, fresh)).toBe(true);
+    expect(sameAvailabilitySubjectEvidence(prior, fresh)).toBe(false);
+  });
+
+  it('preserves business scope and material dimensions when comparing fresh proofs', () => {
+    const prior = decode(input);
+    const verification = purchasingContext.contextVerification;
+    for (const [field, scopeField] of [
+      ['channelId', 'channelId'],
+      ['marketId', 'marketId'],
+      ['sellingLegalEntityId', 'legalEntityId'],
+    ]) {
+      const changed = decode({
+        ...input,
+        purchasingContext: {
+          contextVerification: {
+            ...verification,
+            evidence: {
+              ...verification.evidence,
+              verifiedScope: { ...verification.evidence.verifiedScope, [scopeField]: 'other' },
+            },
+            request: {
+              ...verification.request,
+              purchasingContext: { ...verification.request.purchasingContext, [field]: 'other' },
+            },
+          },
+        },
+      });
+      expect(sameAvailabilitySubject(prior, changed)).toBe(false);
+    }
+    for (const field of ['cartRef', 'choicesEvidenceRef', 'storefrontRef', 'locale']) {
+      const changed = decode({
+        ...input,
+        purchasingContext: {
+          ...purchasingContext,
+          dimensions: { [field]: 'other', ownerRef: 'purchase-context', ownerRevisionRef: 'revision-1' },
+        },
+      });
+      expect(sameAvailabilitySubject(prior, changed)).toBe(false);
+    }
+    const changedRevision = decode({
+      ...input,
+      purchasingContext: {
+        contextVerification: {
+          ...verification,
+          evidence: { ...verification.evidence, ownerRevisionRef: 'revision-2' },
+          request: {
+            ...verification.request,
+            purchasingContext: { ...verification.request.purchasingContext, contextRevision: 'revision-2' },
+          },
+        },
+      },
+    });
+    expect(sameAvailabilitySubject(prior, changedRevision)).toBe(false);
+  });
+
+  it('rejects coherent cross-actor, subject, context and Tenant identity reuse', () => {
+    const verification = purchasingContext.contextVerification;
+    const profileSubject = {
+      authorizationSubject: { kind: 'RETAIL' },
+      kind: 'PROFILE',
+      profileRef: {
+        moduleId: 'commerce.customer-context',
+        resourceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        resourceType: 'commerce.customer-context.retail-customer-profile',
+        tenantId,
+      },
+    };
+    const profileInput = {
+      ...input,
+      purchasingContext: {
+        contextVerification: {
+          ...verification,
+          evidence: {
+            ...verification.evidence,
+            subjectAuthority: {
+              actorPrincipalId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+              kind: 'PROFILE',
+              partyAuthorityRef: 'party-authority',
+              partyAuthorityRevisionRef: 'party-R1',
+              subject: profileSubject,
+              subjectAuthorityRef: 'profile-authority',
+              subjectAuthorityRevisionRef: 'profile-R1',
+            },
+          },
+          request: {
+            ...verification.request,
+            actor: { kind: 'AUTHENTICATED_CUSTOMER', principalId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+            subject: profileSubject,
+          },
+        },
+      },
+    };
+    const profile = decode(profileInput);
+    const profileVerification = profileInput.purchasingContext.contextVerification;
+    expect(
+      sameAvailabilitySubject(
+        profile,
+        decode({
+          ...profileInput,
+          purchasingContext: {
+            contextVerification: {
+              ...profileVerification,
+              evidence: {
+                ...profileVerification.evidence,
+                subjectAuthority: {
+                  ...profileVerification.evidence.subjectAuthority,
+                  actorPrincipalId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+                },
+              },
+              request: {
+                ...profileVerification.request,
+                actor: { kind: 'AUTHENTICATED_CUSTOMER', principalId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' },
+              },
+            },
+          },
+        }),
+      ),
+    ).toBe(false);
+    const changedSubject = { ...guestSubject, guestSessionRef: 'another-session' };
+    const prior = decode(input);
+    const candidates = [
+      {
+        ...input,
+        purchasingContext: {
+          contextVerification: {
+            ...verification,
+            evidence: {
+              ...verification.evidence,
+              subjectAuthority: { ...verification.evidence.subjectAuthority, subject: changedSubject },
+            },
+            request: { ...verification.request, subject: changedSubject },
+          },
+        },
+      },
+      {
+        ...input,
+        purchasingContext: {
+          contextVerification: {
+            ...verification,
+            evidence: { ...verification.evidence, ownerRef: 'another-context' },
+            request: {
+              ...verification.request,
+              purchasingContext: { ...verification.request.purchasingContext, contextRef: 'another-context' },
+            },
+          },
+        },
+      },
+      {
+        ...input,
+        purchasingContext: {
+          contextVerification: {
+            ...verification,
+            evidence: {
+              ...verification.evidence,
+              verifiedScope: { ...verification.evidence.verifiedScope, tenantId: foreignTenantId },
+            },
+            request: { ...verification.request, tenantId: foreignTenantId },
+          },
+        },
+        quantity: { ...input.quantity, unitRef: { ...unitRef, tenantId: foreignTenantId } },
+        selection: {
+          productRef: { ...productRef, tenantId: foreignTenantId },
+          variantRef: { ...variantRef, tenantId: foreignTenantId },
+        },
+      },
+    ];
+    for (const candidate of candidates) {
+      expect(sameAvailabilitySubject(prior, decode(candidate))).toBe(false);
+    }
   });
 
   it('rejects Product-only, SKU-only and Stock Item shortcuts', () => {

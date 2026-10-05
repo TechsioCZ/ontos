@@ -14,7 +14,6 @@ export const availabilityRegistration = defineVerticalRuntimeRegistration({
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
-      'current-availability': () => import('./src/api/current-availability-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

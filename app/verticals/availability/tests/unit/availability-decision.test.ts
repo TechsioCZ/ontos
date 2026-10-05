@@ -6,9 +6,10 @@ import {
   AvailabilityStockInputSchema,
 } from '../../shared/domain/availability-source-authority.ts';
 import { AvailabilitySubjectSchema } from '../../shared/domain/availability-subject.ts';
+import { AvailabilityOwnerQualificationSchema } from '../../shared/domain/availability-decision.ts';
 import type { AvailabilityEvaluationInput } from '../../shared/domain/availability-decision.ts';
 import { availabilityEvaluationService } from '../../src/services/availability-evaluation.service.ts';
-import { position, stockInput, subject } from '../support/availability-decision.ts';
+import { configuration, position, stockInput, subject } from '../support/availability-decision.ts';
 
 const boundary = {
   kind: 'INFORMATIONAL' as const,
@@ -58,6 +59,7 @@ const makeInput = (amounts: readonly string[], requested = '10'): AvailabilityEv
         },
         usability: 'USABLE',
       })),
+      selectedBackendAuthority: { _tag: 'PROVEN', configuration },
       set: complete,
       stockInput: stock,
       subject: exactSubject,
@@ -89,6 +91,21 @@ const check = (input: AvailabilityEvaluationInput, outcome: string, reason?: str
   });
 
 describe('exact owner-qualified Availability decision', () => {
+  it('requires separate owner-qualified backend authority in the contract', () => {
+    const qualification = makeInput(['3'], '2').ownerQualification;
+    const decode = Schema.decodeUnknownSync(Schema.toType(AvailabilityOwnerQualificationSchema));
+    expect(decode(qualification)).toEqual(qualification);
+    const unproven = { ...qualification, selectedBackendAuthority: { _tag: 'UNPROVEN' } };
+    expect(decode(unproven)).toEqual(unproven);
+    const missing = Object.fromEntries(
+      Object.entries(qualification).filter(([key]) => key !== 'selectedBackendAuthority'),
+    );
+    expect(() => decode(missing)).toThrow();
+    expect(() =>
+      decode({ ...qualification, selectedBackendAuthority: { _tag: 'PROVEN', configuration: {} } }),
+    ).toThrow();
+  });
+
   it.effect('covers 6 + 4 without allocating and respects quantity 2 versus 5', () =>
     Effect.gen(function* checkCoverage() {
       yield* check(makeInput(['6', '4']), 'AVAILABLE');
@@ -99,6 +116,101 @@ describe('exact owner-qualified Availability decision', () => {
       yield* check(makeInput(['0.1', '0.2'], '0.3'), 'AVAILABLE');
     }),
   );
+  it.effect('rejects a coherent alternate backend against independently selected authority', () => {
+    const input = makeInput(['3'], '2');
+    const alternate = { ...configuration, configurationId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' };
+    const positions = input.stockInput.positions.map((entry) => {
+      const onHand = {
+        ...entry.position.onHand,
+        ownerConfigurationRef: {
+          ...entry.position.onHand.ownerConfigurationRef,
+          resourceId: alternate.configurationId,
+        },
+      };
+      return {
+        ...entry,
+        position: { ...entry.position, onHand },
+        sourceEvidence: { ...entry.sourceEvidence, onHand, ownerConfiguration: alternate },
+      };
+    });
+    const stock = Schema.decodeUnknownSync(Schema.toType(AvailabilityStockInputSchema))({
+      ...input.stockInput,
+      positions,
+      selectedBackendConfiguration: alternate,
+    });
+    return check(
+      {
+        ...input,
+        ownerQualification: { ...input.ownerQualification, stockInput: stock },
+        stockInput: stock,
+      },
+      'INDETERMINATE',
+      'SELECTED_AUTHORITY_MISMATCH',
+    );
+  });
+
+  it.effect('does not label constrained reusable zero or unusable Positions as physical Current zero', () =>
+    Effect.gen(function* constrainedZero() {
+      const input = makeInput(['10'], '2');
+      const constrained = {
+        ...input,
+        ownerQualification: {
+          ...input.ownerQualification,
+          positions: input.ownerQualification.positions.map((entry) => ({
+            ...entry,
+            reusableQuantity: { _tag: 'PROVEN' as const, quantity: { amount: '0', unitRef: subject.quantity.unitRef } },
+          })),
+        },
+      };
+      const result = yield* availabilityEvaluationService(constrained);
+      expect(result.outcome).toBe('UNAVAILABLE');
+      expect(result.reasons).toContain('INSUFFICIENT_REUSABLE_QUANTITY');
+      expect(result.reasons).not.toContain('CURRENT_ZERO');
+      const unusable = yield* availabilityEvaluationService({
+        ...input,
+        ownerQualification: {
+          ...input.ownerQualification,
+          positions: input.ownerQualification.positions.map((entry) => ({ ...entry, usability: 'UNUSABLE' as const })),
+        },
+      });
+      expect(unusable.outcome).toBe('UNAVAILABLE');
+      expect(unusable.reasons).not.toContain('CURRENT_ZERO');
+    }),
+  );
+
+  it.effect('distinguishes unproven selected authority from actual Position scope mismatch', () =>
+    Effect.gen(function* authorityReasons() {
+      const input = makeInput(['3'], '2');
+      yield* check(
+        {
+          ...input,
+          ownerQualification: { ...input.ownerQualification, selectedBackendAuthority: { _tag: 'UNPROVEN' } },
+        },
+        'INDETERMINATE',
+        'SELECTED_AUTHORITY_UNPROVEN',
+      );
+      const positions = input.stockInput.positions.map((entry) => ({
+        ...entry,
+        binding: {
+          ...entry.binding,
+          catalogSelection: {
+            ...entry.binding.catalogSelection,
+            variantRef: { ...subject.selection.variantRef, resourceId: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' },
+          },
+        },
+      }));
+      const stock = Schema.decodeUnknownSync(Schema.toType(AvailabilityStockInputSchema))({
+        ...input.stockInput,
+        positions,
+      });
+      yield* check(
+        { ...input, ownerQualification: { ...input.ownerQualification, stockInput: stock }, stockInput: stock },
+        'INDETERMINATE',
+        'POSITION_SCOPE_MISMATCH',
+      );
+    }),
+  );
+
   it.effect('incomplete sets cannot establish positive or negative', () =>
     Effect.gen(function* checkIncomplete() {
       for (const amounts of [['100'], ['0'], []]) {
@@ -271,7 +383,10 @@ describe('exact owner-qualified Availability decision', () => {
             sourceEvidence: { ...entry.sourceEvidence, _tag: 'OWNER_MANAGED' as const, onHand },
           };
         });
-        const stock = { ...input.stockInput, positions };
+        const stock = Schema.decodeUnknownSync(Schema.toType(AvailabilityStockInputSchema))({
+          ...input.stockInput,
+          positions,
+        });
         yield* check(
           { ...input, ownerQualification: { ...input.ownerQualification, stockInput: stock }, stockInput: stock },
           'INDETERMINATE',

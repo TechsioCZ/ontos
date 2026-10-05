@@ -6,6 +6,8 @@ import type { AvailabilityOwnerFailure } from './availability-owner-ports.ts';
 import type { AvailabilitySubject, AvailabilityUseBoundary } from './availability-subject.ts';
 
 export interface AvailabilityOwnerVerificationRequest {
+  /** Exact candidate includes independently qualified backend authority and the resolved policy.
+   * Coherence must authorize this complete snapshot; evaluation cannot substitute another policy. */
   readonly evidence: AvailabilityEvaluationInput;
   readonly subject: AvailabilitySubject;
   readonly useBoundary: AvailabilityUseBoundary;

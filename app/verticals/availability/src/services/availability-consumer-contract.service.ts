@@ -8,7 +8,7 @@ import {
 } from '../../shared/domain/availability-consumer-owner-port.ts';
 import { AvailabilityConsumerResponseSchema } from '../../shared/domain/availability-consumer-contract.ts';
 import type { AvailabilityConsumerResolvedRequest } from '../../shared/domain/availability-consumer-owner-port.ts';
-import { AvailabilityPurchasingContextSchema } from '../../shared/domain/availability-subject.ts';
+import { sameAvailabilityPurchasingContext } from '../../shared/domain/availability-subject.ts';
 import type { AvailabilitySubject } from '../../shared/domain/availability-subject.ts';
 import type { AvailabilityConsumerRequest } from '../../shared/domain/availability-consumer-contract.ts';
 import type { AvailabilityCurrentDecision } from '../../shared/domain/availability-currentness.ts';
@@ -110,7 +110,7 @@ export const availabilityConsumerContractService = Effect.fn('availabilityConsum
     const verification = resolved.subject.purchasingContext.contextVerification;
     if (
       (resolved.previous !== undefined &&
-        !Schema.toEquivalence(AvailabilityPurchasingContextSchema)(
+        !sameAvailabilityPurchasingContext(
           resolved.previous.decision.subject.purchasingContext,
           resolved.subject.purchasingContext,
         )) ||

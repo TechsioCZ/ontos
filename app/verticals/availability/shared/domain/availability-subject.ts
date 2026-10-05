@@ -78,5 +78,34 @@ export const AvailabilityUseBoundarySchema = Schema.Struct({
 });
 export type AvailabilityUseBoundary = typeof AvailabilityUseBoundarySchema.Type;
 
-/** Exact representation is material, including decimal text and context evidence lineage. */
-export const sameAvailabilitySubject = Schema.toEquivalence(AvailabilitySubjectSchema);
+/** Exact equality binds a verifier proof to its complete retained evidence snapshot. */
+export const sameAvailabilitySubjectEvidence = Schema.toEquivalence(AvailabilitySubjectSchema);
+
+const sameBusinessRequest = Schema.toEquivalence(
+  Schema.Struct({
+    actor: PricingPurchaseContextVerificationRequestSchema.fields.actor,
+    purchasingContext: PricingPurchaseContextVerificationRequestSchema.fields.purchasingContext,
+    subject: PricingPurchaseContextVerificationRequestSchema.fields.subject,
+    tenantId: PricingPurchaseContextVerificationRequestSchema.fields.tenantId,
+  }),
+);
+const sameSelection = Schema.toEquivalence(AvailabilitySubjectSchema.fields.selection);
+const sameQuantity = Schema.toEquivalence(AvailabilitySubjectSchema.fields.quantity);
+
+/** Verification times and proof revisions change lineage, not business Purchasing Context identity. */
+export const sameAvailabilityPurchasingContext = (
+  left: typeof AvailabilityPurchasingContextSchema.Type,
+  right: typeof AvailabilityPurchasingContextSchema.Type,
+): boolean =>
+  sameBusinessRequest(left.contextVerification.request, right.contextVerification.request) &&
+  left.dimensions?.ownerRef === right.dimensions?.ownerRef &&
+  left.dimensions?.cartRef === right.dimensions?.cartRef &&
+  left.dimensions?.choicesEvidenceRef === right.dimensions?.choicesEvidenceRef &&
+  left.dimensions?.storefrontRef === right.dimensions?.storefrontRef &&
+  left.dimensions?.locale === right.dimensions?.locale;
+
+/** Exact Selection, decimal text, Unit and material business context identify prospective demand. */
+export const sameAvailabilitySubject = (left: AvailabilitySubject, right: AvailabilitySubject): boolean =>
+  sameSelection(left.selection, right.selection) &&
+  sameQuantity(left.quantity, right.quantity) &&
+  sameAvailabilityPurchasingContext(left.purchasingContext, right.purchasingContext);

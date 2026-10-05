@@ -2,8 +2,6 @@ import { defineConfig } from '@modern-js/app-tools';
 import type { AppToolsUserConfig } from '@modern-js/app-tools';
 import { getBuildConfigEnvironment, resolveDeployTarget } from '@modern-js/app-tools-extensions/config';
 import { bffPlugin } from '@modern-js/plugin-bff-build-extensions';
-import { i18nPlugin } from '@modern-js/plugin-i18n';
-import { tanstackRouterPlugin } from '@modern-js/plugin-tanstack';
 import { presetUltramodern, ultramodernAppTools } from '@modern-js/ultramodern-app-tools';
 
 import {
@@ -39,39 +37,7 @@ const modernConfig = createModernConfig({
   chunkLoadingGlobal: '__ULTRAMODERN_VERTICAL_AVAILABILITY_LOADED_CHUNKS__',
   cloudflareWorkerName,
   moduleUrl: import.meta.url,
-  plugins: [
-    ultramodernAppTools(),
-    tanstackRouterPlugin(),
-    i18nPlugin({
-      backend: {
-        enabled: true,
-        loadPath: '/locales/{{lng}}/{{ns}}.json',
-      },
-      localeDetection: {
-        fallbackLanguage: 'en',
-        ignoreRedirectRoutes: [
-          '/.well-known',
-          '/@mf-types',
-          '/assets',
-          '/bundles',
-          bffPrefix,
-          '/locales',
-          '/mf-manifest.json',
-          '/mf-stats.json',
-          '/remoteEntry.js',
-          '/robots.txt',
-          '/site.webmanifest',
-          '/sitemap.xml',
-          '/static',
-          '/zephyr-manifest.json',
-        ],
-        languages: ['en', 'cs'],
-        localePathRedirect: true,
-      },
-      reactI18next: false,
-    }),
-    bffPlugin(),
-  ],
+  plugins: [ultramodernAppTools(), bffPlugin()],
   uniqueName: 'verticalAvailability',
 });
 
