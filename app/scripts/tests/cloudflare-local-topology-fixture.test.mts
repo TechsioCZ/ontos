@@ -40,6 +40,11 @@ import {
 import { createShellRuntimeContract } from '../generate-ontos-shell-runtime-contract.mts';
 import { collectToolingProcess } from './tooling-process-fixture.mts';
 
+const localTopologyProofScript = '../prove-cloudflare-local-topology.sh';
+const localShellOrigin = 'http://localhost:8787';
+const snapshotFileName = 'active.json';
+const proofPathsFileName = 'paths.json';
+const releaseIntentPath = 'topology/application-release-intent.json';
 const partyAppId = 'party-registry';
 const partyModuleId = 'party.registry';
 const partyComponentKey = 'party.registry.page-people';
@@ -186,7 +191,7 @@ it('accepts only explicit local canonical HTTPS owner mappings', () => {
 });
 
 it('starts native Bash Workers with optional TLS and keeps cleanup owned by the parent', () => {
-  const source = readFileSync(new URL('../prove-cloudflare-local-topology.sh', import.meta.url), 'utf-8');
+  const source = readFileSync(new URL(localTopologyProofScript, import.meta.url), 'utf-8');
   const startup = source.slice(source.indexOf('start_worker()'), source.indexOf('\nowner_port()'));
   const cleanup = source.slice(source.indexOf('cleanup()'), source.indexOf('\ntrap cleanup EXIT INT TERM'));
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-cloudflare-bash-lifecycle-'));
@@ -342,8 +347,11 @@ it.effect('discovers the selected artifact root without choosing stale workspace
     try {
       mkdirSync(path.join(directory, 'verticals', partyAppId), { recursive: true });
       mkdirSync(path.join(directory, 'verticals', 'catalog'), { recursive: true });
+      mkdirSync(path.join(directory, 'verticals', 'availability'), { recursive: true });
       writeFileSync(path.join(directory, 'verticals', '.DS_Store'), 'not a delivery unit');
-      const owners = yield* discoverLocalTopologyOwners(directory).pipe(Effect.provide(NodeServices.layer));
+      const owners = yield* discoverLocalTopologyOwners(directory, {
+        modules: [{ appId: 'catalog' }, { appId: partyAppId }],
+      }).pipe(Effect.provide(NodeServices.layer));
       expect(owners).toEqual([
         {
           appId: 'catalog',
@@ -356,11 +364,89 @@ it.effect('discovers the selected artifact root without choosing stale workspace
           outputDirectory: path.join(directory, 'verticals/party-registry/.output'),
         },
       ]);
+      const admitted = yield* discoverLocalTopologyOwners(directory, {
+        modules: [{ appId: 'availability' }, { appId: 'catalog' }, { appId: partyAppId }],
+      }).pipe(Effect.provide(NodeServices.layer));
+      expect(admitted.map(({ appId }) => appId)).toEqual(['availability', 'catalog', partyAppId]);
     } finally {
       rmSync(directory, { force: true, recursive: true });
     }
   }),
 );
+
+it('rejects missing and duplicate intended owners before reading native Worker artifacts', () => {
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-workerd-incomplete-intent-'));
+  const intentFile = path.join(directory, 'intent.json');
+  try {
+    mkdirSync(path.join(directory, 'verticals', partyAppId), { recursive: true });
+    for (const modules of [[{ appId: 'catalog' }], [{ appId: partyAppId }, { appId: partyAppId }]]) {
+      writeFileSync(intentFile, JSON.stringify({ modules }));
+      const result = spawnSync(
+        process.execPath,
+        [
+          path.resolve('scripts/cloudflare-local-topology-fixture.mts'),
+          'prepare',
+          '--intent-file',
+          intentFile,
+          '--artifact-root',
+          directory,
+          '--shell-origin',
+          localShellOrigin,
+          '--snapshot-file',
+          path.join(directory, snapshotFileName),
+          '--paths-file',
+          path.join(directory, proofPathsFileName),
+        ],
+        { encoding: 'utf-8' },
+      );
+      expect(result.status).toBe(1);
+      expect(result.stdout + result.stderr).toContain('CloudflareLocalTopologyFixtureError');
+      expect(existsSync(path.join(directory, snapshotFileName))).toBe(false);
+    }
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
+it('runs built Workers while admitting only reviewed owners into the native Bash fixture', () => {
+  const source = readFileSync(new URL(localTopologyProofScript, import.meta.url), 'utf-8');
+  const inventory = source.slice(source.indexOf("printf '[]' >"), source.indexOf('\nshell_output='));
+  const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-workerd-reviewed-owners-'));
+  const work = path.join(directory, 'work');
+  try {
+    mkdirSync(work);
+    mkdirSync(path.join(directory, 'topology'));
+    for (const appId of ['availability', partyAppId]) {
+      const output = path.join(directory, 'verticals', appId, '.output');
+      mkdirSync(output, { recursive: true });
+      writeFileSync(path.join(output, 'wrangler.json'), '{}');
+    }
+    writeFileSync(path.join(directory, releaseIntentPath), JSON.stringify({ modules: [{ appId: partyAppId }] }));
+    execFileSync(
+      '/bin/bash',
+      [
+        '-euo',
+        'pipefail',
+        '-c',
+        `artifact_root="$1"; work="$2"; first_vertical_port=8790; owner_names=(); owner_ports=()\n${inventory}\nprintf '%s\\n' "\${owner_names[@]}" > "$work/workers"`,
+        'fixture',
+        directory,
+        work,
+      ],
+      { cwd: directory },
+    );
+    expect(JSON.parse(readFileSync(path.join(work, 'owners.json'), 'utf-8'))).toEqual([
+      {
+        appId: partyAppId,
+        baseUrl: 'https://localhost:8791/',
+        outputDirectory: path.join(directory, 'verticals', partyAppId, '.output'),
+      },
+    ]);
+    expect(readFileSync(path.join(work, 'workers'), 'utf-8')).toBe(`availability\n${partyAppId}\n`);
+  } finally {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
 
 it('rejects missing or mixed native output selectors before observing any Worker artifacts', () => {
   const directory = mkdtempSync(path.join(os.tmpdir(), 'ontos-workerd-placement-selectors-'));
@@ -368,13 +454,13 @@ it('rejects missing or mixed native output selectors before observing any Worker
     path.resolve('scripts/cloudflare-local-topology-fixture.mts'),
     'prepare',
     '--intent-file',
-    path.resolve('topology/application-release-intent.json'),
+    path.resolve(releaseIntentPath),
     '--shell-origin',
-    'http://localhost:8787',
+    localShellOrigin,
     '--snapshot-file',
-    path.join(directory, 'active.json'),
+    path.join(directory, snapshotFileName),
     '--paths-file',
-    path.join(directory, 'paths.json'),
+    path.join(directory, proofPathsFileName),
   ];
   try {
     const missing = spawnSync(process.execPath, args, { encoding: 'utf-8' });
@@ -389,8 +475,8 @@ it('rejects missing or mixed native output selectors before observing any Worker
       expect(mixed.stdout + mixed.stderr).toContain('CloudflareLocalTopologyFixtureError');
       expect(mixed.stdout + mixed.stderr).toContain('selectNativeOutputPlacement');
     }
-    expect(existsSync(path.join(directory, 'active.json'))).toBe(false);
-    expect(existsSync(path.join(directory, 'paths.json'))).toBe(false);
+    expect(existsSync(path.join(directory, snapshotFileName))).toBe(false);
+    expect(existsSync(path.join(directory, proofPathsFileName))).toBe(false);
   } finally {
     rmSync(directory, { force: true, recursive: true });
   }
@@ -458,7 +544,7 @@ it('aligns public proof roots and cleans its exact temporary directory when the 
     });
     expect(result.status).toBe(42);
     expect(readFileSync(argumentsFile, 'utf-8')).toBe(
-      `--intent-file=${path.join(metadataRoot, 'topology/application-release-intent.json')}\n--artifact-root=${artifactRoot}\n`,
+      `--intent-file=${path.join(metadataRoot, releaseIntentPath)}\n--artifact-root=${artifactRoot}\n`,
     );
     expect(readFileSync(invocationFile, 'utf-8')).toContain(path.join(directory, proofDirectoryPrefix));
     expect(existsSync(shellFile)).toBe(true);
@@ -478,7 +564,7 @@ it('aligns public proof roots and cleans its exact temporary directory when the 
       expect.arrayContaining([...existingKeys, 'BETTER_AUTH_URL', 'BETTER_AUTH_SECRET']),
     );
     const authUrl = shellFields.find((line) => line.startsWith('BETTER_AUTH_URL='))?.slice('BETTER_AUTH_URL='.length);
-    expect(authUrl).toBe('http://localhost:8787');
+    expect(authUrl).toBe(localShellOrigin);
     expect(new URL(authUrl ?? '').protocol).toBe('http:');
     const firstSecret = shellFields
       .find((line) => line.startsWith('BETTER_AUTH_SECRET='))
@@ -509,7 +595,7 @@ it('aligns public proof roots and cleans its exact temporary directory when the 
 
 it.live('decodes native curl JSON while preserving independent compressed wire evidence', () =>
   Effect.gen(function* provesStandardContentCoding() {
-    const source = readFileSync(new URL('../prove-cloudflare-local-topology.sh', import.meta.url), 'utf-8');
+    const source = readFileSync(new URL(localTopologyProofScript, import.meta.url), 'utf-8');
     const requestStart = source.indexOf('\nrequest() {');
     expect(requestStart).toBeGreaterThanOrEqual(0);
     const requestEnd = source.indexOf('\n}\n', requestStart);

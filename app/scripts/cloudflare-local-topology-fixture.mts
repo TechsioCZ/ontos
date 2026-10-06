@@ -51,6 +51,7 @@ import {
 } from './active-application-composition.mts';
 import type { ObservedArtifact, ObservedModuleDeployment } from './active-application-composition.mts';
 import { ApplicationReleaseIntentSchema } from './application-release-intent.mts';
+import type { ApplicationReleaseIntent } from './application-release-intent.mts';
 import { ApplicationCompositionAuthorityAdminDatabaseLive } from './application-composition-authority-publication.mts';
 
 export class CloudflareLocalTopologyFixtureError extends Schema.TaggedError<CloudflareLocalTopologyFixtureError>()(
@@ -113,6 +114,7 @@ export const LocalTopologyOwnerSchema = Schema.Struct({
 
 export const discoverLocalTopologyOwners = Effect.fn('CloudflareLocalTopology.discoverOwners')(function* discoverOwners(
   artifactRoot: string,
+  intent: ApplicationReleaseIntent,
 ) {
   const fileSystem = yield* FileSystem.FileSystem;
   const verticalsDirectory = path.resolve(artifactRoot, 'verticals');
@@ -125,11 +127,14 @@ export const discoverLocalTopologyOwners = Effect.fn('CloudflareLocalTopology.di
     { concurrency: 1 },
   );
   return yield* Schema.decodeEffect(Schema.Array(LocalTopologyOwnerSchema))(
-    names.flatMap(Option.toArray).map((appId, index) => ({
-      appId,
-      baseUrl: `https://localhost:${8791 + index}/`,
-      outputDirectory: path.join(verticalsDirectory, appId, '.output'),
-    })),
+    names
+      .flatMap(Option.toArray)
+      .filter((appId) => intent.modules.some((module) => module.appId === appId))
+      .map((appId, index) => ({
+        appId,
+        baseUrl: `https://localhost:${8791 + index}/`,
+        outputDirectory: path.join(verticalsDirectory, appId, '.output'),
+      })),
   );
 });
 
@@ -296,7 +301,7 @@ const prepareCommand = Command.make(
             return yield* fail('artifact-root cannot be combined with explicit owners-file or shell-output');
           }
           return {
-            owners: yield* discoverLocalTopologyOwners(input.artifactRoot.value),
+            owners: yield* discoverLocalTopologyOwners(input.artifactRoot.value, intent),
             shellOutput: path.resolve(input.artifactRoot.value, 'apps/shell-super-app/.output'),
           };
         }

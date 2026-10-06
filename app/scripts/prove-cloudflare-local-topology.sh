@@ -167,7 +167,7 @@ write_dev_vars() {
   } >|"$1/.dev.vars"
 }
 
-# Derive one approved inventory from unmodified native output bytes before adding any local config.
+# Run every built Worker, but admit only the reviewed release intent into the composition.
 printf '[]' > "$work/owners.json"
 port="$first_vertical_port"
 for output in "$artifact_root"/verticals/*/.output; do
@@ -177,11 +177,14 @@ for output in "$artifact_root"/verticals/*/.output; do
   owner_ports+=("$port")
   node --input-type=module --eval '
     import { readFileSync, writeFileSync } from "node:fs";
-    const [file, appId, outputDirectory, port] = process.argv.slice(1);
+    const [file, appId, outputDirectory, port, intentFile] = process.argv.slice(1);
     const owners = JSON.parse(readFileSync(file, "utf8"));
-    owners.push({ appId, baseUrl: "https://localhost:" + port + "/", outputDirectory });
+    const intent = JSON.parse(readFileSync(intentFile, "utf8"));
+    if (intent.modules.some((module) => module.appId === appId)) {
+      owners.push({ appId, baseUrl: "https://localhost:" + port + "/", outputDirectory });
+    }
     writeFileSync(file, JSON.stringify(owners));
-  ' "$work/owners.json" "$name" "$output" "$port"
+  ' "$work/owners.json" "$name" "$output" "$port" topology/application-release-intent.json
   port=$((port + 1))
 done
 shell_output="$artifact_root/apps/shell-super-app/.output"
