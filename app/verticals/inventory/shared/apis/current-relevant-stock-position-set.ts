@@ -47,6 +47,12 @@ export const CurrentRelevantStockPositionSetInternalProblemSchema = makeProblemD
   500,
 );
 
+/**
+ * Registered production capability: owner-complete POTENTIALLY_RELEVANT_POSITIONS, including empty.
+ * Sharing is NOT_EVALUATED; consumers cannot count candidates as sellable stock on membership alone.
+ * Exact-mode requests fail closed until the approved Commerce verifier is composed. This public read
+ * neither promises quantity nor performs Inventory-to-Availability orchestration.
+ */
 export const CurrentRelevantStockPositionSetApi = HttpApi.make('CurrentRelevantStockPositionSetApi').add(
   HttpApiGroup.make('currentRelevantStockPositionSet').add(
     HttpApiEndpoint.post('execute', '/reads/current-relevant-stock-position-set', {

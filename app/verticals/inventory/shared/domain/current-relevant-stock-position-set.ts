@@ -27,6 +27,12 @@ const requestScope = {
   previousCompleteness: Schema.optionalKey(OwnerVerifiableSetCompletenessEvidenceSchema),
   scope: RelevantStockPositionSetScopeSchema,
 };
+/**
+ * The production read supports POTENTIALLY_RELEVANT_POSITIONS without Commerce verification.
+ * It proves the owner-complete candidate scope, not purchasing eligibility or reusable quantity.
+ * EXACT_COMMERCE_SCOPE is retained for compatible callers and requires an approved live verifier;
+ * current production composition returns COMMERCE_CONTEXT_UNVERIFIABLE for that mode.
+ */
 export const RelevantStockPositionSetRequestSchema = Schema.Struct({
   ...requestScope,
   commerceVerificationRequest: Schema.optionalKey(PricingPurchaseContextVerificationRequestSchema),
@@ -40,6 +46,12 @@ export const RelevantStockPositionSetRequestSchema = Schema.Struct({
 );
 export type RelevantStockPositionSetRequest = typeof RelevantStockPositionSetRequestSchema.Type;
 
+/**
+ * COMPLETE describes the proof's declared scope. NOT_EVALUATED candidates still require separate
+ * owner-proven sharing/usability before contributing to an Availability decision. A nonempty
+ * candidate set with no eligible members is not an exact eligible-empty response. Observation or
+ * authorization failure never supplies complete-empty; every retained proof requires revalidation.
+ */
 export const RelevantStockPositionSetResponseSchema = Schema.Union([
   Schema.Struct({
     completeness: OwnerVerifiableSetCompletenessEvidenceSchema,
