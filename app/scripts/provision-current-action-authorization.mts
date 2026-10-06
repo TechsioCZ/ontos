@@ -236,7 +236,9 @@ export const discoverCurrentActions = (
     const collectVerticalActions = Effect.gen(function* collectVerticalActionsEffect() {
       const verticalActions: ActionAuthorizationProvisioningAction[] = [];
       for (const { contract, id } of contracts) {
-        if (contract.deployment.appId !== id || contract.manifest.publicSurface.actions.length === 0) {
+        // A validated foundation/read-only vertical can publish no Actions. Its deployment
+        // identity and every Action it does publish still have to match the governed contract.
+        if (contract.deployment.appId !== id) {
           return yield* discoveryFailure();
         }
         for (const { actionKey, entrypoint } of contract.manifest.publicSurface.actions) {

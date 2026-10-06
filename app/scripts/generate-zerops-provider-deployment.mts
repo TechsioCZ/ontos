@@ -1,9 +1,13 @@
 import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, ManagedRuntime, Path, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
+import { parse } from 'yaml';
 
 const begin = '  # <generated-vertical-provider-deployments>';
 const end = '  # </generated-vertical-provider-deployments>';
+const importsBegin = '  # <generated-vertical-provider-imports>';
+const importsEnd = '  # </generated-vertical-provider-imports>';
+const providerRuntimeBase = 'nodejs@24';
 const TopologySchema = Schema.fromJsonString(
   Schema.Struct({
     verticals: Schema.Array(
@@ -93,7 +97,7 @@ const renderProvider = (
         failureTimeout: 3m
         retryPeriod: 10s
     run:
-      base: 'nodejs@24'
+      base: '${providerRuntimeBase}'
       ports:
         - port: ${port}
           protocol: tcp
@@ -165,6 +169,72 @@ export const generateZeropsProviderDeployment = (
     return `${source.slice(0, first)}${rendered}\n\n${source.slice(shell)}`;
   });
 
+/** Adds missing topology providers without changing operator-owned infrastructure or workers. */
+export const generateZeropsProviderImports = (
+  source: string,
+  topology: { readonly verticals: readonly ProviderVertical[] },
+) =>
+  Effect.gen(function* generateProviderImports() {
+    const start = source.indexOf(importsBegin);
+    const stop = source.indexOf(importsEnd);
+    if (
+      (start !== -1 || stop !== -1) &&
+      (start === -1 ||
+        stop < start ||
+        source.includes(importsBegin, start + 1) ||
+        source.includes(importsEnd, stop + 1))
+    ) {
+      return yield* invalid('Invalid generated provider import markers');
+    }
+    const retained = start === -1 ? source : `${source.slice(0, start)}${source.slice(stop + importsEnd.length)}`;
+    const importSchema = Schema.Struct({
+      services: Schema.Array(
+        Schema.Struct({
+          enableSubdomainAccess: Schema.optionalKey(Schema.Boolean),
+          hostname: Schema.String,
+          type: Schema.String,
+        }),
+      ),
+    });
+    const imported = yield* Effect.try({
+      catch: () => invalid('Invalid Zerops service import YAML'),
+      try: () => Schema.decodeUnknownResult(importSchema)(parse(retained)),
+    }).pipe(
+      Effect.flatMap(Effect.fromResult),
+      Effect.mapError(() => invalid('Invalid Zerops service import YAML')),
+    );
+    const services = new Map(imported.services.map((service) => [service.hostname, service]));
+    if (services.size !== imported.services.length) {
+      return yield* invalid('Duplicate Zerops service import hostname');
+    }
+    const hostnames = new Set<string>();
+    const missing: string[] = [];
+    for (const { id } of topology.verticals) {
+      const hostname = id.replaceAll('-', '');
+      if (
+        !/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/u.test(id) ||
+        !/^[a-z0-9]{1,25}$/u.test(hostname) ||
+        hostnames.has(hostname)
+      ) {
+        return yield* invalid(`Invalid or duplicate topology provider hostname: ${id}`);
+      }
+      hostnames.add(hostname);
+      const current = services.get(hostname);
+      if (current === undefined) {
+        missing.push(`  - hostname: ${hostname}\n    type: ${providerRuntimeBase}\n    enableSubdomainAccess: true`);
+      } else if (current.type !== providerRuntimeBase || current.enableSubdomainAccess !== true) {
+        return yield* invalid(`Zerops provider import drift: ${id}`);
+      }
+    }
+    if (missing.length === 0 && start === -1) {
+      return source;
+    }
+    const generated = `${importsBegin}\n${missing.join('\n')}\n${importsEnd}`;
+    return start === -1
+      ? `${source.trimEnd()}\n${generated}\n`
+      : `${source.slice(0, start)}${generated}${source.slice(stop + importsEnd.length)}`;
+  });
+
 const version = /^[0-9]+\.[0-9]+\.[0-9]+$/u;
 const PackageManifestSchema = Schema.fromJsonString(Schema.Struct({ packageManager: Schema.String }));
 
@@ -200,9 +270,13 @@ const runCommand = ({ write }: { readonly write: boolean }) =>
       yield* fs.readFileString(path.join(root, 'package.json')),
     );
     const generated = yield* generateZeropsProviderDeployment(source, topology, toolchain);
+    const importPath = path.join(root, 'zerops-import.yaml');
+    const importSource = yield* fs.readFileString(importPath);
+    const generatedImports = yield* generateZeropsProviderImports(importSource, topology);
     if (write) {
       yield* fs.writeFileString(sourcePath, generated);
-    } else if (generated !== source) {
+      yield* fs.writeFileString(importPath, generatedImports);
+    } else if (generated !== source || generatedImports !== importSource) {
       yield* invalid('Zerops provider deployment drift: run pnpm zerops:providers --write');
     }
   });

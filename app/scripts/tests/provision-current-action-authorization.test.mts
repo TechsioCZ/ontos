@@ -914,10 +914,10 @@ it.effect(
       path: 'verticals/example',
     };
     yield* writeInventory(root, [vertical]);
-    const incomplete: typeof deriveOntosModuleDeploymentContract = () =>
+    const incomplete: typeof deriveOntosModuleDeploymentContract = (_options) =>
       Effect.succeed({
         ...currentContract,
-        deployment: { ...currentContract.deployment, appId: 'example' },
+        deployment: { ...currentContract.deployment, appId: 'wrong-deployment' },
         manifest: {
           ...currentContract.manifest,
           publicSurface: {
@@ -933,6 +933,18 @@ it.effect(
     expect(Schema.decodeUnknownSync(NativeProvisioningError)(incompleteError).code).toBe(
       'action_authorization_discovery_failed',
     );
+
+    const foundation: typeof deriveOntosModuleDeploymentContract = (options) =>
+      incomplete(options).pipe(
+        Effect.map((contract) => ({
+          ...contract,
+          deployment: { ...contract.deployment, appId: 'example' },
+        })),
+      );
+    const foundationActions = yield* discoverCurrentActionKeys(root, foundation).pipe(
+      Effect.provide(NodeServices.layer),
+    );
+    expect(foundationActions).toEqual(completeCurrentActionKeys.filter((key) => key.startsWith('core.')));
 
     const duplicate: typeof deriveOntosModuleDeploymentContract = () =>
       Effect.succeed({

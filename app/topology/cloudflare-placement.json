@@ -5,6 +5,7 @@
     "ULTRAMODERN_CLOUDFLARE_SPICEDB_VPC_SERVICE_ID": "01a0f130-b075-7a93-8670-cb7adf78a1ef",
     "ULTRAMODERN_MF_DEV_ORIGIN": "https://ontos-stage.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_ASSORTMENT": "https://ontos-stage-assortment.bleeding.dev",
+    "ULTRAMODERN_PUBLIC_URL_AVAILABILITY": "https://ontos-stage-availability.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_CATALOG": "https://ontos-stage-catalog.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT": "https://ontos-stage-commerce-customer-context.bleeding.dev",
     "ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG": "https://ontos-stage-commerce-market-catalog.bleeding.dev",
@@ -19,6 +20,7 @@
   "retiredWorkers": [],
   "schemaVersion": 1,
   "units": [
+    "availability",
     "assortment",
     "party-registry",
     "commerce-customer-context",
