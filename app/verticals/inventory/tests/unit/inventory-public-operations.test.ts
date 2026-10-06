@@ -8,6 +8,10 @@ import {
 } from '../../shared/inventory-public-operations.ts';
 // oxlint-disable-next-line import/no-namespace, sonarjs/no-wildcard-import -- The public-barrel contract test must enumerate runtime exports to reject extras; expires: 2027-03-31.
 import * as inventoryPublicClient from '../../src/api/inventory-client.ts';
+import {
+  executeCurrentRelevantStockPositionSet,
+  executeCurrentRelevantStockPositionSetWithAuthorization,
+} from '../../src/api/current-relevant-stock-position-set-client.ts';
 
 const expectedActionKeys = [
   'commerce.inventory.select-inventory-backend',
@@ -53,10 +57,14 @@ const operationClientStem = (key: string): string =>
     .map((segment) => `${segment.charAt(0).toUpperCase()}${segment.slice(1)}`)
     .join('');
 
-const expectedOperationClientExports = [...expectedActionKeys, ...Object.keys(expectedReadSchemas)].flatMap((key) => {
-  const stem = operationClientStem(key);
-  return [`execute${stem}`, `execute${stem}WithAuthorization`];
-});
+const expectedOperationClientExports = [
+  ...[...expectedActionKeys, ...Object.keys(expectedReadSchemas)].flatMap((key) => {
+    const stem = operationClientStem(key);
+    return [`execute${stem}`, `execute${stem}WithAuthorization`];
+  }),
+  'executeCurrentRelevantStockPositionSet',
+  'executeCurrentRelevantStockPositionSetWithAuthorization',
+];
 
 describe('Inventory public owner contracts', () => {
   it('enumerates every launch Action exactly once with immutable owner contract metadata', () => {
@@ -121,13 +129,17 @@ describe('Inventory public owner contracts', () => {
     ).toBe(false);
   });
 
-  it('exports exactly one direct and one authorized client helper for all 20 Actions and 10 governed reads', () => {
+  it('exports the exact launch client pairs plus the #1038 governed Position-set read pair', () => {
     const actualOperationClientExports = Object.keys(inventoryPublicClient).filter((key) => key.startsWith('execute'));
 
     expect(inventoryPublicActionContracts).toHaveLength(20);
     expect(inventoryGovernedReadContracts).toHaveLength(10);
     expect(new Set(actualOperationClientExports)).toEqual(new Set(expectedOperationClientExports));
-    expect(actualOperationClientExports).toHaveLength(60);
+    expect(actualOperationClientExports).toHaveLength(62);
+    expect(inventoryPublicClient.executeCurrentRelevantStockPositionSet).toBe(executeCurrentRelevantStockPositionSet);
+    expect(inventoryPublicClient.executeCurrentRelevantStockPositionSetWithAuthorization).toBe(
+      executeCurrentRelevantStockPositionSetWithAuthorization,
+    );
   });
 
   it('maps exact relation lifecycles and recovery to their canonical boundaries', () => {

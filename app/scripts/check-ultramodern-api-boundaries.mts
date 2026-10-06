@@ -451,25 +451,17 @@ const checkApiBoundaries = Effect.gen(function* checkApiBoundariesEffect() {
       const validateApiPackage = Effect.gen(function* validateApiPackageEffect() {
         if (yield* exists(packageJsonPath)) {
           const packageJson = yield* readText(packageJsonPath).pipe(Effect.flatMap(decodePackageJson));
-          const isPrivateVerticalInfrastructureApi =
-            appPath.startsWith('verticals/') &&
-            (yield* exists(sharedApi)) &&
-            isGeneratedInfrastructureReadinessApi(appPath, yield* readText(sharedApi));
-          if (isPrivateVerticalInfrastructureApi) {
-            assert(
-              packageJson.exports?.['./api'] === undefined && packageJson.exports?.['./api/client'] === undefined,
-              `${packageJsonPath}: infrastructure-only vertical APIs must remain private deployment surfaces.`,
-            );
-          } else {
-            assert(
-              packageJson.exports?.['./api'] === './shared/api.ts',
-              `${packageJsonPath}: package must export ./api from shared/api.ts.`,
-            );
-            assert(
-              packageJson.exports?.['./api/client']?.startsWith('./src/api/') ?? false,
-              `${packageJsonPath}: package must export ./api/client from src/api/*.`,
-            );
-          }
+          // Foundation readiness is framework infrastructure, independent of business publication.
+          // Every generated API keeps its schema/client exports; business endpoints still require
+          // the governed registration and gateway checks below.
+          assert(
+            packageJson.exports?.['./api'] === './shared/api.ts',
+            `${packageJsonPath}: package must export ./api from shared/api.ts.`,
+          );
+          assert(
+            packageJson.exports?.['./api/client']?.startsWith('./src/api/') ?? false,
+            `${packageJsonPath}: package must export ./api/client from src/api/*.`,
+          );
         }
       });
       yield* validateApiPackage;

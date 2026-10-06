@@ -42,6 +42,11 @@ export {
   executeCurrentStockEvidenceForAvailabilityWithAuthorization,
 } from './current-stock-evidence-for-availability-client.ts';
 export type { CurrentStockEvidenceForAvailabilityClientOptions } from './current-stock-evidence-for-availability-client.ts';
+export {
+  executeCurrentRelevantStockPositionSet,
+  executeCurrentRelevantStockPositionSetWithAuthorization,
+} from './current-relevant-stock-position-set-client.ts';
+export type { CurrentRelevantStockPositionSetClientOptions } from './current-relevant-stock-position-set-client.ts';
 export * from './catalog-to-stock-binding-resolution-client.ts';
 export * from './commitment-protection-verification-client.ts';
 export * from './inventory-backend-configuration-current-client.ts';

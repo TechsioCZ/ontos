@@ -54,6 +54,7 @@ import { collectEffectBindings, effectMember } from '../shared/effect-imports.ts
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { isScriptFile, isTestFile, matchesAny } from '../shared/paths.ts';
 import { isNonReferencePosition } from '../shared/reference-positions.ts';
+import { isInsideCoreReadTestHarnessCallback } from '../shared/native-service-factory.ts';
 
 const LAYER_NAMESPACE = 'Layer';
 const EFFECT_ROOT_MODULE = 'effect';
@@ -361,6 +362,9 @@ export const rule = defineRule({
     }> = [];
 
     function queue(node: ESTree.Node, member: string): void {
+      if (isInsideCoreReadTestHarnessCallback(context, node)) {
+        return;
+      }
       reports.push({
         node,
         messageId: 'layerProvideInLibrary',

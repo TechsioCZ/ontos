@@ -76,7 +76,11 @@ const makeFixture = Effect.fn(function* makeRuntimeCompositionBoundaryFixture() 
     service.createApiServiceEntry(owner, '../shared/api.ts', { scope: 'app' }),
   );
   yield* writeText(root, clientPath, client.createApiClient(owner, '../../shared/api.ts', { scope: 'app' }));
-  yield* writeText(root, `${ownerRoot}/package.json`, JSON.stringify({ exports: {} }));
+  yield* writeText(
+    root,
+    `${ownerRoot}/package.json`,
+    JSON.stringify({ exports: { './api': './shared/api.ts', './api/client': './src/api/inventory-stock-client.ts' } }),
+  );
   yield* writeText(root, `${shellRoot}/package.json`, JSON.stringify({ exports: {} }));
   yield* writeText(
     root,
@@ -107,12 +111,24 @@ const makeFixture = Effect.fn(function* makeRuntimeCompositionBoundaryFixture() 
 
 describe('runtime composition API boundaries', () => {
   it.live(
-    'accepts owner clients without a compiled Shell client registry',
+    'accepts foundation schema and client exports without business endpoints or a compiled Shell client registry',
     Effect.fn(function* acceptsNativeOwnerClients() {
       const fixture = yield* makeFixture();
       const result = fixture.check();
       expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
       expect(result.stdout).toContain('UltraModern API boundary check passed');
+    }),
+  );
+
+  it.live(
+    'requires generated aggregate exports even when only foundation readiness is published',
+    Effect.fn(function* rejectsMissingFoundationExports() {
+      const fixture = yield* makeFixture();
+      yield* writeText(fixture.root, `${ownerRoot}/package.json`, JSON.stringify({ exports: {} }));
+      const result = fixture.check();
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/package must export \.\/api from shared\/api\.ts/u);
+      expect(result.stderr).toMatch(/package must export \.\/api\/client from src\/api/u);
     }),
   );
 

@@ -34,6 +34,7 @@
     "./testing/actions": "./src/testing/actions.ts",
     "./testing/application-composition-source": "./src/modules/active-application-composition-source-service.ts",
     "./testing/outbox": "./src/outbox/verified-handler-context.ts",
+    "./testing/reads": "./src/testing/reads.ts",
     "./testing/module-contract": "./src/testing/module-contract.ts",
     "./unit-service-fetch": "./src/http/unit-service-fetch.export.ts",
     "./workspace-environment": "./src/environment/workspace-environment.ts"

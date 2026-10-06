@@ -60,6 +60,7 @@ import { bindingsFor } from '../shared/effect-imports.ts';
 import type { EffectBindings } from '../shared/effect-imports.ts';
 import { collectNamedImports, collectRootNamespaces } from '../shared/imports.ts';
 import { isTestFile, matchesAny } from '../shared/paths.ts';
+import { isInsideCoreReadTestHarnessCallback } from '../shared/native-service-factory.ts';
 import {
   isInTypePosition as inTypePosition,
   isNonReferencePosition as nonReferencePosition,
@@ -438,6 +439,9 @@ export const rule = defineRule({
     let bindings: ProvideBindings | null = null;
 
     const report = (node: ESTree.Node, member: string): void => {
+      if (isInsideCoreReadTestHarnessCallback(context, node)) {
+        return;
+      }
       context.report({ node, messageId: 'provideInLibrary', data: { member } });
     };
 

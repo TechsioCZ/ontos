@@ -17,7 +17,7 @@ const CatalogHome = () => {
             className="catalog:rounded-full catalog:border catalog:border-stone-900/15 catalog:bg-white catalog:px-4 catalog:py-2 catalog:text-sm catalog:font-bold catalog:text-stone-950 catalog:no-underline"
             key={code}
             params={{ lang: code }}
-            to="/$lang"
+            to="/$lang/"
           >
             {t(`catalog.language.${code}`)}
           </Link>

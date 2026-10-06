@@ -3,6 +3,7 @@ import { Effect, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { makeAvailabilityApiRuntime } from '../../api/index.ts';
+import { getAvailabilityReadiness } from '@app/availability/api/client';
 import { availabilityApi, availabilityReadinessSchema } from '../../shared/api.ts';
 import { CurrentAvailabilityApi } from '../../shared/apis/current-availability.ts';
 import { availabilityManifest } from '../../vertical.manifest.ts';
@@ -44,4 +45,5 @@ it('preserves the typed contract without registering an executable or discoverab
   expect(availabilityManifest.publicSurface.components).toEqual({});
   expect(availabilityManifest.publicSurface.search).toEqual([]);
   expect(availabilityManifest.publicSurface.shellContributions.pages).toEqual([]);
+  expect(Effect.isEffect(getAvailabilityReadiness)).toBe(true);
 });
