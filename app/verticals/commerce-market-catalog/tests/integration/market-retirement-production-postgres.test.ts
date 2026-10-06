@@ -11,7 +11,7 @@ import type {
 } from '@app/customer-market-retirement-contracts';
 import { ActionRuntime } from '@app/core-runtime';
 import { GatewayContextResponseSchema } from '@app/shared-contracts';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { Cause, ConfigProvider, DateTime, Effect, Exit, Option, Predicate, Redacted, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 import { TestClock } from 'effect/testing';
@@ -19,6 +19,7 @@ import { FetchHttpClient } from 'effect/unstable/http';
 
 import { makeCoreDatabase } from '../../../../packages/core-runtime/src/db/client.ts';
 import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
+import { outboxMessages } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { makeLiveOperationFixture } from '../../../../packages/core-runtime/src/testing/live-operations.ts';
 import {
   makeTestDatabaseFromClient,
@@ -313,6 +314,10 @@ it.live(
         `);
         const { admin: adminClient } = yield* testDatabaseClients;
         const marketAdmin = yield* makeTestDatabaseFromClient(adminClient, commerceMarketCatalogRelations);
+        // Release only this disposable tenant's dispatch queue; retain append-only Core evidence.
+        yield* Effect.addFinalizer(() =>
+          marketAdmin.delete(outboxMessages).where(eq(outboxMessages.tenantId, fixture.tenantId)).pipe(Effect.orDie),
+        );
         const now = yield* TestClock.withLive(DateTime.now).pipe(Effect.provide(TestClock.layer()));
         const effectiveAt = DateTime.formatIso(DateTime.subtract(now, { seconds: 1 }));
         const nextApplicabilityBoundary = DateTime.formatIso(DateTime.add(now, { hours: 1 }));

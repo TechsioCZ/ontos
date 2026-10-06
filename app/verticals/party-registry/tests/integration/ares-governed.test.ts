@@ -19,6 +19,7 @@ import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { outboxMessages } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { aresLookupReadApiLive } from '../../api/ares-lookup-read-server.ts';
 import { ActionPrincipalVerifierLive } from '../../api/auth/action-principal.ts';
 import {
@@ -117,6 +118,10 @@ it.live(
       );
       const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
       const admin = yield* makeTestDatabaseFromClient(adminClient, partyRelations);
+      // Release only this disposable tenant's dispatch queue; retain append-only Core evidence.
+      yield* Effect.addFinalizer(() =>
+        admin.delete(outboxMessages).where(eq(outboxMessages.tenantId, fixture.tenantId)).pipe(Effect.orDie),
+      );
       const managerWithLegalEntity = { ...fixture.manager, legalEntityId: fixture.legalEntityId };
       const compositionRevision = compositionSnapshot.composition.revision;
       const apiBaseUrl = '/party-registry-api';
