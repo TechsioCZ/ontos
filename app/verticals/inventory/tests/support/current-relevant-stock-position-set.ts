@@ -1,23 +1,9 @@
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { CatalogSelectionSchema } from '@app/catalog/domain/catalog-selection-evidence';
 import { Schema } from 'effect';
-import { getTableColumns } from 'drizzle-orm';
-import type { PgTable } from 'drizzle-orm/pg-core';
 
 import { RelevantStockPositionSetRequestSchema } from '../../shared/domain/current-relevant-stock-position-set.ts';
 import type { RelevantStockPositionSetObservation } from '../../src/persistence/current-relevant-stock-position-set-repository.ts';
-import { inventoryBackendConfigurations } from '../../src/persistence/inventory-backend-configuration-table.ts';
-import {
-  inventoryCatalogToStockBindingHistory,
-  inventoryCatalogToStockBindings,
-} from '../../src/persistence/catalog-to-stock-binding-table.ts';
-import { inventoryStockItems } from '../../src/persistence/stock-item-table.ts';
-import { inventoryStockLocations } from '../../src/persistence/stock-location-table.ts';
-import { inventoryStockPositions } from '../../src/persistence/stock-position-table.ts';
-import {
-  inventoryStockSharingEligibilities,
-  inventoryStockSharingEligibilityHistory,
-} from '../../src/persistence/stock-sharing-eligibility-table.ts';
 
 const CATALOG_MODULE_ID = 'commerce.catalog';
 const STOCK_UNIT_RESOURCE_TYPE = 'commerce.catalog.product-unit';
@@ -214,33 +200,20 @@ export const observation = {
   sharingHistory: [],
 } satisfies RelevantStockPositionSetObservation;
 
-/** Raw joined driver rows, in the real repository SELECT order; the production repository maps them. */
-type PositionSetDriverSource =
-  | (typeof inventoryBackendConfigurations)['$inferSelect']
-  | (typeof inventoryCatalogToStockBindings)['$inferSelect']
-  | (typeof inventoryStockItems)['$inferSelect']
-  | (typeof inventoryStockLocations)['$inferSelect']
-  | (typeof inventoryStockPositions)['$inferSelect'];
-type PositionSetDriverValue<Row = PositionSetDriverSource> = Row extends PositionSetDriverSource
-  ? Row[keyof Row]
-  : never;
-export const positionSetDriverRows = (positions: RelevantStockPositionSetObservation['positions']) =>
-  (positions.length === 0 ? [null] : positions).map((candidate) => {
-    const row: Record<string, PositionSetDriverValue> = {};
-    const append = (alias: string, table: PgTable, value: PositionSetDriverSource | null | undefined) => {
-      const fields = new Map<string, PositionSetDriverValue>(Object.entries(value ?? {}));
-      for (const name of Object.keys(getTableColumns(table))) {
-        row[`${alias}.${name}`] = fields.get(name) ?? null;
-      }
-    };
-    append('backend', inventoryBackendConfigurations, observation.backendConfigurations[0]);
-    append('binding', inventoryCatalogToStockBindings, observation.bindings[0]);
-    append('bindingHistory', inventoryCatalogToStockBindingHistory, null);
-    append('item', inventoryStockItems, observation.items[0]);
-    append('location', inventoryStockLocations, candidate === null ? null : observation.locations[0]);
-    row.observedAt = observation.observedAt;
-    append('position', inventoryStockPositions, candidate);
-    append('sharing', inventoryStockSharingEligibilities, null);
-    append('sharingHistory', inventoryStockSharingEligibilityHistory, null);
-    return row;
-  });
+/** Raw aggregate driver row in the real SELECT order; production decoders restore dates. */
+const aggregate = (rows: readonly object[]) =>
+  Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json))(JSON.stringify(rows));
+
+export const positionSetDriverRows = (positions: RelevantStockPositionSetObservation['positions']) => [
+  {
+    backendConfigurations: aggregate(observation.backendConfigurations),
+    bindingHistory: aggregate(observation.bindingHistory),
+    bindings: aggregate(observation.bindings),
+    ...Object.fromEntries(Object.entries(observation.items[0]).map(([name, value]) => [`item.${name}`, value])),
+    locations: aggregate(positions.length === 0 ? [] : observation.locations),
+    observedAt: observation.observedAt,
+    positions: aggregate(positions),
+    sharing: aggregate([]),
+    sharingHistory: aggregate([]),
+  },
+];
