@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths-ignore:
-      - "docs/**"
+      - 'docs/**'
       - CONTEXT-MAP.md
       - README.md
       - AGENTS.md
@@ -99,8 +99,8 @@ jobs:
         id: install
         uses: ./.github/actions/install-app
         with:
-          restore-typescript-build: "true"
-          save-store: "true"
+          restore-typescript-build: 'true'
+          save-store: 'true'
 
       - name: Typecheck the workspace incrementally
         working-directory: app
@@ -425,11 +425,11 @@ jobs:
       ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
       POSTGRES_DB: ontos_ci
       POSTGRES_PASSWORD: ontos_ci_admin
-      POSTGRES_PORT: "5433"
+      POSTGRES_PORT: '5433'
       POSTGRES_USER: ontos_ci_admin
       SPICEDB_ENDPOINT: localhost:50051
-      SPICEDB_GRPC_PORT: "50051"
-      SPICEDB_HTTP_PORT: "8443"
+      SPICEDB_GRPC_PORT: '50051'
+      SPICEDB_HTTP_PORT: '8443'
       SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
     steps:
       - name: Harden Runner
@@ -527,7 +527,7 @@ jobs:
         env:
           COMMERCE_PORTAL_AUTH_DATABASE_ADMIN_URL: postgresql://ontos_ci_admin:ontos_ci_admin@localhost:5433/ontos_ci
           COMMERCE_PORTAL_AUTH_DATABASE_URL: postgresql://commerce_auth_runtime:commerce_auth_runtime@localhost:5433/ontos_ci
-          MIGRATOR_PORT: "8080"
+          MIGRATOR_PORT: '8080'
           NODE_ENV: production
           SPICEDB_DATABASE_PASSWORD: spicedb
           ULTRAMODERN_DEPLOYMENT_ENVIRONMENT: stage
@@ -619,13 +619,9 @@ jobs:
         shard: [1, 2, 3, 4, 5]
         include:
           - { shard: 1, proof: none, units: verticals/catalog }
-          - {
-              shard: 2,
-              proof: none,
-              units: verticals/commerce-customer-context verticals/storefront-registry,
-            }
+          - { shard: 2, proof: none, units: verticals/commerce-customer-context verticals/storefront-registry }
           - { shard: 3, proof: none, units: verticals/assortment apps/shell-super-app }
-          - { shard: 4, proof: none, units: verticals/party-registry verticals/inventory }
+          - { shard: 4, proof: none, units: verticals/party-registry verticals/inventory verticals/availability }
           - {
               shard: 5,
               proof: node,
@@ -742,13 +738,13 @@ jobs:
         shard: [1, 2, 3, 4, 5]
         include:
           - { shard: 1, proof: topology, units: verticals/assortment verticals/pricing }
-          - { shard: 2, proof: none, units: verticals/party-registry verticals/price-group-catalog }
-          - { shard: 3, proof: outputs, units: verticals/catalog verticals/storefront-registry }
           - {
-              shard: 4,
+              shard: 2,
               proof: none,
-              units: verticals/commerce-customer-context apps/shell-super-app,
+              units: verticals/party-registry verticals/price-group-catalog verticals/availability,
             }
+          - { shard: 3, proof: outputs, units: verticals/catalog verticals/storefront-registry }
+          - { shard: 4, proof: none, units: verticals/commerce-customer-context apps/shell-super-app }
           - {
               shard: 5,
               proof: none,
@@ -833,11 +829,11 @@ jobs:
           ONTOS_RUNTIME_DB_PASSWORD: ontos_runtime
           POSTGRES_DB: ontos_ci
           POSTGRES_PASSWORD: ontos_ci_admin
-          POSTGRES_PORT: "5433"
+          POSTGRES_PORT: '5433'
           POSTGRES_USER: ontos_ci_admin
           SPICEDB_ENDPOINT: localhost:50051
-          SPICEDB_GRPC_PORT: "50051"
-          SPICEDB_HTTP_PORT: "8443"
+          SPICEDB_GRPC_PORT: '50051'
+          SPICEDB_HTTP_PORT: '8443'
           SPICEDB_PRESHARED_KEY: ontos-ci-spicedb-key
           BETTER_AUTH_SECRET: ontos-ci-better-auth-secret-at-least-32-characters
           BETTER_AUTH_TRUSTED_ORIGINS: http://localhost:3020,http://127.0.0.1:3020

@@ -4,7 +4,11 @@ import { NodeServices } from '@effect/platform-node';
 import { Effect, FileSystem, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
-import { generateZeropsProviderDeployment, readZeropsToolchain } from '../generate-zerops-provider-deployment.mts';
+import {
+  generateZeropsProviderDeployment,
+  generateZeropsProviderImports,
+  readZeropsToolchain,
+} from '../generate-zerops-provider-deployment.mts';
 
 const root = path.resolve(import.meta.dirname, '../..');
 const toolchain = { node: '26.7.0', pnpm: '12.4.2' };
@@ -40,6 +44,8 @@ it.effect('reproduces the checked-in provider setups from topology and preserves
       yield* fs.readFileString(path.join(root, 'package.json')),
     );
     expect(yield* generateZeropsProviderDeployment(source, topology, checkedInToolchain)).toBe(source);
+    const imports = yield* fs.readFileString(path.join(root, 'zerops-import.yaml'));
+    expect(yield* generateZeropsProviderImports(imports, topology)).toBe(imports);
     for (const vertical of topology.verticals) {
       expect(source).toContain(`  - setup: '${vertical.id}'\n`);
       expect(source).toContain(
@@ -49,6 +55,25 @@ it.effect('reproduces the checked-in provider setups from topology and preserves
     expect(source).toContain("  - setup: 'migrator'\n");
     expect(source).toContain("  - setup: 'shellsuperapp'\n");
   }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect('generates missing public provider imports and preserves private services idempotently', () =>
+  Effect.gen(function* importsAreComplete() {
+    const source =
+      'services:\n  - hostname: db18\n    type: postgresql:single@18\n  - hostname: ledgerworker\n    type: nodejs@24\n';
+    const generated = yield* generateZeropsProviderImports(source, { verticals: [ledger] });
+    expect(generated).toContain(source);
+    expect(generated).toContain('  - hostname: ledger\n    type: nodejs@24\n    enableSubdomainAccess: true');
+    expect(yield* generateZeropsProviderImports(generated, { verticals: [ledger] })).toBe(generated);
+    for (const invalidSource of [
+      'services:\n  - hostname: ledger\n    type: nodejs@24\n',
+      'services:\n  - hostname: db18\n    type: postgresql:single@18\n  - hostname: db18\n    type: postgresql:single@18\n',
+    ]) {
+      expect(
+        (yield* Effect.flip(generateZeropsProviderImports(invalidSource, { verticals: [ledger] }))).reason,
+      ).toMatch(/Zerops provider import drift|Duplicate Zerops service import hostname/u);
+    }
+  }),
 );
 
 it.effect('rejects duplicate provider identity and port instead of emitting ambiguous YAML', () =>

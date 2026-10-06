@@ -10,7 +10,7 @@
     "./api/current-availability": "./shared/apis/current-availability.ts"
   },
   "scripts": {
-    "dev": "modern dev",
+    "dev": "node ../../scripts/prepare-dev-module-contract.mts availability && modern dev",
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical availability --target dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app availability --target dist && modern deploy --skip-build --deploy-target node",
     "cloudflare:build": "modern build --deploy-target cloudflare && node ../../scripts/generate-ontos-module-contract.mts --vertical availability --target cloudflare-dist && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app availability --target cloudflare-dist && modern deploy --skip-build --deploy-target cloudflare && ultramodern-create ultramodern cloudflare-output-verify --app availability",
     "cloudflare:deploy": "modern build --deploy-target cloudflare && pnpm --dir ../.. exec ultramodern-create ultramodern public-surface --app availability --target cloudflare-dist --require-public-origin && modern deploy --skip-build --deploy-target cloudflare && ultramodern-create ultramodern cloudflare-output-verify --app availability --require-public-urls && wrangler deploy --config .output/wrangler.json",

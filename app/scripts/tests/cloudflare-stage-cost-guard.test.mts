@@ -45,6 +45,7 @@ const settings: CutoverSettings = {
 
 /** Every placed unit's public hostname, in placement order (the Shell deploys last). */
 const HOSTNAMES = [
+  'ontos-stage-availability.stage.example.com',
   'ontos-stage-assortment.stage.example.com',
   'ontos-stage-party-registry.stage.example.com',
   'ontos-stage-commerce-customer-context.stage.example.com',

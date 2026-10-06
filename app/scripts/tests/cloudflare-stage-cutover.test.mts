@@ -305,7 +305,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
       ULTRAMODERN_PUBLIC_URL_PRICING: 'https://ontos-stage-pricing.stage.example.com',
       ULTRAMODERN_PUBLIC_URL_SHELL_SUPER_APP: SHELL_ORIGIN,
     });
-    expect(placement.units).toHaveLength(11);
+    expect(placement.units).toHaveLength(12);
     expect(stage.environments.has(STAGE_EDGE)).toBe(true);
     expect(stage.variables.get(STAGE_EDGE)?.get('CLOUDFLARE_ACCOUNT_ID')).toBe('account-1');
     expect(stage.inputs.find(({ command }) => command.startsWith('gh secret set CLOUDFLARE_API_TOKEN'))?.stdin).toBe(
@@ -314,7 +314,7 @@ it.effect('provisions the whole stage data plane on an empty account, without ex
 
     // Every placed Worker receives its secrets through `wrangler secret bulk` on stdin.
     const bulk = stage.inputs.filter(({ command }) => command.includes('wrangler secret bulk'));
-    expect(bulk.map(({ command }) => command.split(' ').at(-1))).toHaveLength(11);
+    expect(bulk.map(({ command }) => command.split(' ').at(-1))).toHaveLength(12);
     const shell = bulk.find(({ command }) => command.endsWith('--name app-shell-super-app'));
     expect(Schema.decodeUnknownSync(StringRecord)(shell?.stdin)).toStrictEqual({
       BETTER_AUTH_SECRET: AUTH_SECRET,
@@ -639,6 +639,7 @@ const provisionedAccount = (
       kvKeys: { [COMPOSITION_KV_ID]: compositionKeys },
       kvNamespaces: [{ id: COMPOSITION_KV_ID, title: COMPOSITION_KV }],
       scripts: [
+        'app-availability',
         'app-assortment',
         'app-party-registry',
         CUSTOMER_CONTEXT_WORKER,
@@ -921,7 +922,7 @@ it.effect('gives each caller its own redacted gateway key and the native Shell U
     const reveal = (worker: string) =>
       Object.fromEntries(Object.entries(plan.get(worker) ?? {}).map(([key, value]) => [key, Redacted.value(value)]));
 
-    expect([...plan.keys()]).toHaveLength(11);
+    expect([...plan.keys()]).toHaveLength(12);
     expect(reveal(CUSTOMER_CONTEXT_WORKER)).toMatchObject({
       ONTOS_COMMERCE_CUSTOMER_CONTEXT_GATEWAY_API_KEY: CUSTOMER_CONTEXT_GATEWAY_API_KEY,
       ONTOS_SHELL_GATEWAY_BASE_URL: 'https://app.stage.example.com/shell-super-app-api',

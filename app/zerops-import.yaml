@@ -86,3 +86,8 @@ services:
       maxRam: 0.5
       minDisk: 1
       maxDisk: 1
+  # <generated-vertical-provider-imports>
+  - hostname: availability
+    type: nodejs@24
+    enableSubdomainAccess: true
+  # </generated-vertical-provider-imports>

@@ -10,7 +10,7 @@ import {
   createModernConfig,
   installGlobalRequire,
 } from '../../packages/shared-contracts/tooling/modern-config.ts';
-import developmentOverlay from '../../topology/local-overlays/development.json';
+import developmentOverlay from '../../topology/local-overlays/development.json' with { type: 'json' };
 
 installGlobalRequire(import.meta.url);
 
@@ -21,7 +21,7 @@ const build = createModernBuildContext({
   appId,
   cloudflarePublicUrlEnvironmentVariable: 'ULTRAMODERN_PUBLIC_URL_AVAILABILITY',
   cloudflareWorkerName,
-  defaultPort: developmentOverlay.ports[appId],
+  defaultPort: 4111,
   deployTarget: resolveDeployTarget().target,
   getBuildConfigEnvironment,
   portEnvironmentVariable: 'VERTICAL_AVAILABILITY_PORT',
@@ -65,7 +65,7 @@ export default defineConfig(
           },
         },
       },
-      output: { ...modernConfig.output, disableTsChecker: false },
+      output: { ...modernConfig.output, disableTsChecker: true },
     } satisfies AppToolsUserConfig,
     {
       appId,
