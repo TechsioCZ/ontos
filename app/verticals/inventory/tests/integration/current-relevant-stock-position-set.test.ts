@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { trustVerifiedGatewayPrincipalContext } from '@app/core-runtime';
 import { eq } from 'drizzle-orm';
-import { DateTime, Effect, Schema } from 'effect';
+import { DateTime, Effect, Predicate, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
@@ -11,15 +11,19 @@ import {
   makeTestDatabaseFromClient,
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { CatalogToStockBindingSchema } from '../../shared/domain/catalog-to-stock-binding.ts';
+import { StockSharingEligibilitySchema } from '../../shared/domain/stock-sharing-eligibility.ts';
 import { RelevantStockPositionSetRequestSchema } from '../../shared/domain/current-relevant-stock-position-set.ts';
 import {
   inventoryBackendConfigurations,
   inventoryCatalogToStockBindings,
+  inventoryCatalogToStockBindingHistory,
   inventoryRelations,
   inventoryStockItems,
   inventoryStockLocations,
   inventoryStockPositions,
   inventoryStockSharingEligibilities,
+  inventoryStockSharingEligibilityHistory,
 } from '../../src/database/schema.ts';
 import { observeRelevantStockPositionSet } from '../../src/persistence/current-relevant-stock-position-set-repository.ts';
 import { evaluateRelevantStockPositionSet } from '../../src/services/current-relevant-stock-position-set.service.ts';
@@ -183,9 +187,10 @@ it.live('runtime-role atomic query includes a concurrent unknown Position insert
             return yield* evaluateRelevantStockPositionSet({ ...input, previousCompleteness }, snapshot, scope);
           }),
         );
+      const eligibilityId = randomUUID();
       yield* admin.insert(inventoryStockSharingEligibilities).values({
         ...sharing,
-        eligibilityId: randomUUID(),
+        eligibilityId,
         ownerConfigurationId: configurationId,
         sellingLegalEntityId: scope.legalEntityId,
         stockPositionId: positionId,
@@ -208,11 +213,142 @@ it.live('runtime-role atomic query includes a concurrent unknown Position insert
         return;
       }
       expect(bindingChanged.previousProof).toBe('INVALIDATED');
+      const bindingSnapshot = Schema.decodeUnknownSync(CatalogToStockBindingSchema)({
+        bindingRef: {
+          moduleId: 'commerce.inventory',
+          resourceId: bindingId,
+          resourceType: 'commerce.inventory.catalog-to-stock-binding',
+          tenantId,
+        },
+        catalogSelection: {
+          ...binding.catalogSelection,
+          productRef: { ...binding.catalogSelection.productRef, tenantId },
+          variantRef: { ...binding.catalogSelection.variantRef, tenantId },
+        },
+        effectiveFrom: binding.effectiveFrom.toISOString(),
+        exactSelectionMeaning: { id: binding.exactSelectionMeaningId, kind: binding.exactSelectionKind },
+        revision: 1,
+        stockItemRef: input.scope.stockItemRef,
+        unitRef: input.scope.unitRef,
+      });
+      const eligibilityIds = [eligibilityId, randomUUID(), randomUUID()];
+      yield* admin.insert(inventoryStockSharingEligibilities).values(
+        eligibilityIds.slice(1).map((id) => ({
+          ...sharing,
+          eligibilityId: id,
+          ownerConfigurationId: configurationId,
+          sellingLegalEntityId: scope.legalEntityId,
+          stockPositionId: positionId,
+          tenantId,
+        })),
+      );
+      yield* admin.insert(inventoryCatalogToStockBindingHistory).values(
+        Array.from({ length: 20 }, (_unused, index) => ({
+          bindingId,
+          endedAt: binding.effectiveFrom,
+          ownerEvidenceRef: 'aggregate-snapshot-test',
+          revision: index + 1,
+          snapshot: bindingSnapshot,
+          tenantId,
+          transition: 'CORRECTED' as const,
+        })),
+      );
+      for (const id of eligibilityIds) {
+        const sharingSnapshot = Schema.decodeUnknownSync(StockSharingEligibilitySchema)({
+          commerceValidation: {
+            evidenceRef: sharing.commerceValidationEvidenceRef,
+            observedAt: sharing.commerceValidationObservedAt.toISOString(),
+            verification: 'OWNER_VERIFIED_CURRENT',
+          },
+          effectivePeriod: { from: sharing.effectiveFrom.toISOString(), to: null },
+          lifecycle: 'CURRENT',
+          ref: {
+            moduleId: 'commerce.inventory',
+            resourceId: id,
+            resourceType: 'commerce.inventory.stock-sharing-eligibility',
+            tenantId,
+          },
+          revision: 1,
+          scope: {
+            customerConfigurationId: input.scope.customerConfigurationId,
+            ownerConfigurationRef: input.scope.ownerConfigurationRef,
+            positionRef: {
+              moduleId: 'commerce.inventory',
+              resourceId: positionId,
+              resourceType: 'commerce.inventory.stock-position',
+              tenantId,
+            },
+          },
+          subject: {
+            channel: 'B2C',
+            sellingLegalEntityRef: {
+              moduleId: 'core.identity',
+              resourceId: scope.legalEntityId,
+              resourceType: 'core.identity.legal-entity',
+              tenantId,
+            },
+          },
+        });
+        yield* admin.insert(inventoryStockSharingEligibilityHistory).values(
+          Array.from({ length: 10 }, (_unused, index) => ({
+            eligibilityId: id,
+            revision: index + 1,
+            snapshot: sharingSnapshot,
+            tenantId,
+            transitionAt: sharing.effectiveFrom,
+          })),
+        );
+      }
       yield* admin
         .update(inventoryStockPositions)
-        .set({ endedAt: new Date('2026-10-05T12:00:00.000Z'), lifecycleState: 'HISTORICAL', revision: 2 })
+        .set({
+          onHandAmount: '12345678901234567890.123456789',
+          onHandEvidenceRef: 'exact-decimal-test',
+          onHandObservedAt: sharing.effectiveFrom,
+          onHandState: 'CURRENT',
+        })
         .where(eq(inventoryStockPositions.stockPositionId, positionId));
-      const ended = yield* revalidate(bindingChanged.completeness);
+      const aggregated = yield* runtime.transaction((transaction) =>
+        Effect.gen(function* verifyIndependentAggregates() {
+          const scoped = yield* installOperationalScope(transaction, scope);
+          const snapshot = yield* observeRelevantStockPositionSet(scoped, scope, input.scope);
+          expect(snapshot.positions).toHaveLength(2);
+          expect(snapshot.sharing).toHaveLength(3);
+          expect(snapshot.bindingHistory).toHaveLength(20);
+          expect(snapshot.sharingHistory).toHaveLength(30);
+          expect(snapshot.positions.find((row) => row.stockPositionId === positionId)?.onHandAmount).toBe(
+            '12345678901234567890.123456789',
+          );
+          expect(snapshot.bindingHistory.every((row) => Predicate.isDate(row.endedAt))).toBe(true);
+          const historyIds = snapshot.sharingHistory.map((row) => row.historyId);
+          expect(historyIds.every((id, index) => index === 0 || id > (historyIds[index - 1] ?? ''))).toBe(true);
+          return yield* evaluateRelevantStockPositionSet(
+            { ...input, previousCompleteness: bindingChanged.completeness },
+            snapshot,
+            scope,
+          );
+        }),
+      );
+      expect(aggregated.outcome).toBe('COMPLETE');
+      if (aggregated.outcome !== 'COMPLETE') {
+        return;
+      }
+      expect(aggregated.previousProof).toBe('INVALIDATED');
+      const stable = yield* revalidate(aggregated.completeness);
+      expect(stable.outcome).toBe('COMPLETE');
+      if (stable.outcome === 'COMPLETE') {
+        expect(stable.previousProof).toBe('CURRENT');
+      }
+      yield* admin
+        .update(inventoryStockPositions)
+        .set({
+          endedAt: new Date('2026-10-05T12:00:00.000Z'),
+          lifecycleState: 'HISTORICAL',
+          onHandState: 'STALE',
+          revision: 2,
+        })
+        .where(eq(inventoryStockPositions.stockPositionId, positionId));
+      const ended = yield* revalidate(aggregated.completeness);
       expect(ended.outcome).toBe('COMPLETE');
       if (ended.outcome === 'COMPLETE') {
         expect(ended.previousProof).toBe('INVALIDATED');
