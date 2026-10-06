@@ -1594,6 +1594,7 @@ const ArtifactBuildJobSchema = Schema.Struct({
   permissions: Schema.Record(Schema.String, Schema.String),
   steps: Schema.Array(
     Schema.Struct({
+      env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
       if: Schema.optional(Schema.String),
       name: Schema.String,
       run: Schema.optional(Schema.String),
@@ -1615,8 +1616,8 @@ const ArtifactBuildWorkflowSchema = Schema.Struct({
   }),
 });
 const TopologyUnitsSchema = Schema.Struct({
-  shell: Schema.Struct({ path: Schema.String }),
-  verticals: Schema.Array(Schema.Struct({ path: Schema.String })),
+  shell: Schema.Struct({ id: Schema.String, path: Schema.String }),
+  verticals: Schema.Array(Schema.Struct({ id: Schema.String, path: Schema.String })),
 });
 
 const sorted = (values: readonly string[]) => EffectArray.sort(values, Order.String);
@@ -1639,6 +1640,26 @@ it('builds every delivery unit of the topology in exactly one build shard of eac
     const built = strategy.matrix.include.flatMap(({ units: shardUnits }) => shardUnits.split(/\s+/u).filter(Boolean));
     expect(sorted(built)).toEqual(sorted(units));
     expect(steps.some(({ run }) => run?.includes(`"\${filters[@]}" run ${script}\n`) === true)).toBe(true);
+  }
+});
+
+it('supplies a placeholder public URL for every unit in Cloudflare builds and output proofs', () => {
+  const { jobs } = Schema.decodeUnknownSync(ArtifactBuildWorkflowSchema)(
+    parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')),
+  );
+  const topology = Schema.decodeUnknownSync(TopologyUnitsSchema)(
+    JSON.parse(readFileSync(new URL('../../topology/reference-topology.json', import.meta.url), 'utf-8')),
+  );
+  for (const name of [
+    "Build the shard's Cloudflare artifacts one unit at a time",
+    'Generate federated types, verify the Worker outputs and prove their SSR',
+  ]) {
+    const step = jobs[CLOUDFLARE_ARTIFACT_BUILD_JOB].steps.find((candidate) => candidate.name === name);
+    expect(step, name).toBeDefined();
+    for (const { id } of [topology.shell, ...topology.verticals]) {
+      const variable = `ULTRAMODERN_PUBLIC_URL_${id.replaceAll('-', '_').toUpperCase()}`;
+      expect(step?.env?.[variable], `${name}: ${variable}`).toBe(`https://${id}.invalid`);
+    }
   }
 });
 

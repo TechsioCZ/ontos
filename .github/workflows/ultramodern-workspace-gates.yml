@@ -783,6 +783,7 @@ jobs:
           SHARD_UNITS: ${{ matrix.units }}
           ULTRAMODERN_SOURCE_REVISION: ${{ github.sha }}
           ULTRAMODERN_PUBLIC_URL_ASSORTMENT: https://assortment.invalid
+          ULTRAMODERN_PUBLIC_URL_AVAILABILITY: https://availability.invalid
           ULTRAMODERN_PUBLIC_URL_CATALOG: https://catalog.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG: https://commerce-market-catalog.invalid
@@ -905,6 +906,7 @@ jobs:
         env:
           MODERN_PUBLIC_SITE_URL: https://shell-super-app.invalid
           ULTRAMODERN_PUBLIC_URL_ASSORTMENT: https://assortment.invalid
+          ULTRAMODERN_PUBLIC_URL_AVAILABILITY: https://availability.invalid
           ULTRAMODERN_PUBLIC_URL_CATALOG: https://catalog.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_CUSTOMER_CONTEXT: https://commerce-customer-context.invalid
           ULTRAMODERN_PUBLIC_URL_COMMERCE_MARKET_CATALOG: https://commerce-market-catalog.invalid
