@@ -65,29 +65,37 @@ export const makeReadTestHarness = Effect.fn('ReadTestHarness.make')(function* m
       params: readonly unknown[],
     ): Effect.fn.Return<readonly object[], SqlError> {
       statements.push(sql);
-      const text = sql.toLowerCase();
+      const text = sql.trim().replaceAll(/\s+/gu, ' ').toLowerCase();
       if (/^(?:begin|commit|rollback|savepoint|release savepoint)(?:\s|$)/u.test(text)) {
         return [];
       }
-      if (text.includes("current_setting('transaction_isolation')")) {
+      if (text === "select current_setting('transaction_isolation') as isolation") {
         return [{ isolation: 'read committed' }];
       }
-      if (text.includes('pg_advisory_xact_lock_shared')) {
+      if (
+        text === "select pg_advisory_xact_lock_shared(hashtextextended('ontos.application-composition-authority', 0))"
+      ) {
         return [];
       }
-      if (text.includes('"core"."application_composition_authority"')) {
+      if (
+        text ===
+        'select "phase", "revision", "subscriptions_json", "valid_until" > clock_timestamp() from "core"."application_composition_authority" where "core"."application_composition_authority"."authority_key" = $1'
+      ) {
         return [{ phase: 'active', revision: options.compositionRevision, subscriptionsJson: [], unexpired: true }];
       }
-      if (text.includes("set_config('ontos.tenant_id'")) {
+      if (text === "select set_config('ontos.tenant_id', $1, true), set_config('ontos.legal_entity_id', $2, true)") {
         [scope.tenantId, scope.legalEntityId] = yield* Schema.decodeUnknownEffect(scopeValuesSchema)(params).pipe(
           Effect.orDie,
         );
         return [];
       }
-      if (text.includes("current_setting('ontos.tenant_id'")) {
+      if (
+        text ===
+        "select current_setting('ontos.tenant_id', true) as tenant_id, current_setting('ontos.legal_entity_id', true) as legal_entity_id"
+      ) {
         return [{ legal_entity_id: scope.legalEntityId, tenant_id: scope.tenantId }];
       }
-      if (text.includes('transaction_timestamp()')) {
+      if (text === 'select transaction_timestamp() as operation_at') {
         return [{ operation_at: options.operationTime }];
       }
       if (text.startsWith('insert into "core"."data_access_events"')) {

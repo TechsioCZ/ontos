@@ -1,4 +1,5 @@
 import { DateTime, Effect, Schema } from 'effect';
+import { sql } from 'drizzle-orm';
 import { expect, it } from 'effect-rstest';
 import { ConnectionError, SqlError } from 'effect/unstable/sql/SqlError';
 
@@ -30,6 +31,7 @@ const makeServices: ReadServiceFactory<Services> = (transaction) =>
     read: transaction
       .select({ tenantId: tenants.tenantId })
       .from(tenants)
+      .where(sql`${tenants.createdAt} <= transaction_timestamp()`)
       .pipe(
         Effect.map((rows) => rows.map((row) => row.tenantId)),
         Effect.mapError(
@@ -110,6 +112,7 @@ it.effect('runs the original factory and handler with installed scope and commit
     });
     expect(yield* harness.runtime.runRead(invocation)).toEqual([scope.tenantId]);
     expect(harness.snapshot().ownerQueries).toHaveLength(1);
+    expect(harness.snapshot().ownerQueries[0]?.sql).toContain('transaction_timestamp()');
     expect(harness.snapshot().evidenceWrites).toBe(1);
     expect(harness.snapshot().stages.slice(-3)).toEqual(['handler_executed', 'result_decoded', 'evidence_persisted']);
     expect(harness.snapshot().statements.at(-1)).toBe('COMMIT');
