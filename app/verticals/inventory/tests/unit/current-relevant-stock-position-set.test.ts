@@ -62,11 +62,13 @@ describe('Inventory owner Position-set completeness', () => {
   it.effect('invalidates sharing and lifecycle changes and verifies unchanged evidence', () =>
     Effect.gen(function* positionSetScenario3() {
       const first = yield* evaluateRelevantStockPositionSet(request, observation, scope);
+      expect(first.outcome).toBe('COMPLETE');
       if (first.outcome !== 'COMPLETE') {
         return;
       }
       const revalidate = { ...request, previousCompleteness: first.completeness };
       const unchanged = yield* evaluateRelevantStockPositionSet(revalidate, observation, scope);
+      expect(unchanged.outcome).toBe('COMPLETE');
       if (unchanged.outcome === 'COMPLETE') {
         expect(unchanged.previousProof).toBe('CURRENT');
       }
@@ -111,6 +113,7 @@ describe('Inventory owner Position-set completeness', () => {
     Effect.gen(function* positionSetScenario5() {
       const future = { ...observation, sharing: [{ ...sharing, effectiveFrom: new Date('2026-10-05T13:00:00Z') }] };
       const first = yield* evaluateRelevantStockPositionSet(request, future, scope);
+      expect(first.outcome).toBe('COMPLETE');
       if (first.outcome !== 'COMPLETE') {
         return;
       }
@@ -121,6 +124,7 @@ describe('Inventory owner Position-set completeness', () => {
         { ...future, observedAt: new Date('2026-10-05T13:00:00Z') },
         scope,
       );
+      expect(next.outcome).toBe('COMPLETE');
       if (next.outcome === 'COMPLETE') {
         expect(next.previousProof).toBe('INVALIDATED');
         expect(next.positionRefs).toHaveLength(1);
@@ -130,6 +134,7 @@ describe('Inventory owner Position-set completeness', () => {
   it.effect('rejects wrong Unit/backend and invalidates removal/binding changes', () =>
     Effect.gen(function* positionSetScenario6() {
       const first = yield* evaluateRelevantStockPositionSet(request, observation, scope);
+      expect(first.outcome).toBe('COMPLETE');
       if (first.outcome !== 'COMPLETE') {
         return;
       }
@@ -139,6 +144,7 @@ describe('Inventory owner Position-set completeness', () => {
         { ...observation, bindings: [{ ...observation.bindings[0], currentRevision: 2 }] },
       ]) {
         const result = yield* evaluateRelevantStockPositionSet(previous, changed, scope);
+        expect(result.outcome).toBe('COMPLETE');
         if (result.outcome === 'COMPLETE') {
           expect(result.previousProof).toBe('INVALIDATED');
         }
@@ -190,6 +196,7 @@ describe('Inventory owner Position-set completeness', () => {
   it.effect('future observation and a forged scope never validate retained proof', () =>
     Effect.gen(function* positionSetScenario8() {
       const first = yield* evaluateRelevantStockPositionSet(request, observation, scope);
+      expect(first.outcome).toBe('COMPLETE');
       if (first.outcome !== 'COMPLETE') {
         return;
       }
@@ -201,6 +208,7 @@ describe('Inventory owner Position-set completeness', () => {
         observation,
         scope,
       );
+      expect(result.outcome).toBe('COMPLETE');
       if (result.outcome === 'COMPLETE') {
         expect(result.previousProof).toBe('INVALIDATED');
       }
@@ -249,6 +257,7 @@ describe('Inventory owner Position-set completeness', () => {
   it.effect('query observation advances without invalidating unchanged material revision', () =>
     Effect.gen(function* revalidateLaterObservation() {
       const first = yield* evaluateRelevantStockPositionSet(request, observation, scope);
+      expect(first.outcome).toBe('COMPLETE');
       if (first.outcome !== 'COMPLETE') {
         return;
       }
