@@ -20,6 +20,7 @@ import {
   makeTestDatabaseFromClient,
   makeTestPgClient,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { outboxMessages } from '../../../../packages/core-runtime/src/db/schema.ts';
 import { ultramodernApiMarker } from '../../shared/ultramodern-build.ts';
 import type { PartyCandidateSchema } from '../../shared/domain/identity-contracts.ts';
 import { committedCreateResult } from '../../shared/domain/matching-contracts.ts';
@@ -130,6 +131,12 @@ it.live(
         );
         const adminClient = yield* makeTestPgClient(connections.admin.connectionString);
         const admin = yield* makeTestDatabaseFromClient(adminClient, partyRelations);
+        // Release only these disposable tenants' dispatch queues; retain append-only Core evidence.
+        yield* Effect.addFinalizer(() =>
+          Effect.forEach([fixture.tenantId, other.tenantId], (tenantId) =>
+            admin.delete(outboxMessages).where(eq(outboxMessages.tenantId, tenantId)),
+          ).pipe(Effect.orDie),
+        );
         const fixtureContext = yield* Layer.build(fixture.layer);
         const otherContext = yield* Layer.build(other.layer);
         const managerPrincipal = decodeFixturePrincipal(fixture.manager);

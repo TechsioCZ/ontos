@@ -39,7 +39,11 @@ import { FetchHttpClient } from 'effect/unstable/http';
 import { expect, it } from 'effect-rstest';
 import { SignJWT } from 'jose';
 
-import { applicationCompositionAuthority, coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
+import {
+  applicationCompositionAuthority,
+  coreRelations,
+  outboxMessages,
+} from '../../../../packages/core-runtime/src/db/schema.ts';
 import { loadSpiceDbConfig } from '../../../../packages/core-runtime/src/permissions/config.ts';
 import { newSpiceDbGrpcClient } from '../../../../packages/core-runtime/src/permissions/spicedb-grpc-rpc.ts';
 import {
@@ -452,6 +456,9 @@ it.live(
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
+        yield* Effect.addFinalizer(() =>
+          coreDatabase.delete(outboxMessages).where(eq(outboxMessages.tenantId, fixture.tenantId)).pipe(Effect.orDie),
+        );
         const cleanup = cleanupOwnerRows(database, fixture.tenantId);
         yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
         yield* cleanup();
@@ -631,6 +638,9 @@ it.live(
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
+        yield* Effect.addFinalizer(() =>
+          coreDatabase.delete(outboxMessages).where(eq(outboxMessages.tenantId, fixture.tenantId)).pipe(Effect.orDie),
+        );
         const cleanup = cleanupOwnerRows(database, fixture.tenantId);
         yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
         yield* cleanup();
@@ -778,6 +788,9 @@ it.live(
           runtimeConnectionString: Redacted.make(connections.runtime.connectionString),
         });
         yield* Effect.addFinalizer(() => fixture.close().pipe(Effect.orDie));
+        yield* Effect.addFinalizer(() =>
+          coreDatabase.delete(outboxMessages).where(eq(outboxMessages.tenantId, fixture.tenantId)).pipe(Effect.orDie),
+        );
         const cleanup = cleanupOwnerRows(database, fixture.tenantId);
         yield* Effect.addFinalizer(() => cleanup().pipe(Effect.orDie));
         yield* cleanup();
