@@ -74,6 +74,30 @@ export const makeCurrentnessInput = (amounts: readonly string[], requested = '10
   };
 };
 
+/** Broader public set proof; per-Position eligibility remains separate controlled owner evidence. */
+export const makeBroaderCurrentnessInput = (
+  amounts: readonly string[],
+  requested = '10',
+): AvailabilityEvaluationInput => {
+  const input = makeCurrentnessInput(amounts, requested);
+  const evidence = Schema.decodeUnknownSync(OwnerVerifiableSetCompletenessEvidenceSchema)({
+    observedAt: '2026-10-05T12:00:00.000Z',
+    ownerRevision: 'broader-set-revision-1',
+    scope: {
+      declaredScopeRef: 'inventory-item-unit-backend-current-positions:controlled',
+      kind: 'SAFELY_BROADER_SCOPE',
+      predicateRef: 'inventory-position-set:controlled-broader',
+    },
+  });
+  return {
+    ...input,
+    ownerQualification: {
+      ...input.ownerQualification,
+      set: { _tag: 'COMPLETE', evidence, predicateRef: evidence.scope.predicateRef },
+    },
+  };
+};
+
 const inventoryRef = (resourceType: string, resourceId: string) => ({
   moduleId: 'commerce.inventory',
   resourceId,

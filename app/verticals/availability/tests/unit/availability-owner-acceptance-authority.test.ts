@@ -10,7 +10,11 @@ import { AvailabilitySubjectSchema } from '../../shared/domain/availability-subj
 import { validateAvailabilitySourceAuthority } from '../../src/domain/availability-source-authority.ts';
 import { availabilityEvaluationService } from '../../src/services/availability-evaluation.service.ts';
 import { availabilityPromisePolicyService } from '../../src/services/availability-promise-policy.service.ts';
-import { makeCurrentnessInput, makeRichExternalCurrentnessInput } from '../support/availability-currentness.ts';
+import {
+  makeBroaderCurrentnessInput,
+  makeCurrentnessInput,
+  makeRichExternalCurrentnessInput,
+} from '../support/availability-currentness.ts';
 
 const evaluate = (input: AvailabilityEvaluationInput) =>
   Effect.gen(function* evaluateWithLaunchPolicy() {
@@ -276,51 +280,99 @@ describe('Availability owner acceptance: exact subject, authority and truthful q
       ).toBe(true);
     }
   });
-  it.effect('scenario 23: public Inventory completeness envelope permits the qualified multi-Position decision', () =>
-    Effect.gen(function* consumePublishedOwnerContract() {
-      const input = makeCurrentnessInput(['6', '4'], '10');
-      const completeness = Match.value(input.ownerQualification.set).pipe(
-        Match.tag('COMPLETE', (set) => set.evidence),
-        Match.tag('UNPROVEN', () => {}),
-        Match.exhaustive,
-      );
-      const ownerResponse = Schema.decodeUnknownSync(Schema.toType(CurrentRelevantStockPositionSetResponseSchema))({
-        completeness,
-        outcome: 'COMPLETE',
-        positionRefs: input.stockInput.positions.map((entry) => entry.position.ref),
-        previousProof: 'NOT_REQUESTED',
-        sharingEligibility: 'OWNER_VERIFIED',
-        verificationRule: 'OWNER_REVALIDATION_REQUIRED_AT_EACH_USE',
-      });
-      const producer = Schema.decodeUnknownSync(CurrentRelevantStockPositionSetResponseSchema)(
-        Schema.encodeSync(CurrentRelevantStockPositionSetResponseSchema)(ownerResponse),
-      );
-      expect(producer.outcome).toBe('COMPLETE');
-      yield* Match.value(producer).pipe(
-        Match.when({ outcome: 'COMPLETE' }, (complete) =>
-          Effect.gen(function* verifyComplete() {
-            const result = yield* evaluate({
-              ...input,
-              ownerQualification: {
-                ...input.ownerQualification,
-                set: {
-                  _tag: 'COMPLETE',
-                  evidence: complete.completeness,
-                  predicateRef: complete.completeness.scope.predicateRef,
+  it.effect(
+    'scenario 23: public broader Inventory proof permits the separately qualified multi-Position decision',
+    () =>
+      Effect.gen(function* consumePublishedOwnerContract() {
+        const input = makeBroaderCurrentnessInput(['6', '4'], '10');
+        const completeness = Match.value(input.ownerQualification.set).pipe(
+          Match.tag('COMPLETE', (set) => set.evidence),
+          Match.tag('UNPROVEN', () => {}),
+          Match.exhaustive,
+        );
+        const ownerResponse = Schema.decodeUnknownSync(Schema.toType(CurrentRelevantStockPositionSetResponseSchema))({
+          completeness,
+          outcome: 'COMPLETE',
+          positionRefs: input.stockInput.positions.map((entry) => entry.position.ref),
+          previousProof: 'NOT_REQUESTED',
+          sharingEligibility: 'NOT_EVALUATED',
+          verificationRule: 'OWNER_REVALIDATION_REQUIRED_AT_EACH_USE',
+        });
+        const producer = Schema.decodeUnknownSync(CurrentRelevantStockPositionSetResponseSchema)(
+          Schema.encodeSync(CurrentRelevantStockPositionSetResponseSchema)(ownerResponse),
+        );
+        expect(producer.outcome).toBe('COMPLETE');
+        yield* Match.value(producer).pipe(
+          Match.when({ outcome: 'COMPLETE' }, (complete) =>
+            Effect.gen(function* verifyComplete() {
+              expect(complete.completeness.scope.kind).toBe('SAFELY_BROADER_SCOPE');
+              expect(complete.sharingEligibility).toBe('NOT_EVALUATED');
+              const result = yield* evaluate({
+                ...input,
+                ownerQualification: {
+                  ...input.ownerQualification,
+                  set: {
+                    _tag: 'COMPLETE',
+                    evidence: complete.completeness,
+                    predicateRef: complete.completeness.scope.predicateRef,
+                  },
                 },
-              },
-            });
-            expect(result.outcome).toBe('AVAILABLE');
-            expect(complete.positionRefs).toEqual(
-              result.evidence.stockInput.positions.map((entry) => entry.position.ref),
-            );
-          }),
-        ),
-        Match.when({ outcome: 'UNPROVEN' }, () =>
-          Effect.sync(() => expect.fail('Controlled owner set must be complete')),
-        ),
-        Match.exhaustive,
-      );
+              });
+              expect(result.outcome).toBe('AVAILABLE');
+              expect(complete.positionRefs).toEqual(
+                result.evidence.stockInput.positions.map((entry) => entry.position.ref),
+              );
+            }),
+          ),
+          Match.when({ outcome: 'UNPROVEN' }, () =>
+            Effect.sync(() => expect.fail('Controlled owner set must be complete')),
+          ),
+          Match.exhaustive,
+        );
+      }),
+  );
+  it.effect('broader candidates with stock cannot replace owner-proven selling eligibility', () =>
+    Effect.gen(function* requireSeparateEligibility() {
+      const input = makeBroaderCurrentnessInput(['0', '10'], '5');
+      for (const usability of ['UNUSABLE', 'INDETERMINATE'] as const) {
+        const result = yield* evaluate({
+          ...input,
+          ownerQualification: {
+            ...input.ownerQualification,
+            positions: input.ownerQualification.positions.map((entry, index) =>
+              index === 1 ? { ...entry, usability } : entry,
+            ),
+          },
+        });
+        expect(result.outcome).toBe(usability === 'UNUSABLE' ? 'UNAVAILABLE' : 'INDETERMINATE');
+        expect(result.reasons).toContain(
+          usability === 'UNUSABLE' ? 'INSUFFICIENT_REUSABLE_QUANTITY' : 'POSITION_USABILITY_UNCERTAIN',
+        );
+        expect(result.reasons).not.toContain('COMPLETE_EMPTY_SET');
+        expect(result.reasons).not.toContain('CURRENT_ZERO');
+      }
+    }),
+  );
+  it.effect('nonempty broader candidates with no usable members remain distinct from a complete empty set', () =>
+    Effect.gen(function* preserveDeclaredSetMeaning() {
+      const input = makeBroaderCurrentnessInput(['10'], '5');
+      const unusable = yield* evaluate({
+        ...input,
+        ownerQualification: {
+          ...input.ownerQualification,
+          positions: input.ownerQualification.positions.map((entry) => ({ ...entry, usability: 'UNUSABLE' })),
+        },
+      });
+      expect(unusable.outcome).toBe('UNAVAILABLE');
+      expect(unusable.reasons).toContain('INSUFFICIENT_REUSABLE_QUANTITY');
+      expect(unusable.reasons).not.toContain('COMPLETE_EMPTY_SET');
+      expect(unusable.reasons).not.toContain('CURRENT_ZERO');
+      expect(unusable.evidence.stockInput.positions).toHaveLength(1);
+
+      const empty = yield* evaluate(makeBroaderCurrentnessInput([], '5'));
+      expect(empty.outcome).toBe('UNAVAILABLE');
+      expect(empty.reasons).toContain('COMPLETE_EMPTY_SET');
+      expect(empty.reasons).not.toContain('CURRENT_ZERO');
     }),
   );
   it.effect('scenario 24: a missing or non-current completeness qualification forbids negative authority', () =>

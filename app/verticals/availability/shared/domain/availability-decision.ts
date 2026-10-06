@@ -16,7 +16,9 @@ const reusableQuantity = Schema.Struct({
 });
 
 /** RESOLVED proves reusable quantity accounts for obligations, Source Coverage, sharing and exact constraints.
- * Verified owner qualification is supplied by trusted composition, never by a purchase request. */
+ * Verified owner qualification is supplied by trusted composition, never by a purchase request.
+ * A complete broader Inventory set may supply coverage, but NOT_EVALUATED candidate membership must
+ * never default to USABLE: exact sharing/usability remains separately owner-proven for each Position. */
 export const AvailabilityOwnerQualificationSchema = Schema.Struct({
   currentness: Schema.Literals(['CURRENT', 'STALE', 'INDETERMINATE']),
   positions: Schema.Array(
