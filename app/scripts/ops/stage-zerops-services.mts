@@ -80,6 +80,7 @@ export const RETIRED_STAGE_SERVICES = [
   { hostname: 'storefrontregistry', setup: 'storefront-registry' },
   { hostname: 'pricegroupcatalog', setup: 'price-group-catalog' },
   { hostname: 'inventory', setup: 'inventory' },
+  { hostname: 'availability', setup: 'availability' },
 ] as const;
 
 const EnvironmentKeySchema = Schema.NonEmptyString.pipe(Schema.brand('ZeropsEnvironmentKey'));
