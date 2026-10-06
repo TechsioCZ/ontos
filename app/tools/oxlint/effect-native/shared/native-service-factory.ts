@@ -1,8 +1,9 @@
 import type { Context, ESTree } from '@oxlint/plugins';
 
-import { asNode, memberName, parentOf, skipWrappers, staticString, unwrap } from './ast.ts';
+import { asNode, memberName, parentOf, skipWrappers, staticString, unwrap, walk } from './ast.ts';
 import type { Syntax } from './ast.ts';
 import { lookupVariable } from './bindings.ts';
+import { scopePath } from './paths.ts';
 
 const nativeFactories = new Set(['ActionServiceFactory', 'ReadServiceFactory']);
 const nativeDefinitions = new Set(['defineAction', 'defineRead']);
@@ -155,6 +156,70 @@ export const isInsideNativeServiceFactoryCallback = (context: Context, node: EST
   let ancestor = parentOf(node);
   while (ancestor !== null) {
     if (isNativeServiceFactoryCallback(context, ancestor)) {
+      return true;
+    }
+    ancestor = parentOf(ancestor);
+  }
+  return false;
+};
+
+const isExportedReadTestHarness = (context: Context, wrapped: ESTree.Node): boolean => {
+  const declaration = parentOf(wrapped);
+  if (declaration?.type !== 'VariableDeclarator' || declaration.init !== wrapped) {
+    return false;
+  }
+  const binding = asNode(declaration.id);
+  if (binding?.type !== 'Identifier' || binding.name !== 'makeReadTestHarness') {
+    return false;
+  }
+  const statement = parentOf(declaration);
+  if (statement?.type !== 'VariableDeclaration' || statement.kind !== 'const') {
+    return false;
+  }
+  const exported = parentOf(statement);
+  if (exported?.type !== 'ExportNamedDeclaration' || parentOf(exported)?.type !== 'Program') {
+    return false;
+  }
+  const variable = lookupVariable(context, binding);
+  return variable !== null && !variable.references.some((reference) => reference.isWrite() && !reference.init);
+};
+
+const hasReadTestComposition = (context: Context, body: ESTree.Node): boolean => {
+  let runtime = false;
+  let driver = false;
+  walk(body, context.sourceCode.visitorKeys, (node) => {
+    if (node.type !== 'CallExpression' || node.callee.type !== 'Identifier') {
+      return;
+    }
+    runtime ||= importedName(context, node.callee, '../reads/runtime.ts', true) === 'makeReadRuntime';
+    driver ||= importedName(context, node.callee, './scripted-pg-client.ts', true) === 'scriptedPgClientLayer';
+  });
+  return runtime && driver;
+};
+
+/** Core's public Read harness is a scoped test composition root, not a business factory.
+ * Recognition is limited to its exported callback and real owner-local runtime/driver calls;
+ * unrelated helpers in the same module and other testing directories remain governed. */
+export const isCoreReadTestHarnessCallback = (context: Context, node: ESTree.Node): boolean => {
+  if (scopePath(context.filename) !== 'packages/core-runtime/src/testing/reads.ts') {
+    return false;
+  }
+  if (node.type !== 'ArrowFunctionExpression' && node.type !== 'FunctionExpression') {
+    return false;
+  }
+  const wrapped = wrappedFactory(context, node);
+  return (
+    wrapped !== null &&
+    isExportedReadTestHarness(context, wrapped) &&
+    node.body !== null &&
+    hasReadTestComposition(context, node.body)
+  );
+};
+
+export const isInsideCoreReadTestHarnessCallback = (context: Context, node: ESTree.Node): boolean => {
+  let ancestor = parentOf(node);
+  while (ancestor !== null) {
+    if (isCoreReadTestHarnessCallback(context, ancestor)) {
       return true;
     }
     ancestor = parentOf(ancestor);

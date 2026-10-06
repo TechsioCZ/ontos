@@ -16,7 +16,7 @@ import type { ESTree } from '@oxlint/plugins';
 
 import { keyName as staticKeyName, parentOf, unwrapBinding } from '../shared/ast.ts';
 import { lookupVariable } from '../shared/bindings.ts';
-import { isNativeServiceFactoryCallback } from '../shared/native-service-factory.ts';
+import { isCoreReadTestHarnessCallback, isNativeServiceFactoryCallback } from '../shared/native-service-factory.ts';
 import { booleanOption, compile, positiveInteger, stringList } from '../shared/options.ts';
 import { isScriptFile, isTestFile, matchesGlobs, scopePath } from '../shared/paths.ts';
 
@@ -398,6 +398,9 @@ export const rule = defineRule({
 
     const inspect = (fn: AnyNode, identity: FactoryName | null, hasBody: boolean): void => {
       if (identity === null) return;
+      if (isCoreReadTestHarnessCallback(context, fn)) {
+        return;
+      }
       if (!options.factoryNamePattern.test(identity.name)) return;
       if (options.ignoreNames.has(identity.name)) return;
       const params = (fn as { params?: readonly AnyNode[] }).params ?? [];

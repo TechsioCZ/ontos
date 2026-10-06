@@ -3028,7 +3028,9 @@ it.live(
       }),
     );
     yield* writeText(fixture, `${ownerPath}/src/api/warehouse-client.ts`, 'export const client = true;\n');
-    yield* writeJson(fixture, `${ownerPath}/package.json`, { exports: {} });
+    yield* writeJson(fixture, `${ownerPath}/package.json`, {
+      exports: { './api': './shared/api.ts', './api/client': './src/api/warehouse-client.ts' },
+    });
     const api = {
       basePath: '/warehouse-api/warehouse-items',
       bff: { prefix: warehouseApiPrefix, strictEffectApproach: true },
