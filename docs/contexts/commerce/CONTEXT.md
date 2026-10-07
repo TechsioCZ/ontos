@@ -1165,9 +1165,10 @@ commercial terms, source evidence and Actor attribution. It remains the System o
 historical purchase even when Current Catalog or other source definitions later change.
 
 **Payment domain family** — Owns reusable Payment Term definitions plus canonical Payment intents,
-Payment Operations, collection/refund outcomes, settlement/remittance observations, authorization
-proofs and Payment reconciliation. Customer entitlement/preference, purchase selection, Billing
-receivable/documents, Fulfillment and Order Snapshot remain separate owner facts.
+Payment Operations, Payment Observations, collection/refund outcomes, settlement/remittance
+observations, authorization proofs and Payment reconciliation. Customer entitlement/preference,
+purchase selection, Billing receivable/documents, Fulfillment and Order Snapshot remain separate
+owner facts.
 
 **Fulfillment** — Domain for preparation, handoff, delivery, tracking, partial fulfillment and
 delivery exceptions. It acts on Accepted line and component meaning; current Catalog revisions do
