@@ -63,6 +63,26 @@ const inScope = (client: PgClient.PgClient, tenant: string, legalEntity: string)
     ]);
   });
 
+const waitForCompetingRoutineLock = (admin: PgClient.PgClient, competingPid: number, firstPid: number) =>
+  Effect.gen(function* proveConcurrentRoutineWait() {
+    // Observe the competing statement inside PostgreSQL before releasing the first
+    // transaction. A sequential replay cannot satisfy this barrier.
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const rows = yield* admin.unsafe<{ readonly blocked: boolean }>(
+        `select exists(select 1 from pg_stat_activity
+          where pid=$1 and wait_event_type='Lock'
+            and query like '%payment_term_catalog.accept_source_statement%'
+            and $2::int = any(pg_blocking_pids(pid))) as blocked`,
+        [competingPid, firstPid],
+      );
+      if (rows[0]?.blocked) {
+        return;
+      }
+      yield* Effect.sleep('10 millis');
+    }
+    expect.fail('Competing owner routine did not block on the first transaction');
+  });
+
 const migrateOwner = (temporaryDirectory: string, folder: string, adminUrl: string) =>
   Effect.gen(function* runRepositoryOwnerMigrator() {
     const configPath = path.join(temporaryDirectory, 'drizzle-proof.config.cjs');
@@ -104,6 +124,12 @@ const proveDatabase = (populated: boolean) =>
       const admin = yield* makeTestPgSession(adminUrl.toString(), { prepare: false });
       const runtime = yield* makeTestPgSession(runtimeUrl.toString());
       const competitor = yield* makeTestPgSession(runtimeUrl.toString());
+      const runtimePid = yield* Schema.decodeUnknownEffect(Schema.Struct({ pid: Schema.Number }))(
+        (yield* runtime.unsafe<{ readonly pid: number }>('select pg_backend_pid() as pid'))[0],
+      );
+      const competitorPid = yield* Schema.decodeUnknownEffect(Schema.Struct({ pid: Schema.Number }))(
+        (yield* competitor.unsafe<{ readonly pid: number }>('select pg_backend_pid() as pid'))[0],
+      );
       const oldMigrations = yield* Effect.tryPromise(() => mkdtemp(path.join(tmpdir(), 'c15-history-')));
       yield* Effect.addFinalizer(() =>
         Effect.tryPromise(() => rm(oldMigrations, { force: true, recursive: true })).pipe(Effect.orDie),
@@ -201,7 +227,7 @@ const proveDatabase = (populated: boolean) =>
         namespace: 'accounting-company-a',
         reason: 'Accept qualified source definition',
         semantics,
-        sourceCode: 'PAY14',
+        sourceCode: 'F14',
         sourceRecordId: 'record-14',
         sourceRevision: 1,
         sourceStatementId: 'statement-1',
@@ -318,6 +344,109 @@ const proveDatabase = (populated: boolean) =>
         ),
       ).toMatchObject({ result: { reason: 'INCOMPATIBLE_REFERENCE' } });
       yield* runtime.unsafe('COMMIT');
+      // Qualified source identities remain distinct even when external codes agree.
+      // EBS B supplies proven equivalence explicitly; its code is never a mapping key.
+      yield* inScope(runtime, tenant, legalEntity);
+      const otherSystem = 'other-actual-erp';
+      expect(
+        Schema.is(Schema.TaggedStruct('configured', { authorityRevision: Schema.Literal(1) }))(
+          yield* invoke('configure_source_authority', { ...configure(0), externalBusinessSystemId: otherSystem }),
+        ),
+      ).toBe(true);
+      const equivalent = acceptance({
+        externalBusinessSystemId: otherSystem,
+        mapping: { kind: 'EXISTING', paymentTermId: oldRef.resourceId },
+      });
+      const equivalentRaw = yield* invoke('accept_source_statement', equivalent);
+      const equivalentDefinition = yield* Schema.decodeUnknownEffect(acceptedDefinition)(equivalentRaw);
+      expect(equivalentDefinition.result.definition.paymentTermRef).toEqual(oldRef);
+      expect(yield* invoke('get_source_statement', equivalent)).not.toEqual(original.result);
+      expect(yield* invoke('get_source_statement', source)).toEqual(original.result);
+      const otherMeaning = yield* invoke(
+        'accept_source_statement',
+        acceptance({
+          externalBusinessSystemId: otherSystem,
+          mapping: {
+            ...source.mapping,
+            activeFrom: source.businessObservedAt,
+            code: 'OTHER_NET45',
+            description: 'Forty-five calendar days',
+            kind: 'CREATE',
+            name: 'Net 45',
+          },
+          semantics: { ...semantics, days: 45 },
+          sourceRevision: 2,
+          sourceStatementId: 'statement-2',
+        }),
+      );
+      const differentDefinition = yield* Schema.decodeUnknownEffect(acceptedDefinition)(otherMeaning);
+      expect(differentDefinition.result.definition.paymentTermRef).not.toEqual(oldRef);
+      expect(differentDefinition.result.definition.paymentTermRef).not.toEqual(
+        replacementDefinition.result.definition.paymentTermRef,
+      );
+      yield* runtime.unsafe('COMMIT');
+      expect(
+        yield* admin.unsafe<{ readonly code: string; readonly system: string; readonly term: string }>(
+          "select external_business_system_id as system,source_code as code,result->'definition'->'paymentTermRef'->>'resourceId' as term from payment_term_catalog.payment_term_source_statements where source_statement_id=$1 and outcome=$2 order by external_business_system_id",
+          ['statement-1', 'ACCEPTED'],
+        ),
+      ).toEqual([
+        { code: 'F14', system: source.externalBusinessSystemId, term: oldRef.resourceId },
+        { code: 'F14', system: otherSystem, term: oldRef.resourceId },
+      ]);
+
+      // A concurrent exact CREATE retry must wait, then recover the first result.
+      const createRetry = acceptance({
+        mapping: {
+          activeFrom: source.businessObservedAt,
+          code: 'ERP_NET60',
+          description: 'Sixty days',
+          kind: 'CREATE',
+          name: 'Net 60',
+        },
+        semantics: { ...semantics, days: 60 },
+        sourceRecordId: 'record-60',
+        sourceStatementId: 'create-retry',
+      });
+      yield* inScope(runtime, tenant, legalEntity);
+      yield* inScope(competitor, tenant, legalEntity);
+      const createdOnceRaw = yield* invoke('accept_source_statement', createRetry);
+      const createdOnce = yield* Schema.decodeUnknownEffect(decision)(createdOnceRaw);
+      const createdOnceDefinition = yield* Schema.decodeUnknownEffect(acceptedDefinition)(createdOnceRaw);
+      expect(createdOnce.canonicalCreated).toBe(true);
+      const waitingCreate = yield* Effect.forkChild(
+        call(competitor, tenant, legalEntity, 'accept_source_statement', {
+          ...createRetry,
+          actionInvocationId: randomUUID(),
+        }),
+      );
+      yield* waitForCompetingRoutineLock(admin, competitorPid.pid, runtimePid.pid);
+      yield* runtime.unsafe('COMMIT');
+      expect(yield* Fiber.join(waitingCreate)).toEqual({
+        canonicalCreated: false,
+        changed: false,
+        result: createdOnce.result,
+      });
+      yield* competitor.unsafe('COMMIT');
+      expect(
+        yield* admin.unsafe(
+          'select count(*)::int as count from payment_term_catalog.payment_terms where payment_term_id=$1',
+          [createdOnceDefinition.result.definition.paymentTermRef.resourceId],
+        ),
+      ).toEqual([{ count: 1 }]);
+      expect(
+        yield* admin.unsafe(
+          'select count(*)::int as count from payment_term_catalog.payment_term_revisions where payment_term_id=$1',
+          [createdOnceDefinition.result.definition.paymentTermRef.resourceId],
+        ),
+      ).toEqual([{ count: 1 }]);
+      expect(
+        yield* admin.unsafe(
+          'select count(*)::int as count from payment_term_catalog.payment_term_source_statements where source_statement_id=$1',
+          ['create-retry'],
+        ),
+      ).toEqual([{ count: 1 }]);
+
       yield* inScope(runtime, tenant, legalEntity);
       const rolledBack = acceptance({
         mapping: { kind: 'EXISTING', paymentTermId: oldRef.resourceId },
@@ -343,9 +472,179 @@ const proveDatabase = (populated: boolean) =>
           actionInvocationId: randomUUID(),
         }),
       );
+      yield* waitForCompetingRoutineLock(admin, competitorPid.pid, runtimePid.pid);
       yield* runtime.unsafe('COMMIT');
       expect(yield* Fiber.join(pending)).toEqual({ canonicalCreated: false, changed: false, result: first.result });
       yield* competitor.unsafe('COMMIT');
+      // Governed persisted lifecycle/history evidence uses a legitimate owner-local
+      // equivalent duplicate fixture, representing retained catalog history.
+      const aliasId = randomUUID();
+      yield* inScope(admin, tenant, legalEntity);
+      yield* admin.unsafe(
+        `insert into payment_term_catalog.payment_terms
+        select (jsonb_populate_record(null::payment_term_catalog.payment_terms,
+          to_jsonb(t) || jsonb_build_object('payment_term_id',$1::text,'business_code','RETAINED_ALIAS14',
+            'created_by_action_invocation_id',$2::text))).*
+        from payment_term_catalog.payment_terms t where payment_term_id=$3`,
+        [aliasId, randomUUID(), oldRef.resourceId],
+      );
+      yield* admin.unsafe(
+        `insert into payment_term_catalog.payment_term_revisions
+        select (jsonb_populate_record(null::payment_term_catalog.payment_term_revisions,
+          to_jsonb(r) || jsonb_build_object('payment_term_id',$1::text,
+            'payment_term_revision_id',$2::text,'semantic_revision_id',$3::text,'action_invocation_id',$4::text))).*
+        from payment_term_catalog.payment_term_revisions r where payment_term_id=$5 and revision_number=1`,
+        [aliasId, randomUUID(), randomUUID(), randomUUID(), oldRef.resourceId],
+      );
+      yield* admin.unsafe('COMMIT');
+      const mutation = {
+        actingPrincipalId: principal,
+        actionInvocationId: randomUUID(),
+        expectedMetadataRevision: 1,
+        paymentTermId: oldRef.resourceId,
+        reason: 'Owner acceptance history',
+      };
+      yield* inScope(runtime, tenant, legalEntity);
+      const correctedRows = yield* runtime.unsafe<{ readonly payload: unknown }>(
+        'select payload from payment_term_catalog.correct_term($1,$2,$3)',
+        [
+          tenant,
+          legalEntity,
+          JSON.stringify({ ...mutation, displayName: 'Clarified fourteen days', explanation: 'Cosmetic wording only' }),
+        ],
+      );
+      const corrected = yield* Schema.decodeUnknownEffect(Schema.Struct({ definition: PaymentTermDefinitionSchema }))(
+        correctedRows[0]?.payload,
+      );
+      expect(corrected.definition.paymentTermRef).toEqual(oldRef);
+      expect(corrected.definition.semanticRevisionId).toBe(accepted.result.definition.semanticRevisionId);
+      expect(corrected.definition.semanticFingerprint).toBe(accepted.result.definition.semanticFingerprint);
+      expect(corrected.definition.metadataRevision).toBe(2);
+      const staleCorrection = yield* runtime.unsafe<{ readonly payload: unknown }>(
+        'select payload from payment_term_catalog.correct_term($1,$2,$3)',
+        [
+          tenant,
+          legalEntity,
+          JSON.stringify({
+            ...mutation,
+            actionInvocationId: randomUUID(),
+            displayName: 'Stale correction',
+            explanation: 'Must not persist',
+          }),
+        ],
+      );
+      expect(
+        Schema.is(Schema.TaggedStruct('revision_conflict', { actualMetadataRevision: Schema.Literal(2) }))(
+          staleCorrection[0]?.payload,
+        ),
+      ).toBe(true);
+      const staleRetirement = yield* runtime.unsafe<{ readonly payload: unknown }>(
+        'select payload from payment_term_catalog.retire_term($1,$2,$3)',
+        [
+          tenant,
+          legalEntity,
+          JSON.stringify({ ...mutation, actionInvocationId: randomUUID(), effectiveAt: '2026-11-01T00:00:00.000Z' }),
+        ],
+      );
+      expect(
+        Schema.is(Schema.TaggedStruct('revision_conflict', { actualMetadataRevision: Schema.Literal(2) }))(
+          staleRetirement[0]?.payload,
+        ),
+      ).toBe(true);
+      const reconciled = yield* runtime.unsafe<{ readonly payload: unknown }>(
+        'select payload from payment_term_catalog.reconcile_term($1,$2,$3)',
+        [
+          tenant,
+          legalEntity,
+          JSON.stringify({
+            ...mutation,
+            actionInvocationId: randomUUID(),
+            aliasPaymentTermId: aliasId,
+            canonicalPaymentTermId: oldRef.resourceId,
+            expectedAliasMetadataRevision: 1,
+            expectedCanonicalMetadataRevision: 2,
+          }),
+        ],
+      );
+      expect(Schema.is(Schema.TaggedStruct('reconciled', {}))(reconciled[0]?.payload)).toBe(true);
+      const scheduled = yield* runtime.unsafe<{ readonly payload: unknown }>(
+        'select payload from payment_term_catalog.retire_term($1,$2,$3)',
+        [
+          tenant,
+          legalEntity,
+          JSON.stringify({
+            ...mutation,
+            actionInvocationId: randomUUID(),
+            effectiveAt: '2026-11-01T00:00:00.000Z',
+            expectedMetadataRevision: 2,
+          }),
+        ],
+      );
+      expect(
+        Schema.is(Schema.TaggedStruct('retired', { definition: PaymentTermDefinitionSchema }))(scheduled[0]?.payload),
+      ).toBe(true);
+      for (const [at, expectedTag] of [
+        ['2026-09-30T23:59:59.999Z', 'not_yet_active'],
+        ['2026-10-01T00:00:00.000Z', 'resolved'],
+        ['2026-10-31T23:59:59.999Z', 'resolved'],
+        ['2026-11-01T00:00:00.000Z', 'retired'],
+      ]) {
+        const resolution = yield* runtime.unsafe<{ readonly payload: unknown }>(
+          'select payload from payment_term_catalog.resolve_reference($1,$2,$3,$4,null)',
+          [tenant, legalEntity, aliasId, at],
+        );
+        expect(Schema.is(Schema.Struct({ _tag: Schema.Literal(expectedTag) }))(resolution[0]?.payload)).toBe(true);
+      }
+      const history = yield* runtime.unsafe<{ readonly payload: unknown }>(
+        'select payload from payment_term_catalog.get_history($1,$2,$3)',
+        [tenant, legalEntity, oldRef.resourceId],
+      );
+      expect(history[0]?.payload).toMatchObject({
+        revisions: [
+          { definitionRevisionId: accepted.result.definition.definitionRevisionId, semantics },
+          { definitionRevisionId: corrected.definition.definitionRevisionId, semantics },
+        ],
+      });
+      expect(yield* invoke('get_source_statement', source)).toEqual(original.result);
+      yield* runtime.unsafe('COMMIT');
+      expect(
+        yield* admin.unsafe(
+          'select count(*)::int as count from payment_term_catalog.payment_term_revisions where payment_term_id=$1',
+          [oldRef.resourceId],
+        ),
+      ).toEqual([{ count: 2 }]);
+
+      // Valid independent tenant and LE catalogs can reuse all source/business keys.
+      // Governed reads cannot observe the sibling scope or use its reference.
+      for (const [siblingTenant, siblingEntity] of [
+        [randomUUID(), legalEntity],
+        [tenant, randomUUID()],
+      ]) {
+        yield* inScope(runtime, siblingTenant, siblingEntity);
+        expect(yield* call(runtime, siblingTenant, siblingEntity, 'get_source_statement', source)).toBeNull();
+        expect(
+          yield* call(runtime, siblingTenant, siblingEntity, 'accept_source_statement', acceptance()),
+        ).toMatchObject({ changed: false, result: { reason: 'UNAUTHORIZED_SOURCE' } });
+        expect(
+          Schema.is(Schema.TaggedStruct('configured', { authorityRevision: Schema.Literal(1) }))(
+            yield* call(runtime, siblingTenant, siblingEntity, 'configure_source_authority', configure(0)),
+          ),
+        ).toBe(true);
+        const siblingRaw = yield* call(runtime, siblingTenant, siblingEntity, 'accept_source_statement', acceptance());
+        const sibling = yield* Schema.decodeUnknownEffect(acceptedDefinition)(siblingRaw);
+        expect(sibling.result.definition.paymentTermRef.resourceId).not.toBe(oldRef.resourceId);
+        expect(sibling.result.definition.paymentTermRef.tenantId).toBe(siblingTenant);
+        yield* runtime.unsafe('COMMIT');
+        yield* inScope(runtime, tenant, legalEntity);
+        expect(yield* invoke('get_source_statement', source)).toEqual(original.result);
+        const crossScope = yield* runtime.unsafe<{ readonly payload: unknown }>(
+          'select payload from payment_term_catalog.get_current($1,$2,$3)',
+          [tenant, legalEntity, sibling.result.definition.paymentTermRef.resourceId],
+        );
+        expect(crossScope[0]?.payload).toBeNull();
+        yield* runtime.unsafe('COMMIT');
+      }
+
       expect(yield* Effect.isFailure(invoke('get_source_statement', source))).toBe(true);
       expect(
         yield* Effect.isFailure(runtime.unsafe('select * from payment_term_catalog.payment_term_source_statements')),
