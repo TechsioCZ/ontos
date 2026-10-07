@@ -281,21 +281,48 @@ jobs:
         id: install
         uses: ./.github/actions/install-app
 
-      # Each check is a step, not a job: they take seconds, so a job each paid the install many times over.
-      # Every step runs after a successful install, so one run reports every failing check.
-      - name: Validate the root lefthook config
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        run: app/node_modules/.bin/lefthook validate
+      # Share one install across independent checks and retain a log for each check.
+      # Keep the memory-heavy API analyzer and Commerce build outside this group.
+      - parallel:
+          - name: Validate the root lefthook config
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            run: app/node_modules/.bin/lefthook validate
 
-      - name: Skills
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: app
-        run: mise exec -- pnpm skills:check
+          - name: Skills
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm skills:check
 
-      - name: I18n Boundaries
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: app
-        run: mise exec -- pnpm i18n:boundaries
+          - name: I18n Boundaries
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm i18n:boundaries
+
+          - name: Database Access Boundaries
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm database-access:check
+
+          - name: Lean Core Dependencies
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm lean-core:check
+
+          - name: Workspace Contract
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm contract:check
+
+          - name: Module Contract Generation
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm check:module-contracts
+
+          - name: Action Unit Tests
+            if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+            working-directory: app
+            run: mise exec -- pnpm action:test:unit
+
 
       - name: API Boundaries
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
@@ -304,31 +331,6 @@ jobs:
           # The whole-workspace analyzer exceeds V8's ~4 GiB default while releasing its graph.
           NODE_OPTIONS: --max-old-space-size=6144
         run: mise exec -- pnpm api:check
-
-      - name: Database Access Boundaries
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: app
-        run: mise exec -- pnpm database-access:check
-
-      - name: Lean Core Dependencies
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: app
-        run: mise exec -- pnpm lean-core:check
-
-      - name: Workspace Contract
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: app
-        run: mise exec -- pnpm contract:check
-
-      - name: Module Contract Generation
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: app
-        run: mise exec -- pnpm check:module-contracts
-
-      - name: Action Unit Tests
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        working-directory: app
-        run: mise exec -- pnpm action:test:unit
 
       # The Commerce Cloudflare build once crashed parsing Catalog's root HttpApi chain because React
       # Compiler also compiled server code. Production imports only the quantity-preparation client;
@@ -471,8 +473,11 @@ jobs:
 
       # The system-library install goes through apt and can take minutes on a slow mirror, so it runs in the
       # background while the services start and the migrations run; the browser tests wait for it below.
-      - name: Start installing Chromium and its runtime dependencies in the background
+      - name: Install Chromium and its runtime dependencies
+        id: chromium-install
+        background: true
         if: matrix.suite == 'browser'
+        timeout-minutes: 10
         working-directory: app
         env:
           CHROMIUM_CACHED: ${{ steps.playwright-cache.outputs.cache-hit }}
@@ -485,11 +490,7 @@ jobs:
           else
             set -- install --with-deps chromium
           fi
-          (
-            status=0
-            mise exec -- pnpm --filter @app/shell-super-app exec playwright "$@" || status=$?
-            echo "$status" > "$RUNNER_TEMP/chromium-install.status"
-          ) > "$RUNNER_TEMP/chromium-install.log" 2>&1 &
+          mise exec -- pnpm --filter @app/shell-super-app exec playwright "$@"
 
       - name: Create the local SpiceDB TLS certificate
         working-directory: app
@@ -562,14 +563,9 @@ jobs:
         working-directory: app
         run: mise exec -- pnpm test:integration
 
+      # `wait` always runs, including on non-browser shards where the install was skipped.
       - name: Wait for the Chromium install
-        if: matrix.suite == 'browser'
-        timeout-minutes: 10
-        run: |
-          status_file="$RUNNER_TEMP/chromium-install.status"
-          while [ ! -f "$status_file" ]; do sleep 2; done
-          cat "$RUNNER_TEMP/chromium-install.log"
-          exit "$(cat "$status_file")"
+        wait: chromium-install
 
       - name: Run parallel authenticated browser tests without retries
         if: matrix.suite == 'browser'
