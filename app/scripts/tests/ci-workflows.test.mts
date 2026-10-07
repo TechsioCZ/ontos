@@ -483,16 +483,20 @@ const TargetWorkflowSchema = Schema.Struct({
 const readTargetWorkflow = () =>
   Schema.decodeUnknownSync(TargetWorkflowSchema)(parse(readFileSync(GATES_WORKFLOW_URL, 'utf-8')));
 
+const VpnWorkflowStepSchema = Schema.Struct({
+  ...PublicationWorkflowStepSchema.fields,
+  env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
+});
 const VpnWorkflowJobsSchema = Schema.Struct({
+  jobs: Schema.Record(Schema.String, Schema.Struct({ steps: Schema.optional(Schema.Array(VpnWorkflowStepSchema)) })),
+});
+const VpnWorkflowEntriesSchema = Schema.Struct({
   jobs: Schema.Record(
     Schema.String,
     Schema.Struct({
       steps: Schema.optional(
         Schema.Array(
-          Schema.Struct({
-            ...PublicationWorkflowStepSchema.fields,
-            env: Schema.optional(Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.Number]))),
-          }),
+          Schema.Union([Schema.Struct({ parallel: Schema.Array(VpnWorkflowStepSchema) }), VpnWorkflowStepSchema]),
         ),
       ),
     }),
@@ -508,10 +512,28 @@ const PRIVATE_DELIVERY_JOBS = [
   'finalize-edge-deployment',
 ] as const;
 
-const readVpnWorkflowJobs = (name: string) =>
-  Schema.decodeUnknownSync(VpnWorkflowJobsSchema)(
-    parse(readFileSync(new URL(`../../../.github/workflows/${name}`, import.meta.url), 'utf-8')),
-  ).jobs;
+const PRIVATE_REFRESH_JOBS = ['refresh-stage', 'refresh-production'] as const;
+
+const readVpnWorkflowJobs = (
+  name: string,
+  source = readFileSync(new URL(`../../../.github/workflows/${name}`, import.meta.url), 'utf-8'),
+) => {
+  const { jobs } = Schema.decodeUnknownSync(VpnWorkflowEntriesSchema)(parse(source));
+  return Schema.decodeUnknownSync(VpnWorkflowJobsSchema)({
+    jobs: Object.fromEntries(
+      Object.entries(jobs).map(([jobName, job]) => {
+        // Private network operations require ordered steps, not siblings in a parallel group.
+        if ([...PRIVATE_DELIVERY_JOBS, ...PRIVATE_REFRESH_JOBS].some((privateJob) => privateJob === jobName)) {
+          expect(
+            job.steps?.some((step) => 'parallel' in step),
+            jobName,
+          ).not.toBe(true);
+        }
+        return [jobName, { steps: job.steps?.flatMap((step) => ('parallel' in step ? step.parallel : [step])) }];
+      }),
+    ),
+  }).jobs;
+};
 
 const NativeVpnActionSchema = Schema.Struct({
   inputs: Schema.Record(Schema.String, Schema.Struct({ required: Schema.Boolean })),
@@ -631,12 +653,21 @@ const runNativeVpnScript = (script: string, environment: Readonly<Record<string,
   }
 };
 
+it('rejects parallel private operations rather than inventing an order while reading them', () => {
+  expect(() =>
+    readVpnWorkflowJobs(
+      GATES_WORKFLOW,
+      'jobs:\n  deploy-zerops:\n    steps:\n      - parallel:\n          - name: Connect VPN\n          - name: Deploy private service\n',
+    ),
+  ).toThrow();
+});
+
 it('connects every private deployment and refresh runner through native Zerops VPN and always clears it', () => {
   const deploymentJobs = readVpnWorkflowJobs(GATES_WORKFLOW);
   const refreshJobs = readVpnWorkflowJobs('active-application-composition-refresh.yml');
   const jobs = [
     ...PRIVATE_DELIVERY_JOBS.map((name) => ({ name, steps: deploymentJobs[name]?.steps ?? [] })),
-    ...['refresh-stage', 'refresh-production'].map((name) => ({ name, steps: refreshJobs[name]?.steps ?? [] })),
+    ...PRIVATE_REFRESH_JOBS.map((name) => ({ name, steps: refreshJobs[name]?.steps ?? [] })),
   ];
   for (const { name, steps } of jobs) {
     const connections = steps.filter((step) => step.uses === ZEROPS_VPN_ACTION && step.with?.operation === 'connect');
@@ -811,7 +842,7 @@ const refreshPreservesNativeAction = (preserveScript: string, checkoutScript: st
 
 it('preserves this workflow revision of the native VPN action before checkout and restores it after git clean', () => {
   const jobs = readVpnWorkflowJobs(REFRESH_WORKFLOW);
-  for (const name of ['refresh-stage', 'refresh-production']) {
+  for (const name of PRIVATE_REFRESH_JOBS) {
     const steps = jobs[name]?.steps ?? [];
     const preserve = steps.find((step) => step.name === REFRESH_VPN_PRESERVE_STEP);
     const checkout = steps.find((step) => step.name === REFRESH_REVISION_STEP);
@@ -1744,7 +1775,14 @@ const GateCommandsWorkflowSchema = Schema.Struct({
       ),
       strategy: Schema.Struct({ matrix: Schema.Struct({ shard: Schema.Array(Schema.Number) }) }),
     }),
-    'static-contracts': Schema.Struct({ steps: Schema.Array(Schema.Struct({ run: Schema.optional(Schema.String) })) }),
+    'static-contracts': Schema.Struct({
+      steps: Schema.Array(
+        Schema.Struct({
+          parallel: Schema.optional(Schema.Array(Schema.Struct({ run: Schema.String }))),
+          run: Schema.optional(Schema.String),
+        }),
+      ),
+    }),
     [WORKSPACE_GATE_JOB]: Schema.Struct({
       strategy: Schema.Struct({
         matrix: Schema.Struct({
@@ -1777,7 +1815,9 @@ it('runs every workspace gate check in some workspace-gate entry', () => {
   ]) {
     expect(commands).toContain(check);
   }
-  const staticChecks = readGateCommandJobs()['static-contracts'].steps.map(({ run }) => run ?? '');
+  const staticChecks = readGateCommandJobs()['static-contracts'].steps.flatMap(({ parallel, run }) =>
+    parallel ? parallel.map((step) => step.run) : [run ?? ''],
+  );
   expect(staticChecks).toContain('mise exec -- pnpm database-access:check');
 });
 
