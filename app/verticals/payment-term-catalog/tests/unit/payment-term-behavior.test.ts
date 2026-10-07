@@ -991,3 +991,32 @@ it.effect('Current returns a proven equivalent requested alias without requiring
     ]);
   }),
 );
+
+it.effect('unavailable authoritative affected-use evidence prevents every retirement write and effect', () =>
+  Effect.gen(function* unavailableRetirementAuthority() {
+    let retireCalls = 0;
+    const counters = { audits: 0, events: 0, outboxes: 0, reads: 0 };
+    const failure = yield* handleRetirePaymentTerm(
+      retirementPayload,
+      context(
+        services({
+          retire: () => {
+            retireCalls += 1;
+            return Effect.succeed({ _tag: 'retired', definition: retired });
+          },
+          verifyRetirementGovernance: () =>
+            Effect.fail(
+              new PaymentTermAffectedUseAssessmentUnavailable({
+                code: 'payment_term_affected_use_assessment_unavailable',
+                reason: 'Authoritative open-purchase evidence is unavailable',
+              }),
+            ),
+        }),
+        counters,
+      ),
+    ).pipe(Effect.flip);
+    expect(Schema.is(PaymentTermAffectedUseAssessmentUnavailable)(failure)).toBe(true);
+    expect(retireCalls).toBe(0);
+    expect(counters).toEqual({ audits: 0, events: 0, outboxes: 0, reads: 0 });
+  }),
+);
