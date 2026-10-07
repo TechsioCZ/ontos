@@ -61,22 +61,17 @@ const incompatible = (
   /* oxlint-disable anti-slop/no-known-value-widening -- This mutable evidence fragment intentionally preserves the optional fields of the public resolution contract. */
   const expectedEvidence: {
     expectedCompatibilityId?: string;
-    expectedConsumerCompatibility?: 'customer-payment-terms.v1';
     expectedSemanticRevisionId?: string;
   } = {};
   /* oxlint-enable anti-slop/no-known-value-widening */
   if (request.expectedCompatibilityId !== undefined) {
     expectedEvidence.expectedCompatibilityId = request.expectedCompatibilityId;
   }
-  if (request.expectedConsumerCompatibility !== undefined) {
-    expectedEvidence.expectedConsumerCompatibility = request.expectedConsumerCompatibility;
-  }
   if (request.expectedSemanticRevisionId !== undefined) {
     expectedEvidence.expectedSemanticRevisionId = request.expectedSemanticRevisionId;
   }
   return {
     actualCompatibilityId: definition.compatibilityId,
-    actualConsumerCompatibility: definition.compatibleWith,
     actualSemanticRevisionId: definition.semanticRevisionId,
     definition,
     ...expectedEvidence,
@@ -107,13 +102,10 @@ const resolutionOutcome = (
       missing: () => ({ kind: 'MISSING' as const, requestedPaymentTermRef }),
       not_yet_active: notYetActive,
       resolved: ({ definition }) => {
-        const consumerMismatch =
-          request.expectedConsumerCompatibility !== undefined &&
-          !definition.compatibleWith.includes(request.expectedConsumerCompatibility);
         const semanticMismatch =
           request.expectedSemanticRevisionId !== undefined &&
           definition.semanticRevisionId !== request.expectedSemanticRevisionId;
-        return consumerMismatch || semanticMismatch
+        return semanticMismatch
           ? incompatible(request, requestedPaymentTermRef, definition)
           : { definition, kind: 'USABLE' as const, requestedPaymentTermRef };
       },
@@ -152,11 +144,6 @@ const isEquivalentToCanonical = (definition: ResolvedPaymentTermDefinition, cano
   definition.semanticFingerprint === canonical.semanticFingerprint &&
   definition.compatibilityId === canonical.compatibilityId;
 
-const supportsExpectedConsumer = (
-  definition: ResolvedPaymentTermDefinition,
-  expectedConsumerCompatibility: CurrentPaymentTermReferenceRequest['expectedConsumerCompatibility'],
-) => expectedConsumerCompatibility === undefined || definition.compatibleWith.includes(expectedConsumerCompatibility);
-
 const historicalResolution = (
   request: CurrentPaymentTermReferenceRequest,
   effectiveAt: string,
@@ -165,11 +152,7 @@ const historicalResolution = (
   exactDefinition: ResolvedPaymentTermDefinition | undefined,
 ): PaymentTermReferenceResolution => {
   const requestedPaymentTermRef = toPaymentTermRef(trustedTenantId, outcome.requestedPaymentTermId);
-  if (
-    exactDefinition === undefined ||
-    !isEquivalentToCanonical(exactDefinition, outcome.definition) ||
-    !supportsExpectedConsumer(exactDefinition, request.expectedConsumerCompatibility)
-  ) {
+  if (exactDefinition === undefined || !isEquivalentToCanonical(exactDefinition, outcome.definition)) {
     return incompatible(request, requestedPaymentTermRef, outcome.definition);
   }
   if (request.paymentTermRef.resourceId === outcome.canonicalPaymentTermId) {
@@ -216,13 +199,20 @@ const preserveRequestedSemanticRevision = (
   const { expectedSemanticRevisionId } = request;
   if (
     (!Predicate.isTagged(outcome, 'resolved') && !Predicate.isTagged(outcome, 'retired')) ||
-    expectedSemanticRevisionId === undefined ||
-    outcome.definition.semanticRevisionId === expectedSemanticRevisionId
+    (outcome.requestedPaymentTermId === outcome.canonicalPaymentTermId &&
+      (expectedSemanticRevisionId === undefined ||
+        outcome.definition.semanticRevisionId === expectedSemanticRevisionId))
   ) {
     return Effect.succeed(resolutionOutcome(request, trustedTenantId, outcome));
   }
 
-  return historicalDefinition(services, outcome.requestedPaymentTermId, expectedSemanticRevisionId).pipe(
+  const requestedDefinition =
+    expectedSemanticRevisionId === undefined
+      ? services
+          .getCurrent(outcome.requestedPaymentTermId)
+          .pipe(Effect.mapError(unavailable), Effect.map(Option.getOrUndefined))
+      : historicalDefinition(services, outcome.requestedPaymentTermId, expectedSemanticRevisionId);
+  return requestedDefinition.pipe(
     Effect.map((exactDefinition) =>
       historicalResolution(request, effectiveAt, trustedTenantId, outcome, exactDefinition),
     ),

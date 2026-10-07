@@ -225,8 +225,7 @@ const paymentTermCatalogOwnerEvidence = {
   current: [
     {
       code: 'NET_14',
-      compatibilityId: 'net_days.invoice_issued_at.calendar_days_utc.v1',
-      compatibleWith: ['customer-payment-terms.v1'],
+      compatibilityId: 'net_days.invoice_issue_date.calendar_days.v2',
       created: {
         actionInvocationId: 'czech-launch-payment-term-v1',
         actorPrincipalId: 'czech-launch-fixture',
@@ -234,7 +233,7 @@ const paymentTermCatalogOwnerEvidence = {
         reason,
       },
       definitionRevisionId: '78000000-0000-4000-8000-000000000114',
-      description: 'Payment is due fourteen UTC calendar days after invoice issue.',
+      description: 'Payment is due fourteen calendar days from the invoice issue date.',
       lifecycle: { effectiveFrom, effectiveTo: null, state: 'ACTIVE' },
       metadataRevision: 1,
       name: 'Net 14',
@@ -243,10 +242,10 @@ const paymentTermCatalogOwnerEvidence = {
       semanticFingerprint: 'c'.repeat(64),
       semanticRevisionId: '78000000-0000-4000-8000-000000000214',
       semantics: {
-        calculationRuleVersion: 1,
-        calendarRule: 'CALENDAR_DAYS_UTC',
+        calculationRuleVersion: 2,
+        calendarRule: 'CALENDAR_DAYS',
         days: 14,
-        dueDateAnchor: 'INVOICE_ISSUED_AT',
+        dueDateAnchor: 'INVOICE_ISSUE_DATE',
         kind: 'NET_DAYS',
       },
       updated: {

@@ -53,6 +53,22 @@ It must not:
 - infer customer identity or Permission from Contact Points, Party Relationships, selected context, or account state; or
 - become a universal BFF for staff, integrations, or future agents.
 
+## Payment Term consumer boundary
+
+`payment.term-catalog` owns Payment Term semantics, lifecycle and revision identity. Commerce
+Customer Context imports the published owner snapshot schema and calls the published Current client;
+it owns customer entitlements and preferences. Canonical version 2 terms describe `IMMEDIATE` as
+no deferred net-days term and `NET_DAYS` as invoice issue DATE plus calendar days. Billing owns
+concrete due dates. Retained version 1 snapshots preserve their exact history and are unsupported
+for new Current Commerce selection.
+
+A material semantic replacement receives a different immutable `PaymentTermRef`. Source code reuse,
+successors and alias resolution must never rewrite customer assignments or returned snapshot
+identity. Missing references, retired definitions, incompatible revisions, broken references and
+unsupported semantics remain explicit fail-closed distinctions; a rejected reference cannot become
+an absent candidate that silently permits policy fallback. The existing CCC-to-Payment client
+direction introduces no upstream runtime or package dependency.
+
 ## Native contracts and Medusa compatibility
 
 Native module-owned Commerce contracts are authoritative. A temporary Medusa Store Compatibility Facade may translate only the Store API routes/shapes required by existing `new-engine` hooks.

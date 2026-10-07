@@ -8,7 +8,7 @@ import {
   PaymentTermNameSchema,
   PaymentTermReasonSchema,
   PaymentTermRevisionIdSchema,
-  PaymentTermSemanticsSchema,
+  PaymentTermCanonicalSemanticsSchema,
 } from '../domain/payment-term.ts';
 import { PaymentTermRefSchema } from '../resources/payment-term.ts';
 
@@ -18,7 +18,7 @@ export const CreatePaymentTermPayloadSchema = Schema.Struct({
   description: PaymentTermDescriptionSchema,
   name: PaymentTermNameSchema,
   reason: PaymentTermReasonSchema,
-  semantics: PaymentTermSemanticsSchema,
+  semantics: PaymentTermCanonicalSemanticsSchema,
 });
 export type CreatePaymentTermPayload = typeof CreatePaymentTermPayloadSchema.Type;
 

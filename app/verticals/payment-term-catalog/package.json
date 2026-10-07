@@ -6,11 +6,13 @@
   "exports": {
     "./api": "./shared/api.ts",
     "./api/client": "./src/api/payment-term-catalog-client.ts",
-    "./ports/customer-context-gateway-credential": "./shared/domain/customer-context-gateway-credential.ts",
     "./outbox/payment-term-catalog-payment-term-created-v1": "./shared/outbox/payment-term-catalog-payment-term-created-v1.ts",
     "./outbox/payment-term-catalog-payment-term-metadata-corrected-v1": "./shared/outbox/payment-term-catalog-payment-term-metadata-corrected-v1.ts",
     "./outbox/payment-term-catalog-payment-term-reference-reconciled-v1": "./shared/outbox/payment-term-catalog-payment-term-reference-reconciled-v1.ts",
     "./outbox/payment-term-catalog-payment-term-retired-v1": "./shared/outbox/payment-term-catalog-payment-term-retired-v1.ts",
+    "./outbox/payment-term-catalog-source-authority-configured-v1": "./shared/outbox/payment-term-catalog-source-authority-configured-v1.ts",
+    "./outbox/payment-term-catalog-source-statement-decided-v1": "./shared/outbox/payment-term-catalog-source-statement-decided-v1.ts",
+    "./ports/customer-context-gateway-credential": "./shared/domain/customer-context-gateway-credential.ts",
     "./resources/payment-term-catalog-root": "./shared/resources/payment-term-catalog-root.ts"
   },
   "scripts": {

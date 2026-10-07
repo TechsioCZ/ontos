@@ -1037,7 +1037,15 @@ export const makeChangeCustomerPaymentTermsServices = (
         ? []
         : yield* catalog
             .resolveDefinitions(definitionRequests)
-            .pipe(Effect.mapError((failure) => actionFailure('DEPENDENCY_UNAVAILABLE', failure.reason, true)));
+            .pipe(
+              Effect.mapError((failure) =>
+                actionFailure(
+                  failure.catalogRejection === undefined ? 'DEPENDENCY_UNAVAILABLE' : 'PAYMENT_TERM_INCOMPATIBLE',
+                  failure.reason,
+                  failure.catalogRejection === undefined,
+                ),
+              ),
+            );
     if (!catalogResolvedEveryRequest(definitionRequests, definitions)) {
       return yield* actionFailure(
         'PAYMENT_TERM_NOT_CURRENT',

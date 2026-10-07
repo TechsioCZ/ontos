@@ -4,12 +4,15 @@
 import { defineOntosModuleManifest } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
+import { acceptPaymentTermSourceStatementAction } from './src/actions/accept-payment-term-source-statement.action.ts';
+import { configurePaymentTermSourceAuthorityAction } from './src/actions/configure-payment-term-source-authority.action.ts';
 import { correctPaymentTermAction } from './src/actions/correct-payment-term.action.ts';
 import { createPaymentTermAction } from './src/actions/create-payment-term.action.ts';
 import { CurrentPaymentTermsApi } from './shared/apis/current-payment-terms.ts';
 import { paymentTermCatalogRootResourceDescriptor } from './shared/resources/payment-term-catalog-root.ts';
 import { PaymentTermHistoryApi } from './shared/apis/payment-term-history.ts';
 import { paymentTermResourceDescriptor } from './shared/resources/payment-term.ts';
+import { PaymentTermSourceStatementApi } from './shared/apis/payment-term-source-statement.ts';
 import { reconcilePaymentTermReferenceAction } from './src/actions/reconcile-payment-term-reference.action.ts';
 import { retirePaymentTermAction } from './src/actions/retire-payment-term.action.ts';
 // </generated-module-manifest-imports>
@@ -31,6 +34,8 @@ export const paymentTermCatalogManifest: OntosModuleManifestInput = defineOntosM
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      acceptPaymentTermSourceStatementAction,
+      configurePaymentTermSourceAuthorityAction,
       correctPaymentTermAction,
       createPaymentTermAction,
       reconcilePaymentTermReferenceAction,
@@ -41,6 +46,7 @@ export const paymentTermCatalogManifest: OntosModuleManifestInput = defineOntosM
       // <generated-module-manifest-apis>
       'current-payment-terms': CurrentPaymentTermsApi,
       'payment-term-history': PaymentTermHistoryApi,
+      'payment-term-source-statement': PaymentTermSourceStatementApi,
       // </generated-module-manifest-apis>
     },
     businessPermissions: [

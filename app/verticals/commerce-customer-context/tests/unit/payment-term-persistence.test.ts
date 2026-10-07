@@ -1,4 +1,5 @@
 import type { OperationalScope } from '@app/core-runtime';
+import { paymentTermCatalogPort } from '../../src/integrations/payment-term-catalog.ts';
 import { ReadHandlerUnavailable } from '@app/core-runtime';
 import type { CurrentPaymentTermsResponse } from '@app/payment-term-catalog-contracts/current-payment-terms';
 import { Effect, Predicate, Schema } from 'effect';
@@ -74,7 +75,6 @@ const provenance = {
 const currentDefinition = (): PaymentTermDefinition => ({
   code: 'NET_30',
   compatibilityId: 'net-days.v1',
-  compatibleWith: ['customer-payment-terms.v1'],
   created: provenance,
   definitionRevisionId: semanticRevisionId,
   description: 'Payment due 30 calendar days after invoice issue.',
@@ -90,10 +90,10 @@ const currentDefinition = (): PaymentTermDefinition => ({
   semanticFingerprint: 'a'.repeat(64),
   semanticRevisionId,
   semantics: {
-    calculationRuleVersion: 1,
-    calendarRule: 'CALENDAR_DAYS_UTC',
+    calculationRuleVersion: 2,
+    calendarRule: 'CALENDAR_DAYS',
     days: 30,
-    dueDateAnchor: 'INVOICE_ISSUED_AT',
+    dueDateAnchor: 'INVOICE_ISSUE_DATE',
     kind: 'NET_DAYS',
   },
   updated: provenance,
@@ -515,5 +515,53 @@ it.effect('fails resolution closed when Customer Commerce Policy is absent', () 
     if (Schema.is(ReadHandlerUnavailable)(failure)) {
       expect(failure.reason).toContain('Customer Commerce Policy');
     }
+  }),
+);
+
+it.effect('maps explicit owner revision rejection to a nonretryable Action incompatibility without persistence', () =>
+  Effect.gen(function* explicitRevisionRejection() {
+    const catalog = paymentTermCatalogPort('revision-conflict', () =>
+      Effect.succeed({
+        current: [],
+        effectiveAt: '2026-10-01T00:00:00.000Z',
+        observedAt: '2026-10-01T00:00:00.000Z',
+        referenceOutcomes: [
+          {
+            actualCompatibilityId: currentDefinition().compatibilityId,
+            actualSemanticRevisionId: semanticRevisionId,
+            definition: currentDefinition(),
+            expectedSemanticRevisionId: '99999999-9999-4999-8999-999999999999',
+            kind: 'INCOMPATIBLE',
+            requestedPaymentTermRef: paymentTermRef,
+          },
+        ],
+        truncated: false,
+      }),
+    );
+    const services = makeChangeCustomerPaymentTermsServices(
+      persistenceContext(transactionReturning([row('PRESENT', state(), 1)])),
+      catalog,
+    );
+    const failure = yield* Effect.flip(
+      services.change(
+        {
+          changes: [
+            {
+              _tag: 'GRANT_ENTITLEMENT',
+              effectiveFrom: '2026-10-01T00:00:00.000Z',
+              entitlementRef,
+              paymentTermRef,
+              semanticRevisionId: '99999999-9999-4999-8999-999999999999',
+            },
+          ],
+          counterpartyRef,
+          expectedRevision: 1,
+          profileRef,
+          reason: 'Approved terms',
+        },
+        actionContextFor(services),
+      ),
+    );
+    expect(failure).toMatchObject({ code: 'PAYMENT_TERM_INCOMPATIBLE', retryable: false });
   }),
 );

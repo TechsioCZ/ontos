@@ -17,10 +17,13 @@ const runtimeRole = 'ontos_runtime';
 
 /** The audited catalog surface: every runtime call enters the schema through one of these. */
 const grantedRoutines = [
+  'accept_source_statement',
+  'configure_source_authority',
   'correct_term',
   'create_term',
   'get_current',
   'get_history',
+  'get_source_statement',
   'list_current',
   'reconcile_term',
   'resolve_reference',
@@ -34,6 +37,8 @@ const guardTriggers = [
   ['payment_term_aliases', 'payment_term_aliases_append_only'],
   ['payment_term_lifecycle_events', 'payment_term_lifecycle_events_append_only'],
   ['payment_term_revisions', 'payment_term_revisions_append_only'],
+  ['payment_term_source_authorities', 'payment_term_source_authorities_append_only'],
+  ['payment_term_source_statements', 'payment_term_source_statements_append_only'],
   ['payment_terms', 'payment_terms_identity_immutable'],
 ] as const;
 

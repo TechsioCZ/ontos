@@ -52,15 +52,15 @@ const expectedColumns = EffectArray.sort(
 );
 
 const schemaInfrastructureIsValid = (infrastructure: InfrastructureRow): boolean =>
-  infrastructure.table_count === 4 &&
-  infrastructure.force_rls_count === 4 &&
+  infrastructure.table_count === 6 &&
+  infrastructure.force_rls_count === 6 &&
   infrastructure.wrong_owner_count === 0 &&
-  infrastructure.policy_count === 16 &&
+  infrastructure.policy_count === 24 &&
   infrastructure.foreign_key_count === 4 &&
-  infrastructure.append_only_trigger_count === 3 &&
+  infrastructure.append_only_trigger_count === 5 &&
   infrastructure.identity_trigger_count === 1 &&
   infrastructure.journal_count === 1 &&
-  infrastructure.governed_routine_count === 8 &&
+  infrastructure.governed_routine_count === 11 &&
   infrastructure.unexpected_runtime_routine_count === 0;
 
 const runtimePrivilegesAreValid = (infrastructure: InfrastructureRow): boolean =>
@@ -173,7 +173,7 @@ const verification = Effect.gen(function* verifyPaymentTermCatalogDatabase() {
             inner join pg_catalog.pg_class as triggered on triggered.oid = trigger_record.tgrelid
             inner join pg_catalog.pg_namespace as triggered_namespace on triggered_namespace.oid = triggered.relnamespace
             where triggered_namespace.nspname = ${PAYMENT_TERM_CATALOG_SCHEMA_NAME}
-              and trigger_record.tgname in (${'payment_term_revisions_append_only'}, ${'payment_term_lifecycle_events_append_only'}, ${'payment_term_aliases_append_only'})
+              and trigger_record.tgname in (${'payment_term_revisions_append_only'}, ${'payment_term_lifecycle_events_append_only'}, ${'payment_term_aliases_append_only'}, ${'payment_term_source_authorities_append_only'}, ${'payment_term_source_statements_append_only'})
               and not trigger_record.tgisinternal) as append_only_trigger_count,
           (select count(*)::integer from pg_catalog.pg_trigger as trigger_record
             inner join pg_catalog.pg_class as triggered on triggered.oid = trigger_record.tgrelid
@@ -189,6 +189,9 @@ const verification = Effect.gen(function* verifyPaymentTermCatalogDatabase() {
             inner join pg_catalog.pg_namespace as routine_namespace on routine_namespace.oid = routine.pronamespace
             where routine_namespace.nspname = ${PAYMENT_TERM_CATALOG_SCHEMA_NAME}
               and routine.oid::regprocedure::text in (
+                ${'payment_term_catalog.accept_source_statement(uuid,uuid,jsonb)'},
+                ${'payment_term_catalog.configure_source_authority(uuid,uuid,jsonb)'},
+                ${'payment_term_catalog.get_source_statement(uuid,uuid,jsonb)'},
                 ${'payment_term_catalog.correct_term(uuid,uuid,jsonb)'},
                 ${'payment_term_catalog.create_term(uuid,uuid,jsonb)'},
                 ${'payment_term_catalog.get_current(uuid,uuid,uuid)'},
@@ -206,6 +209,9 @@ const verification = Effect.gen(function* verifyPaymentTermCatalogDatabase() {
             where routine_namespace.nspname = ${PAYMENT_TERM_CATALOG_SCHEMA_NAME}
               and has_function_privilege(${'ontos_runtime'}, routine.oid, ${'EXECUTE'})
               and routine.oid::regprocedure::text not in (
+                ${'payment_term_catalog.accept_source_statement(uuid,uuid,jsonb)'},
+                ${'payment_term_catalog.configure_source_authority(uuid,uuid,jsonb)'},
+                ${'payment_term_catalog.get_source_statement(uuid,uuid,jsonb)'},
                 ${'payment_term_catalog.correct_term(uuid,uuid,jsonb)'},
                 ${'payment_term_catalog.create_term(uuid,uuid,jsonb)'},
                 ${'payment_term_catalog.get_current(uuid,uuid,uuid)'},

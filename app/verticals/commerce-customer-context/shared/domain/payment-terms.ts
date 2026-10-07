@@ -1,6 +1,7 @@
 import { Match, Predicate, Schema } from 'effect';
 import type { CustomerPaymentTermEntitlementRef } from '../resources/customer-payment-term-entitlement.ts';
 import {
+  isPaymentTermDefinitionSupported,
   CustomerPaymentTermEntitlementSchema,
   CustomerPaymentTermsStateSchema,
   PaymentTermDefinitionSnapshotSchema,
@@ -66,6 +67,7 @@ export const projectCustomerPaymentTermsAt = (
 };
 
 const definitionIsCurrent = (definition: PaymentTermDefinitionSnapshot, at: string): boolean =>
+  isPaymentTermDefinitionSupported(definition) &&
   definition.lifecycle.effectiveFrom <= at &&
   (definition.lifecycle.effectiveTo === null || at < definition.lifecycle.effectiveTo);
 
@@ -270,7 +272,7 @@ const grantEntitlementDefinitionProblem = (
       reason: 'MISSING_DEFINITION',
     };
   }
-  if (!definition.compatibleWith.includes('customer-payment-terms.v1')) {
+  if (!isPaymentTermDefinitionSupported(definition)) {
     return {
       _tag: 'PAYMENT_TERM_UNUSABLE',
       paymentTermRef: change.paymentTermRef,

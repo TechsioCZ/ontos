@@ -42,7 +42,6 @@ const provenance = {
 const definition = {
   code: 'NET_30',
   compatibilityId: 'net_days.invoice_issued_at.calendar_days_utc.v1',
-  compatibleWith: ['customer-payment-terms.v1'],
   created: provenance,
   definitionRevisionId: '50000000-0000-4000-8000-000000000001',
   description: 'Payment is due thirty calendar days after invoice issue.',
@@ -58,10 +57,10 @@ const definition = {
   semanticFingerprint: 'a'.repeat(64),
   semanticRevisionId: '60000000-0000-4000-8000-000000000001',
   semantics: {
-    calculationRuleVersion: 1,
-    calendarRule: 'CALENDAR_DAYS_UTC',
+    calculationRuleVersion: 2,
+    calendarRule: 'CALENDAR_DAYS',
     days: 30,
-    dueDateAnchor: 'INVOICE_ISSUED_AT',
+    dueDateAnchor: 'INVOICE_ISSUE_DATE',
     kind: 'NET_DAYS',
   },
   updated: provenance,
@@ -125,7 +124,6 @@ it.effect('groups catalog requests by effective instant and keeps only USABLE de
     expect(calls).toHaveLength(2);
     expect(calls.map(({ correlation }) => correlation)).toEqual(['payment-correlation', 'payment-correlation']);
     expect(calls[0]?.payload.references[0]).toMatchObject({
-      expectedConsumerCompatibility: 'customer-payment-terms.v1',
       expectedSemanticRevisionId: definition.semanticRevisionId,
       paymentTermRef: firstPaymentTermRef,
     });
@@ -164,7 +162,7 @@ it.effect('maps catalog transport failures to the typed customer dependency fail
   }),
 );
 
-it.effect('preserves requested identity and retired lifecycle for customer resolution', () =>
+it.effect('preserves exact owner identity and retired lifecycle for customer resolution', () =>
   Effect.gen(function* preservesRequestedIdentity() {
     const retired = {
       ...definition,
@@ -184,7 +182,7 @@ it.effect('preserves requested identity and retired lifecycle for customer resol
           {
             definition: retired,
             kind: 'RETIRED' as const,
-            requestedPaymentTermRef: secondPaymentTermRef,
+            requestedPaymentTermRef: firstPaymentTermRef,
           },
         ],
         truncated: false,
@@ -192,15 +190,15 @@ it.effect('preserves requested identity and retired lifecycle for customer resol
     const definitions = yield* paymentTermCatalogPort('payment-correlation', execute).resolveDefinitions([
       {
         at: '2026-10-02T00:00:00.000Z',
-        paymentTermRef: secondPaymentTermRef,
+        paymentTermRef: firstPaymentTermRef,
       },
     ]);
 
-    expect(definitions).toEqual([{ ...retired, paymentTermRef: secondPaymentTermRef }]);
+    expect(definitions).toEqual([{ ...retired, paymentTermRef: firstPaymentTermRef }]);
   }),
 );
 
-it.effect('preserves a broken catalog alias as an absent deterministic definition', () =>
+it.effect('preserves a broken catalog reference as explicit rejection instead of absence', () =>
   Effect.gen(function* brokenAlias() {
     const execute = (): ReturnType<typeof executeCurrentPaymentTerms> =>
       Effect.succeed({
@@ -216,14 +214,16 @@ it.effect('preserves a broken catalog alias as an absent deterministic definitio
         ],
         truncated: false,
       });
-    const definitions = yield* paymentTermCatalogPort('payment-correlation', execute).resolveDefinitions([
-      {
-        at: '2026-09-09T10:00:00.000Z',
-        paymentTermRef: firstPaymentTermRef,
-      },
-    ]);
+    const failure = yield* Effect.flip(
+      paymentTermCatalogPort('payment-correlation', execute).resolveDefinitions([
+        {
+          at: '2026-09-09T10:00:00.000Z',
+          paymentTermRef: firstPaymentTermRef,
+        },
+      ]),
+    );
 
-    expect(definitions).toEqual([]);
+    expect(failure.catalogRejection).toEqual({ kind: 'BROKEN', paymentTermRef: firstPaymentTermRef });
   }),
 );
 
@@ -287,5 +287,85 @@ it.effect('requires a server-owned gateway credential before a production catalo
         requestCorrelation: 'payment-correlation',
       },
     ]);
+  }),
+);
+
+for (const kind of ['INCOMPATIBLE', 'UNSUPPORTED_SEMANTICS', 'IDENTITY_MISMATCH'] as const) {
+  it.effect(`rejects ${kind} through the production adapter without identity remapping or fallback`, () =>
+    Effect.gen(function* rejectedCatalogReference() {
+      const projected =
+        kind === 'UNSUPPORTED_SEMANTICS'
+          ? {
+              ...definition,
+              semantics: {
+                calculationRuleVersion: 1,
+                calendarRule: 'CALENDAR_DAYS_UTC',
+                days: 30,
+                dueDateAnchor: 'INVOICE_ISSUED_AT',
+                kind: 'NET_DAYS',
+              } as const,
+            }
+          : definition;
+      const requestedPaymentTermRef = kind === 'IDENTITY_MISMATCH' ? secondPaymentTermRef : firstPaymentTermRef;
+      const execute = (): ReturnType<typeof executeCurrentPaymentTerms> =>
+        Effect.succeed({
+          current: [],
+          effectiveAt: provenance.at,
+          observedAt: provenance.at,
+          referenceOutcomes:
+            kind === 'INCOMPATIBLE'
+              ? [
+                  {
+                    actualCompatibilityId: definition.compatibilityId,
+                    actualSemanticRevisionId: definition.semanticRevisionId,
+                    definition: projected,
+                    expectedSemanticRevisionId: '70000000-0000-4000-8000-000000000001',
+                    kind,
+                    requestedPaymentTermRef,
+                  },
+                ]
+              : [{ definition: projected, kind: 'USABLE', requestedPaymentTermRef }],
+          truncated: false,
+        });
+      const failure = yield* Effect.flip(
+        paymentTermCatalogPort('payment-correlation', execute).resolveDefinitions([
+          { at: provenance.at, paymentTermRef: requestedPaymentTermRef },
+        ]),
+      );
+      expect(failure.catalogRejection).toEqual({
+        kind: kind === 'IDENTITY_MISMATCH' ? 'BROKEN' : kind,
+        paymentTermRef: requestedPaymentTermRef,
+      });
+      expect(projected.paymentTermRef).toEqual(firstPaymentTermRef);
+      expect(projected.semantics.calculationRuleVersion).toBe(kind === 'UNSUPPORTED_SEMANTICS' ? 1 : 2);
+    }),
+  );
+}
+
+it.effect('consumes a proven equivalent Current alias as its exact retained owner definition', () =>
+  Effect.gen(function* exactEquivalentAlias() {
+    const aliasDefinition = {
+      ...definition,
+      definitionRevisionId: '70000000-0000-4000-8000-000000000002',
+      paymentTermRef: secondPaymentTermRef,
+      semanticRevisionId: '70000000-0000-4000-8000-000000000003',
+    };
+    const execute = (): ReturnType<typeof executeCurrentPaymentTerms> =>
+      Effect.succeed({
+        current: [],
+        effectiveAt: provenance.at,
+        observedAt: provenance.at,
+        referenceOutcomes: [
+          { definition: aliasDefinition, kind: 'USABLE', requestedPaymentTermRef: secondPaymentTermRef },
+        ],
+        truncated: false,
+      });
+    const definitions = yield* paymentTermCatalogPort('alias-current', execute).resolveDefinitions([
+      { at: provenance.at, paymentTermRef: secondPaymentTermRef },
+    ]);
+    expect(definitions).toEqual([aliasDefinition]);
+    expect(definitions[0]?.semanticRevisionId).toBe(aliasDefinition.semanticRevisionId);
+    expect(definitions[0]?.definitionRevisionId).toBe(aliasDefinition.definitionRevisionId);
+    expect(definition.paymentTermRef).toEqual(firstPaymentTermRef);
   }),
 );

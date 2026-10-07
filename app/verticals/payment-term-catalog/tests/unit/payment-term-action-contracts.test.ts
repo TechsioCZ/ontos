@@ -54,7 +54,7 @@ const scope = {
 describe('Payment Term mutation contracts', () => {
   it('exposes an idempotent owner entrypoint with independent definition revisions', () => {
     const result = Schema.decodeUnknownSync(CreatePaymentTermResultSchema)({
-      compatibilityId: 'net_days.invoice_issued_at.calendar_days_utc.v1',
+      compatibilityId: 'net_days.invoice_issue_date.calendar_days.v2',
       definitionRevisionId: '55555555-5555-4555-8555-555555555555',
       metadataRevision: 1,
       paymentTermRef: first,
@@ -79,10 +79,10 @@ describe('Payment Term mutation contracts', () => {
       name: 'Net 30',
       reason: 'Approved catalog definition',
       semantics: {
-        calculationRuleVersion: 1,
-        calendarRule: 'CALENDAR_DAYS_UTC',
+        calculationRuleVersion: 2,
+        calendarRule: 'CALENDAR_DAYS',
         days: 30,
-        dueDateAnchor: 'INVOICE_ISSUED_AT',
+        dueDateAnchor: 'INVOICE_ISSUE_DATE',
         kind: 'NET_DAYS',
       },
     } as const;
@@ -166,7 +166,7 @@ describe('Payment Term mutation contracts', () => {
 
   it('publishes exact safe payloads instead of generic JSON envelopes', () => {
     const definitionEvidence = {
-      compatibilityId: 'net_days.invoice_issued_at.calendar_days_utc.v1',
+      compatibilityId: 'net_days.invoice_issue_date.calendar_days.v2',
       definitionRevisionId: '44444444-4444-4444-8444-444444444444',
       metadataRevision: 2,
       paymentTermRef: first,
@@ -211,10 +211,10 @@ describe('Payment Term mutation contracts', () => {
       name: 'Net 30',
       reason: 'Approved catalog definition',
       semantics: {
-        calculationRuleVersion: 1,
-        calendarRule: 'CALENDAR_DAYS_UTC',
+        calculationRuleVersion: 2,
+        calendarRule: 'CALENDAR_DAYS',
         days: 30,
-        dueDateAnchor: 'INVOICE_ISSUED_AT',
+        dueDateAnchor: 'INVOICE_ISSUE_DATE',
         kind: 'NET_DAYS',
       },
     } as const;
@@ -295,10 +295,10 @@ describe('Payment Term mutation contracts', () => {
         name: 'Net 30',
         reason: 'Approved catalog definition',
         semantics: {
-          calculationRuleVersion: 1,
-          calendarRule: 'CALENDAR_DAYS_UTC',
+          calculationRuleVersion: 2,
+          calendarRule: 'CALENDAR_DAYS',
           days: 30,
-          dueDateAnchor: 'INVOICE_ISSUED_AT',
+          dueDateAnchor: 'INVOICE_ISSUE_DATE',
           kind: 'NET_DAYS',
         },
       } as const;

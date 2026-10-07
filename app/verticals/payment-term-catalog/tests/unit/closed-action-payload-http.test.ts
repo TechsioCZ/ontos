@@ -24,10 +24,10 @@ const createPayment = {
   name: 'Net 30',
   reason: 'Approved catalog definition',
   semantics: {
-    calculationRuleVersion: 1,
-    calendarRule: 'CALENDAR_DAYS_UTC',
+    calculationRuleVersion: 2,
+    calendarRule: 'CALENDAR_DAYS',
     days: 30,
-    dueDateAnchor: 'INVOICE_ISSUED_AT',
+    dueDateAnchor: 'INVOICE_ISSUE_DATE',
     kind: 'NET_DAYS',
   },
 } as const;
