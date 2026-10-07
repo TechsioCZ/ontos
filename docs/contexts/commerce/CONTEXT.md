@@ -263,11 +263,19 @@ Customer Commerce Policy. An invalid explicit choice requires a new explicit dec
 preference may fall back without changing the stored preference. No usable unambiguous currency
 means the purchase cannot be Accepted.
 
-**Payment Term** — Payment-owned reusable semantic definition of when and under which commercial
-conditions an amount becomes due, for example immediate payment, `NET_14`, or `NET_30`. A material
-semantic change creates a new immutable definition revision/identity; it does not rewrite existing
-entitlements or Accepted Orders silently. A Payment Term is distinct from a Payment transaction,
-receivable, invoice, customer entitlement, and Principal authorization.
+**Payment Term** — Payment-owned reusable credit-term definition, separate from a Payment
+transaction, receivable, invoice, customer entitlement, and Principal authorization. Canonical
+`IMMEDIATE` means no deferred net-days term; canonical `NET_DAYS` means the invoice issue DATE plus
+calendar days. Billing owns concrete due-date calculation; a Payment Term defines neither a
+collection instant nor a timezone rule. Payment publishes the semantic snapshot and lifecycle
+contract; Commerce consumes that contract rather than redefining its meaning.
+
+A `PaymentTermRef` identifies immutable meaning. A material semantic change creates a different
+Ref; neither a successor nor an external code reuse silently remaps existing assignments or
+Accepted Order snapshots. Exact retained legacy snapshots remain historical evidence and are not
+reinterpreted as canonical Current terms. An External Business System contributes source evidence
+only through its explicitly qualified namespace, Integration Route and Payment Term fact family;
+source authority does not follow from a caller-supplied flag or code alone.
 
 **Customer Payment Term Entitlement** — Time-bounded Commerce-owned assignment making one Payment
 Term commercially available to one Commerce Customer Profile. A profile may have `0..N` Current

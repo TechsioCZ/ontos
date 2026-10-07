@@ -4,6 +4,8 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { paymentTermCatalogManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { acceptPaymentTermSourceStatementAction } from './src/actions/accept-payment-term-source-statement.action.ts';
+import { configurePaymentTermSourceAuthorityAction } from './src/actions/configure-payment-term-source-authority.action.ts';
 import { correctPaymentTermAction } from './src/actions/correct-payment-term.action.ts';
 import { createPaymentTermAction } from './src/actions/create-payment-term.action.ts';
 import { reconcilePaymentTermReferenceAction } from './src/actions/reconcile-payment-term-reference.action.ts';
@@ -13,6 +15,8 @@ import { retirePaymentTermAction } from './src/actions/retire-payment-term.actio
 export const paymentTermCatalogRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
+    acceptPaymentTermSourceStatementAction,
+    configurePaymentTermSourceAuthorityAction,
     correctPaymentTermAction,
     createPaymentTermAction,
     reconcilePaymentTermReferenceAction,
@@ -24,6 +28,7 @@ export const paymentTermCatalogRegistration = defineVerticalRuntimeRegistration(
       // <generated-module-registration-apis>
       'current-payment-terms': () => import('./src/api/current-payment-terms-client.ts'),
       'payment-term-history': () => import('./src/api/payment-term-history-client.ts'),
+      'payment-term-source-statement': () => import('./src/api/payment-term-source-statement-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

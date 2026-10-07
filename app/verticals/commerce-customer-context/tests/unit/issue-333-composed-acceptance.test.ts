@@ -320,7 +320,6 @@ it.effect('uses the Payment Term production adapter with the exact owner referen
           limit: 1,
           references: [
             {
-              expectedConsumerCompatibility: 'customer-payment-terms.v1',
               expectedSemanticRevisionId: currentPaymentTerm.semanticRevisionId,
               paymentTermRef: currentPaymentTerm.paymentTermRef,
             },

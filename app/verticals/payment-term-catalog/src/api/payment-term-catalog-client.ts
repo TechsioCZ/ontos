@@ -17,6 +17,8 @@ import type { OperationContext, PaymentTermCatalogReadiness } from '../../shared
 // oxlint-disable-next-line effect-native/no-scattered-browser-effect-run -- This generated public compatibility surface must retain its existing runner export until route consumers migrate to the centralized browser runtime.
 export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';
 // <generated-action-http-client-exports>
+export * from './accept-payment-term-source-statement-action-client.ts';
+export * from './configure-payment-term-source-authority-action-client.ts';
 export * from './correct-payment-term-action-client.ts';
 export * from './create-payment-term-action-client.ts';
 export * from './reconcile-payment-term-reference-action-client.ts';

@@ -8,10 +8,13 @@ import type { MicroVerticalOperationContext } from '@modern-js/bff-effect/microv
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, Schema } from '@modern-js/bff-effect/effect-client';
 
 // <generated-governed-http-api-imports>
+import { AcceptPaymentTermSourceStatementActionApi } from './apis/accept-payment-term-source-statement-action.ts';
+import { ConfigurePaymentTermSourceAuthorityActionApi } from './apis/configure-payment-term-source-authority-action.ts';
 import { CorrectPaymentTermActionApi } from './apis/correct-payment-term-action.ts';
 import { CreatePaymentTermActionApi } from './apis/create-payment-term-action.ts';
 import { CurrentPaymentTermsApi } from './apis/current-payment-terms.ts';
 import { PaymentTermHistoryApi } from './apis/payment-term-history.ts';
+import { PaymentTermSourceStatementApi } from './apis/payment-term-source-statement.ts';
 import { ReconcilePaymentTermReferenceActionApi } from './apis/reconcile-payment-term-reference-action.ts';
 import { RetirePaymentTermActionApi } from './apis/retire-payment-term-action.ts';
 // </generated-governed-http-api-imports>
@@ -45,10 +48,13 @@ export * from './apis/payment-term-history.ts';
 export const paymentTermCatalogApi = HttpApi.make('PaymentTermCatalogApi')
   .addHttpApi(paymentTermCatalogFoundationApi)
   // <generated-governed-http-api-additions>
+  .addHttpApi(AcceptPaymentTermSourceStatementActionApi)
+  .addHttpApi(ConfigurePaymentTermSourceAuthorityActionApi)
   .addHttpApi(CorrectPaymentTermActionApi)
   .addHttpApi(CreatePaymentTermActionApi)
   .addHttpApi(CurrentPaymentTermsApi)
   .addHttpApi(PaymentTermHistoryApi)
+  .addHttpApi(PaymentTermSourceStatementApi)
   .addHttpApi(ReconcilePaymentTermReferenceActionApi)
   .addHttpApi(RetirePaymentTermActionApi)
   // </generated-governed-http-api-additions>

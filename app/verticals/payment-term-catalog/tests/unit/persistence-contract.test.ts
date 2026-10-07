@@ -69,3 +69,28 @@ it('declares every catalog operation as an immutable scope-injected routine', ()
     { source: 'input', type: 'timestamptz' },
   ]);
 });
+
+it('retains historical fingerprints and assigns different identity bytes to canonical calendar-date meaning', () => {
+  const historical = paymentTermSemanticFingerprint(
+    {
+      calculationRuleVersion: 1,
+      calendarRule: 'CALENDAR_DAYS_UTC',
+      days: 14,
+      dueDateAnchor: 'INVOICE_ISSUED_AT',
+      kind: 'NET_DAYS',
+    },
+    'net_days.invoice_issued_at.calendar_days_utc.v1',
+  );
+  expect(historical).toBe('99d00e2980c5e984ab5e0722a3943822e91afba4b2db6fbce2dd5786c0dd4fbd');
+  const canonical = paymentTermSemanticFingerprint(
+    {
+      calculationRuleVersion: 2,
+      calendarRule: 'CALENDAR_DAYS',
+      days: 14,
+      dueDateAnchor: 'INVOICE_ISSUE_DATE',
+      kind: 'NET_DAYS',
+    },
+    'net_days.invoice_issue_date.calendar_days.v2',
+  );
+  expect(canonical).not.toBe(historical);
+});

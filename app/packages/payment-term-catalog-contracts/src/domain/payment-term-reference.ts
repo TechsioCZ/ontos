@@ -1,7 +1,6 @@
 import { Schema } from 'effect';
 import {
   PaymentTermCompatibilityIdSchema,
-  PaymentTermConsumerCompatibilitySchema,
   PaymentTermDefinitionSchema,
   PaymentTermRevisionIdSchema,
 } from './payment-term.ts';
@@ -9,7 +8,6 @@ import { PaymentTermRefSchema } from '../resources/payment-term.ts';
 
 export const PaymentTermReferenceRequestSchema = Schema.Struct({
   expectedCompatibilityId: Schema.optionalKey(PaymentTermCompatibilityIdSchema),
-  expectedConsumerCompatibility: Schema.optionalKey(PaymentTermConsumerCompatibilitySchema),
   expectedSemanticRevisionId: Schema.optionalKey(PaymentTermRevisionIdSchema),
   paymentTermRef: PaymentTermRefSchema,
 });
@@ -34,11 +32,9 @@ export const MissingPaymentTermReferenceSchema = Schema.Struct({
 
 export const IncompatiblePaymentTermReferenceSchema = Schema.Struct({
   actualCompatibilityId: PaymentTermCompatibilityIdSchema,
-  actualConsumerCompatibility: Schema.Array(PaymentTermConsumerCompatibilitySchema),
   actualSemanticRevisionId: PaymentTermRevisionIdSchema,
   definition: PaymentTermDefinitionSchema,
   expectedCompatibilityId: Schema.optionalKey(PaymentTermCompatibilityIdSchema),
-  expectedConsumerCompatibility: Schema.optionalKey(PaymentTermConsumerCompatibilitySchema),
   expectedSemanticRevisionId: Schema.optionalKey(PaymentTermRevisionIdSchema),
   kind: Schema.Literal('INCOMPATIBLE'),
   requestedPaymentTermRef: PaymentTermRefSchema,

@@ -54,27 +54,52 @@ export const PaymentTermCompatibilityIdSchema = checkedCompatibilityId.pipe(
   Schema.decodeTo(checkedCompatibilityId),
 );
 export const PaymentTermSemanticFingerprintSchema = Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u));
-export const PaymentTermConsumerCompatibilitySchema = Schema.Literal('customer-payment-terms.v1');
 
-export const ImmediatePaymentTermSemanticsSchema = Schema.Struct({
+// Version 1 retains the original accepted-at/elapsed-UTC-day meaning for history.
+// It must never be relabeled as version 2 or accepted as a new canonical definition.
+export const LegacyImmediatePaymentTermSemanticsSchema = Schema.Struct({
   calculationRuleVersion: Schema.Literal(1),
   calendarRule: Schema.Literal('NOT_APPLICABLE'),
   kind: Schema.Literal('IMMEDIATE'),
 });
-export type ImmediatePaymentTermSemantics = typeof ImmediatePaymentTermSemanticsSchema.Type;
-
-export const NetDaysPaymentTermSemanticsSchema = Schema.Struct({
+export const LegacyNetDaysPaymentTermSemanticsSchema = Schema.Struct({
   calculationRuleVersion: Schema.Literal(1),
   calendarRule: Schema.Literal('CALENDAR_DAYS_UTC'),
   days: Schema.Finite.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0)),
   dueDateAnchor: Schema.Literal('INVOICE_ISSUED_AT'),
   kind: Schema.Literal('NET_DAYS'),
 });
+export const PaymentTermLegacySemanticsSchema = Schema.Union([
+  LegacyImmediatePaymentTermSemanticsSchema,
+  LegacyNetDaysPaymentTermSemanticsSchema,
+]);
+export type PaymentTermLegacySemantics = typeof PaymentTermLegacySemanticsSchema.Type;
+
+// Version 2 describes reusable credit terms, without a collection instant or timezone.
+export const ImmediatePaymentTermSemanticsSchema = Schema.Struct({
+  calculationRuleVersion: Schema.Literal(2),
+  calendarRule: Schema.Literal('NOT_APPLICABLE'),
+  kind: Schema.Literal('IMMEDIATE'),
+});
+export type ImmediatePaymentTermSemantics = typeof ImmediatePaymentTermSemanticsSchema.Type;
+
+export const NetDaysPaymentTermSemanticsSchema = Schema.Struct({
+  calculationRuleVersion: Schema.Literal(2),
+  calendarRule: Schema.Literal('CALENDAR_DAYS'),
+  days: Schema.Finite.check(Schema.isInt(), Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 })),
+  dueDateAnchor: Schema.Literal('INVOICE_ISSUE_DATE'),
+  kind: Schema.Literal('NET_DAYS'),
+});
 export type NetDaysPaymentTermSemantics = typeof NetDaysPaymentTermSemanticsSchema.Type;
 
-export const PaymentTermSemanticsSchema = Schema.Union([
+export const PaymentTermCanonicalSemanticsSchema = Schema.Union([
   ImmediatePaymentTermSemanticsSchema,
   NetDaysPaymentTermSemanticsSchema,
+]);
+export type PaymentTermCanonicalSemantics = typeof PaymentTermCanonicalSemanticsSchema.Type;
+export const PaymentTermSemanticsSchema = Schema.Union([
+  PaymentTermCanonicalSemanticsSchema,
+  PaymentTermLegacySemanticsSchema,
 ]);
 export type PaymentTermSemantics = typeof PaymentTermSemanticsSchema.Type;
 
@@ -83,7 +108,17 @@ export const PaymentTermLifecycleSchema = Schema.Struct({
   // oxlint-disable-next-line effect-native/no-nullable-schema-field -- null is the stable wire sentinel for an open-ended lifecycle; expires: 2027-03-31.
   effectiveTo: Schema.NullOr(PaymentTermInstantSchema),
   state: Schema.Literals(['ACTIVE', 'RETIRED']),
-});
+}).check(
+  Schema.makeFilter((lifecycle) => {
+    if ((lifecycle.state === 'ACTIVE') !== (lifecycle.effectiveTo === null)) {
+      return 'Lifecycle state and effective end must agree';
+    }
+    if (lifecycle.effectiveTo !== null && lifecycle.effectiveTo < lifecycle.effectiveFrom) {
+      return 'Payment Term retirement cannot precede activation';
+    }
+    return true;
+  }),
+);
 export type PaymentTermLifecycle = typeof PaymentTermLifecycleSchema.Type;
 
 export const PaymentTermProvenanceSchema = Schema.Struct({
@@ -97,7 +132,6 @@ export type PaymentTermProvenance = typeof PaymentTermProvenanceSchema.Type;
 const PaymentTermDefinitionFieldsSchema = Schema.Struct({
   code: PaymentTermCodeSchema,
   compatibilityId: PaymentTermCompatibilityIdSchema,
-  compatibleWith: Schema.Array(PaymentTermConsumerCompatibilitySchema),
   created: PaymentTermProvenanceSchema,
   definitionRevisionId: PaymentTermDefinitionRevisionIdSchema,
   description: PaymentTermDescriptionSchema,
@@ -125,19 +159,25 @@ export const PaymentTermDefinitionSchema = PaymentTermDefinitionFieldsSchema.che
     if (!active && !scheduledOrRetired) {
       return 'Lifecycle state, effective end, and retirement provenance must agree';
     }
-    if (
-      definition.lifecycle.effectiveTo !== null &&
-      definition.lifecycle.effectiveTo < definition.lifecycle.effectiveFrom
-    ) {
-      return 'Payment Term retirement cannot precede activation';
-    }
-    if (!definition.compatibleWith.includes('customer-payment-terms.v1')) {
-      return 'Launch Payment Terms must declare customer-payment-terms.v1 compatibility';
-    }
     return true;
   }),
 );
 export type PaymentTermDefinition = typeof PaymentTermDefinitionSchema.Type;
+
+// Consumers share the owner's field and lifecycle validators instead of redefining them.
+export const PaymentTermDefinitionSnapshotSchema = Schema.Struct({
+  code: PaymentTermDefinitionFieldsSchema.fields.code,
+  compatibilityId: PaymentTermDefinitionFieldsSchema.fields.compatibilityId,
+  definitionRevisionId: PaymentTermDefinitionFieldsSchema.fields.definitionRevisionId,
+  lifecycle: PaymentTermDefinitionFieldsSchema.fields.lifecycle,
+  metadataRevision: PaymentTermDefinitionFieldsSchema.fields.metadataRevision,
+  name: PaymentTermDefinitionFieldsSchema.fields.name,
+  paymentTermRef: PaymentTermDefinitionFieldsSchema.fields.paymentTermRef,
+  semanticFingerprint: PaymentTermDefinitionFieldsSchema.fields.semanticFingerprint,
+  semanticRevisionId: PaymentTermDefinitionFieldsSchema.fields.semanticRevisionId,
+  semantics: PaymentTermDefinitionFieldsSchema.fields.semantics,
+});
+export type PaymentTermDefinitionSnapshot = typeof PaymentTermDefinitionSnapshotSchema.Type;
 
 export const PaymentTermAliasSchema = Schema.Struct({
   aliasRef: PaymentTermRefSchema,
@@ -180,22 +220,3 @@ export const PaymentTermAffectedUseDispositionSchema = Schema.Union([
   }),
 ]);
 export type PaymentTermAffectedUseDisposition = typeof PaymentTermAffectedUseDispositionSchema.Type;
-
-export const PaymentTermDueDateInputSchema = Schema.Struct({
-  acceptedAt: PaymentTermInstantSchema,
-  invoiceIssuedAt: Schema.optionalKey(PaymentTermInstantSchema),
-});
-export type PaymentTermDueDateInput = typeof PaymentTermDueDateInputSchema.Type;
-
-export const PaymentTermDueDateResultSchema = Schema.Union([
-  Schema.Struct({ dueAt: PaymentTermInstantSchema, kind: Schema.Literal('CALCULATED') }),
-  Schema.Struct({
-    anchor: Schema.Literal('INVOICE_ISSUED_AT'),
-    kind: Schema.Literal('MISSING_ANCHOR'),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal('OUT_OF_RANGE'),
-    reason: Schema.Literal('DUE_DATE_OUTSIDE_SUPPORTED_INSTANT_RANGE'),
-  }),
-]);
-export type PaymentTermDueDateResult = typeof PaymentTermDueDateResultSchema.Type;

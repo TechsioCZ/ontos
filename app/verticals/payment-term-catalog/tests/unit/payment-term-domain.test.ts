@@ -2,7 +2,6 @@ import { describe, expect, it } from 'effect-rstest';
 import { Schema } from 'effect';
 import { NetDaysPaymentTermSemanticsSchema, PaymentTermDefinitionSchema } from '../../shared/domain/payment-term.ts';
 import {
-  calculatePaymentTermDueDate,
   canonicalPaymentTermSemantics,
   paymentTermCompatibilityId,
   paymentTermIsCurrentAt,
@@ -24,22 +23,16 @@ const provenance = {
   at: '2026-09-09T10:00:00.000Z',
   reason: 'Approved launch catalog definition',
 } as const;
-const immediate = {
-  calculationRuleVersion: 1,
-  calendarRule: 'NOT_APPLICABLE',
-  kind: 'IMMEDIATE',
-} as const;
 const net30 = {
-  calculationRuleVersion: 1,
-  calendarRule: 'CALENDAR_DAYS_UTC',
+  calculationRuleVersion: 2,
+  calendarRule: 'CALENDAR_DAYS',
   days: 30,
-  dueDateAnchor: 'INVOICE_ISSUED_AT',
+  dueDateAnchor: 'INVOICE_ISSUE_DATE',
   kind: 'NET_DAYS',
 } as const;
 const definition = {
   code: 'NET_30',
   compatibilityId: paymentTermCompatibilityId(net30),
-  compatibleWith: ['customer-payment-terms.v1'],
   created: provenance,
   definitionRevisionId: '55555555-5555-4555-8555-555555555555',
   description: 'Payment is due thirty UTC calendar days after invoice issue.',
@@ -70,39 +63,8 @@ describe('Payment Term semantics', () => {
     expect(() => decode({ ...net30, dueDateAnchor: 'ORDER_ACCEPTED_AT' })).toThrow();
   });
 
-  it('calculates launch semantics deterministically in UTC calendar days', () => {
-    expect(
-      calculatePaymentTermDueDate(immediate, {
-        acceptedAt: '2026-01-31T23:15:00.000Z',
-      }),
-    ).toEqual({ dueAt: '2026-01-31T23:15:00.000Z', kind: 'CALCULATED' });
-    expect(
-      calculatePaymentTermDueDate(net30, {
-        acceptedAt: '2026-01-01T00:00:00.000Z',
-        invoiceIssuedAt: '2026-01-31T23:15:00.000Z',
-      }),
-    ).toEqual({ dueAt: '2026-03-02T23:15:00.000Z', kind: 'CALCULATED' });
-    expect(
-      calculatePaymentTermDueDate(net30, {
-        acceptedAt: '2026-01-01T00:00:00.000Z',
-      }),
-    ).toEqual({ anchor: 'INVOICE_ISSUED_AT', kind: 'MISSING_ANCHOR' });
-    expect(
-      calculatePaymentTermDueDate(
-        { ...net30, days: Number.MAX_SAFE_INTEGER },
-        {
-          acceptedAt: '2026-01-01T00:00:00.000Z',
-          invoiceIssuedAt: '2026-01-01T00:00:00.000Z',
-        },
-      ),
-    ).toEqual({
-      kind: 'OUT_OF_RANGE',
-      reason: 'DUE_DATE_OUTSIDE_SUPPORTED_INSTANT_RANGE',
-    });
-  });
-
   it('derives compatibility from the kind contract while preserving exact semantics separately', () => {
-    expect(paymentTermCompatibilityId(net30)).toBe('net_days.invoice_issued_at.calendar_days_utc.v1');
+    expect(paymentTermCompatibilityId(net30)).toBe('net_days.invoice_issue_date.calendar_days.v2');
     expect(canonicalPaymentTermSemantics(net30)).toContain('/30/');
     expect(paymentTermSemanticsAreEquivalent(net30, { ...net30, days: 14 })).toBe(false);
   });

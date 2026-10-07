@@ -250,8 +250,8 @@ export const paymentTermSemanticFingerprint = (
 ): string => {
   const canonical =
     semantics.kind === 'IMMEDIATE'
-      ? `IMMEDIATE|1|NOT_APPLICABLE|${compatibilityKey}`
-      : `NET_DAYS|${semantics.days}|INVOICE_ISSUED_AT|CALENDAR_DAYS_UTC|1|${compatibilityKey}`;
+      ? `IMMEDIATE|${semantics.calculationRuleVersion}|NOT_APPLICABLE|${compatibilityKey}`
+      : `NET_DAYS|${semantics.days}|${semantics.dueDateAnchor}|${semantics.calendarRule}|${semantics.calculationRuleVersion}|${compatibilityKey}`;
   return createHash('sha256').update(canonical, 'utf-8').digest('hex');
 };
 

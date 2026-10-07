@@ -25,6 +25,8 @@ it('owns the exact Payment Term Catalog in one legal-entity-scoped schema', () =
     'payment_term_aliases',
     'payment_term_lifecycle_events',
     'payment_term_revisions',
+    'payment_term_source_authorities',
+    'payment_term_source_statements',
     'payment_terms',
   ]);
   expect(qualifiedNames).toEqual(

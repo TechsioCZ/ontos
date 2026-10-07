@@ -29,7 +29,6 @@ const fallbackRef = {
 const definition = (reference = paymentTermRef): PaymentTermDefinitionSnapshot => ({
   code: 'IMMEDIATE',
   compatibilityId: 'immediate.v1',
-  compatibleWith: ['customer-payment-terms.v1'],
   definitionRevisionId: '55555555-5555-4555-8555-555555555555',
   lifecycle: {
     effectiveFrom: '2026-01-01T00:00:00.000Z',
@@ -42,7 +41,7 @@ const definition = (reference = paymentTermRef): PaymentTermDefinitionSnapshot =
   semanticFingerprint: 'a'.repeat(64),
   semanticRevisionId: '66666666-6666-4666-8666-666666666666',
   semantics: {
-    calculationRuleVersion: 1,
+    calculationRuleVersion: 2,
     calendarRule: 'NOT_APPLICABLE',
     kind: 'IMMEDIATE',
   },

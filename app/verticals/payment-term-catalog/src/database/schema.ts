@@ -7,6 +7,7 @@ import {
   foreignKey,
   index,
   integer,
+  jsonb,
   pgSchema,
   text,
   timestamp,
@@ -21,6 +22,8 @@ export const PAYMENT_TERM_CATALOG_TABLE_INVENTORY = [
   'payment_term_aliases',
   'payment_term_lifecycle_events',
   'payment_term_revisions',
+  'payment_term_source_authorities',
+  'payment_term_source_statements',
   'payment_terms',
 ] as const;
 
@@ -138,9 +141,9 @@ export const paymentTermRevisions = paymentTermCatalogSchema.table.withRLS(
     check('payment_term_catalog_revisions_semantic_kind_ck', sql`${table.semanticKind} in ('IMMEDIATE', 'NET_DAYS')`),
     check(
       'payment_term_catalog_revisions_semantics_ck',
-      sql`(${table.semanticKind} = 'IMMEDIATE' and ${table.netDays} is null and ${table.dueDateAnchor} is null and ${table.calendarRule} = 'NOT_APPLICABLE') or (${table.semanticKind} = 'NET_DAYS' and ${table.netDays} is not null and ${table.netDays} between 0 and 9007199254740991 and ${table.dueDateAnchor} is not null and ${table.dueDateAnchor} = 'INVOICE_ISSUED_AT' and ${table.calendarRule} = 'CALENDAR_DAYS_UTC')`,
+      sql`(${table.semanticKind} = 'IMMEDIATE' and ${table.netDays} is null and ${table.dueDateAnchor} is null and ${table.calendarRule} = 'NOT_APPLICABLE') or (${table.semanticKind} = 'NET_DAYS' and ${table.netDays} is not null and ${table.netDays} between 0 and 9007199254740991 and ${table.dueDateAnchor} is not null and ((${table.calculationRuleVersion} = 1 and ${table.dueDateAnchor} = 'INVOICE_ISSUED_AT' and ${table.calendarRule} = 'CALENDAR_DAYS_UTC') or (${table.calculationRuleVersion} = 2 and ${table.dueDateAnchor} = 'INVOICE_ISSUE_DATE' and ${table.calendarRule} = 'CALENDAR_DAYS')))`,
     ),
-    check('payment_term_catalog_revisions_calculation_version_ck', sql`${table.calculationRuleVersion} = 1`),
+    check('payment_term_catalog_revisions_calculation_version_ck', sql`${table.calculationRuleVersion} in (1, 2)`),
     check(
       'payment_term_catalog_revisions_compatibility_ck',
       sql`${table.compatibilityKey} ~ '^[a-z][a-z0-9._-]{0,99}$'`,
@@ -252,10 +255,108 @@ export const paymentTermAliases = paymentTermCatalogSchema.table.withRLS(
   ],
 );
 
+export const paymentTermSourceAuthorities = paymentTermCatalogSchema.table.withRLS(
+  'payment_term_source_authorities',
+  {
+    sourceAuthorityId: uuid('source_authority_id').defaultRandom().primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    externalBusinessSystemId: text('external_business_system_id').notNull(),
+    namespace: text('namespace').notNull(),
+    integrationRoute: text('integration_route').notNull(),
+    factFamily: text('fact_family').default('PAYMENT_TERM_DEFINITION').notNull(),
+    authorityRevision: integer('authority_revision').notNull(),
+    ingestPrincipalId: uuid('ingest_principal_id').notNull(),
+    reason: text('reason').notNull(),
+    actingPrincipalId: uuid('acting_principal_id').notNull(),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    recordedAt: recordedAt(),
+  },
+  (table) => [
+    unique('payment_term_catalog_authorities_revision_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.externalBusinessSystemId,
+      table.namespace,
+      table.integrationRoute,
+      table.authorityRevision,
+    ),
+    unique('payment_term_catalog_authorities_invocation_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.actionInvocationId,
+    ),
+    check('payment_term_catalog_authorities_revision_ck', sql`${table.authorityRevision} > 0`),
+    check('payment_term_catalog_authorities_family_ck', sql`${table.factFamily} = 'PAYMENT_TERM_DEFINITION'`),
+    check(
+      'payment_term_catalog_authorities_qualification_ck',
+      sql`length(btrim(${table.externalBusinessSystemId})) between 1 and 200 and length(btrim(${table.namespace})) between 1 and 200 and length(btrim(${table.integrationRoute})) between 1 and 200`,
+    ),
+    check(
+      'payment_term_catalog_authorities_reason_ck',
+      sql`${table.reason} = btrim(${table.reason}) and length(${table.reason}) between 1 and 1000`,
+    ),
+    ...tenantLegalEntityRlsPolicies('payment_term_catalog_authorities_scope', table.tenantId, table.legalEntityId),
+  ],
+);
+
+export const paymentTermSourceStatements = paymentTermCatalogSchema.table.withRLS(
+  'payment_term_source_statements',
+  {
+    sourceStatementLedgerId: uuid('source_statement_ledger_id').defaultRandom().primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    externalBusinessSystemId: text('external_business_system_id').notNull(),
+    namespace: text('namespace').notNull(),
+    integrationRoute: text('integration_route').notNull(),
+    sourceRecordId: text('source_record_id').notNull(),
+    sourceStatementId: text('source_statement_id').notNull(),
+    sourceRevision: bigint('source_revision', { mode: 'number' }).notNull(),
+    sourceCode: text('source_code').notNull(),
+    businessObservedAt: timestamp('business_observed_at', { withTimezone: true }).notNull(),
+    authorityRevision: integer('authority_revision').notNull(),
+    content: jsonb('content').notNull(),
+    result: jsonb('result').notNull(),
+    outcome: text('outcome').notNull(),
+    actingPrincipalId: uuid('acting_principal_id').notNull(),
+    actionInvocationId: uuid('action_invocation_id').notNull(),
+    recordedAt: recordedAt(),
+  },
+  (table) => [
+    unique('payment_term_catalog_statements_identity_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.externalBusinessSystemId,
+      table.namespace,
+      table.integrationRoute,
+      table.sourceRecordId,
+      table.sourceStatementId,
+    ),
+    index('payment_term_catalog_statements_ordering_idx').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.externalBusinessSystemId,
+      table.namespace,
+      table.integrationRoute,
+      table.sourceRecordId,
+      table.sourceRevision,
+    ),
+    check('payment_term_catalog_statements_revision_ck', sql`${table.sourceRevision} between 0 and 9007199254740991`),
+    check('payment_term_catalog_statements_authority_ck', sql`${table.authorityRevision} > 0`),
+    check(
+      'payment_term_catalog_statements_outcome_ck',
+      sql`${table.outcome} in ('ACCEPTED', 'REJECTED') and ${table.result}->>'_tag' = ${table.outcome}`,
+    ),
+    ...tenantLegalEntityRlsPolicies('payment_term_catalog_statements_scope', table.tenantId, table.legalEntityId),
+  ],
+);
+
 const paymentTermCatalogDatabaseSchema = {
   paymentTermAliases,
   paymentTermLifecycleEvents,
   paymentTermRevisions,
+  paymentTermSourceAuthorities,
+  paymentTermSourceStatements,
   paymentTerms,
 } as const;
 
@@ -263,6 +364,8 @@ export const PAYMENT_TERM_CATALOG_TABLES = [
   paymentTermAliases,
   paymentTermLifecycleEvents,
   paymentTermRevisions,
+  paymentTermSourceAuthorities,
+  paymentTermSourceStatements,
   paymentTerms,
 ] as const;
 

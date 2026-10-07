@@ -1,5 +1,6 @@
 import { expect, it } from 'effect-rstest';
-import { Predicate } from 'effect';
+import { Predicate, Schema } from 'effect';
+import { PaymentTermDefinitionSnapshotSchema } from '../../shared/domain/payment-term-contracts.ts';
 import { getActionBusinessPermissionTargetResolver } from '../../../../packages/core-runtime/src/actions/definition.ts';
 import { changeCustomerPaymentTermsAction } from '../../src/actions/change-customer-payment-terms.action.ts';
 import { removeCustomerPaymentTermAction } from '../../src/actions/remove-customer-payment-term.action.ts';
@@ -54,9 +55,8 @@ const immediate = (
   resourceId: string,
   overrides: Partial<PaymentTermDefinitionSnapshot> = {},
 ): PaymentTermDefinitionSnapshot => ({
-  code: `TERM-${resourceId}`,
+  code: `TERM_${resourceId.replaceAll('-', '_')}`,
   compatibilityId: 'immediate.v1',
-  compatibleWith: ['customer-payment-terms.v1'],
   definitionRevisionId: '88888888-8888-4888-8888-888888888888',
   lifecycle: {
     effectiveFrom: '2026-01-01T00:00:00.000Z',
@@ -69,7 +69,7 @@ const immediate = (
   semanticFingerprint: 'a'.repeat(64),
   semanticRevisionId: resourceId,
   semantics: {
-    calculationRuleVersion: 1,
+    calculationRuleVersion: 2,
     calendarRule: 'NOT_APPLICABLE',
     kind: 'IMMEDIATE',
   },
@@ -519,4 +519,84 @@ it('honors a valid explicit choice before reporting an unrelated broken entitlem
     }),
     'EXPLICIT_CHOICE',
   );
+});
+
+it('retains legacy snapshot identity and rejects legacy semantics for a new entitlement', () => {
+  const legacy = immediate('88888888-8888-4888-8888-888888888888', {
+    semantics: { calculationRuleVersion: 1, calendarRule: 'NOT_APPLICABLE', kind: 'IMMEDIATE' },
+  });
+  const decoded = Schema.decodeUnknownSync(PaymentTermDefinitionSnapshotSchema)(legacy);
+  expect(decoded).toEqual(legacy);
+  const state = emptyState();
+  const outcome = changeCustomerPaymentTerms({
+    catalogDefinitions: [decoded],
+    changes: [
+      {
+        _tag: 'GRANT_ENTITLEMENT',
+        effectiveFrom: '2026-09-01T00:00:00.000Z',
+        entitlementRef,
+        paymentTermRef: legacy.paymentTermRef,
+        semanticRevisionId: legacy.semanticRevisionId,
+      },
+    ],
+    expectedRevision: state.revision,
+    state,
+  });
+  expectTag(outcome, 'PAYMENT_TERM_UNUSABLE');
+  expect(outcome).toMatchObject({ reason: 'INCOMPATIBLE_CONSUMER' });
+  expect(state).toEqual(emptyState());
+  expect(decoded.paymentTermRef).toEqual(legacy.paymentTermRef);
+  expect(decoded.semanticFingerprint).toEqual(legacy.semanticFingerprint);
+});
+
+it('applies owner lifecycle validation to the consumer snapshot', () => {
+  const definition = immediate('88888888-8888-4888-8888-888888888888');
+  expect(Schema.is(PaymentTermDefinitionSnapshotSchema)(definition)).toBe(true);
+  expect(
+    Schema.is(PaymentTermDefinitionSnapshotSchema)({
+      ...definition,
+      lifecycle: { ...definition.lifecycle, state: 'RETIRED' },
+    }),
+  ).toBe(false);
+  expect(
+    Schema.is(PaymentTermDefinitionSnapshotSchema)({
+      ...definition,
+      lifecycle: { ...definition.lifecycle, effectiveTo: '2025-01-01T00:00:00.000Z', state: 'RETIRED' },
+    }),
+  ).toBe(false);
+});
+
+it('does not remap retained legacy entitlements to a replacement or policy fallback', () => {
+  const legacy = immediate('88888888-8888-4888-8888-888888888888', {
+    semantics: { calculationRuleVersion: 1, calendarRule: 'NOT_APPLICABLE', kind: 'IMMEDIATE' },
+  });
+  const replacement = immediate('99999999-9999-4999-8999-999999999999');
+  const state: CustomerPaymentTermsState = {
+    ...emptyState(),
+    entitlements: [
+      {
+        effectiveFrom: '2026-01-01T00:00:00.000Z',
+        entitlementRef,
+        paymentTermRef: legacy.paymentTermRef,
+        semanticRevisionId: legacy.semanticRevisionId,
+        status: 'ACTIVE',
+      },
+    ],
+  };
+  const outcome = resolvePaymentTerms({
+    at: '2026-09-01T00:00:00.000Z',
+    definitions: [legacy, replacement],
+    eligiblePaymentTermRefs: [legacy.paymentTermRef, replacement.paymentTermRef],
+    policyExplicitlyPermittedRefs: [],
+    policyFallbackRefs: [replacement.paymentTermRef],
+    policyRevision: 'policy-v1',
+    policySource: 'owner-policy',
+    purchasingContextRevision: 'context-v1',
+    state,
+  });
+  expectTag(outcome, 'BROKEN_ENTITLEMENT');
+  expect(outcome).toMatchObject({ paymentTermRef: legacy.paymentTermRef });
+  expect(state.entitlements[0]?.paymentTermRef).toEqual(legacy.paymentTermRef);
+  expect(state.entitlements[0]?.semanticRevisionId).toEqual(legacy.semanticRevisionId);
+  expect(state.revision).toBe(1);
 });

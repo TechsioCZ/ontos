@@ -2,6 +2,7 @@ import { expect, it } from 'effect-rstest';
 import { DateTime, Effect, Layer, Option, Redacted, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
 import { ReadHandlerNotFound } from '@app/core-runtime';
+import { PaymentTermCanonicalSemanticsSchema } from '../../shared/domain/payment-term.ts';
 import type { PaymentTermDefinition } from '../../shared/domain/payment-term.ts';
 import {
   PaymentTermAffectedUseAssessmentRejected,
@@ -43,8 +44,7 @@ const provenance = {
 } as const;
 const active: PaymentTermDefinition = {
   code: 'NET_30',
-  compatibilityId: 'net_days.invoice_issued_at.calendar_days_utc.v1',
-  compatibleWith: ['customer-payment-terms.v1'],
+  compatibilityId: 'net_days.invoice_issue_date.calendar_days.v2',
   created: provenance,
   definitionRevisionId: '55555555-5555-4555-8555-555555555555',
   description: 'Due thirty days after invoice issue.',
@@ -60,10 +60,10 @@ const active: PaymentTermDefinition = {
   semanticFingerprint: 'a'.repeat(64),
   semanticRevisionId: '66666666-6666-4666-8666-666666666666',
   semantics: {
-    calculationRuleVersion: 1,
-    calendarRule: 'CALENDAR_DAYS_UTC',
+    calculationRuleVersion: 2,
+    calendarRule: 'CALENDAR_DAYS',
     days: 30,
-    dueDateAnchor: 'INVOICE_ISSUED_AT',
+    dueDateAnchor: 'INVOICE_ISSUE_DATE',
     kind: 'NET_DAYS',
   },
   updated: provenance,
@@ -164,7 +164,7 @@ it.effect('attaches create, correction, and reconciliation outbox messages to th
         description: active.description,
         name: active.name,
         reason: provenance.reason,
-        semantics: active.semantics,
+        semantics: Schema.decodeUnknownSync(PaymentTermCanonicalSemanticsSchema)(active.semantics),
       },
       {
         actionInvocationId: provenance.actionInvocationId,
@@ -960,5 +960,34 @@ it.effect('history selects one exact definition revision and retains alias evide
     expect(result.canonicalPaymentTermRef).toEqual(ref);
     expect(result.revisions).toEqual([active]);
     expect(result.aliases).toHaveLength(1);
+  }),
+);
+
+it.effect('Current returns a proven equivalent requested alias without requiring a revision hint', () =>
+  Effect.gen(function* requestedAliasDefinition() {
+    const aliasRef = paymentTermRef('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    const aliasDefinition = {
+      ...active,
+      paymentTermRef: aliasRef,
+      semanticRevisionId: '77777777-7777-4777-8777-777777777777',
+    } satisfies PaymentTermDefinition;
+    const result = yield* readCurrentPaymentTerms(
+      { at: '2026-09-09T10:00:00.000Z', limit: 50, references: [{ paymentTermRef: aliasRef }] },
+      tenantId,
+      services({
+        getCurrent: () => Effect.succeed(Option.some(aliasDefinition)),
+        // @ts-expect-error -- Fixture UUIDs are decoded into branded persistence IDs in production.
+        resolveReference: () =>
+          Effect.succeed({
+            _tag: 'resolved',
+            canonicalPaymentTermId: ref.resourceId,
+            definition: active,
+            requestedPaymentTermId: aliasRef.resourceId,
+          }),
+      }),
+    );
+    expect(result.referenceOutcomes).toEqual([
+      { definition: aliasDefinition, kind: 'USABLE', requestedPaymentTermRef: aliasRef },
+    ]);
   }),
 );
