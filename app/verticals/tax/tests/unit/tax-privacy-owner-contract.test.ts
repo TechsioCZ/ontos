@@ -5,10 +5,11 @@ import { PrivacyOwnerCoverageResultSchema, PrivacyOwnerExecutionOutcomeSchema } 
 
 import { RecordTaxSourceAssertionPayloadSchema } from '../../shared/actions/tax-source-assertion.ts';
 import { TaxPrivacyOwnerCoverageRequestSchema } from '../../shared/apis/tax-privacy-owner-coverage.ts';
+import { taxEvidenceReadPermission } from '../../shared/permissions/tax-evidence-read.ts';
 import {
   assessTaxPrivacyOwnerCoverage,
   evaluateTaxPrivacyMeasure,
-  taxPrivacyOwnerContract,
+  taxPrivacyOwnerDeclaration,
   taxPrivacyOwnerScopeParts,
   taxPrivacyOwnerScopeRefs,
 } from '../../shared/tax-privacy-owner-contract.ts';
@@ -19,6 +20,7 @@ import type {
 import { readTaxPrivacyOwnerCoverage } from '../../src/api/tax-privacy-owner-coverage.read.ts';
 import { TAX_TABLE_INVENTORY } from '../../src/database/schema.ts';
 import { unavailable } from '../../src/services/tax-governance-persistence.ts';
+import { taxPrivacyScopePartTables } from '../../src/services/tax-privacy-coverage.service.ts';
 
 const scope = {
   controllerRef: 'legal-entity:controller-a',
@@ -31,7 +33,7 @@ const scope = {
   trustedLookupRefs: ['seller-lookup:956'],
 } as const;
 
-const assertionContent = 'commerce.tax/tax_source_assertions/assertion-956';
+const assertionContent = 'commerce.tax.tax-source-assertion:assertion-956';
 
 const completeObservations = (foundByPart: Partial<Record<string, readonly string[]>> = {}) =>
   taxPrivacyOwnerScopeParts.map((scopePart): TaxPrivacyScopeObservation => ({
@@ -83,17 +85,19 @@ const decodeOutcome = Schema.decodeUnknownSync(PrivacyOwnerExecutionOutcomeSchem
 
 describe('#956 TAX Privacy Owner coverage declaration', () => {
   it('assigns every private TAX table to a declared owner scope part (F13-F16)', () => {
-    const covered = new Set(Object.values(taxPrivacyOwnerContract.scopePartTables).flat());
+    const covered = new Set<string>(Object.values(taxPrivacyScopePartTables).flat());
     expect([...covered].toSorted()).toEqual([...TAX_TABLE_INVENTORY].toSorted());
-    expect(Object.keys(taxPrivacyOwnerContract.scopePartTables).toSorted()).toEqual(
-      [...taxPrivacyOwnerScopeParts].toSorted(),
-    );
+    expect(Object.keys(taxPrivacyScopePartTables).toSorted()).toEqual([...taxPrivacyOwnerScopeParts].toSorted());
+  });
+
+  it('publishes the coverage read only under the privileged Tax Evidence permission (#956 F27, #950)', () => {
+    expect(taxEvidenceReadPermission.protectedEntrypoints).toContain('commerce.tax.api.tax-privacy-owner-coverage');
   });
 
   it('declares Order/Billing copies of Accepted Tax Terms instead of persisting them (D2 default a, F14)', () => {
-    expect(taxPrivacyOwnerContract.scopePartTables.ACCEPTED_TAX_TERMS_COPIES).toEqual([]);
-    expect(taxPrivacyOwnerContract.acceptedTaxTermsCopyHolders.length).toBeGreaterThan(0);
-    expect(taxPrivacyOwnerContract.externalCopyRecipients).toEqual([]);
+    expect(taxPrivacyScopePartTables.ACCEPTED_TAX_TERMS_COPIES).toEqual([]);
+    expect(taxPrivacyOwnerDeclaration.acceptedTaxTermsCopyHolders.length).toBeGreaterThan(0);
+    expect(taxPrivacyOwnerDeclaration.externalCopyRecipients).toEqual([]);
   });
 });
 
@@ -131,6 +135,28 @@ describe('#956 TAX Owner Contribution', () => {
     const coverage = decodeCoverage(assess(first === undefined ? [] : [...completeObservations(), first]));
     expect(coverage.coverageStatus).toBe('INDETERMINATE');
     expect(foundCoverage.coverageParts.every(({ observedAt }) => observedAt === '2026-10-08T12:00:00.000Z')).toBe(true);
+  });
+
+  it('never reports NO_DATA for a requested part TAX does not own or a foreign owner capability (F19)', () => {
+    const extraPart = decodeCoverage(
+      assessTaxPrivacyOwnerCoverage({
+        assessedAt: '2026-10-08T12:01:00.000Z',
+        evidenceRefs: [],
+        observations: completeObservations(),
+        scope: { ...scope, requestedScopePartRefs: [...scope.requestedScopePartRefs, 'commerce.tax/unexamined'] },
+      }),
+    );
+    expect(extraPart.coverageStatus).toBe('INDETERMINATE');
+    expect(extraPart.contentStatus).toBe('UNKNOWN');
+    const foreign = decodeCoverage(
+      assessTaxPrivacyOwnerCoverage({
+        assessedAt: '2026-10-08T12:01:00.000Z',
+        evidenceRefs: [],
+        observations: completeObservations(),
+        scope: { ...scope, ownerCapability: 'commerce.inventory' },
+      }),
+    );
+    expect(foreign.contentStatus).toBe('UNKNOWN');
   });
 
   it('accepts only the exact TAX scope with typed lookups matching the trusted lookup refs', () => {
@@ -194,7 +220,7 @@ describe('#956 TAX coverage read', () => {
 
 describe('#956 TAX Privacy Measure execution', () => {
   it('never fabricates deletion: TAX has no supported disposition lifecycle for its evidence (F32, F38-F40)', () => {
-    const { outcome } = evaluate();
+    const outcome = evaluate();
     expect(decodeOutcome(outcome).status).toBe('BUSINESS_REJECTED');
     expect(outcome.reason).toBe('NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION');
     expect(outcome.remainingContentRefs).toEqual([assertionContent]);
@@ -202,95 +228,76 @@ describe('#956 TAX Privacy Measure execution', () => {
   });
 
   it('reports BLOCKED under a Current Legal Hold instead of bypassing it (F33-F35, BDD required evidence)', () => {
-    const { outcome } = evaluate({
+    const outcome = evaluate({
       blockers: [{ blockerRef: 'privacy:legal-hold-956', contentRefs: [assertionContent], kind: 'LEGAL_HOLD' }],
     });
     expect(decodeOutcome(outcome).status).toBe('BLOCKED');
     expect(outcome.reason).toBe('LEGAL_HOLD_OR_RETENTION_OBLIGATION_IS_CURRENT');
   });
 
-  it('validates the Current target against TAX owner coverage before any effect (F33)', () => {
-    const { outcome } = evaluate({
-      measure: { ...measure, targetContentRefs: ['commerce.tax/tax_rules/not-covered'] },
+  it('blocks only destructive measures: a restriction under a Legal Hold is rejected as unsupported (F33-F35)', () => {
+    const outcome = evaluate({
+      blockers: [{ blockerRef: 'privacy:legal-hold-956', contentRefs: [assertionContent], kind: 'LEGAL_HOLD' }],
+      measure: { ...measure, intendedOutcome: 'ENFORCE_PROCESSING_RESTRICTION' },
     });
+    expect(outcome.status).toBe('BUSINESS_REJECTED');
+    expect(outcome.reason).toBe('NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION');
+  });
+
+  it('validates the Current target against TAX owner coverage before any effect (F33)', () => {
+    const outcome = evaluate({ measure: { ...measure, targetContentRefs: ['commerce.tax.tax-rule:not-covered'] } });
     expect(outcome.status).toBe('BUSINESS_REJECTED');
     expect(outcome.reason).toBe('TARGET_CONTENT_NOT_IN_CURRENT_TAX_OWNER_COVERAGE');
   });
 
   it('returns NOT_APPLICABLE only on complete NO_DATA and INDETERMINATE on incomplete coverage (F18-F19)', () => {
-    expect(evaluate({ coverage: assess(completeObservations()) }).outcome.status).toBe('NOT_APPLICABLE');
-    const incomplete = evaluate({ coverage: assess([]) }).outcome;
+    expect(evaluate({ coverage: assess(completeObservations()) }).status).toBe('NOT_APPLICABLE');
+    const incomplete = evaluate({ coverage: assess([]) });
     expect(decodeOutcome(incomplete).status).toBe('INDETERMINATE');
-    expect(incomplete.reconciliationRequired).toBe(true);
+    expect(incomplete.reason).toBe('TAX_OWNER_SCOPE_COVERAGE_INCOMPLETE');
   });
 
   it('rejects coverage that belongs to another Privacy scope', () => {
-    const { outcome } = evaluate({
+    const outcome = evaluate({
       coverage: { ...foundCoverage, scope: { ...scope, requestedScopeRef: 'privacy-owner-scope:tax/other' } },
     });
     expect(outcome.reason).toBe('OWNER_COVERAGE_SCOPE_DOES_NOT_MATCH_MEASURE_SCOPE');
   });
 
   it('replays a retry of the same measure without a second effect and rejects a changed identity (F47)', () => {
-    const first = evaluate().outcome;
-    expect(evaluate({ previousAttempt: { measure, outcome: first } }).outcome).toEqual(first);
+    const first = evaluate();
+    expect(evaluate({ previousAttempt: { measure, outcome: first } })).toEqual(first);
     const changed = evaluate({
       measure: { ...measure, intendedOutcome: 'ANONYMIZE' },
       previousAttempt: { measure, outcome: first },
-    }).outcome;
+    });
     expect(changed.reason).toBe('IDEMPOTENCY_IDENTITY_OR_MEASURE_SCOPE_CONFLICT');
   });
 
-  it('requires owner reconciliation before retrying an indeterminate attempt (F48)', () => {
-    const indeterminate = evaluate({ coverage: assess([]) }).outcome;
-    const previousAttempt = { measure, outcome: indeterminate };
-    expect(evaluate({ previousAttempt }).outcome.reason).toBe('OWNER_RECONCILIATION_REQUIRED_BEFORE_RETRY');
-    const retried = evaluate({
-      previousAttempt,
-      reconciliation: {
-        evidenceRefs: ['privacy:reconciliation-956'],
-        measureRef: measure.measureRef,
-        observedAt: '2026-10-08T12:04:00.000Z',
-        preconditionsRecheckedAt: '2026-10-08T12:05:00.000Z',
-        retryAllowed: true,
-        sourceDecisionRevision: measure.sourceDecisionRevision,
-        status: 'NOT_EXECUTED',
-      },
-    }).outcome;
+  it('re-evaluates an indeterminate attempt against Current coverage because no TAX effect was attempted (F48-F49)', () => {
+    const indeterminate = evaluate({ coverage: assess([]) });
+    const retried = evaluate({ previousAttempt: { measure, outcome: indeterminate } });
     expect(retried.reason).toBe('NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION');
+    expect(retried.affectedContentRefs).toEqual([]);
   });
 
-  it('accepts a confirmed disposition only with exact, payload-free anti-resurrection evidence (F42-F45, F50)', () => {
-    const previousAttempt = { measure, outcome: evaluate({ coverage: assess([]) }).outcome };
-    const reconciliation = {
-      evidenceRefs: ['privacy:reconciliation-956'],
-      measureRef: measure.measureRef,
-      observedAt: '2026-10-08T12:04:00.000Z',
-      retryAllowed: false,
-      sourceDecisionRevision: measure.sourceDecisionRevision,
-      status: 'EXECUTION_CONFIRMED',
-    } as const;
-    const protection = {
-      enforcedAt: '2026-10-08T12:04:00.000Z',
-      evidenceRefs: ['tax:protection-956'],
-      kind: 'DELETED_SCOPE',
-      protectedContentRefs: [assertionContent],
-      protectionRef: 'tax:protection-956',
-      retainsRemovedPayload: false,
-      scope,
-      sourceDecisionRef: measure.sourceDecisionRef,
-      sourceDecisionRevision: measure.sourceDecisionRevision,
-      sourceOutcomeRef: 'privacy-owner-outcome:tax/956',
-      staleSourceResponsibilities: ['IMPORT', 'REPLAY', 'PROJECTION_REBUILD', 'BACKUP_RECOVERY'],
-    } as const;
-    expect(evaluate({ previousAttempt, reconciliation }).outcome.status).toBe('PARTIAL');
-    const partialProtection = { ...protection, staleSourceResponsibilities: ['IMPORT'] as const };
-    expect(
-      evaluate({ antiResurrectionProtection: partialProtection, previousAttempt, reconciliation }).outcome.status,
-    ).toBe('PARTIAL');
-    const achieved = evaluate({ antiResurrectionProtection: protection, previousAttempt, reconciliation });
-    expect(decodeOutcome(achieved.outcome).status).toBe('ACHIEVED');
-    expect(achieved.antiResurrectionProtection?.protectedContentRefs).toEqual([assertionContent]);
+  it('never reports ACHIEVED or PARTIAL for any intended outcome or retry path (F32, F42)', () => {
+    const intendedOutcomes = [
+      'RECTIFY',
+      'ENFORCE_DISPOSITION_RESTRICTION',
+      'ENFORCE_PROCESSING_RESTRICTION',
+      'ANONYMIZE',
+      'DELETE',
+    ] as const;
+    const statuses = intendedOutcomes.flatMap((intendedOutcome) => {
+      const candidate = { ...measure, intendedOutcome };
+      const indeterminate = evaluate({ coverage: assess([]), measure: candidate });
+      return [
+        evaluate({ measure: candidate }).status,
+        evaluate({ measure: candidate, previousAttempt: { measure: candidate, outcome: indeterminate } }).status,
+      ];
+    });
+    expect(statuses.filter((status) => status === 'ACHIEVED' || status === 'PARTIAL')).toEqual([]);
   });
 });
 

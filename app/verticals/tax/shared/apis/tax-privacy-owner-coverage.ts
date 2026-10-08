@@ -57,6 +57,14 @@ export const TaxPrivacyOwnerCoverageRequestSchema = Schema.Struct({
 export type TaxPrivacyOwnerCoverageRequest = typeof TaxPrivacyOwnerCoverageRequestSchema.Type;
 export const TaxPrivacyOwnerCoverageResponseSchema = Schema.Struct({
   coverage: Schema.toEncoded(PrivacyOwnerCoverageResultSchema),
+  /** Copies held by other owners and TAX external recipients, published with every contribution (#956 F16-F17). */
+  ownerDeclaration: Schema.Struct({
+    acceptedTaxTermsCopyHolders: Schema.Array(Schema.String),
+    attributionCoverageBoundary: Schema.Literal('SELLING_LEGAL_ENTITY'),
+    externalCopyRecipients: Schema.Array(Schema.String),
+    ownerCapability: Schema.Literal(TAX_PRIVACY_OWNER_CAPABILITY),
+    ownerMutationBoundary: Schema.Literal('NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION'),
+  }),
 });
 export type TaxPrivacyOwnerCoverageResponse = typeof TaxPrivacyOwnerCoverageResponseSchema.Type;
 
