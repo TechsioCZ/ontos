@@ -11,16 +11,22 @@ import {
   EstablishTaxFactAuthorityContractPayloadSchema,
   ReviseTaxFactAuthorityContractPayloadSchema,
 } from '../../shared/actions/tax-governance.ts';
-import { TaxGovernanceAuditEvidenceSchema } from '../../shared/domain/tax-governance-errors.ts';
+import { RecordTaxSourceAssertionPayloadSchema } from '../../shared/actions/tax-source-assertion.ts';
+import { TaxGovernanceAuditEvidenceSchema, TaxGovernanceConflict } from '../../shared/domain/tax-governance-errors.ts';
 import { handleCorrectTaxRuleRevision } from '../../src/actions/correct-tax-rule-revision.action.ts';
 import { handleCreateTaxRuleRevision } from '../../src/actions/create-tax-rule-revision.action.ts';
 import { handleCreateTaxRule } from '../../src/actions/create-tax-rule.action.ts';
 import { handleEndTaxFactAuthorityContract } from '../../src/actions/end-tax-fact-authority-contract.action.ts';
 import { handleEndTaxRuleRevision } from '../../src/actions/end-tax-rule-revision.action.ts';
 import { handleEstablishTaxFactAuthorityContract } from '../../src/actions/establish-tax-fact-authority-contract.action.ts';
+import { handleRecordTaxSourceAssertion } from '../../src/actions/record-tax-source-assertion.action.ts';
 import { handleReviseTaxFactAuthorityContract } from '../../src/actions/revise-tax-fact-authority-contract.action.ts';
 import type { TaxAuthorityGovernancePersistence } from '../../src/services/tax-authority-governance.service.ts';
 import type { TaxRuleGovernancePersistence } from '../../src/services/tax-rule-governance.service.ts';
+import type {
+  RecordTaxSourceAssertionOutcome,
+  TaxSourceAssertionPersistence,
+} from '../../src/services/tax-source-assertion.service.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
 const principalId = '20000000-0000-4000-8000-000000000001';
@@ -253,5 +259,129 @@ it.effect('#950 F46-F47 every governed TAX mutation audits its expected-current 
       reason,
       resultingRevisionId: 'ending-revision',
     });
+  }),
+);
+
+const sourceAssertionPayload = Schema.decodeEffect(RecordTaxSourceAssertionPayloadSchema)({
+  ...attribution,
+  factFamily: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
+  jurisdiction: 'CZ_DOMESTIC',
+  registrationMeaning: 'REGISTERED',
+  sourceAssertionKey: 'erp-assertion-1',
+  sourceRecordRef: 'erp-record-1',
+  sourceRef: 'erp.finance',
+  validFrom: '2026-01-01T00:00:00.000Z',
+});
+const sourceServices = (outcome: RecordTaxSourceAssertionOutcome): TaxSourceAssertionPersistence => ({
+  recordAssertion: (input) => {
+    expect(input.operationTime).toBeInstanceOf(Date);
+    expect(input.legalEntityId).toBe(legalEntityId);
+    return Effect.succeed(outcome);
+  },
+});
+
+it.effect('#957 F25-F29 #958 F11 an integrity conflict is a typed result whose audit names the conflict', () =>
+  Effect.gen(function* nonAcceptedIsResult() {
+    const payload = yield* sourceAssertionPayload;
+    const prepared = context(
+      sourceServices({
+        acceptanceOutcome: 'REJECTED',
+        acceptanceReason: 'ASSERTION_IDENTITY_CONFLICT',
+        assertionId: 'stored-assertion',
+        authorityRole: 'NONE',
+        conflictId: 'integrity-conflict',
+        created: true,
+        meaningFingerprint,
+      }),
+    );
+    const result = yield* handleRecordTaxSourceAssertion(payload, prepared.value);
+    expect(result).toEqual({
+      acceptanceOutcome: 'REJECTED',
+      acceptanceReason: 'ASSERTION_IDENTITY_CONFLICT',
+      assertionRef: ref('commerce.tax.tax-source-assertion', 'stored-assertion'),
+      authorityRole: 'NONE',
+      conflictRef: ref('commerce.tax.tax-source-conflict', 'integrity-conflict'),
+      created: true,
+    });
+    expect(yield* decodeAudit(prepared.audit)).toEqual([
+      {
+        action: 'RECORD_TAX_SOURCE_ASSERTION',
+        changed: true,
+        meaningFingerprint,
+        operation: 'CREATE',
+        reason: attribution.reason,
+        resourceId: 'integrity-conflict',
+        resourceType: 'commerce.tax.tax-source-conflict',
+      },
+    ]);
+  }),
+);
+
+it.effect('#959 F4-F5 a replayed source assertion audits no change and returns no conflict it did not record', () =>
+  Effect.gen(function* replayAuditsNoChange() {
+    const prepared = context(
+      sourceServices({
+        acceptanceOutcome: 'ACCEPTED',
+        acceptanceReason: 'ACCEPTED',
+        assertionId: 'assertion-1',
+        authorityRole: 'SYSTEM_OF_RECORD',
+        created: false,
+        eligibility: 'ELIGIBLE',
+        meaningFingerprint,
+      }),
+    );
+    const result = yield* handleRecordTaxSourceAssertion(yield* sourceAssertionPayload, prepared.value);
+    expect(result).toEqual({
+      acceptanceOutcome: 'ACCEPTED',
+      acceptanceReason: 'ACCEPTED',
+      assertionRef: ref('commerce.tax.tax-source-assertion', 'assertion-1'),
+      authorityRole: 'SYSTEM_OF_RECORD',
+      created: false,
+      eligibility: 'ELIGIBLE',
+    });
+    const [evidence] = yield* decodeAudit(prepared.audit);
+    expect(evidence).toMatchObject({ changed: false, resourceId: 'assertion-1' });
+    expect(evidence?.resultingConflictId).toBeUndefined();
+  }),
+);
+
+it.effect('#955 G Core idempotency reuse is the only failure of recording a source assertion', () =>
+  Effect.gen(function* idempotencyReuseFails() {
+    const prepared = context(sourceServices({ conflict: 'IDEMPOTENCY_REUSED', kind: 'conflict' }));
+    const failure = yield* handleRecordTaxSourceAssertion(yield* sourceAssertionPayload, prepared.value).pipe(
+      Effect.flip,
+    );
+    expect(Schema.is(TaxGovernanceConflict)(failure)).toBe(true);
+    expect(Schema.is(TaxGovernanceConflict)(failure) ? failure.conflict : undefined).toBe('IDEMPOTENCY_REUSED');
+    expect(prepared.audit).toEqual([]);
+  }),
+);
+
+it.effect('#958 F12-F16 F26 the payload never derives validity and rejects an inverted validity period', () =>
+  Effect.gen(function* payloadValidity() {
+    const inverted = yield* Schema.decodeEffect(RecordTaxSourceAssertionPayloadSchema)({
+      ...attribution,
+      factFamily: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
+      jurisdiction: 'CZ_DOMESTIC',
+      registrationMeaning: 'REGISTERED',
+      sourceAssertionKey: 'erp-assertion-1',
+      sourceRecordRef: 'erp-record-1',
+      sourceRef: 'erp.finance',
+      validFrom: '2026-06-01T00:00:00.000Z',
+      validTo: '2026-01-01T00:00:00.000Z',
+    }).pipe(Effect.flip);
+    expect(String(inverted)).toMatch(/validity period must end after it starts/u);
+    const observedOnly = yield* Schema.decodeEffect(RecordTaxSourceAssertionPayloadSchema)({
+      ...attribution,
+      factFamily: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
+      jurisdiction: 'CZ_DOMESTIC',
+      observedAt: '2026-02-01T00:00:00.000Z',
+      registrationMeaning: 'REGISTERED',
+      sourceAssertionKey: 'erp-assertion-2',
+      sourceRecordRef: 'erp-record-1',
+      sourceRef: 'erp.finance',
+    });
+    expect(observedOnly.validFrom).toBeUndefined();
+    expect(observedOnly.validTo).toBeUndefined();
   }),
 );
