@@ -279,8 +279,25 @@ const settledTaxStatuses: ReadonlySet<PrivacyOwnerExecutionOutcomeEncoded['statu
   'NOT_APPLICABLE',
 ]);
 
-const isSettledTaxOutcome = (outcome: PrivacyOwnerExecutionOutcomeEncoded): boolean =>
-  settledTaxStatuses.has(outcome.status);
+/**
+ * A settled outcome is replayed only when it is TAX's own answer to exactly this measure: same measure, decision
+ * and owner scope, no claimed effect, and only this measure's targets remaining.
+ */
+const isSettledTaxOutcomeFor = (
+  outcome: PrivacyOwnerExecutionOutcomeEncoded,
+  measure: PrivacyMeasureEncoded,
+): boolean => {
+  const targets = new Set(measure.targetContentRefs);
+  return (
+    settledTaxStatuses.has(outcome.status) &&
+    outcome.measureRef === measure.measureRef &&
+    outcome.sourceDecisionRef === measure.sourceDecisionRef &&
+    outcome.sourceDecisionRevision === measure.sourceDecisionRevision &&
+    isSameOwnerScope(outcome.scope, measure.scope) &&
+    outcome.affectedContentRefs.length === 0 &&
+    outcome.remainingContentRefs.every((contentRef) => targets.has(contentRef))
+  );
+};
 
 /**
  * Evaluates TAX's truthful owner response to an approved Privacy Measure. Every TAX row is append-only governance
@@ -291,7 +308,8 @@ const isSettledTaxOutcome = (outcome: PrivacyOwnerExecutionOutcomeEncoded): bool
  * Retry keeps the measure identity (F47): a changed identity is rejected and a settled TAX outcome is replayed. An
  * INDETERMINATE outcome here only ever means coverage was incomplete; no TAX effect was attempted, so the owner
  * reconciliation is a fresh evaluation against Current coverage and can never duplicate an effect (F48-F49). A
- * supplied previous status TAX cannot produce (e.g. ACHIEVED) is re-evaluated, never echoed (F32, F35).
+ * supplied previous outcome TAX cannot produce (e.g. ACHIEVED) or one that belongs to another measure, decision or
+ * scope is re-evaluated, never echoed (F32, F35).
  */
 export const evaluateTaxPrivacyMeasure = (
   input: TaxPrivacyMeasureEvaluationInput,
@@ -303,5 +321,5 @@ export const evaluateTaxPrivacyMeasure = (
   if (!isSameTaxPrivacyMeasureIdentity(previous.measure, input.measure)) {
     return outcomeOf(input, 'BUSINESS_REJECTED', 'IDEMPOTENCY_IDENTITY_OR_MEASURE_SCOPE_CONFLICT');
   }
-  return isSettledTaxOutcome(previous.outcome) ? previous.outcome : evaluateCurrentMeasure(input);
+  return isSettledTaxOutcomeFor(previous.outcome, input.measure) ? previous.outcome : evaluateCurrentMeasure(input);
 };

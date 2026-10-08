@@ -318,6 +318,24 @@ describe('#956 TAX Privacy Measure execution', () => {
     expect(statuses.filter((status) => status === 'ACHIEVED' || status === 'PARTIAL')).toEqual([]);
   });
 
+  it('never replays a settled outcome that belongs to another measure, decision, scope or content (F47)', () => {
+    const blocked = evaluate({
+      blockers: [{ blockerRef: 'privacy:legal-hold-956', contentRefs: [assertionContent], kind: 'LEGAL_HOLD' }],
+    });
+    expect(evaluate({ previousAttempt: { measure, outcome: blocked } })).toEqual(blocked);
+    const foreign = [
+      { ...blocked, measureRef: 'privacy-measure:other' },
+      { ...blocked, sourceDecisionRevision: 'revision-other' },
+      { ...blocked, scope: { ...scope, tenantId: 'tenant-other' } },
+      { ...blocked, remainingContentRefs: ['commerce.tax.tax-rule:unrelated'] },
+    ];
+    for (const outcome of foreign) {
+      const retried = evaluate({ previousAttempt: { measure, outcome } });
+      expect(retried.reason).toBe('NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION');
+      expect(retried.measureRef).toBe(measure.measureRef);
+    }
+  });
+
   it('never echoes a supplied previous ACHIEVED or PARTIAL outcome that TAX cannot produce (F32, F35)', () => {
     const settled = evaluate();
     const claimed = [
