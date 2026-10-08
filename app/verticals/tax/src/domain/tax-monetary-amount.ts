@@ -1,6 +1,9 @@
 import { Schema } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
+import { roundHalfUpToMinorUnits } from './tax-exact-rational.ts';
+import type { NonNegativeTaxExactRational } from './tax-exact-rational.ts';
+
 /** Launch Tax currency is explicit and closed to CZK (#918 F31, #936 F31, #937 F23-F24). */
 export const TaxCurrencySchema = Schema.Literal('CZK');
 export type TaxCurrency = typeof TaxCurrencySchema.Type;
@@ -25,14 +28,18 @@ export const CZK_MINOR_UNITS_PER_MAJOR_UNIT = 100n;
 const MINOR_UNIT_DIGITS = 2;
 
 /**
- * Published Tax amount of a non-negative count of exact CZK minor units; callers pass only values that are
- * non-negative by their schema invariants (non-negative basis, positive rate, sums of published amounts).
+ * Published Tax amount of a non-negative count of exact CZK minor units. Module-private: its only sources are
+ * HALF_UP of a non-negative exact value and sums of published amounts, so the count is never negative.
  */
-export const taxMonetaryAmountFromNonNegativeMinorUnits = (minorUnits: bigint): TaxMonetaryAmount => {
+const taxMonetaryAmountFromNonNegativeMinorUnits = (minorUnits: bigint): TaxMonetaryAmount => {
   const major = minorUnits / CZK_MINOR_UNITS_PER_MAJOR_UNIT;
   const minor = (minorUnits % CZK_MINOR_UNITS_PER_MAJOR_UNIT).toString().padStart(MINOR_UNIT_DIGITS, '0');
   return { amount: `${major}.${minor}`, currency: 'CZK' };
 };
+
+/** Published CZK Tax amount of a non-negative exact value, ROUND_HALF_UP at 0.01 CZK (#935 F21-F22, #936 F33). */
+export const publishedTaxAmountRoundedHalfUp = (value: NonNegativeTaxExactRational): TaxMonetaryAmount =>
+  taxMonetaryAmountFromNonNegativeMinorUnits(roundHalfUpToMinorUnits(value, CZK_MINOR_UNITS_PER_MAJOR_UNIT));
 
 /** Exact CZK minor units (halere) of one published Tax amount. */
 export const taxMonetaryAmountMinorUnits = (value: TaxMonetaryAmount): bigint => BigInt(value.amount.replace('.', ''));

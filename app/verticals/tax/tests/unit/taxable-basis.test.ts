@@ -101,19 +101,18 @@ describe('Taxable Basis composition', () => {
       composeLineTaxableBasis(pricingLine('set-o-1', '1000.00', [contribution('PRICE', '1000.00')])),
     );
     const input = decisionUnitInput('set-o-1');
+    const setSelection = {
+      ...catalogSelectionInput('set-variant-1'),
+      setCompositionRevisionRef: { revision: 1, setCompositionId: 'set-composition-1' },
+    };
     const unit = decodeTaxDecisionUnit({
       ...input,
       taxableBasisInterpretation: { components: [composed.basisComponent] },
       taxableSupplyUnit: {
-        mapping: {
-          _tag: 'WHOLE_TREATMENT_SET',
-          catalogSelection: catalogSelectionInput('set-variant-1'),
-          occurrenceId: 'set-o-1',
-          setCompositionRevisionRef: { revision: 1, setCompositionId: 'set-composition-1' },
-        },
+        mapping: { _tag: 'WHOLE_TREATMENT_SET', catalogSelection: setSelection, occurrenceId: 'set-o-1' },
         unitId: 'taxable-supply-unit:set-o-1',
       },
-      taxClassification: { ...input.taxClassification, catalogSelection: catalogSelectionInput('set-variant-1') },
+      taxClassification: { ...input.taxClassification, catalogSelection: setSelection },
     });
 
     expect(unit.taxableBasisInterpretation.components).toHaveLength(1);

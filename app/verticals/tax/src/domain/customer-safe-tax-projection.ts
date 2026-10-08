@@ -1,4 +1,4 @@
-import { Array as Arr, Match, Schema } from 'effect';
+import { Array as Arr, Match, Option, Schema, pipe } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
 import { PurchaseDemandOccurrenceIdSchema } from './purchase-binding.ts';
@@ -46,19 +46,38 @@ export type CustomerSafeTaxProjection = typeof CustomerSafeTaxProjectionSchema.T
 type CustomerSafeTaxComponent = typeof CustomerSafeTaxComponentSchema.Type;
 
 /**
- * Pairs each Decision unit with its published Result amount. The outcome schema guarantees the Result follows from
- * the Decision unit by unit, so no unit is ever dropped (#940 F32, #936 F28-F29).
+ * Joins each Decision unit with its published Result amount by Taxable Supply Unit identity, never by array position
+ * (#937 F7, #936 F28-F29). The outcome schema guarantees the Result covers exactly the Decision units, so no unit is
+ * dropped (#940 F32); a unit without its published amount has no components.
  */
-const componentsOf = (success: TaxOutcomeSuccess): NonEmptyReadonlyArray<CustomerSafeTaxComponent> =>
-  Arr.zipWith(
-    success.decision.units,
-    success.result.units,
-    ({ taxableSupplyUnit, treatment }, { publishedTaxAmount }): CustomerSafeTaxComponent => ({
-      purchaseDemandOccurrenceIds: taxableSupplyUnitSourceOccurrenceIds(taxableSupplyUnit),
-      taxAmount: publishedTaxAmount,
-      treatment: { category: treatment._tag, ratePercent: treatment.ratePercent },
-    }),
+const componentsOf = (success: TaxOutcomeSuccess): Option.Option<NonEmptyReadonlyArray<CustomerSafeTaxComponent>> => {
+  const publishedByUnitId = new Map<string, CustomerSafeTaxComponent['taxAmount']>(
+    success.result.units.map(({ publishedTaxAmount, taxableSupplyUnitId }) => [
+      taxableSupplyUnitId,
+      publishedTaxAmount,
+    ]),
   );
+  return Option.all(
+    pipe(
+      success.decision.units,
+      Arr.map(({ taxableSupplyUnit, treatment }) =>
+        pipe(
+          Option.fromUndefinedOr(publishedByUnitId.get(taxableSupplyUnit.unitId)),
+          Option.map((taxAmount): CustomerSafeTaxComponent => ({
+            purchaseDemandOccurrenceIds: taxableSupplyUnitSourceOccurrenceIds(taxableSupplyUnit),
+            taxAmount,
+            treatment: { category: treatment._tag, ratePercent: treatment.ratePercent },
+          })),
+        ),
+      ),
+    ),
+  );
+};
+
+const notDetermined: CustomerSafeTaxProjection = {
+  _tag: 'TAX_NOT_DETERMINED',
+  contractVersion: CUSTOMER_SAFE_TAX_PROJECTION_VERSION,
+};
 
 /**
  * Projects one authoritative Tax Outcome into its customer-safe view by copying published values only; it never
@@ -76,11 +95,14 @@ export const projectCustomerSafeTax = (
         purchaseTaxTotal: success.result.purchaseTaxTotal,
       } as const;
       return decompositionNeed === 'PER_TAXABLE_SUPPLY_UNIT'
-        ? { ...projection, components: componentsOf(success) }
+        ? pipe(
+            componentsOf(success),
+            Option.match({
+              onNone: () => notDetermined,
+              onSome: (components): CustomerSafeTaxProjection => ({ ...projection, components }),
+            }),
+          )
         : projection;
     }),
-    Match.orElse((): CustomerSafeTaxProjection => ({
-      _tag: 'TAX_NOT_DETERMINED',
-      contractVersion: CUSTOMER_SAFE_TAX_PROJECTION_VERSION,
-    })),
+    Match.orElse(() => notDetermined),
   );
