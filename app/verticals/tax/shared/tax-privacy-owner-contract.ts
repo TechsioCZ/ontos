@@ -166,11 +166,6 @@ export interface TaxPrivacyMeasureBlocker {
   readonly kind: 'LEGAL_HOLD' | 'RETENTION_OBLIGATION';
 }
 
-export interface TaxPrivacyPreviousAttempt {
-  readonly measure: PrivacyMeasureEncoded;
-  readonly outcome: PrivacyOwnerExecutionOutcomeEncoded;
-}
-
 export interface TaxPrivacyMeasureEvaluationInput {
   readonly blockers: readonly TaxPrivacyMeasureBlocker[];
   readonly confirmedAt: PrivacyOwnerExecutionOutcomeEncoded['confirmedAt'];
@@ -178,7 +173,8 @@ export interface TaxPrivacyMeasureEvaluationInput {
   readonly evidenceRefs: readonly string[];
   readonly measure: PrivacyMeasureEncoded;
   readonly outcomeRef: string;
-  readonly previousAttempt?: TaxPrivacyPreviousAttempt;
+  /** The measure as first delivered under the same idempotency key, when this is a retry. */
+  readonly previousMeasure?: PrivacyMeasureEncoded;
 }
 
 const canonicalReferences = (references: readonly string[]): readonly string[] => [...references].toSorted();
@@ -272,55 +268,22 @@ const evaluateCurrentMeasure = (input: TaxPrivacyMeasureEvaluationInput): Privac
   return outcomeOf(input, 'BUSINESS_REJECTED', 'NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION');
 };
 
-/** Settled outcomes TAX itself produces; any other supplied status is not TAX evidence and is never replayed. */
-const settledTaxStatuses: ReadonlySet<PrivacyOwnerExecutionOutcomeEncoded['status']> = new Set([
-  'BLOCKED',
-  'BUSINESS_REJECTED',
-  'NOT_APPLICABLE',
-]);
-
-/**
- * A settled outcome is replayed only when it is TAX's own answer to exactly this measure: same measure, decision
- * and owner scope, no claimed effect, and exactly the remaining content TAX itself reports.
- */
-const isSettledTaxOutcomeFor = (
-  outcome: PrivacyOwnerExecutionOutcomeEncoded,
-  measure: PrivacyMeasureEncoded,
-): boolean => {
-  // TAX's own settled outcomes keep every target remaining, except NOT_APPLICABLE, which has none.
-  const expectedRemaining = outcome.status === 'NOT_APPLICABLE' ? [] : measure.targetContentRefs;
-  return (
-    settledTaxStatuses.has(outcome.status) &&
-    outcome.measureRef === measure.measureRef &&
-    outcome.sourceDecisionRef === measure.sourceDecisionRef &&
-    outcome.sourceDecisionRevision === measure.sourceDecisionRevision &&
-    isSameOwnerScope(outcome.scope, measure.scope) &&
-    outcome.affectedContentRefs.length === 0 &&
-    hasExactReferences(outcome.remainingContentRefs, expectedRemaining)
-  );
-};
-
 /**
  * Evaluates TAX's truthful owner response to an approved Privacy Measure. Every TAX row is append-only governance
  * evidence and TAX has no approved privacy mutation lifecycle, so TAX never alters an artifact and keeps presenting
  * it as the original (#956 F38-F40) and never reports ACHIEVED, PARTIAL or an anti-resurrection protection for an
  * effect it cannot perform (F32, F35, F42). Owner Execution Outcome stays separate from the Privacy decision (F29).
  *
- * Retry keeps the measure identity (F47): a changed identity is rejected and a settled TAX outcome is replayed. An
- * INDETERMINATE outcome here only ever means coverage was incomplete; no TAX effect was attempted, so the owner
- * reconciliation is a fresh evaluation against Current coverage and can never duplicate an effect (F48-F49). A
- * supplied previous outcome TAX cannot produce (e.g. ACHIEVED) or one that belongs to another measure, decision or
- * scope is re-evaluated, never echoed (F32, F35).
+ * Retry keeps the measure identity (F47): a retry carrying a changed identity is rejected. TAX performs no effect,
+ * so a retry of the same measure is always evaluated afresh against Current coverage: it can never duplicate an
+ * effect, needs no owner reconciliation of a prior effect (F48-F49), and no caller-supplied previous outcome is ever
+ * trusted or echoed (F32, F35).
  */
 export const evaluateTaxPrivacyMeasure = (
   input: TaxPrivacyMeasureEvaluationInput,
 ): PrivacyOwnerExecutionOutcomeEncoded => {
-  const previous = input.previousAttempt;
-  if (previous === undefined) {
-    return evaluateCurrentMeasure(input);
-  }
-  if (!isSameTaxPrivacyMeasureIdentity(previous.measure, input.measure)) {
+  if (input.previousMeasure !== undefined && !isSameTaxPrivacyMeasureIdentity(input.previousMeasure, input.measure)) {
     return outcomeOf(input, 'BUSINESS_REJECTED', 'IDEMPOTENCY_IDENTITY_OR_MEASURE_SCOPE_CONFLICT');
   }
-  return isSettledTaxOutcomeFor(previous.outcome, input.measure) ? previous.outcome : evaluateCurrentMeasure(input);
+  return evaluateCurrentMeasure(input);
 };
