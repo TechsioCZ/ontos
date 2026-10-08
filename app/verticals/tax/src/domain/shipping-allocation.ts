@@ -1,10 +1,8 @@
 import { Array as Arr, Match, Option, Result, Schema, pipe } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
-import { ShippingSourceRefSchema } from './purchase-binding.ts';
+import { ShippingSourceRefSchema, isSameShippingSourceRef } from './purchase-binding.ts';
 import type { ShippingSourceRef } from './purchase-binding.ts';
-import { ShippingAllocationBasisSchema, isConsistentShippingAttribution } from './tax-decision.ts';
-import type { ShippingAllocationBasis } from './tax-decision.ts';
 import { BoundedIdentifierSchema, distinctBy } from './tax-domain-primitives.ts';
 import {
   NonNegativeTaxExactRationalSchema,
@@ -20,6 +18,36 @@ import type { TaxCaseUnsupported, TaxNotEstablishedOutcome, TaxStateIndeterminat
 import { OwnerIssuedAmountSchema } from './taxable-basis.ts';
 import { TaxableSupplyUnitIdSchema } from './taxable-supply-unit.ts';
 import type { TaxableSupplyUnitId } from './taxable-supply-unit.ts';
+
+/**
+ * Exact allocation of the separately owned Shipping amount into one unit, attributed to the exact source Shipping
+ * amount revision and, when owner-approved weights were applied, to their approval evidence (#920 F31-F34,
+ * #933 F17-F19, #936 F19, #937 F29-F30).
+ */
+export const ShippingAllocationBasisSchema = Schema.TaggedStruct('SHIPPING_ALLOCATION', {
+  allocationWeightsEvidenceRef: Schema.optionalKey(BoundedIdentifierSchema),
+  amount: NonNegativeTaxExactRationalSchema,
+  shippingSourceRef: ShippingSourceRefSchema,
+});
+export type ShippingAllocationBasis = typeof ShippingAllocationBasisSchema.Type;
+
+/**
+ * Allocations of one Shipping amount attribute the same exact source and the same weights evidence. Weights
+ * evidence may be absent only when one unit takes the whole amount or the authoritative amount is zero
+ * (#933 F14, F17-F18; #962 F32; #920 F33).
+ */
+const isConsistentShippingAttribution = (allocations: NonEmptyReadonlyArray<ShippingAllocationBasis>): boolean => {
+  const [first] = allocations;
+  const weighted =
+    allocations.length > 1 &&
+    allocations.some(({ amount }) => !taxExactRationalsEqual(amount, ZERO_TAX_EXACT_RATIONAL));
+  return allocations.every(
+    ({ allocationWeightsEvidenceRef, shippingSourceRef }) =>
+      isSameShippingSourceRef(shippingSourceRef, first.shippingSourceRef) &&
+      allocationWeightsEvidenceRef === first.allocationWeightsEvidenceRef &&
+      (!weighted || allocationWeightsEvidenceRef !== undefined),
+  );
+};
 
 const distinctUnitIds = <Entry>(unitIdOf: (entry: Entry) => TaxableSupplyUnitId) =>
   distinctBy(unitIdOf, 'Taxable Supply Units must not repeat');
@@ -58,11 +86,11 @@ export const ShippingAllocationInputSchema = Schema.Struct({
 });
 export type ShippingAllocationInput = typeof ShippingAllocationInputSchema.Type;
 
-const UnitShippingAllocationSchema = Schema.Struct({
+export const UnitShippingAllocationSchema = Schema.Struct({
   basisComponent: ShippingAllocationBasisSchema,
   taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
 });
-type UnitShippingAllocation = typeof UnitShippingAllocationSchema.Type;
+export type UnitShippingAllocation = typeof UnitShippingAllocationSchema.Type;
 
 const basisComponentsOf = (unitAllocations: NonEmptyReadonlyArray<UnitShippingAllocation>) =>
   pipe(
@@ -166,6 +194,8 @@ const indeterminate: TaxStateIndeterminate = { _tag: 'TAX_STATE_INDETERMINATE' }
 
 /**
  * Allocates ancillary owner-issued Shipping into the Taxable Basis of the affected Taxable Supply Units.
+ * - Provided weights that do not exactly cover the affected units are an inconsistent material set, so the state
+ *   is indeterminate even for one affected unit (#938 F27-F28).
  * - One affected unit receives the whole amount (#933 F14).
  * - Authoritative zero Shipping stays zero for every affected unit, as no other exact conserving split exists
  *   (#962 F32, #933 F21).
@@ -179,6 +209,10 @@ export const allocateShippingTaxableBasis = (
     requireCurrentCzkShipping(input.shippingSource),
     Result.flatMap((shipping): Result.Result<ShippingAllocation, ShippingAllocationFailure> => {
       const affected = input.affectedTaxableSupplyUnitIds;
+      const weights = input.allocationWeights;
+      if (weights !== undefined && !weightsCoverExactly(affected, weights)) {
+        return Result.fail(indeterminate);
+      }
       if (affected.length === 1 || taxExactRationalsEqual(shipping.amount, ZERO_TAX_EXACT_RATIONAL)) {
         const component: ShippingAllocationBasis = {
           _tag: 'SHIPPING_ALLOCATION',
@@ -193,8 +227,7 @@ export const allocateShippingTaxableBasis = (
           ),
         });
       }
-      const weights = input.allocationWeights;
-      if (weights === undefined || !weightsCoverExactly(affected, weights)) {
+      if (weights === undefined) {
         return Result.fail(indeterminate);
       }
       return pipe(

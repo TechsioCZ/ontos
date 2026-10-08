@@ -1,9 +1,14 @@
 import { Array as Arr, Match, Result, Schema, pipe } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
-import { PurchaseDemandOccurrenceIdSchema, PurchaseDemandOccurrenceSchema } from './purchase-binding.ts';
+import {
+  CatalogSelectionSchema,
+  PurchaseDemandOccurrenceIdSchema,
+  PurchaseDemandOccurrenceSchema,
+  SetCompositionRevisionRefSchema,
+} from './purchase-binding.ts';
 import type { PurchaseDemandOccurrence, PurchaseDemandOccurrenceId } from './purchase-binding.ts';
-import { BoundedIdentifierSchema, RevisionSchema, distinctBy } from './tax-domain-primitives.ts';
+import { distinctBy } from './tax-domain-primitives.ts';
 import type { TaxCaseUnsupported } from './tax-non-success-outcome.ts';
 
 /** Tax-owned identity of one Taxable Supply Unit; it is not a Pricing Line or UI row (#920 F1-F11). */
@@ -14,21 +19,13 @@ export const TaxableSupplyUnitIdSchema = Schema.String.check(
 ).pipe(Schema.brand('TaxableSupplyUnitId'));
 export type TaxableSupplyUnitId = typeof TaxableSupplyUnitIdSchema.Type;
 
-/** Exact pinned Set Composition Revision used for a Set's Tax meaning (#934 F3, F23; #937 F17). */
-export const SetCompositionIdSchema = BoundedIdentifierSchema.pipe(Schema.brand('SetCompositionId'));
-
-export const SetCompositionRevisionRefSchema = Schema.Struct({
-  revision: RevisionSchema,
-  setCompositionId: SetCompositionIdSchema,
-});
-
 const OrdinaryOccurrenceMappingSchema = Schema.TaggedStruct('ORDINARY_OCCURRENCE', {
-  catalogSelectionRef: BoundedIdentifierSchema,
+  catalogSelection: CatalogSelectionSchema,
   occurrenceId: PurchaseDemandOccurrenceIdSchema,
 });
 
 const WholeTreatmentSetMappingSchema = Schema.TaggedStruct('WHOLE_TREATMENT_SET', {
-  catalogSelectionRef: BoundedIdentifierSchema,
+  catalogSelection: CatalogSelectionSchema,
   occurrenceId: PurchaseDemandOccurrenceIdSchema,
   setCompositionRevisionRef: SetCompositionRevisionRefSchema,
 });
@@ -82,7 +79,7 @@ const unitFor = (meaning: OccurrenceSupplyMeaning): Result.Result<TaxableSupplyU
       Result.succeed({
         mapping: {
           _tag: 'ORDINARY_OCCURRENCE' as const,
-          catalogSelectionRef: occurrence.catalogSelectionRef,
+          catalogSelection: occurrence.catalogSelection,
           occurrenceId: occurrence.occurrenceId,
         },
         unitId: unitIdFor(occurrence),
@@ -92,7 +89,7 @@ const unitFor = (meaning: OccurrenceSupplyMeaning): Result.Result<TaxableSupplyU
       Result.succeed({
         mapping: {
           _tag: 'WHOLE_TREATMENT_SET' as const,
-          catalogSelectionRef: occurrence.catalogSelectionRef,
+          catalogSelection: occurrence.catalogSelection,
           occurrenceId: occurrence.occurrenceId,
           setCompositionRevisionRef,
         },

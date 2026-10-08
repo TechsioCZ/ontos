@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { OccurrenceSupplyMeaningsSchema, mapTaxableSupplyUnits } from '../../src/domain/taxable-supply-unit.ts';
-import { occurrenceInput } from './tax-domain-fixtures.ts';
+import { catalogSelectionInput, occurrenceInput } from './tax-domain-fixtures.ts';
 
 const decodeMeanings = Schema.decodeUnknownSync(OccurrenceSupplyMeaningsSchema);
 const setComposition = { revision: 3, setCompositionId: 'set-composition-1' };
@@ -14,7 +14,7 @@ describe('Taxable Supply Unit mapping', () => {
     expect(mapped).toEqual(
       Result.succeed([
         {
-          mapping: { _tag: 'ORDINARY_OCCURRENCE', catalogSelectionRef: 'variant-1', occurrenceId: 'o-1' },
+          mapping: { _tag: 'ORDINARY_OCCURRENCE', catalogSelection: catalogSelectionInput(), occurrenceId: 'o-1' },
           unitId: 'taxable-supply-unit:o-1',
         },
       ]),
@@ -51,7 +51,7 @@ describe('Taxable Supply Unit mapping', () => {
         {
           mapping: {
             _tag: 'WHOLE_TREATMENT_SET',
-            catalogSelectionRef: 'variant-1',
+            catalogSelection: catalogSelectionInput(),
             occurrenceId: 'set-o-1',
             setCompositionRevisionRef: setComposition,
           },

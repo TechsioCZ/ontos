@@ -1,15 +1,20 @@
-import { Option, Result, Schema } from 'effect';
+import { Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { PurchaseDemandOccurrenceIdSchema } from '../../src/domain/purchase-binding.ts';
-import { LineCommercialValueBasisSchema } from '../../src/domain/tax-decision.ts';
 import { exactTaxContribution } from '../../src/domain/tax-rounding.ts';
 import {
+  LineCommercialValueBasisSchema,
   PublishedPricingLineSchema,
   composeLineTaxableBasis,
   lineTaxableBasisForOccurrence,
 } from '../../src/domain/taxable-basis.ts';
-import { decisionUnitInput, decodeTaxDecisionUnit, exactDecimal } from './tax-domain-fixtures.ts';
+import {
+  catalogSelectionInput,
+  decisionUnitInput,
+  decodeTaxDecisionUnit,
+  exactDecimal,
+} from './tax-domain-fixtures.ts';
 
 const decodeLine = Schema.decodeUnknownSync(PublishedPricingLineSchema);
 const czk = (amount: string) => ({ amount: exactDecimal(amount), currency: 'CZK' });
@@ -95,23 +100,23 @@ describe('Taxable Basis composition', () => {
     const composed = Result.getOrThrow(
       composeLineTaxableBasis(pricingLine('set-o-1', '1000.00', [contribution('PRICE', '1000.00')])),
     );
+    const input = decisionUnitInput('set-o-1');
     const unit = decodeTaxDecisionUnit({
-      ...decisionUnitInput('set-o-1'),
+      ...input,
       taxableBasisInterpretation: { components: [composed.basisComponent] },
       taxableSupplyUnit: {
         mapping: {
           _tag: 'WHOLE_TREATMENT_SET',
-          catalogSelectionRef: 'set-variant-1',
+          catalogSelection: catalogSelectionInput('set-variant-1'),
           occurrenceId: 'set-o-1',
           setCompositionRevisionRef: { revision: 1, setCompositionId: 'set-composition-1' },
         },
         unitId: 'taxable-supply-unit:set-o-1',
       },
+      taxClassification: { ...input.taxClassification, catalogSelection: catalogSelectionInput('set-variant-1') },
     });
 
     expect(unit.taxableBasisInterpretation.components).toHaveLength(1);
-    expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual(
-      Option.some(exactDecimal('210')),
-    );
+    expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual(exactDecimal('210'));
   });
 });

@@ -9,7 +9,7 @@ import type { NonEmptyReadonlyArray } from 'effect/Array';
 
 const integerPattern = /^(?:0|-?[1-9]\d*)$/u;
 const positiveIntegerPattern = /^[1-9]\d*$/u;
-const decimalPattern = /^(?<sign>-?)(?<integerDigits>0|[1-9]\d*)(?:\.(?<fractionDigits>\d+))?$/u;
+const decimalPattern = /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/u;
 
 const absolute = (value: bigint) => (value < 0n ? -value : value);
 
@@ -61,15 +61,18 @@ const normalize = (numerator: bigint, denominator: bigint): TaxExactRational => 
 export const makeTaxExactRational = (numerator: bigint, denominator: bigint): Option.Option<TaxExactRational> =>
   denominator === 0n ? Option.none() : Option.some(normalize(numerator, denominator));
 
-/** Reads a canonical base-10 decimal string exactly, without binary floating point. */
-export const taxExactRationalFromDecimal = (value: string): Option.Option<TaxExactRational> => {
-  const groups = decimalPattern.exec(value)?.groups;
-  if (groups === undefined) {
-    return Option.none();
-  }
-  const { fractionDigits = '', integerDigits = '0', sign = '' } = groups;
-  return makeTaxExactRational(BigInt(`${sign}${integerDigits}${fractionDigits}`), 10n ** BigInt(fractionDigits.length));
+/**
+ * Exact value of a decimal string already validated as canonical base-10 (e.g. a schema-checked Tax rate percent),
+ * read without binary floating point.
+ */
+export const taxExactRationalFromCanonicalDecimal = (value: string): TaxExactRational => {
+  const [integerPart = '0', fractionDigits = ''] = value.split('.');
+  return normalize(BigInt(`${integerPart}${fractionDigits}`), 10n ** BigInt(fractionDigits.length));
 };
+
+/** Reads an arbitrary string as a canonical base-10 decimal exactly; anything else has no exact value. */
+export const taxExactRationalFromDecimal = (value: string): Option.Option<TaxExactRational> =>
+  decimalPattern.test(value) ? Option.some(taxExactRationalFromCanonicalDecimal(value)) : Option.none();
 
 /** Exact value of an integer count of minor units at the given (positive) number of minor units per major unit. */
 export const taxExactRationalFromMinorUnits = (minorUnits: bigint, minorUnitsPerMajorUnit: bigint): TaxExactRational =>
@@ -120,15 +123,12 @@ export const taxExactRationalsEqual = (left: TaxExactRational, right: TaxExactRa
   left.numerator === right.numerator && left.denominator === right.denominator;
 
 /**
- * ROUND_HALF_UP of a non-negative exact value to whole minor units: the nearest minor unit, with an exact
- * midpoint going up (#935 F21-F22). Negative values have no Launch publication meaning and give none.
+ * ROUND_HALF_UP of an exact value to whole minor units: the nearest minor unit, with an exact midpoint going up
+ * (#935 F21-F22).
  */
-export const roundNonNegativeHalfUpToMinorUnits = (
-  value: TaxExactRational,
-  minorUnitsPerMajorUnit: bigint,
-): Option.Option<bigint> => {
+export const roundHalfUpToMinorUnits = (value: TaxExactRational, minorUnitsPerMajorUnit: bigint): bigint => {
   const { denominator, numerator } = partsOf(value);
-  return numerator < 0n
-    ? Option.none()
-    : Option.some((2n * numerator * minorUnitsPerMajorUnit + denominator) / (2n * denominator));
+  const doubled = 2n * numerator * minorUnitsPerMajorUnit + denominator;
+  const divisor = 2n * denominator;
+  return doubled >= 0n ? doubled / divisor : -((-doubled + divisor - 1n) / divisor);
 };

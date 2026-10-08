@@ -43,6 +43,11 @@ describe('Tax time', () => {
     expect(isWithinEffectivePeriod(r1, taxRelevantTime('2026-01-01T00:59:59+01:00'))).toBe(true);
   });
 
+  it('#929 F4-F10 #941 F5 an inverted or empty Effective Period is not representable', () => {
+    expect(() => effectivePeriod({ effectiveFrom: boundary, effectiveTo: beforeBoundary })).toThrow();
+    expect(() => effectivePeriod({ effectiveFrom: boundary, effectiveTo: boundary })).toThrow();
+  });
+
   it('#941 F2-F4 F10 #907 F155-F156 final Launch Order Tax-Relevant Time is exactly Order Commitment Time T', () => {
     const t = orderCommitmentTime(beforeBoundary);
     const evaluatedAfterBoundary = taxEvaluationTime('2026-01-01T00:00:05.000Z');

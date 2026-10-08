@@ -1,4 +1,4 @@
-import { Array as Arr, Option, Schema, pipe } from 'effect';
+import { Array as Arr, Schema, pipe } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { sumTaxExactRationals } from '../../src/domain/tax-exact-rational.ts';
@@ -7,12 +7,10 @@ import {
   TaxRoundingPolicySchema,
   TaxUnitRoundingEvidenceSchema,
   exactTaxContribution,
-  finalizeTaxContribution,
   finalizeTaxDecisionUnits,
   finalizeTaxableSupplyUnitTax,
 } from '../../src/domain/tax-rounding.ts';
 import type { TaxUnitRoundingEvidence } from '../../src/domain/tax-rounding.ts';
-import { TaxableSupplyUnitIdSchema } from '../../src/domain/taxable-supply-unit.ts';
 import {
   decisionUnitInput,
   decodeTaxDecision,
@@ -31,9 +29,9 @@ const publishedTotal = (units: readonly [TaxUnitRoundingEvidence, ...TaxUnitRoun
       Arr.map(({ publishedTaxAmount }) => publishedTaxAmount),
     ),
   );
-const unitId = (value: string) => TaxableSupplyUnitIdSchema.make(value);
-const publish = (id: string, exact: string) =>
-  Option.getOrThrow(finalizeTaxContribution(unitId(id), exactDecimal(exact), policy));
+/** Publishes an exact contribution: a 100 % rate makes the contribution equal the basis, isolating the boundary. */
+const publish = (occurrenceId: string, exact: string) =>
+  finalizeTaxableSupplyUnitTax(decodeTaxDecisionUnit(decisionUnitInput(occurrenceId, exact, '100')), policy);
 const decodeEvidence = Schema.decodeUnknownSync(TaxUnitRoundingEvidenceSchema);
 
 describe('Tax Rounding', () => {
@@ -57,7 +55,7 @@ describe('Tax Rounding', () => {
     const decision = decodeTaxDecision(
       taxDecisionInput(['o-1', 'o-2'], { units: [decisionUnitInput('o-1', '0.03'), decisionUnitInput('o-2', '0.03')] }),
     );
-    const units = Option.getOrThrow(finalizeTaxDecisionUnits(decision, policy));
+    const units = finalizeTaxDecisionUnits(decision, policy);
 
     expect(units).toHaveLength(2);
     expect(units.map(({ taxableSupplyUnitId }) => taxableSupplyUnitId)).toEqual([
@@ -109,10 +107,11 @@ describe('Tax Rounding', () => {
       },
     });
 
-    expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual(
-      Option.some({ denominator: '175', numerator: '2103' }),
-    );
-    expect(Option.getOrThrow(finalizeTaxableSupplyUnitTax(unit, policy)).publishedTaxAmount).toEqual({
+    expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual({
+      denominator: '175',
+      numerator: '2103',
+    });
+    expect(finalizeTaxableSupplyUnitTax(unit, policy).publishedTaxAmount).toEqual({
       amount: '12.02',
       currency: 'CZK',
     });
@@ -122,7 +121,7 @@ describe('Tax Rounding', () => {
     const unit = decodeTaxDecisionUnit(decisionUnitInput('o-1', '47.64', '21'));
 
     expect(finalizeTaxableSupplyUnitTax(unit, policy)).toEqual(finalizeTaxableSupplyUnitTax(unit, policy));
-    expect(Option.getOrThrow(finalizeTaxableSupplyUnitTax(unit, policy)).publishedTaxAmount.amount).toBe('10.00');
+    expect(finalizeTaxableSupplyUnitTax(unit, policy).publishedTaxAmount.amount).toBe('10.00');
   });
 
   it('#935 F56-F58 the rounding policy is versioned, retained on evidence and closed to CZK', () => {

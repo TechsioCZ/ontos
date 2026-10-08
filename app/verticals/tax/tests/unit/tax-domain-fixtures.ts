@@ -21,9 +21,8 @@ export const roundingPolicy: TaxRoundingPolicy = {
   revision: 1,
 };
 
-/** Tax Result of a Decision whose every unit has a published amount under the Launch rounding policy. */
-export const composeResult = (decision: TaxDecision): TaxResult =>
-  Option.getOrThrow(composeTaxResult(decision, roundingPolicy));
+/** Tax Result of a Decision under the Launch rounding policy. */
+export const composeResult = (decision: TaxDecision): TaxResult => composeTaxResult(decision, roundingPolicy);
 
 export const shippingSourceRefInput = { revision: 1, shippingAmountId: 'shipping-1' } as const;
 
@@ -33,8 +32,15 @@ type PurchaseBindingInput = typeof TaxPurchaseBindingSchema.Encoded;
 type TaxDecisionUnitInput = typeof TaxDecisionUnitSchema.Encoded;
 type TaxDecisionInput = typeof TaxDecisionSchema.Encoded;
 
+type CatalogSelectionInput = PurchaseBindingInput['purchaseDemandOccurrences'][number]['catalogSelection'];
+
+export const catalogSelectionInput = (variantRef = 'variant-1'): CatalogSelectionInput => ({
+  productRef: 'product-1',
+  variantRef,
+});
+
 export const occurrenceInput = (occurrenceId: string): PurchaseBindingInput['purchaseDemandOccurrences'][number] => ({
-  catalogSelectionRef: 'variant-1',
+  catalogSelection: catalogSelectionInput(),
   occurrenceId,
   quantity: { amount: '1', unitRef: 'piece' },
 });
@@ -61,7 +67,10 @@ export const decisionUnitInput = (
 ): TaxDecisionUnitInput => ({
   applicability: 'APPLICABLE',
   governingTaxRuleRevisionRef: { revision: 1, taxRuleId: 'cz-domestic-standard' },
-  jurisdiction: 'CZ_DOMESTIC',
+  jurisdiction: {
+    jurisdiction: 'CZ_DOMESTIC',
+    placeEvidenceRefs: { deliveryDestination: 'delivery-destination-evidence-1' },
+  },
   taxableBasisInterpretation: {
     components: [
       {
@@ -73,8 +82,21 @@ export const decisionUnitInput = (
     ],
   },
   taxableSupplyUnit: {
-    mapping: { _tag: 'ORDINARY_OCCURRENCE', catalogSelectionRef: 'variant-1', occurrenceId },
+    mapping: { _tag: 'ORDINARY_OCCURRENCE', catalogSelection: catalogSelectionInput(), occurrenceId },
     unitId: `taxable-supply-unit:${occurrenceId}`,
+  },
+  taxClassification: {
+    catalogSelection: catalogSelectionInput(),
+    classificationCode: 'cz-standard-goods',
+    completenessEvidenceRef: 'completeness-1',
+    materialCatalogEvidence: [
+      {
+        _tag: 'CURRENT',
+        catalogFactRef: 'variant-1:tax-category',
+        catalogFactRevisionRef: 'r1',
+        ownerEvidenceRef: 'owner-evidence-1',
+      },
+    ],
   },
   treatment: { _tag: 'TAXABLE', ratePercent },
 });
