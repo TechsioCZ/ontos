@@ -7,7 +7,10 @@ import {
   TaxCorrectionPreviewResponseSchema,
 } from '../../shared/apis/tax-correction-preview.ts';
 import { previewTaxCorrection } from '../../src/api/tax-correction-preview.read.ts';
-import { TaxCorrectionDeltaSchema } from '../../src/domain/tax-correction-delta.ts';
+import {
+  TaxCorrectionDeltaSchema,
+  TaxCorrectionHistoricalInputUnresolvedSchema,
+} from '../../src/domain/tax-correction-delta.ts';
 import {
   HistoricalReadUsesAcceptedTaxTermsSchema,
   NewEventDeterminationUnsupportedSchema,
@@ -105,6 +108,30 @@ describe('Tax correction preview read', () => {
           preview({ acceptedTaxTerms: terms, declaredPurpose: { _tag: 'HISTORICAL_READ' } }, foreign),
         );
         expect(failure.code).toBe('read_handler_not_found');
+      }
+    }),
+  );
+
+  it.effect('#947 F13 #948 F7 an incomplete original record is the explicit unresolved outcome, not a rejection', () =>
+    Effect.gen(function* answersIncompleteRecord() {
+      const { finalTax, ...withoutFinalTax } = terms;
+      const withoutQuantity = {
+        ...terms,
+        finalTax: {
+          ...finalTax,
+          decision: {
+            ...finalTax.decision,
+            purchaseBinding: { ...finalTax.decision.purchaseBinding, purchaseDemandOccurrences: [] },
+          },
+        },
+      };
+      for (const incomplete of [withoutFinalTax, withoutQuantity, {}]) {
+        const result = yield* preview(
+          { acceptedTaxTerms: incomplete, declaredPurpose: { _tag: 'HISTORICAL_READ' } },
+          { ...scope, tenantId: 'tenant-2' },
+        );
+        expect(Schema.is(TaxCorrectionHistoricalInputUnresolvedSchema)(result)).toBe(true);
+        expect(encodeResponse(result)).toMatchObject({ unresolved: { _tag: 'ORIGINAL_RECORD_INCOMPLETE' } });
       }
     }),
   );
