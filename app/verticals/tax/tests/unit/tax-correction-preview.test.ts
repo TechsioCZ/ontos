@@ -6,7 +6,7 @@ import {
   TaxCorrectionPreviewRequestSchema,
   TaxCorrectionPreviewResponseSchema,
 } from '../../shared/apis/tax-correction-preview.ts';
-import { previewTaxCorrection } from '../../src/api/tax-correction-preview.read.ts';
+import { readTaxCorrectionPreview } from '../../src/api/tax-correction-preview.read.ts';
 import {
   TaxCorrectionDeltaSchema,
   TaxCorrectionHistoricalInputUnresolvedSchema,
@@ -36,7 +36,11 @@ const scope = {
 const terms = acceptedTaxTermsInput([{ lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' }]);
 
 const preview = (input: PreviewRequestInput, at: OperationalScope = scope) =>
-  previewTaxCorrection(decodeRequest(input), at).pipe(Effect.map(({ result }) => result));
+  readTaxCorrectionPreview(decodeRequest(input), {
+    readKey: 'commerce.tax.api.tax-correction-preview',
+    scope: at,
+    services: {},
+  }).pipe(Effect.map(({ result }) => result));
 
 describe('Tax correction preview read', () => {
   it.effect('#948 F13-F15 #946 F16 previews a correction delta from the handed-over Accepted Tax Terms only', () =>
