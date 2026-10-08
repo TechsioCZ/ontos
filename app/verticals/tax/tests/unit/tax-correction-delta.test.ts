@@ -28,13 +28,21 @@ const decodeState = Schema.decodeUnknownSync(CumulativeUnitTaxStateSchema);
 const isDelta = Schema.is(TaxCorrectionDeltaSchema);
 const isUnresolved = Schema.is(TaxCorrectionHistoricalInputUnresolvedSchema);
 const isOutOfBounds = Schema.is(TaxCorrectionOutOfBoundsSchema);
+const isUnresolvedUnits = Schema.is(TaxCorrectionHistoricalInputUnresolvedSchema.fields.unresolved.members[1]);
 
 const minorUnits = (amount: string) => BigInt(amount.replace('.', ''));
 const sumOfDeltas = (steps: readonly { readonly taxCorrectionDelta: { readonly amount: string } }[]) =>
   steps.reduce((total, { taxCorrectionDelta }) => total + minorUnits(taxCorrectionDelta.amount), 0n);
 
 const quantity = (amount: string): TaxCorrectionChange => ({ _tag: 'QUANTITY', quantityDelta: exactDecimal(amount) });
-const value = (amount: string): TaxCorrectionChange => ({ _tag: 'VALUE', valueDelta: exactDecimal(amount) });
+const value = (
+  amount: string,
+  basisComponent: 'LINE_COMMERCIAL_VALUE' | 'SHIPPING_ALLOCATION' = 'LINE_COMMERCIAL_VALUE',
+): TaxCorrectionChange => ({
+  _tag: 'VALUE',
+  basisComponent,
+  valueDelta: exactDecimal(amount),
+});
 const NO_ACCEPTED_CORRECTION: AcceptedCumulativeCorrectionState = { _tag: 'NO_ACCEPTED_CORRECTION' };
 
 const unitRequest = (
@@ -61,9 +69,13 @@ const deltaOf = (outcome: TaxCorrectionOutcome): TaxCorrectionDelta => {
   return outcome;
 };
 
-/** Units reported by a non-success correction outcome; a delta reports none. */
-const issuesOf = (outcome: TaxCorrectionOutcome) =>
-  isUnresolved(outcome) || isOutOfBounds(outcome) ? outcome.units : [];
+/** Units reported by a non-success correction outcome; a delta or a whole-record problem reports none. */
+const issuesOf = (outcome: TaxCorrectionOutcome): readonly object[] => {
+  if (isOutOfBounds(outcome)) {
+    return outcome.units;
+  }
+  return isUnresolved(outcome) && isUnresolvedUnits(outcome.unresolved) ? outcome.unresolved.units : [];
+};
 
 /** Billing accepts the proposed next state under a new version it alone assigns. */
 const acceptedAs = (delta: TaxCorrectionDelta, stateVersion: string): AcceptedCumulativeCorrectionState => ({
@@ -82,14 +94,17 @@ const returnInSteps = (terms: AcceptedTaxTerms, occurrenceId: string, steps: rea
   });
 };
 
+const exceeds = (reason: string) => [{ reason, taxableSupplyUnitId: unitIdOf('o-1') }];
+
 const tenAt9999: OriginalUnitInput = { lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' };
 
 const acceptedAfterSeven: AcceptedCumulativeCorrectionState = {
   _tag: 'ACCEPTED',
   state: decodeState({
-    remainingBasis: exactDecimal('299.97'),
+    remainingLineBasis: exactDecimal('299.97'),
     remainingPublishedTax: { amount: '62.99', currency: 'CZK' },
     remainingQuantity: exactDecimal('3'),
+    remainingShippingBasis: exactDecimal('0'),
   }),
   stateVersion: 'v1',
 };
@@ -107,7 +122,7 @@ describe('Tax Correction Delta', () => {
       '0.00',
     ]);
     expect(steps.map(({ taxCorrectionDelta }) => taxCorrectionDelta.amount)).toEqual(['-62.99', '-63.00', '-83.99']);
-    expect(steps.map(({ proposedNext }) => proposedNext.remainingBasis)).toEqual([
+    expect(steps.map(({ proposedNext }) => proposedNext.remainingLineBasis)).toEqual([
       exactDecimal('699.93'),
       exactDecimal('399.96'),
       exactDecimal('0'),
@@ -168,11 +183,14 @@ describe('Tax Correction Delta', () => {
     expect(terms.finalTax.result.units[0].publishedTaxAmount.amount).toBe('23.10');
 
     const goods = deltaOf(correct(terms, [unitRequest('o-1', quantity('-2'))]));
-    expect(goods.units[0].proposedNext.remainingBasis).toEqual(exactDecimal('10'));
+    expect(goods.units[0].proposedNext.remainingLineBasis).toEqual(exactDecimal('0'));
+    expect(goods.units[0].proposedNext.remainingShippingBasis).toEqual(exactDecimal('10'));
     expect(goods.units[0].proposedNext.remainingQuantity).toEqual(exactDecimal('0'));
     expect(goods.units[0].taxCorrectionDelta.amount).toBe('-21.00');
 
-    const shipping = deltaOf(correct(terms, [unitRequest('o-1', value('-10'), acceptedAs(goods, 'v1'))]));
+    const shipping = deltaOf(
+      correct(terms, [unitRequest('o-1', value('-10', 'SHIPPING_ALLOCATION'), acceptedAs(goods, 'v1'))]),
+    );
     expect(shipping.units[0].proposedNext.remainingPublishedTax.amount).toBe('0.00');
     expect(shipping.units[0].taxCorrectionDelta.amount).toBe('-2.10');
   });
@@ -187,20 +205,75 @@ describe('Tax Correction Delta', () => {
 
   it('#948 F16 already corrected quantity or basis is not consumed twice and nothing is clamped', () => {
     const terms = acceptedTaxTerms([tenAt9999]);
-    const quantityOutside = [{ reason: 'QUANTITY_OUTSIDE_ORIGINAL', taxableSupplyUnitId: unitIdOf('o-1') }];
 
     for (const outcome of [
       correct(terms, [unitRequest('o-1', quantity('-4'), acceptedAfterSeven)]),
       correct(terms, [unitRequest('o-1', quantity('-11'))]),
-      correct(terms, [unitRequest('o-1', quantity('1'))]),
     ]) {
       expect(isOutOfBounds(outcome)).toBe(true);
-      expect(issuesOf(outcome)).toEqual(quantityOutside);
+      expect(issuesOf(outcome)).toEqual(exceeds('EXCEEDS_REMAINING_QUANTITY'));
     }
-    const basis = correct(terms, [unitRequest('o-1', value('-1000'))]);
-    expect(isOutOfBounds(basis)).toBe(true);
-    expect(issuesOf(basis)).toEqual([{ reason: 'BASIS_OUTSIDE_ORIGINAL', taxableSupplyUnitId: unitIdOf('o-1') }]);
-    expect(isDelta(correct(terms, [unitRequest('o-1', quantity('3'), acceptedAfterSeven)]))).toBe(true);
+    for (const outcome of [
+      correct(terms, [unitRequest('o-1', value('-1000'))]),
+      correct(terms, [unitRequest('o-1', value('-300'), acceptedAfterSeven)]),
+      correct(terms, [unitRequest('o-1', value('-0.01', 'SHIPPING_ALLOCATION'))]),
+    ]) {
+      expect(isOutOfBounds(outcome)).toBe(true);
+      expect(issuesOf(outcome)).toEqual(exceeds('EXCEEDS_REMAINING_BASIS_COMPONENT'));
+    }
+    expect(isDelta(correct(terms, [unitRequest('o-1', quantity('-3'), acceptedAfterSeven)]))).toBe(true);
+  });
+
+  it('#948 F22 G a value correction followed by returns still exhausts the unit to exactly 0.00 CZK', () => {
+    const terms = acceptedTaxTerms([tenAt9999]);
+    const discounted = deltaOf(correct(terms, [unitRequest('o-1', value('-99.99'))]));
+    const returned = deltaOf(correct(terms, [unitRequest('o-1', quantity('-10'), acceptedAs(discounted, 'v1'))]));
+
+    expect(discounted.units[0].proposedNext.remainingPublishedTax.amount).toBe('188.98');
+    expect(returned.units[0].proposedNext).toEqual({
+      remainingLineBasis: exactDecimal('0'),
+      remainingPublishedTax: { amount: '0.00', currency: 'CZK' },
+      remainingQuantity: exactDecimal('0'),
+      remainingShippingBasis: exactDecimal('0'),
+    });
+    expect(sumOfDeltas([...discounted.units, ...returned.units])).toBe(-20_998n);
+  });
+
+  it('#948 F20-F25 mixed quantity, line-value and Shipping reductions always exhaust to minus the original Tax', () => {
+    const terms = acceptedTaxTerms([
+      { lineValue: '93.59', occurrenceId: 'o-1', quantity: '7', ratePercent: '12', shipping: '12.34' },
+    ]);
+    const original = minorUnits(terms.finalTax.result.units[0].publishedTaxAmount.amount);
+    const paths: readonly (readonly TaxCorrectionChange[])[] = [
+      [quantity('-7'), value('-12.34', 'SHIPPING_ALLOCATION')],
+      [value('-12.34', 'SHIPPING_ALLOCATION'), quantity('-7')],
+      [
+        value('-10'),
+        quantity('-2'),
+        value('-2.34', 'SHIPPING_ALLOCATION'),
+        quantity('-5'),
+        value('-10', 'SHIPPING_ALLOCATION'),
+      ],
+      [quantity('-1'), value('-0.01'), quantity('-3'), value('-12.34', 'SHIPPING_ALLOCATION'), quantity('-3')],
+      [value('-93.59'), quantity('-7'), value('-12.34', 'SHIPPING_ALLOCATION')],
+      [
+        quantity('-0.5'),
+        value('-3.33'),
+        quantity('-6.5'),
+        value('-6', 'SHIPPING_ALLOCATION'),
+        value('-6.34', 'SHIPPING_ALLOCATION'),
+      ],
+    ];
+    for (const path of paths) {
+      let state: AcceptedCumulativeCorrectionState = NO_ACCEPTED_CORRECTION;
+      const steps = path.map((change, index) => {
+        const delta = deltaOf(correct(terms, [unitRequest('o-1', change, state)]));
+        state = acceptedAs(delta, `v${index + 1}`);
+        return delta.units[0];
+      });
+      expect(steps.at(-1)?.proposedNext.remainingPublishedTax.amount).toBe('0.00');
+      expect(sumOfDeltas(steps)).toBe(-original);
+    }
   });
 
   it('#947 F13 #948 F7 a unit outside the original record is an explicit unresolved historical input, never zero', () => {
@@ -218,15 +291,16 @@ describe('Tax Correction Delta', () => {
   it('#947 F13-F14 an Accepted state that cannot follow from the original record is unresolved, not repaired', () => {
     const terms = acceptedTaxTerms([tenAt9999]);
     const forged = (
-      state: Partial<{ remainingBasis: string; remainingPublishedTax: string; remainingQuantity: string }>,
+      state: Partial<{ remainingLineBasis: string; remainingPublishedTax: string; remainingQuantity: string }>,
     ) =>
       correct(terms, [
         unitRequest('o-1', quantity('-1'), {
           _tag: 'ACCEPTED',
           state: decodeState({
-            remainingBasis: exactDecimal(state.remainingBasis ?? '699.93'),
+            remainingLineBasis: exactDecimal(state.remainingLineBasis ?? '699.93'),
             remainingPublishedTax: { amount: state.remainingPublishedTax ?? '146.99', currency: 'CZK' },
             remainingQuantity: exactDecimal(state.remainingQuantity ?? '7'),
+            remainingShippingBasis: exactDecimal('0'),
           }),
           stateVersion: 'v1',
         }),
@@ -236,7 +310,8 @@ describe('Tax Correction Delta', () => {
     for (const state of [
       { remainingPublishedTax: '147.00' },
       { remainingQuantity: '11' },
-      { remainingBasis: '1000' },
+      { remainingLineBasis: '1000', remainingPublishedTax: '210.00' },
+      { remainingLineBasis: '10', remainingPublishedTax: '2.10', remainingQuantity: '0' },
     ]) {
       const outcome = forged(state);
       expect(isUnresolved(outcome)).toBe(true);
@@ -279,6 +354,7 @@ describe('Tax Correction Delta', () => {
     expect(reversed).toEqual(forward);
     const outcome = deltaOf(forward);
     expect(outcome.originalRecord).toEqual(terms.authoritativeRecord);
+    expect(outcome.originalOrderLineage).toEqual(terms.orderLineage);
     expect(outcome.originalTaxDecisionId).toBe(terms.finalTax.decision.decisionId);
     expect(outcome.taxRoundingPolicy).toEqual(terms.finalTax.result.taxRoundingPolicy);
     expect(outcome.correctionEventRef).toBe('return-1');
@@ -286,7 +362,7 @@ describe('Tax Correction Delta', () => {
     expect(outcome.correctionTaxDelta.amount).toBe('-4.20');
   });
 
-  it('#948 F10-F16 rejects a zero change and a unit changed twice in one correction', () => {
+  it('#948 F9-F16 #948 E accepts only reductions, each original unit once per correction', () => {
     const request = (units: readonly TaxCorrectionUnitRequest[]) => ({
       acceptedTaxTerms: acceptedTaxTermsInput([tenAt9999]),
       correctionEventRef: 'return-1',
@@ -296,6 +372,8 @@ describe('Tax Correction Delta', () => {
 
     expect(decodeRequest(request([unitRequest('o-1', quantity('-1'))])).units).toHaveLength(1);
     expect(() => decodeRequest(request([unitRequest('o-1', quantity('0'))]))).toThrow();
+    expect(() => decodeRequest(request([unitRequest('o-1', quantity('1'))]))).toThrow();
+    expect(() => decodeRequest(request([unitRequest('o-1', value('99.99'))]))).toThrow();
     expect(() =>
       decodeRequest(request([unitRequest('o-1', quantity('-1')), unitRequest('o-1', value('-1'))])),
     ).toThrow();
