@@ -29,6 +29,9 @@ import {
 } from '../../src/integrations/customer-payment-term-affected-use.ts';
 
 const tenantId = '11111111-1111-4111-8111-111111111111';
+const persistenceId = Schema.decodeUnknownSync(
+  Schema.String.check(Schema.isUUID()).pipe(Schema.brand('PaymentTermId')),
+);
 const paymentTermRef = (resourceId: string): PaymentTermRef => ({
   moduleId: 'payment.term-catalog',
   resourceId,
@@ -753,7 +756,7 @@ it.effect('current read separates effective and observed time and preserves inco
   }),
 );
 
-it.effect('preserves an equivalent reconciled alias semantic revision for existing references', () =>
+it.effect('preserves equivalent alias semantics under the canonical Current lifecycle', () =>
   Effect.gen(function* preservesAliasRevision() {
     const aliasRef = paymentTermRef('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
     const aliasSemanticRevisionId = '77777777-7777-4777-8777-777777777777';
@@ -761,7 +764,13 @@ it.effect('preserves an equivalent reconciled alias semantic revision for existi
     const aliasDefinition: PaymentTermDefinition = {
       ...active,
       definitionRevisionId: '88888888-8888-4888-8888-888888888888',
+      lifecycle: {
+        effectiveFrom: '2025-01-01T00:00:00.000Z',
+        effectiveTo: '2026-08-01T00:00:00.000Z',
+        state: 'RETIRED',
+      },
       paymentTermRef: aliasRef,
+      retired: { ...provenance, at: '2026-07-01T00:00:00.000Z' },
       semanticRevisionId: aliasSemanticRevisionId,
     };
     const result = yield* readCurrentPaymentTerms(
@@ -805,11 +814,69 @@ it.effect('preserves an equivalent reconciled alias semantic revision for existi
     );
 
     expect(result.referenceOutcomes[0]).toEqual({
-      definition: aliasDefinition,
+      definition: {
+        ...aliasDefinition,
+        lifecycle: active.lifecycle,
+        retired: active.retired,
+      },
       kind: 'USABLE',
       requestedPaymentTermRef: aliasRef,
     });
     expect(result.referenceOutcomes[1]?.kind).toBe('INCOMPATIBLE');
+  }),
+);
+
+it.effect('preserves an exact historical canonical definition under its Current lifecycle', () =>
+  Effect.gen(function* preservesCanonicalRevision() {
+    const historicalDefinition: PaymentTermDefinition = {
+      ...active,
+      definitionRevisionId: '88888888-8888-4888-8888-888888888888',
+      description: 'Original Net 30 wording.',
+      lifecycle: {
+        effectiveFrom: '2025-01-01T00:00:00.000Z',
+        effectiveTo: '2026-08-01T00:00:00.000Z',
+        state: 'RETIRED',
+      },
+      retired: { ...provenance, at: '2026-07-01T00:00:00.000Z' },
+      semanticRevisionId: '77777777-7777-4777-8777-777777777777',
+    };
+    const result = yield* readCurrentPaymentTerms(
+      {
+        at: '2026-09-09T10:00:00.000Z',
+        limit: 50,
+        references: [
+          {
+            expectedSemanticRevisionId: historicalDefinition.semanticRevisionId,
+            paymentTermRef: ref,
+          },
+        ],
+      },
+      tenantId,
+      services({
+        getHistory: () =>
+          Effect.succeed(Option.some({ aliases: [], lifecycle: [], revisions: [historicalDefinition] })),
+        // @ts-expect-error -- This Current-resolution double uses fixture identifiers while production owner decoding supplies branded identifiers.
+        resolveReference: () =>
+          Effect.succeed({
+            _tag: 'resolved' as const,
+            canonicalPaymentTermId: ref.resourceId,
+            definition: active,
+            requestedPaymentTermId: ref.resourceId,
+          }),
+      }),
+    );
+
+    expect(result.referenceOutcomes).toEqual([
+      {
+        definition: {
+          ...historicalDefinition,
+          lifecycle: active.lifecycle,
+          retired: active.retired,
+        },
+        kind: 'USABLE',
+        requestedPaymentTermRef: ref,
+      },
+    ]);
   }),
 );
 
@@ -939,9 +1006,27 @@ it.effect('current read exposes truncation instead of silently capping the catal
   }),
 );
 
-it.effect('history selects one exact definition revision and retains alias evidence', () =>
+it.effect('history keeps exact revision lifecycle separate from the published lifecycle ledger', () =>
   Effect.gen(function* exactHistory() {
     const aliasRef = paymentTermRef('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    const lifecycle = [
+      {
+        actingPrincipalId: persistenceId(provenance.actorPrincipalId),
+        actionInvocationId: persistenceId(provenance.actionInvocationId),
+        effectiveAt: active.lifecycle.effectiveFrom,
+        eventKind: 'ACTIVATED' as const,
+        reason: provenance.reason,
+        recordedAt: provenance.at,
+      },
+      {
+        actingPrincipalId: persistenceId(provenance.actorPrincipalId),
+        actionInvocationId: persistenceId('99999999-9999-4999-8999-999999999999'),
+        effectiveAt: '2026-10-01T00:00:00.000Z',
+        eventKind: 'RETIRED' as const,
+        reason: 'Retired from Current use',
+        recordedAt: '2026-09-09T11:00:00.000Z',
+      },
+    ];
     const result = yield* readPaymentTermHistory(
       { definitionRevisionId: active.definitionRevisionId, paymentTermRef: aliasRef },
       tenantId,
@@ -950,7 +1035,7 @@ it.effect('history selects one exact definition revision and retains alias evide
           Effect.succeed(
             Option.some({
               aliases: [{ aliasRef, canonicalRef: ref, reconciled: provenance }],
-              lifecycle: [],
+              lifecycle,
               revisions: [active, { ...active, definitionRevisionId: provenance.actionInvocationId }],
             }),
           ),
@@ -959,7 +1044,9 @@ it.effect('history selects one exact definition revision and retains alias evide
 
     expect(result.canonicalPaymentTermRef).toEqual(ref);
     expect(result.revisions).toEqual([active]);
+    expect(result.revisions[0]?.lifecycle).toEqual(active.lifecycle);
     expect(result.aliases).toHaveLength(1);
+    expect(result.lifecycle).toEqual(lifecycle);
   }),
 );
 

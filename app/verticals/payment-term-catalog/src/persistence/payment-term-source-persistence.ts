@@ -2,6 +2,11 @@ import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import { OperationContextUnavailable, defineScopedRoutine } from '@app/core-runtime';
 import type { Option } from 'effect';
 import { Effect, Schema } from 'effect';
+import { PaymentTermSourceRecordHistoryResponseSchema } from '../../shared/apis/payment-term-source-record-history.ts';
+import type {
+  PaymentTermSourceRecordHistoryRequest,
+  PaymentTermSourceRecordHistoryResponse,
+} from '../../shared/apis/payment-term-source-record-history.ts';
 import {
   AcceptPaymentTermSourceStatementResultSchema,
   ConfigurePaymentTermSourceAuthorityResultSchema,
@@ -41,6 +46,7 @@ const routine = (name: string) =>
 export const configureSourceAuthorityRoutine = routine('configure_source_authority');
 export const acceptSourceStatementRoutine = routine('accept_source_statement');
 export const getSourceStatementRoutine = routine('get_source_statement');
+export const getSourceRecordHistoryRoutine = routine('get_source_record_history');
 const unavailable = (cause?: unknown) => {
   const failure = new PaymentTermCatalogPersistenceUnavailable({
     code: 'payment_term_catalog_persistence_unavailable',
@@ -58,6 +64,9 @@ export interface PaymentTermSourcePersistence {
   readonly configureSourceAuthority: (
     input: ConfigurePaymentTermSourceAuthorityPayload & MutationContext,
   ) => Effect.Effect<ConfigurePaymentTermSourceAuthorityResult, PaymentTermCatalogPersistenceUnavailable>;
+  readonly getSourceRecordHistory: (
+    input: PaymentTermSourceRecordHistoryRequest,
+  ) => Effect.Effect<Option.Option<PaymentTermSourceRecordHistoryResponse>, PaymentTermCatalogPersistenceUnavailable>;
   readonly getSourceStatement: (
     input: PaymentTermSourceKey,
   ) => Effect.Effect<Option.Option<AcceptPaymentTermSourceStatementResult>, PaymentTermCatalogPersistenceUnavailable>;
@@ -78,6 +87,7 @@ export const paymentTermSourcePersistenceForScope = (
     selected: ReturnType<typeof routine>,
     input:
       | PaymentTermSourceKey
+      | PaymentTermSourceRecordHistoryRequest
       | (ConfigurePaymentTermSourceAuthorityPayload & MutationContext)
       | (AcceptPaymentTermSourceStatementPayload & MutationContext),
     schema: Schema.ConstraintDecoder<A>,
@@ -97,6 +107,12 @@ export const paymentTermSourcePersistenceForScope = (
         invoke(acceptSourceStatementRoutine, input, DecisionSchema),
       configureSourceAuthority: (input: ConfigurePaymentTermSourceAuthorityPayload & MutationContext) =>
         invoke(configureSourceAuthorityRoutine, input, ConfigurePaymentTermSourceAuthorityResultSchema),
+      getSourceRecordHistory: (input: PaymentTermSourceRecordHistoryRequest) =>
+        invoke(
+          getSourceRecordHistoryRoutine,
+          input,
+          Schema.OptionFromNullOr(PaymentTermSourceRecordHistoryResponseSchema),
+        ),
       getSourceStatement: (input: PaymentTermSourceKey) =>
         invoke(getSourceStatementRoutine, input, Schema.OptionFromNullOr(AcceptPaymentTermSourceStatementResultSchema)),
     }),

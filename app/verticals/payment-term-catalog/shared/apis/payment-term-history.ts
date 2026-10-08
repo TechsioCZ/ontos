@@ -6,6 +6,8 @@ import {
   PaymentTermAliasSchema,
   PaymentTermDefinitionSchema,
   PaymentTermInstantSchema,
+  PaymentTermProvenanceSchema,
+  PaymentTermReasonSchema,
   PaymentTermDefinitionRevisionIdSchema,
   PaymentTermRevisionIdSchema,
 } from '../domain/payment-term.ts';
@@ -17,9 +19,20 @@ export const PaymentTermHistoryRequestSchema = Schema.Struct({
   semanticRevisionId: Schema.optionalKey(PaymentTermRevisionIdSchema),
 });
 export type PaymentTermHistoryRequest = typeof PaymentTermHistoryRequestSchema.Type;
+// Revision definitions retain their recorded lifecycle snapshot; this separate ledger explains later lifecycle events.
+export const PaymentTermHistoryLifecycleEventSchema = Schema.Struct({
+  actingPrincipalId: PaymentTermProvenanceSchema.fields.actorPrincipalId,
+  actionInvocationId: PaymentTermProvenanceSchema.fields.actionInvocationId,
+  effectiveAt: PaymentTermInstantSchema,
+  eventKind: Schema.Literals(['ACTIVATED', 'RETIRED']),
+  reason: PaymentTermReasonSchema,
+  recordedAt: PaymentTermInstantSchema,
+});
+export type PaymentTermHistoryLifecycleEvent = typeof PaymentTermHistoryLifecycleEventSchema.Type;
 export const PaymentTermHistoryResponseSchema = Schema.Struct({
   aliases: Schema.Array(PaymentTermAliasSchema),
   canonicalPaymentTermRef: PaymentTermRefSchema,
+  lifecycle: Schema.Array(PaymentTermHistoryLifecycleEventSchema),
   observedAt: PaymentTermInstantSchema,
   requestedPaymentTermRef: PaymentTermRefSchema,
   revisions: Schema.Array(PaymentTermDefinitionSchema),

@@ -14,6 +14,7 @@ import { CorrectPaymentTermActionApi } from './apis/correct-payment-term-action.
 import { CreatePaymentTermActionApi } from './apis/create-payment-term-action.ts';
 import { CurrentPaymentTermsApi } from './apis/current-payment-terms.ts';
 import { PaymentTermHistoryApi } from './apis/payment-term-history.ts';
+import { PaymentTermSourceRecordHistoryApi } from './apis/payment-term-source-record-history.ts';
 import { PaymentTermSourceStatementApi } from './apis/payment-term-source-statement.ts';
 import { ReconcilePaymentTermReferenceActionApi } from './apis/reconcile-payment-term-reference-action.ts';
 import { RetirePaymentTermActionApi } from './apis/retire-payment-term-action.ts';
@@ -54,6 +55,7 @@ export const paymentTermCatalogApi = HttpApi.make('PaymentTermCatalogApi')
   .addHttpApi(CreatePaymentTermActionApi)
   .addHttpApi(CurrentPaymentTermsApi)
   .addHttpApi(PaymentTermHistoryApi)
+  .addHttpApi(PaymentTermSourceRecordHistoryApi)
   .addHttpApi(PaymentTermSourceStatementApi)
   .addHttpApi(ReconcilePaymentTermReferenceActionApi)
   .addHttpApi(RetirePaymentTermActionApi)

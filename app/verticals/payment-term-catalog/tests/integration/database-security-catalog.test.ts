@@ -23,6 +23,7 @@ const grantedRoutines = [
   'create_term',
   'get_current',
   'get_history',
+  'get_source_record_history',
   'get_source_statement',
   'list_current',
   'reconcile_term',
@@ -30,13 +31,20 @@ const grantedRoutines = [
   'retire_term',
 ] as const;
 
-/** Scope assertion and revision projection stay definer-private; granting either would bypass the scope gate. */
-const privateRoutines = ['assert_operation_scope', 'definition_json'] as const;
+/** Scope/assertion, projection, and trigger helpers stay private; callers enter through governed routines only. */
+const privateRoutines = [
+  'assert_operation_scope',
+  'definition_json',
+  'enforce_revision_semantic_immutability',
+  'source_decision_json',
+] as const;
 
 const guardTriggers = [
   ['payment_term_aliases', 'payment_term_aliases_append_only'],
   ['payment_term_lifecycle_events', 'payment_term_lifecycle_events_append_only'],
   ['payment_term_revisions', 'payment_term_revisions_append_only'],
+  ['payment_term_revisions', 'payment_term_revisions_semantic_immutability'],
+  ['payment_term_source_acceptance_lineage', 'payment_term_source_acceptance_lineage_append_only'],
   ['payment_term_source_authorities', 'payment_term_source_authorities_append_only'],
   ['payment_term_source_statements', 'payment_term_source_statements_append_only'],
   ['payment_terms', 'payment_terms_identity_immutable'],
