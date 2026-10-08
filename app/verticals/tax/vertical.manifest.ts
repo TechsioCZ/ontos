@@ -4,6 +4,23 @@
 import { defineOntosModuleManifest } from '@app/core-runtime';
 import type { OntosModuleManifestInput } from '@app/core-runtime';
 // <generated-module-manifest-imports>
+import { ApplicableTaxRuleSetApi } from './shared/apis/applicable-tax-rule-set.ts';
+import { correctTaxRuleRevisionAction } from './src/actions/correct-tax-rule-revision.action.ts';
+import { createTaxRuleAction } from './src/actions/create-tax-rule.action.ts';
+import { createTaxRuleRevisionAction } from './src/actions/create-tax-rule-revision.action.ts';
+import { endTaxFactAuthorityContractAction } from './src/actions/end-tax-fact-authority-contract.action.ts';
+import { endTaxRuleRevisionAction } from './src/actions/end-tax-rule-revision.action.ts';
+import { establishTaxFactAuthorityContractAction } from './src/actions/establish-tax-fact-authority-contract.action.ts';
+import { reviseTaxFactAuthorityContractAction } from './src/actions/revise-tax-fact-authority-contract.action.ts';
+import { taxAuthorityContractManagePermission } from './shared/permissions/tax-authority-contract-manage.ts';
+import { taxEvidenceReadPermission } from './shared/permissions/tax-evidence-read.ts';
+import { taxFactAuthorityContractResourceDescriptor } from './shared/resources/tax-fact-authority-contract.ts';
+import { TaxFactAuthorityCurrentApi } from './shared/apis/tax-fact-authority-current.ts';
+import { taxGovernedReadPermission } from './shared/permissions/tax-governed-read.ts';
+import { TaxRuleHistoryApi } from './shared/apis/tax-rule-history.ts';
+import { taxRuleManagePermission } from './shared/permissions/tax-rule-manage.ts';
+import { taxRuleResourceDescriptor } from './shared/resources/tax-rule.ts';
+import { taxRuleRevisionResourceDescriptor } from './shared/resources/tax-rule-revision.ts';
 // </generated-module-manifest-imports>
 export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -22,14 +39,28 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   publicSurface: {
     actions: [
       // <generated-module-manifest-actions>
+      correctTaxRuleRevisionAction,
+      createTaxRuleAction,
+      createTaxRuleRevisionAction,
+      endTaxFactAuthorityContractAction,
+      endTaxRuleRevisionAction,
+      establishTaxFactAuthorityContractAction,
+      reviseTaxFactAuthorityContractAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
+      'applicable-tax-rule-set': ApplicableTaxRuleSetApi,
+      'tax-fact-authority-current': TaxFactAuthorityCurrentApi,
+      'tax-rule-history': TaxRuleHistoryApi,
       // </generated-module-manifest-apis>
     },
     businessPermissions: [
       // <generated-module-manifest-business-permissions>
+      taxAuthorityContractManagePermission,
+      taxEvidenceReadPermission,
+      taxGovernedReadPermission,
+      taxRuleManagePermission,
       // </generated-module-manifest-business-permissions>
     ],
     components: {
@@ -43,6 +74,9 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
     ],
     resourceTypes: [
       // <generated-module-manifest-resources>
+      taxFactAuthorityContractResourceDescriptor,
+      taxRuleResourceDescriptor,
+      taxRuleRevisionResourceDescriptor,
       // </generated-module-manifest-resources>
     ],
     search: [

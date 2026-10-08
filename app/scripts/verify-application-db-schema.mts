@@ -24,6 +24,7 @@ const EXPECTED_APPLICATION_SCHEMAS = [
   'price_group_catalog',
   'pricing',
   'storefront_registry',
+  'tax',
 ] as const;
 const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_assortment',
@@ -39,6 +40,7 @@ const EXPECTED_MIGRATION_JOURNALS = [
   '__drizzle_migrations_price_group_catalog',
   '__drizzle_migrations_pricing',
   '__drizzle_migrations_storefront_registry',
+  '__drizzle_migrations_tax',
 ] as const;
 const COMMERCE_PORTAL_AUTH_SCHEMA_NAME = 'commerce_auth' as const;
 const COMMERCE_PORTAL_AUTH_MIGRATION_JOURNAL = '__drizzle_migrations_commerce_portal_auth' as const;
@@ -151,6 +153,7 @@ const ownerVerifierPaths = [
   '../verticals/inventory/scripts/verify-db-schema.mts',
   '../verticals/pricing/scripts/verify-db-schema.mts',
   '../verticals/storefront-registry/scripts/verify-db-schema.mts',
+  '../verticals/tax/scripts/verify-db-schema.mts',
 ] as const;
 
 const COMMERCE_PORTAL_AUTH_VERIFIER = '../verticals/commerce-customer-context/scripts/verify-portal-auth-db-schema.mts';
