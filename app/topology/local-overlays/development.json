@@ -10,7 +10,8 @@
     "storefront-registry": "http://localhost:4107/.well-known/ontos-module-manifest.json",
     "price-group-catalog": "http://localhost:4108/.well-known/ontos-module-manifest.json",
     "inventory": "http://localhost:4110/.well-known/ontos-module-manifest.json",
-    "availability": "http://localhost:4111/.well-known/ontos-module-manifest.json"
+    "availability": "http://localhost:4111/.well-known/ontos-module-manifest.json",
+    "tax": "http://localhost:4112/.well-known/ontos-module-manifest.json"
   },
   "schemaVersion": 1,
   "environment": "development",
@@ -27,7 +28,8 @@
     "storefront-registry": 4107,
     "price-group-catalog": 4108,
     "inventory": 4110,
-    "availability": 4111
+    "availability": 4111,
+    "tax": 4112
   },
   "manifests": {
     "assortment": "http://localhost:4104/mf-manifest.json",
@@ -595,6 +597,54 @@
           "buildMarker": "7b0e5ab486adc9c0"
         }
       }
+    },
+    "tax": {
+      "apiBaseUrl": "http://localhost:4112/tax-api",
+      "versionBoundary": "web-and-api-same-build",
+      "deliveryUnit": {
+        "unitId": "app/tax",
+        "buildMarker": "5c4b3253f7d46679"
+      },
+      "cloudflare": {
+        "kind": "cloudflare-worker-snapshot",
+        "workerName": "app-tax",
+        "publicUrlEnv": "ULTRAMODERN_PUBLIC_URL_TAX",
+        "api": {
+          "workerEntry": ".output/server/index.mjs",
+          "workerManifest": ".output/server/modern-worker-manifest.json",
+          "effectBffBundle": ".output/worker/__modern_bff_effect.js"
+        },
+        "zephyr": {
+          "runtime": "api-worker",
+          "integration": "managed-cloudflare",
+          "snapshotIdEnv": "ZEPHYR_TAX_SNAPSHOT_ID",
+          "versionIdEnv": "ZEPHYR_TAX_VERSION_ID",
+          "applicationUidEnv": "ZEPHYR_TAX_APPLICATION_UID"
+        },
+        "workerDispatch": {
+          "preferred": "service-binding",
+          "serviceBinding": "VERTICAL_TAX_WORKER",
+          "serviceBindingEnv": "VERTICAL_TAX_WORKER_BINDING",
+          "dispatchNamespaceEnv": "VERTICAL_TAX_DISPATCH_NAMESPACE",
+          "dispatchWorkerNameEnv": "VERTICAL_TAX_WORKER_NAME",
+          "requestInterface": "fetch"
+        }
+      },
+      "node": {
+        "kind": "node-mf-runtime",
+        "adapterVersion": "backend-mf-effect-v1",
+        "remoteName": "verticalTaxBackend",
+        "manifestEnv": "VERTICAL_TAX_BACKEND_MF_MANIFEST",
+        "manifestUrl": "http://localhost:4112/backend-mf-manifest.json",
+        "containerEntry": "http://localhost:4112/backendRemoteEntry.cjs",
+        "remoteType": "commonjs-module",
+        "expose": "./effect-api",
+        "runtimePackage": "@modern-js/plugin-bff-extensions/backend-federation-manifest/node",
+        "expected": {
+          "unitId": "app/tax",
+          "buildMarker": "5c4b3253f7d46679"
+        }
+      }
     }
   },
   "apis": {
@@ -608,6 +658,7 @@
     "price-group-catalog": "http://localhost:4108/price-group-catalog-api",
     "assortment": "http://localhost:4104/assortment-api",
     "inventory": "http://localhost:4110/inventory-api",
-    "availability": "http://localhost:4111/availability-api"
+    "availability": "http://localhost:4111/availability-api",
+    "tax": "http://localhost:4112/tax-api"
   }
 }
