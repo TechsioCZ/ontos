@@ -38,7 +38,6 @@ export const DeclaredTaxPurposeRequestSchema = Schema.Struct({
   acceptedTaxTerms: Schema.Unknown,
   declaredPurpose: DeclaredTaxPurposeSchema,
 });
-export type DeclaredTaxPurposeRequest = typeof DeclaredTaxPurposeRequestSchema.Type;
 
 /** Accepted Tax Terms as handed over, or none when the original record is incomplete or ambiguous. */
 export const acceptedTaxTermsFromHandover = Schema.decodeUnknownOption(AcceptedTaxTermsSchema);
