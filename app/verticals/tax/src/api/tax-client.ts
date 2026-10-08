@@ -21,6 +21,7 @@ export * from './establish-tax-fact-authority-contract-action-client.ts';
 export * from './record-tax-source-assertion-action-client.ts';
 export * from './revise-tax-fact-authority-contract-action-client.ts';
 // </generated-action-http-client-exports>
+export * from './tax-correction-preview-client.ts';
 
 type TaxApiGroups = typeof taxApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
 export type TaxClient = HttpApiClient.Client<Extract<TaxApiGroups, HttpApiGroup.Constraint>>;
