@@ -1,6 +1,8 @@
-import { DateTime, Option, Schema } from 'effect';
+import { ReadHandlerNotFound } from '@app/core-runtime';
+import { DateTime, Effect, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
+import { readTaxMaterialityComparison } from '../../src/api/tax-materiality-comparison.read.ts';
 import { TaxDecisionIdSchema } from '../../src/domain/tax-decision.ts';
 import {
   TaxMaterialChangeConclusionSchema,
@@ -205,4 +207,38 @@ describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
     expect(taxOutcomeVisibleInScope(approved, { ...own, legalEntityId: 'selling-legal-entity-2' })).toBe(false);
     expect(taxOutcomeVisibleInScope(TaxRuleMissingSchema.make({}), { ...own, tenantId: 'tenant-2' })).toBe(true);
   });
+});
+
+const handlerContextFor = (tenantId: string) => ({
+  readKey: 'commerce.tax.api.tax-materiality-comparison',
+  scope: {
+    authContextRef: 'better-auth-session:test',
+    authMethod: 'session' as const,
+    correlationId: 'correlation-1',
+    legalEntityId: 'selling-legal-entity-1',
+    principalId: 'principal-1',
+    tenantId,
+  },
+  services: {},
+});
+const materialityInput = () => ({ current: evaluate(), declaredUse: 'LAUNCH_PURCHASE' as const, previous: evaluate() });
+
+describe('Tax materiality comparison read handler', () => {
+  it.effect('#950 F21-F25 outcomes of another Tenant are not found in the trusted scope', () =>
+    Effect.gen(function* foreignTenant() {
+      const failure = yield* Effect.flip(
+        readTaxMaterialityComparison(materialityInput(), handlerContextFor('tenant-2')),
+      );
+
+      expect(failure).toBeInstanceOf(ReadHandlerNotFound);
+    }),
+  );
+
+  it.effect('outcomes of the trusted scope are compared', () =>
+    Effect.gen(function* ownTenant() {
+      const { result } = yield* readTaxMaterialityComparison(materialityInput(), handlerContextFor('tenant-1'));
+
+      expect(attestedDifferences(result)).toEqual(Option.some([]));
+    }),
+  );
 });
