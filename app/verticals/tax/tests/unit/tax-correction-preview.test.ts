@@ -139,7 +139,7 @@ describe('Tax correction preview read', () => {
 
   it('#946 F8-F9 owners hand over Accepted Tax Terms in the published contract shape', () => {
     const encode = Schema.encodeSync(AcceptedTaxTermsContractSchema);
-    expect(encode(Schema.decodeUnknownSync(AcceptedTaxTermsContractSchema)(terms))).toEqual(terms);
+    expect(encode(Schema.decodeSync(AcceptedTaxTermsContractSchema)(terms))).toEqual(terms);
   });
 
   it('#948 F11 #907 F193-F194 accepts no Payment refund or Fulfillment status as correction facts', () => {

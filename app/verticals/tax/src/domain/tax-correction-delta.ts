@@ -204,8 +204,6 @@ const exactValueOf = (amount: TaxMonetaryAmount): TaxExactRational =>
 const isAtMost = (value: TaxExactRational, limit: TaxExactRational) =>
   isNonNegativeTaxExactRational(subtractTaxExactRationals(limit, value));
 
-const isZero = (value: TaxExactRational) => value.numerator === '0';
-
 /**
  * Published Tax of a remaining basis at the original rate and the original single per-unit boundary; the basis is the
  * exact sum of its components, never rounded before this boundary (#948 F18, F21; #935 F12-F22).
@@ -235,16 +233,19 @@ const previousStateOf = (baseline: OriginalUnitBaseline, expected: AcceptedCumul
   );
 
 /**
- * An Accepted state can only have followed from the original record by this arithmetic: each remaining quantity and
- * basis component within the original, no goods value left once no quantity is left, and published at the original
- * rate and boundary. Anything else is an unresolved historical input for Billing to recover, not a state TAX repairs
+ * An Accepted state can only have followed from the original record by this arithmetic: remaining quantity and
+ * Shipping share within the original, the remaining Line Commercial Value at most the original value per remaining
+ * quantity (quantity reductions keep it pro rata, value reductions only lower it, so no goods value is left once no
+ * quantity is left), and published at the original rate and boundary. Anything else is an unresolved historical input for Billing to recover, not a state TAX repairs
  * (#947 F13-F14, #948 F7).
  */
 const followsFromOriginalRecord = (baseline: OriginalUnitBaseline, state: CumulativeUnitTaxState) =>
   isAtMost(state.remainingQuantity, baseline.originalQuantity) &&
-  isAtMost(state.remainingLineBasis, baseline.originalLineBasis) &&
+  isAtMost(
+    multiplyTaxExactRationals(state.remainingLineBasis, baseline.originalQuantity),
+    multiplyTaxExactRationals(baseline.originalLineBasis, state.remainingQuantity),
+  ) &&
   isAtMost(state.remainingShippingBasis, baseline.originalShippingBasis) &&
-  (!isZero(state.remainingQuantity) || isZero(state.remainingLineBasis)) &&
   publishedTaxOf(baseline, state.remainingLineBasis, state.remainingShippingBasis).published.amount ===
     state.remainingPublishedTax.amount;
 
