@@ -1,13 +1,15 @@
 import { randomUUID } from 'node:crypto';
 
 import { and, eq, sql } from 'drizzle-orm';
-import { DateTime, Effect, Exit, Option, Schema } from 'effect';
+import { DateTime, Deferred, Effect, Exit, Fiber, Option, Schema } from 'effect';
 import { expect, it } from 'effect-rstest';
 
 import {
   makeTestDatabaseFromClient,
+  makeTestPgSession,
   testDatabaseClients,
 } from '../../../../packages/core-runtime/tests/support/database.ts';
+import { loadDatabaseConnectionPair } from '../../../../packages/core-runtime/src/db/config.ts';
 import type { TestDatabaseFromClient } from '../../../../packages/core-runtime/tests/support/database.ts';
 import { installOperationalScope } from '../../../../packages/core-runtime/src/db/scoped-transaction.ts';
 import { coreRelations } from '../../../../packages/core-runtime/src/db/schema.ts';
@@ -70,10 +72,14 @@ const runScoped = <Value, Failure>(
     }),
   );
 
-const invocation = (scope: OperationalScope) => ({
+/** Fixed trusted operation time, so lifecycle assertions never depend on the wall clock. */
+const operationTime = DateTime.toDateUtc(DateTime.makeUnsafe('2026-02-01T00:00:00.000Z'));
+
+const invocation = (scope: OperationalScope, at: Date = operationTime) => ({
   actionInvocationId: randomUUID(),
   actorPrincipalId: principalId,
   legalEntityId: scope.legalEntityId ?? '',
+  operationTime: at,
   tenantId: scope.tenantId,
 });
 
@@ -182,12 +188,25 @@ const withReads =
   <Value, Failure>(operation: (reads: GovernedReads) => Effect.Effect<Value, Failure>) =>
     runScoped(runtime, scope, (transaction) => operation(taxGovernedReadsForScope(transaction, scope)));
 
+/** Visible evidence history of one Tax Rule in the given trusted scope. */
+const ruleHistory = (runtime: CoreTestDatabase, scope: OperationalScope) => (taxRuleId: string) =>
+  withReads(
+    runtime,
+    scope,
+  )((read) => read.taxRuleHistory({ taxRuleRef: ruleRef(taxRuleId) })).pipe(Effect.map(Option.getOrThrow));
+
 const applicableRequest = (taxRelevantTime: string) =>
   Schema.decodeEffect(ApplicableTaxRuleSetRequestContractSchema)({
     jurisdiction: 'CZ_DOMESTIC',
     taxClassificationCode: 'cz-standard-goods',
     taxRelevantTime,
   });
+/** Complete applicable Tax Rule set for the launch predicate at a Tax-Relevant Time in the given trusted scope. */
+const applicableSet = (runtime: CoreTestDatabase, scope: OperationalScope) => (taxRelevantTime: string) =>
+  applicableRequest(taxRelevantTime).pipe(
+    Effect.flatMap((request) => withReads(runtime, scope)((read) => read.applicableTaxRuleSet(request))),
+  );
+
 const authorityRequest = (instant: string) =>
   Schema.decodeEffect(TaxFactAuthorityCurrentRequestContractSchema)({
     factFamily: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
@@ -217,8 +236,42 @@ const acquireDatabases = Effect.gen(function* acquireTaxTestDatabases() {
   const runtime = yield* makeTestDatabaseFromClient(runtimeClient, coreRelations);
   yield* cleanup(admin);
   yield* Effect.addFinalizer(() => cleanup(admin).pipe(Effect.orDie));
-  return { admin, runtime };
+  return { admin, adminClient, runtime };
 });
+
+/** Waits until some backend is blocked behind the given backend; the interleaving is then deterministic. */
+const awaitBlockedBehind = (observer: Effect.Success<typeof testDatabaseClients>['admin'], blockingPid: number) =>
+  Effect.gen(function* awaitBlockedBackend() {
+    for (let observation = 0; observation < 1000; observation += 1) {
+      const [row] = yield* observer.unsafe<{ blocked: boolean }>(
+        'select exists (select 1 from pg_stat_activity where $1::integer = any(pg_blocking_pids(pid))) as blocked',
+        [blockingPid],
+      );
+      if (row?.blocked === true) {
+        return true;
+      }
+      yield* Effect.sleep('10 millis');
+    }
+    return false;
+  });
+
+/** Waits until a runtime writer is blocked on the Tax Rule row lock held by a concurrent governed change. */
+const awaitRuleLockWaiter = (observer: Effect.Success<typeof testDatabaseClients>['admin']) =>
+  Effect.gen(function* awaitRuleLockWaiterEffect() {
+    for (let observation = 0; observation < 1000; observation += 1) {
+      const [row] = yield* observer.unsafe<{ blocked: boolean }>(
+        `select exists (
+           select 1 from pg_stat_activity
+           where wait_event_type = 'Lock' and query like '%"tax_rules"%for update%'
+         ) as blocked`,
+      );
+      if (row?.blocked === true) {
+        return true;
+      }
+      yield* Effect.sleep('10 millis');
+    }
+    return false;
+  });
 
 it.live(
   '#929 #930 F8 #955 Tax Rule governance replays, rejects reused keys and stale bases, and keeps corrections addressable',
@@ -227,9 +280,7 @@ it.live(
       Effect.gen(function* taxRuleGovernanceAcceptance() {
         const { runtime } = yield* acquireDatabases;
         const rules = withRules(runtime, scopeA);
-        const reads = withReads(runtime, scopeA);
-        const history = (taxRuleId: string) =>
-          reads((read) => read.taxRuleHistory({ taxRuleRef: ruleRef(taxRuleId) })).pipe(Effect.map(Option.getOrThrow));
+        const history = ruleHistory(runtime, scopeA);
 
         const createInput = {
           ...(yield* createRulePayload('cz.standard-goods', content({ effectiveTo: '2027-01-01T00:00:00.000Z' }))),
@@ -305,8 +356,8 @@ it.live(
         );
         expect(meaningChanged).toEqual({ conflict: 'MEANING_CHANGED', kind: 'conflict' });
 
-        // Ending is a separate fact guarded by the exact revision basis.
-        const firstRevisionBasis = (yield* history(created.taxRuleId)).revisions[0]?.basisFingerprint ?? '';
+        // Ending is a separate fact guarded by the whole-rule basis (#949 F19).
+        const firstRevisionBasis = (yield* history(created.taxRuleId)).basisFingerprint;
         const endInput = {
           ...(yield* Schema.decodeEffect(EndTaxRuleRevisionPayloadSchema)({
             endedEffectiveTo: '2026-07-01T00:00:00.000Z',
@@ -325,14 +376,14 @@ it.live(
           Effect.flatMap(Schema.decodeUnknownEffect(EndedRevisionSchema)),
         );
         expect(endReplay.ended).toBe(false);
-        const endedBasis = (yield* history(created.taxRuleId)).revisions[0]?.basisFingerprint ?? '';
+        const endedBasis = (yield* history(created.taxRuleId)).basisFingerprint;
         const endAgain = yield* rules((persistence) =>
           persistence.endTaxRuleRevision({ ...endInput, ...invocation(scopeA), expectedBasisFingerprint: endedBasis }),
         );
         expect(endAgain).toEqual({ conflict: 'LIFECYCLE', kind: 'conflict' });
 
         // #930 F8 a confirmed correction appends a correcting revision plus provenance atomically.
-        const wrongBasis = (yield* history(created.taxRuleId)).revisions[1]?.basisFingerprint ?? '';
+        const wrongBasis = (yield* history(created.taxRuleId)).basisFingerprint;
         const correctInput = {
           ...(yield* Schema.decodeEffect(CorrectTaxRuleRevisionPayloadSchema)({
             confirmedAt: '2026-03-01T00:00:00.000Z',
@@ -362,10 +413,7 @@ it.live(
           future.revisionId,
         ]);
 
-        const applicableAt = (taxRelevantTime: string) =>
-          applicableRequest(taxRelevantTime).pipe(
-            Effect.flatMap((request) => reads((read) => read.applicableTaxRuleSet(request))),
-          );
+        const applicableAt = applicableSet(runtime, scopeA);
         // #929 F4-F10 #930 F8 the end fact and confirmed correction decide applicability over the complete set.
         const corrected2027 = yield* applicableAt('2027-06-01T00:00:00.000Z');
         expect(corrected2027.outcome).toBe('SELECTED');
@@ -527,6 +575,25 @@ it.live(
         };
         const staleRevise = yield* authority((persistence) => persistence.reviseContract(reviseInput));
         expect(staleRevise).toEqual({ kind: 'stale_basis' });
+
+        // #949 F30-F32 F44 revising never moves the System of Record or the authority window; that would rewrite
+        // past authority or leave the present without one. A transition is an end plus a successor contract.
+        const currentBasis = established.authorities[0]?.basisFingerprint ?? '';
+        for (const authorityChange of [
+          { ...reviseInput.authority, systemOfRecordRef: 'erp.vat-ledger' },
+          { ...reviseInput.authority, authorityFrom: DateTime.makeUnsafe('2025-01-01T00:00:00.000Z') },
+          { ...reviseInput.authority, authorityTo: DateTime.makeUnsafe('2027-01-01T00:00:00.000Z') },
+        ]) {
+          const moved = yield* authority((persistence) =>
+            persistence.reviseContract({
+              ...reviseInput,
+              ...invocation(scopeA),
+              authority: authorityChange,
+              expectedBasisFingerprint: currentBasis,
+            }),
+          );
+          expect(moved).toEqual({ conflict: 'LIFECYCLE', kind: 'conflict' });
+        }
         const revised = yield* authority((persistence) =>
           persistence.reviseContract({
             ...reviseInput,
@@ -546,6 +613,15 @@ it.live(
           })),
           ...invocation(scopeA),
         };
+        // #929 F19 #949 F16-F17 authority is never ended before the trusted operation time.
+        const backdatedEnd = yield* authority((persistence) =>
+          persistence.endContract({
+            ...endInput,
+            ...invocation(scopeA),
+            authorityTo: DateTime.makeUnsafe('2026-01-15T00:00:00.000Z'),
+          }),
+        );
+        expect(backdatedEnd).toEqual({ conflict: 'LIFECYCLE', kind: 'conflict' });
         const ended = yield* authority((persistence) => persistence.endContract(endInput)).pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(ContractOutcomeSchema)),
         );
@@ -602,6 +678,322 @@ it.live(
           'erp.vat-ledger',
         ]);
         expect((yield* currentAt('2025-01-01T00:00:00.000Z')).outcome).toBe('AUTHORITY_MISSING');
+      }),
+    ),
+);
+
+it.live(
+  '#930 F6-F7 #942 F15 F18 a correction committed during a governed read is wholly visible or wholly absent, never torn',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* tornReadAcceptance() {
+        const { adminClient, runtime } = yield* acquireDatabases;
+        const createInput = { ...(yield* createRulePayload('cz.torn-read', content())), ...invocation(scopeA) };
+        const created = yield* withRules(
+          runtime,
+          scopeA,
+        )((persistence) => persistence.createTaxRule(createInput)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(CreatedRuleSchema)),
+        );
+
+        // A concurrent writer holds the correction table and commits a correcting revision plus its provenance.
+        const connections = yield* loadDatabaseConnectionPair();
+        const writer = yield* makeTestPgSession(connections.admin.connectionString);
+        yield* writer.unsafe('BEGIN');
+        yield* Effect.addFinalizer(() => writer.unsafe('ROLLBACK').pipe(Effect.orDie));
+        const [writerBackend] = yield* writer.unsafe<{ pid: number }>('select pg_backend_pid() as pid');
+        const writerPid = yield* Schema.decodeUnknownEffect(Schema.Finite)(writerBackend?.pid);
+        yield* writer.unsafe('lock table tax.tax_rule_corrections in access exclusive mode');
+        const correctingRevisionId = randomUUID();
+        const correctionInvocation = randomUUID();
+        yield* writer.unsafe(
+          `insert into tax.tax_rule_revisions (tax_rule_revision_id, tenant_id, legal_entity_id, composition_kind,
+             effective_from, jurisdiction, rate_percent, revision_number, semantic_fingerprint, supersedes_revision_id,
+             tax_classification_code, tax_rule_id, treatment_category, action_invocation_id, actor_principal_id,
+             idempotency_key, provenance_ref, reason)
+           values ($1, $2, $3, 'EXCLUSIVE', '2026-01-01T00:00:00.000Z', 'CZ_DOMESTIC', '12', 2, $4, $5,
+             'cz-standard-goods', $6, 'TAXABLE', $7::uuid, $8, $7::text, 'acceptance:torn-read',
+             'Concurrent correction')`,
+          [
+            correctingRevisionId,
+            tenantId,
+            sellerA,
+            'e'.repeat(64),
+            created.initialRevisionId,
+            created.taxRuleId,
+            correctionInvocation,
+            principalId,
+          ],
+        );
+        yield* writer.unsafe(
+          `insert into tax.tax_rule_corrections (tenant_id, legal_entity_id, confirmed_at, correcting_revision_id,
+             wrong_revision_id, action_invocation_id, actor_principal_id, idempotency_key, provenance_ref, reason)
+           values ($1, $2, '2026-02-01T00:00:00.000Z', $3, $4, $5::uuid, $6, $5::text, 'acceptance:torn-read',
+             'Concurrent correction')`,
+          [tenantId, sellerA, correctingRevisionId, created.initialRevisionId, correctionInvocation, principalId],
+        );
+
+        const reader = yield* applicableRequest('2026-06-01T00:00:00.000Z').pipe(
+          Effect.flatMap((request) => withReads(runtime, scopeA)((read) => read.applicableTaxRuleSet(request))),
+          Effect.forkChild,
+        );
+        // The writer commits only while the read is waiting inside its observation of the predicate state.
+        expect(yield* awaitBlockedBehind(adminClient, writerPid)).toBe(true);
+        yield* writer.unsafe('COMMIT');
+        const observed = yield* Fiber.join(reader);
+
+        expect(observed.completeness.rowCount).toBe(2);
+        expect(observed.outcome).toBe('SELECTED');
+        expect(observed.applicable.map(({ taxRuleRevisionRef }) => taxRuleRevisionRef.resourceId)).toEqual([
+          correctingRevisionId,
+        ]);
+        expect(observed.excludedByCorrection.map(({ wrongRevisionRef }) => wrongRevisionRef.resourceId)).toEqual([
+          created.initialRevisionId,
+        ]);
+      }),
+    ),
+);
+
+it.live(
+  '#929 F8 F19 #930 F8-F9 #949 F16-F19 F45 #955 Tax Rule lifecycle is never backdated, withdraws scheduled revisions and never revives corrected ones',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* taxRuleLifecycleAcceptance() {
+        const { runtime } = yield* acquireDatabases;
+        const rules = withRules(runtime, scopeA);
+        const history = ruleHistory(runtime, scopeA);
+        const applicableAt = applicableSet(runtime, scopeA);
+        const createRule = (stableCode: string, classification: string) =>
+          Effect.gen(function* createLifecycleRule() {
+            const input = {
+              ...(yield* createRulePayload(stableCode, content({ taxClassificationCode: classification }))),
+              ...invocation(scopeA),
+            };
+            return yield* rules((persistence) => persistence.createTaxRule(input)).pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(CreatedRuleSchema)),
+            );
+          });
+        const endInput = (revisionId: string, endedEffectiveTo: string, expectedBasisFingerprint: string) =>
+          Effect.gen(function* endLifecycleInput() {
+            return {
+              ...(yield* Schema.decodeEffect(EndTaxRuleRevisionPayloadSchema)({
+                endedEffectiveTo,
+                expectedBasisFingerprint,
+                provenanceRef: 'acceptance:lifecycle-end',
+                reason: 'Lifecycle end',
+                taxRuleRevisionRef: revisionRef(revisionId),
+              })),
+              ...invocation(scopeA),
+            };
+          });
+        const revisionInput = (
+          taxRuleId: string,
+          revisionContent: ReturnType<typeof content>,
+          expectedBasisFingerprint: string,
+          replacesRevisionId?: string,
+        ) =>
+          Effect.gen(function* revisionLifecycleInput() {
+            const payload = {
+              content: revisionContent,
+              expectedBasisFingerprint,
+              provenanceRef: 'acceptance:lifecycle-revision',
+              reason: 'Lifecycle revision',
+              taxRuleRef: ruleRef(taxRuleId),
+            };
+            const withReplacement =
+              replacesRevisionId === undefined
+                ? payload
+                : { ...payload, replacesRevisionRef: revisionRef(replacesRevisionId) };
+            return {
+              ...(yield* Schema.decodeEffect(CreateTaxRuleRevisionPayloadSchema)(withReplacement)),
+              ...invocation(scopeA),
+            };
+          });
+
+        const rule = yield* createRule('cz.lifecycle', 'cz-standard-goods');
+        const rev1 = rule.initialRevisionId;
+
+        // #929 F19 #949 F16-F17 an end before the trusted operation time is a retroactive change, not an end.
+        const backdated = yield* endInput(
+          rev1,
+          '2026-01-15T00:00:00.000Z',
+          (yield* history(rule.taxRuleId)).basisFingerprint,
+        );
+        expect(yield* rules((persistence) => persistence.endTaxRuleRevision(backdated))).toEqual({
+          conflict: 'LIFECYCLE',
+          kind: 'conflict',
+        });
+
+        const rev2Input = yield* revisionInput(
+          rule.taxRuleId,
+          content({ effectiveFrom: '2027-01-01T00:00:00.000Z', ratePercent: '23' }),
+          (yield* history(rule.taxRuleId)).basisFingerprint,
+        );
+        const rev2 = yield* rules((persistence) => persistence.createTaxRuleRevision(rev2Input)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(CreatedRevisionSchema)),
+        );
+
+        // #929 F8 #949 D a scheduled revision that is not effective yet is withdrawn by an empty end.
+        const withdraw = yield* endInput(
+          rev2.revisionId,
+          '2027-01-01T00:00:00.000Z',
+          (yield* history(rule.taxRuleId)).basisFingerprint,
+        );
+        expect(
+          (yield* rules((persistence) => persistence.endTaxRuleRevision(withdraw)).pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(EndedRevisionSchema)),
+          )).ended,
+        ).toBe(true);
+        expect((yield* applicableAt('2027-06-01T00:00:00.000Z')).applicable[0]?.taxRuleRevisionRef.resourceId).toBe(
+          rev1,
+        );
+
+        // #949 F45 replacement provenance names a revision of the same Tax Rule and is echoed by history.
+        const other = yield* createRule('cz.lifecycle-other', 'cz-reduced-books');
+        const crossRule = yield* revisionInput(
+          rule.taxRuleId,
+          content({ effectiveFrom: '2027-01-01T00:00:00.000Z', ratePercent: '22' }),
+          (yield* history(rule.taxRuleId)).basisFingerprint,
+          other.initialRevisionId,
+        );
+        expect(yield* rules((persistence) => persistence.createTaxRuleRevision(crossRule))).toEqual({
+          conflict: 'LIFECYCLE',
+          kind: 'conflict',
+        });
+        const basisBeforeReplacement = (yield* history(rule.taxRuleId)).basisFingerprint;
+        const rev3Input = yield* revisionInput(
+          rule.taxRuleId,
+          content({ effectiveFrom: '2027-01-01T00:00:00.000Z', ratePercent: '22' }),
+          basisBeforeReplacement,
+          rev2.revisionId,
+        );
+        const rev3 = yield* rules((persistence) => persistence.createTaxRuleRevision(rev3Input)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(CreatedRevisionSchema)),
+        );
+        const afterReplacement = yield* history(rule.taxRuleId);
+        expect(afterReplacement.revisions[2]?.supersedesRevisionRef).toEqual(Option.some(revisionRef(rev2.revisionId)));
+        expect(afterReplacement.meaningKind).toBe('VAT_RATE');
+        expect(afterReplacement.revisions[2]?.jurisdiction).toBe('CZ_DOMESTIC');
+
+        // #949 F19 ending is guarded by the whole-rule basis: an intervening revision makes the earlier basis stale.
+        const staleEnd = yield* endInput(rev1, '2027-01-01T00:00:00.000Z', basisBeforeReplacement);
+        expect(yield* rules((persistence) => persistence.endTaxRuleRevision(staleEnd))).toEqual({
+          kind: 'stale_basis',
+        });
+        const rev1End = yield* endInput(rev1, '2027-01-01T00:00:00.000Z', afterReplacement.basisFingerprint);
+        expect(
+          (yield* rules((persistence) => persistence.endTaxRuleRevision(rev1End)).pipe(
+            Effect.flatMap(Schema.decodeUnknownEffect(EndedRevisionSchema)),
+          )).ended,
+        ).toBe(true);
+
+        // #930 F8-F9 a correction must replace the wrong revision for its whole Effective Period.
+        const correctInput = (correctingContent: ReturnType<typeof content>, expectedBasisFingerprint: string) =>
+          Effect.gen(function* correctLifecycleInput() {
+            return {
+              ...(yield* Schema.decodeEffect(CorrectTaxRuleRevisionPayloadSchema)({
+                confirmedAt: '2026-02-01T00:00:00.000Z',
+                correctingContent,
+                expectedBasisFingerprint,
+                provenanceRef: 'acceptance:lifecycle-correction',
+                reason: 'Announced rate was wrong',
+                wrongRevisionRef: revisionRef(rev3.revisionId),
+              })),
+              ...invocation(scopeA),
+            };
+          });
+        const basisBeforeCorrection = (yield* history(rule.taxRuleId)).basisFingerprint;
+        for (const partial of [
+          content({ effectiveFrom: '2027-06-01T00:00:00.000Z', ratePercent: '21' }),
+          content({
+            effectiveFrom: '2027-01-01T00:00:00.000Z',
+            effectiveTo: '2028-01-01T00:00:00.000Z',
+            ratePercent: '21',
+          }),
+        ]) {
+          const partialInput = yield* correctInput(partial, basisBeforeCorrection);
+          expect(yield* rules((persistence) => persistence.correctTaxRuleRevision(partialInput))).toEqual({
+            conflict: 'LIFECYCLE',
+            kind: 'conflict',
+          });
+        }
+        const fullInput = yield* correctInput(
+          content({ effectiveFrom: '2027-01-01T00:00:00.000Z', ratePercent: '21' }),
+          basisBeforeCorrection,
+        );
+        const corrected = yield* rules((persistence) => persistence.correctTaxRuleRevision(fullInput)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(CorrectedSchema)),
+        );
+
+        // Ending the correcting revision leaves a gap; the confirmed-wrong revision is never revived (#949 F16).
+        const endCorrecting = yield* endInput(
+          corrected.correctingRevisionId,
+          '2028-01-01T00:00:00.000Z',
+          (yield* history(rule.taxRuleId)).basisFingerprint,
+        );
+        yield* rules((persistence) => persistence.endTaxRuleRevision(endCorrecting)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(EndedRevisionSchema)),
+        );
+        const gap = yield* applicableAt('2028-06-01T00:00:00.000Z');
+        expect(gap.outcome).toBe('TAX_RULE_MISSING');
+        expect(gap.excludedByCorrection.map(({ wrongRevisionRef }) => wrongRevisionRef.resourceId)).toEqual([
+          rev3.revisionId,
+        ]);
+
+        // #955 G a replay arriving after newer unrelated revisions still returns its original outcome.
+        const replayed = yield* rules((persistence) => persistence.createTaxRuleRevision(rev2Input)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(CreatedRevisionSchema)),
+        );
+        expect(replayed).toEqual({ ...rev2, created: false });
+        const replayedEnd = yield* rules((persistence) => persistence.endTaxRuleRevision(rev1End)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(EndedRevisionSchema)),
+        );
+        expect(replayedEnd).toEqual({ ended: false, revisionId: rev1 });
+      }),
+    ),
+);
+
+it.live(
+  '#949 F20 #955 concurrent writers with the same expected-current basis: exactly one wins, the other is stale',
+  () =>
+    Effect.scoped(
+      Effect.gen(function* concurrentStaleBasis() {
+        const { adminClient, runtime } = yield* acquireDatabases;
+        const rules = withRules(runtime, scopeA);
+        const createInput = { ...(yield* createRulePayload('cz.concurrent', content())), ...invocation(scopeA) };
+        const rule = yield* rules((persistence) => persistence.createTaxRule(createInput)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(CreatedRuleSchema)),
+        );
+        const basis = Option.getOrThrow(
+          yield* withReads(runtime, scopeA)((read) => read.taxRuleHistory({ taxRuleRef: ruleRef(rule.taxRuleId) })),
+        ).basisFingerprint;
+        const revisionPayload = yield* Schema.decodeEffect(CreateTaxRuleRevisionPayloadSchema)({
+          content: content({ effectiveFrom: '2027-01-01T00:00:00.000Z', ratePercent: '23' }),
+          expectedBasisFingerprint: basis,
+          provenanceRef: 'acceptance:concurrent',
+          reason: 'Concurrent revision',
+          taxRuleRef: ruleRef(rule.taxRuleId),
+        });
+
+        const firstWrote = yield* Deferred.make<boolean>();
+        const releaseFirst = yield* Deferred.make<boolean>();
+        const first = yield* rules((persistence) =>
+          persistence.createTaxRuleRevision({ ...revisionPayload, ...invocation(scopeA) }).pipe(
+            Effect.tap(() => Deferred.succeed(firstWrote, true)),
+            Effect.tap(() => Deferred.await(releaseFirst)),
+          ),
+        ).pipe(Effect.forkChild);
+        yield* Deferred.await(firstWrote);
+        const second = yield* rules((persistence) =>
+          persistence.createTaxRuleRevision({ ...revisionPayload, ...invocation(scopeA) }),
+        ).pipe(Effect.forkChild);
+        // The second writer is parked on the Tax Rule lock while the first is still uncommitted.
+        expect(yield* awaitRuleLockWaiter(adminClient)).toBe(true);
+        yield* Deferred.succeed(releaseFirst, true);
+
+        const won = yield* Fiber.join(first).pipe(Effect.flatMap(Schema.decodeUnknownEffect(CreatedRevisionSchema)));
+        expect(won).toMatchObject({ created: true, revisionNumber: 2 });
+        expect(yield* Fiber.join(second)).toEqual({ kind: 'stale_basis' });
       }),
     ),
 );

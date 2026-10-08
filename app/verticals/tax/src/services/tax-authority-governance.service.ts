@@ -14,6 +14,7 @@ import {
   conflict,
   isOwnerId,
   mutation,
+  notBackdated,
   notFound,
   query,
   sameInstant,
@@ -104,7 +105,11 @@ export const authorityCoversInstant = (period: AuthorityPeriod, at: DateTime.Utc
   DateTime.isLessThanOrEqualTo(DateTime.makeUnsafe(period.authorityFrom), at) &&
   (period.authorityTo === null || DateTime.isLessThan(at, DateTime.makeUnsafe(period.authorityTo)));
 
-/** The contract chain's current revision is its last governed amendment; competitors are never ranked. */
+/**
+ * The contract chain's current revision is its last governed amendment; competitors are never ranked. Revising never
+ * moves the System of Record or the authority window and ending only shortens it, so the current revision's window
+ * is the contract's effective authority window at every instant (#949 F30-F32, F44).
+ */
 export const currentContractRevisions = (
   revisions: readonly ContractRevisionRow[],
 ): ReadonlyMap<string, ContractRevisionRow> => {
@@ -118,14 +123,15 @@ export const currentContractRevisions = (
   return current;
 };
 
-export type EstablishOutcome =
-  | Readonly<{ contractId: string; created: boolean; meaningFingerprint: string; revisionNumber: number }>
-  | GovernanceConflict;
-export type ReviseOutcome =
-  | Readonly<{ contractId: string; created: boolean; meaningFingerprint: string; revisionNumber: number }>
-  | GovernanceConflict
-  | GovernanceNotFound
-  | GovernanceStale;
+type ContractOutcome = Readonly<{
+  contractId: string;
+  created: boolean;
+  meaningFingerprint: string;
+  revisionId: string;
+  revisionNumber: number;
+}>;
+export type EstablishOutcome = ContractOutcome | GovernanceConflict;
+export type ReviseOutcome = ContractOutcome | GovernanceConflict | GovernanceNotFound | GovernanceStale;
 
 export interface TaxAuthorityGovernancePersistence {
   readonly endContract: (
@@ -159,6 +165,16 @@ const toPeriod = (content: TaxFactAuthorityContent): AuthorityPeriod => ({
   authorityFrom: DateTime.toDateUtc(content.authorityFrom),
   authorityTo: content.authorityTo === undefined ? null : DateTime.toDateUtc(content.authorityTo),
 });
+
+/** A revision keeps the System of Record and the whole authority window; only evidence roles may change. */
+const keepsAuthority = (current: ContractRevisionRow, next: TaxFactAuthorityContent): boolean => {
+  const period = toPeriod(next);
+  return (
+    current.systemOfRecordRef === next.systemOfRecordRef &&
+    sameInstant(current.authorityFrom, period.authorityFrom) &&
+    sameInstant(current.authorityTo, period.authorityTo)
+  );
+};
 
 export const taxAuthorityGovernancePersistenceForScope = (
   transaction: ScopedTransaction,
@@ -264,7 +280,13 @@ export const taxAuthorityGovernancePersistenceForScope = (
         replayRevision.revisionNumber === 1 &&
         replayRevision.semanticFingerprint === meaningFingerprint;
       return matches
-        ? { contractId: replay.taxFactAuthorityContractId, created: false, meaningFingerprint, revisionNumber: 1 }
+        ? {
+            contractId: replay.taxFactAuthorityContractId,
+            created: false,
+            meaningFingerprint,
+            revisionId: replayRevision.taxFactAuthorityContractRevisionId,
+            revisionNumber: 1,
+          }
         : conflict('IDEMPOTENCY_REUSED');
     }
     yield* lockFactFamily(input, input.factFamily);
@@ -336,7 +358,16 @@ export const taxAuthorityGovernancePersistenceForScope = (
     if ('kind' in revision) {
       return revision;
     }
-    return { contractId: contract.contractId, created: true, meaningFingerprint, revisionNumber: 1 };
+    const [inserted] = revision;
+    return inserted === undefined
+      ? yield* unavailable()
+      : {
+          contractId: contract.contractId,
+          created: true,
+          meaningFingerprint,
+          revisionId: inserted.revisionId,
+          revisionNumber: 1,
+        };
   });
 
   /** Appends the next contract revision after expected-current and complete-set conflict checks. */
@@ -418,7 +449,10 @@ export const taxAuthorityGovernancePersistenceForScope = (
     if ('kind' in inserted) {
       return inserted;
     }
-    return { contractId: input.contractId, created: true, meaningFingerprint, revisionNumber };
+    const [row] = inserted;
+    return row === undefined
+      ? yield* unavailable()
+      : { contractId: input.contractId, created: true, meaningFingerprint, revisionId: row.revisionId, revisionNumber };
   });
 
   const reviseContract: TaxAuthorityGovernancePersistence['reviseContract'] = Effect.fn(
@@ -427,9 +461,10 @@ export const taxAuthorityGovernancePersistenceForScope = (
     if (!trustedInvocation(scope, input, [input.contractRef.tenantId])) {
       return yield* unavailable();
     }
-    const outcome = yield* appendRevision({ ...input, contractId: input.contractRef.resourceId }, () => ({
-      content: input.authority,
-    }));
+    // Revising only changes evidence roles; an authority transition is an end plus a successor contract (#949 F30).
+    const outcome = yield* appendRevision({ ...input, contractId: input.contractRef.resourceId }, (current) =>
+      keepsAuthority(current, input.authority) ? { content: input.authority } : { lifecycleConflict: true as const },
+    );
     if (!('kind' in outcome) || outcome.kind !== 'replay') {
       return outcome;
     }
@@ -458,6 +493,7 @@ export const taxAuthorityGovernancePersistenceForScope = (
           contractId: replay.taxFactAuthorityContractId,
           created: false,
           meaningFingerprint,
+          revisionId: replay.taxFactAuthorityContractRevisionId,
           revisionNumber: replay.revisionNumber,
         }
       : conflict('IDEMPOTENCY_REUSED');
@@ -470,9 +506,11 @@ export const taxAuthorityGovernancePersistenceForScope = (
       return yield* unavailable();
     }
     const authorityTo = DateTime.toDateUtc(input.authorityTo);
-    // Ending appends a final revision that only shortens the current authority period.
+    // Ending appends a final revision that only shortens the current authority period and is never backdated.
     const outcome = yield* appendRevision({ ...input, contractId: input.contractRef.resourceId }, (current) =>
-      startsBeforeEnd(current.authorityFrom, authorityTo) && startsBeforeEnd(authorityTo, current.authorityTo)
+      notBackdated(authorityTo, input) &&
+      startsBeforeEnd(current.authorityFrom, authorityTo) &&
+      startsBeforeEnd(authorityTo, current.authorityTo)
         ? {
             content: {
               authorityFrom: DateTime.makeUnsafe(current.authorityFrom),
@@ -497,6 +535,7 @@ export const taxAuthorityGovernancePersistenceForScope = (
           contractId: replay.taxFactAuthorityContractId,
           created: false,
           meaningFingerprint: replay.semanticFingerprint,
+          revisionId: replay.taxFactAuthorityContractRevisionId,
           revisionNumber: replay.revisionNumber,
         }
       : conflict('IDEMPOTENCY_REUSED');

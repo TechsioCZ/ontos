@@ -34,7 +34,7 @@ export const handleCreateTaxRule = Effect.fn('CreateTaxRuleAction.handle')(funct
   payload: CreateTaxRulePayload,
   context: ActionHandlerContext<typeof domainEvents, TaxRuleGovernancePersistence>,
 ) {
-  const outcome = yield* context.services.createTaxRule({ ...payload, ...governedInvocation(context) });
+  const outcome = yield* context.services.createTaxRule({ ...payload, ...(yield* governedInvocation(context)) });
   if ('kind' in outcome) {
     return yield* failGovernance(outcome, 'Tax Rule');
   }
@@ -44,8 +44,10 @@ export const handleCreateTaxRule = Effect.fn('CreateTaxRuleAction.handle')(funct
     changed: outcome.created,
     meaningFingerprint: outcome.meaningFingerprint,
     operation: 'CREATE',
+    reason: payload.reason,
     resourceId: outcome.taxRuleId,
     resourceType: 'commerce.tax.tax-rule',
+    resultingRevisionId: outcome.initialRevisionId,
   });
   return {
     created: outcome.created,

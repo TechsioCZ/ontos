@@ -64,12 +64,20 @@ export const TaxGovernanceStaleBasis = Schema.TaggedError<typeof StaleBasisSchem
   StaleBasisFields,
 );
 
-/** Safe business audit evidence; never credentials, tokens or raw provider payload (#950 F49-F54). */
+/**
+ * Safe business audit evidence; never credentials, tokens or raw provider payload (#950 F49-F54). It names the
+ * business reason, the expected-current evidence the Action was guarded by, and the resulting revision or lifecycle
+ * fact identity (#950 F45-F47).
+ */
 export const TaxGovernanceAuditEvidenceSchema = Schema.Struct({
   action: Schema.String.check(Schema.isMinLength(1)),
   changed: Schema.Boolean,
+  expectedBasisFingerprint: Schema.optionalKey(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u))),
   meaningFingerprint: Schema.String.check(Schema.isMinLength(1)),
   operation: Schema.String.check(Schema.isMinLength(1)),
+  reason,
   resourceId: AuditResourceIdSchema,
   resourceType: Schema.String.check(Schema.isMinLength(1)),
+  resultingEndFactId: Schema.optionalKey(AuditResourceIdSchema),
+  resultingRevisionId: Schema.optionalKey(AuditResourceIdSchema),
 });

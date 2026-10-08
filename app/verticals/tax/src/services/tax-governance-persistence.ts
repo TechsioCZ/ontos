@@ -1,7 +1,7 @@
 import { findPostgresFailure } from '@app/core-runtime';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
-import { Effect, Option, Schema } from 'effect';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
 import {
   TaxGovernanceConflictKindSchema,
@@ -35,6 +35,8 @@ export interface GovernedInvocation {
   readonly actionInvocationId: string;
   readonly actorPrincipalId: string;
   readonly legalEntityId: string;
+  /** Trusted server operation time; lifecycle ends are never backdated before it (#929 F19, #949 F16-F17). */
+  readonly operationTime: Date;
   readonly tenantId: string;
 }
 
@@ -124,6 +126,10 @@ export const trustedInvocation = (
   scope.legalEntityId !== undefined &&
   input.legalEntityId === scope.legalEntityId &&
   refTenantIds.every((tenantId) => tenantId === scope.tenantId);
+
+/** A lifecycle end at or after the trusted operation time; retroactive change goes through correction. */
+export const notBackdated = (end: Date, input: GovernedInvocation): boolean =>
+  DateTime.isGreaterThanOrEqualTo(DateTime.makeUnsafe(end), DateTime.makeUnsafe(input.operationTime));
 
 export const sameInstant = (left: Date | null, right: Date | null): boolean =>
   left === null || right === null ? left === right : left.getTime() === right.getTime();

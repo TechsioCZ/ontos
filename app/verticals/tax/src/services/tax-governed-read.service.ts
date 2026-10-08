@@ -1,7 +1,9 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { and, eq, inArray } from 'drizzle-orm';
-import { DateTime, Effect, Option } from 'effect';
+import { and, eq } from 'drizzle-orm';
+import type { SQL } from 'drizzle-orm';
+import { DateTime, Effect, Option, Schema } from 'effect';
 
+import { TaxRuleMeaningKindSchema, TaxRuleRevisionContentSchema } from '../../shared/actions/tax-governance.ts';
 import type {
   ApplicableTaxRuleSetRequest,
   ApplicableTaxRuleSetResponse,
@@ -76,8 +78,28 @@ const basisOf = (
   semanticFingerprint: revision.semanticFingerprint,
 });
 
-const toSelectionState = (basis: TaxRuleRevisionBasis, revision: RevisionRow): TaxRuleRevisionState => ({
-  compositionKind: 'EXCLUSIVE',
+/** Stored revision meaning echoed from the row; a value outside the owner vocabulary is never guessed. */
+const StoredRevisionMeaningSchema = Schema.Struct({
+  compositionKind: TaxRuleRevisionContentSchema.fields.compositionKind,
+  jurisdiction: TaxRuleRevisionContentSchema.fields.jurisdiction,
+  treatmentCategory: TaxRuleRevisionContentSchema.fields.treatmentCategory,
+});
+type StoredRevisionMeaning = typeof StoredRevisionMeaningSchema.Type;
+const decodeStoredMeaning = (revision: RevisionRow) =>
+  Schema.decodeUnknownEffect(StoredRevisionMeaningSchema)({
+    compositionKind: revision.compositionKind,
+    jurisdiction: revision.jurisdiction,
+    treatmentCategory: revision.treatmentCategory,
+  }).pipe(Effect.mapError(unavailable));
+const decodeMeaningKind = (meaningKind: string) =>
+  Schema.decodeUnknownEffect(TaxRuleMeaningKindSchema)(meaningKind).pipe(Effect.mapError(unavailable));
+
+const toSelectionState = (
+  basis: TaxRuleRevisionBasis,
+  revision: RevisionRow,
+  meaning: StoredRevisionMeaning,
+): TaxRuleRevisionState => ({
+  compositionKind: meaning.compositionKind,
   correctedBy: basis.correctedBy,
   effectiveFrom: instant(revision.effectiveFrom),
   effectiveTo: optionalInstant(revision.effectiveTo),
@@ -86,8 +108,48 @@ const toSelectionState = (basis: TaxRuleRevisionBasis, revision: RevisionRow): T
   revisionId: revision.taxRuleRevisionId,
   revisionNumber: revision.revisionNumber,
   taxRuleId: revision.taxRuleId,
-  treatmentCategory: 'TAXABLE',
+  treatmentCategory: meaning.treatmentCategory,
 });
+
+/** One revision of the evidence history, echoing the stored row and its separate lifecycle facts. */
+const historyRevision = ({
+  corrections,
+  endFacts,
+  meaning,
+  revision,
+  tenantId,
+}: Readonly<{
+  corrections: readonly CorrectionRow[];
+  endFacts: readonly EndFactRow[];
+  meaning: StoredRevisionMeaning;
+  revision: RevisionRow;
+  tenantId: string;
+}>) => {
+  const endFact = endFacts.find((candidate) => candidate.taxRuleRevisionId === revision.taxRuleRevisionId);
+  return {
+    ...meaning,
+    basisFingerprint: taxRuleRevisionBasisFingerprint(basisOf(revision, endFacts, corrections)),
+    effectiveFrom: instant(revision.effectiveFrom),
+    effectiveTo: optionalInstant(revision.effectiveTo),
+    endFact: Option.map(Option.fromUndefinedOr(endFact), (fact) => ({
+      endedEffectiveTo: instant(fact.endedEffectiveTo),
+      provenanceRef: fact.provenanceRef,
+      reason: fact.reason,
+      recordedAt: instant(fact.recordedAt),
+    })),
+    provenanceRef: revision.provenanceRef,
+    ratePercent: revision.ratePercent,
+    reason: revision.reason,
+    recordedAt: instant(revision.recordedAt),
+    revisionNumber: revision.revisionNumber,
+    semanticFingerprint: revision.semanticFingerprint,
+    supersedesRevisionRef: Option.map(Option.fromNullOr(revision.supersedesRevisionId), (revisionId) =>
+      taxRuleRevisionRef(tenantId, revisionId),
+    ),
+    taxClassificationCode: revision.taxClassificationCode,
+    taxRuleRevisionRef: taxRuleRevisionRef(tenantId, revision.taxRuleRevisionId),
+  };
+};
 
 /** Zero or one covering System of Record is decisive; several are a configuration conflict (#949 F28-F32). */
 const authorityOutcome = (covering: number): TaxFactAuthorityCurrentResponse['outcome'] => {
@@ -101,39 +163,56 @@ export const taxGovernedReadsForScope = (transaction: ScopedTransaction, scope: 
   const { tenantId } = scope;
   const legalEntityId = scope.legalEntityId ?? '';
 
-  /** End facts and corrections of the given revisions; empty input never reaches the database. */
-  const lifecycleOf = (revisionIds: readonly string[]) =>
-    revisionIds.length === 0
-      ? Effect.succeed({ corrections: [], endFacts: [] })
-      : Effect.all(
-          {
-            corrections: query(
-              transaction
-                .select()
-                .from(taxRuleCorrections)
-                .where(
-                  and(
-                    eq(taxRuleCorrections.tenantId, tenantId),
-                    eq(taxRuleCorrections.legalEntityId, legalEntityId),
-                    inArray(taxRuleCorrections.wrongRevisionId, revisionIds),
-                  ),
-                ),
-            ),
-            endFacts: query(
-              transaction
-                .select()
-                .from(taxRuleRevisionEndFacts)
-                .where(
-                  and(
-                    eq(taxRuleRevisionEndFacts.tenantId, tenantId),
-                    eq(taxRuleRevisionEndFacts.legalEntityId, legalEntityId),
-                    inArray(taxRuleRevisionEndFacts.taxRuleRevisionId, revisionIds),
-                  ),
-                ),
-            ),
-          },
-          { concurrency: 1 },
-        );
+  /**
+   * Revisions with their end facts and confirmed corrections in ONE statement, hence one snapshot even under
+   * READ COMMITTED: a concurrently committed correction is either wholly visible or wholly absent, never torn
+   * (#930 F6-F7, #942 F15, F18).
+   */
+  const revisionStates = Effect.fn('taxGovernedReads.revisionStates')(function* revisionStatesEffect(
+    predicate: SQL | undefined,
+  ) {
+    const rows = yield* query(
+      transaction
+        .select({ correction: taxRuleCorrections, endFact: taxRuleRevisionEndFacts, revision: taxRuleRevisions })
+        .from(taxRuleRevisions)
+        .leftJoin(
+          taxRuleRevisionEndFacts,
+          and(
+            eq(taxRuleRevisionEndFacts.tenantId, taxRuleRevisions.tenantId),
+            eq(taxRuleRevisionEndFacts.legalEntityId, taxRuleRevisions.legalEntityId),
+            eq(taxRuleRevisionEndFacts.taxRuleRevisionId, taxRuleRevisions.taxRuleRevisionId),
+          ),
+        )
+        .leftJoin(
+          taxRuleCorrections,
+          and(
+            eq(taxRuleCorrections.tenantId, taxRuleRevisions.tenantId),
+            eq(taxRuleCorrections.legalEntityId, taxRuleRevisions.legalEntityId),
+            eq(taxRuleCorrections.wrongRevisionId, taxRuleRevisions.taxRuleRevisionId),
+          ),
+        )
+        .where(
+          and(eq(taxRuleRevisions.tenantId, tenantId), eq(taxRuleRevisions.legalEntityId, legalEntityId), predicate),
+        ),
+    );
+    const revisions = new Map<string, RevisionRow>();
+    const endFacts = new Map<string, EndFactRow>();
+    const corrections = new Map<string, CorrectionRow>();
+    for (const row of rows) {
+      revisions.set(row.revision.taxRuleRevisionId, row.revision);
+      if (row.endFact !== null) {
+        endFacts.set(row.endFact.taxRuleRevisionEndFactId, row.endFact);
+      }
+      if (row.correction !== null) {
+        corrections.set(row.correction.taxRuleCorrectionId, row.correction);
+      }
+    }
+    return {
+      corrections: [...corrections.values()],
+      endFacts: [...endFacts.values()],
+      revisions: [...revisions.values()],
+    };
+  });
 
   const applicableTaxRuleSet: TaxGovernedReads['applicableTaxRuleSet'] = Effect.fn(
     'taxGovernedReads.applicableTaxRuleSet',
@@ -143,27 +222,24 @@ export const taxGovernedReadsForScope = (transaction: ScopedTransaction, scope: 
     }
     const predicate = { jurisdiction: request.jurisdiction, taxClassificationCode: request.taxClassificationCode };
     // The complete predicate state in one owner transaction; no pagination or partial query (#942 F9-F12).
-    const revisions = yield* query(
-      transaction
-        .select()
-        .from(taxRuleRevisions)
-        .where(
-          and(
-            eq(taxRuleRevisions.tenantId, tenantId),
-            eq(taxRuleRevisions.legalEntityId, legalEntityId),
-            eq(taxRuleRevisions.jurisdiction, request.jurisdiction),
-            eq(taxRuleRevisions.taxClassificationCode, request.taxClassificationCode),
-          ),
-        ),
+    const { corrections, endFacts, revisions } = yield* revisionStates(
+      and(
+        eq(taxRuleRevisions.jurisdiction, request.jurisdiction),
+        eq(taxRuleRevisions.taxClassificationCode, request.taxClassificationCode),
+      ),
     );
-    const { corrections, endFacts } = yield* lifecycleOf(revisions.map((revision) => revision.taxRuleRevisionId));
     const bases = revisions.map((revision) => basisOf(revision, endFacts, corrections));
     const predicateFingerprint = taxMeaningFingerprint({ ...predicate, legalEntityId });
+    const states = yield* Effect.forEach(
+      revisions,
+      (revision) =>
+        decodeStoredMeaning(revision).pipe(
+          Effect.map((meaning) => toSelectionState(basisOf(revision, endFacts, corrections), revision, meaning)),
+        ),
+      { concurrency: 1 },
+    );
     const selection = selectApplicableTaxRuleRevision({
-      completeState: {
-        predicateFingerprint,
-        revisions: revisions.map((revision) => toSelectionState(basisOf(revision, endFacts, corrections), revision)),
-      },
+      completeState: { predicateFingerprint, revisions: states },
       taxRelevantTime: TaxRelevantTimeSchema.make(request.taxRelevantTime),
     });
     const applicable = selection.kind === 'SELECTED' ? [selection.revision] : selection.applicable;
@@ -223,21 +299,19 @@ export const taxGovernedReadsForScope = (transaction: ScopedTransaction, scope: 
       if (rule === undefined) {
         return Option.none();
       }
-      const revisions = yield* query(
-        transaction
-          .select()
-          .from(taxRuleRevisions)
-          .where(
-            and(
-              eq(taxRuleRevisions.tenantId, tenantId),
-              eq(taxRuleRevisions.legalEntityId, legalEntityId),
-              eq(taxRuleRevisions.taxRuleId, taxRuleId),
-            ),
-          ),
-      );
-      const { corrections, endFacts } = yield* lifecycleOf(revisions.map((revision) => revision.taxRuleRevisionId));
+      // The rule row is immutable; its whole lifecycle state is read in one statement.
+      const { corrections, endFacts, revisions } = yield* revisionStates(eq(taxRuleRevisions.taxRuleId, taxRuleId));
       const ordered = revisions.toSorted((left, right) => left.revisionNumber - right.revisionNumber);
       const bases = ordered.map((revision) => basisOf(revision, endFacts, corrections));
+      const meaningKind = yield* decodeMeaningKind(rule.meaningKind);
+      const historyRevisions = yield* Effect.forEach(
+        ordered,
+        (revision) =>
+          decodeStoredMeaning(revision).pipe(
+            Effect.map((meaning) => historyRevision({ corrections, endFacts, meaning, revision, tenantId })),
+          ),
+        { concurrency: 1 },
+      );
       return Option.some({
         basisFingerprint: taxRuleBasisFingerprint(taxRuleId, bases),
         corrections: corrections
@@ -250,35 +324,8 @@ export const taxGovernedReadsForScope = (transaction: ScopedTransaction, scope: 
             recordedAt: instant(correction.recordedAt),
             wrongRevisionRef: taxRuleRevisionRef(tenantId, correction.wrongRevisionId),
           })),
-        meaningKind: 'VAT_RATE' as const,
-        revisions: ordered.map((revision) => {
-          const endFact = endFacts.find((candidate) => candidate.taxRuleRevisionId === revision.taxRuleRevisionId);
-          return {
-            basisFingerprint: taxRuleRevisionBasisFingerprint(basisOf(revision, endFacts, corrections)),
-            compositionKind: 'EXCLUSIVE' as const,
-            effectiveFrom: instant(revision.effectiveFrom),
-            effectiveTo: optionalInstant(revision.effectiveTo),
-            endFact: Option.map(Option.fromUndefinedOr(endFact), (fact) => ({
-              endedEffectiveTo: instant(fact.endedEffectiveTo),
-              provenanceRef: fact.provenanceRef,
-              reason: fact.reason,
-              recordedAt: instant(fact.recordedAt),
-            })),
-            jurisdiction: 'CZ_DOMESTIC' as const,
-            provenanceRef: revision.provenanceRef,
-            ratePercent: revision.ratePercent,
-            reason: revision.reason,
-            recordedAt: instant(revision.recordedAt),
-            revisionNumber: revision.revisionNumber,
-            semanticFingerprint: revision.semanticFingerprint,
-            supersedesRevisionRef: Option.map(Option.fromNullOr(revision.supersedesRevisionId), (revisionId) =>
-              taxRuleRevisionRef(tenantId, revisionId),
-            ),
-            taxClassificationCode: revision.taxClassificationCode,
-            taxRuleRevisionRef: taxRuleRevisionRef(tenantId, revision.taxRuleRevisionId),
-            treatmentCategory: 'TAXABLE' as const,
-          };
-        }),
+        meaningKind,
+        revisions: historyRevisions,
         stableCode: rule.stableCode,
         taxRuleRef: taxRuleRef(tenantId, rule.taxRuleId),
       });
@@ -291,34 +338,32 @@ export const taxGovernedReadsForScope = (transaction: ScopedTransaction, scope: 
     if (scope.legalEntityId === undefined) {
       return yield* unavailable();
     }
-    const contracts = yield* query(
+    // Contracts and their revisions in one statement, hence one snapshot of the complete authority set.
+    const rows = yield* query(
       transaction
-        .select()
-        .from(taxFactAuthorityContracts)
+        .select({ contract: taxFactAuthorityContracts, revision: taxFactAuthorityContractRevisions })
+        .from(taxFactAuthorityContractRevisions)
+        .innerJoin(
+          taxFactAuthorityContracts,
+          and(
+            eq(taxFactAuthorityContracts.tenantId, taxFactAuthorityContractRevisions.tenantId),
+            eq(taxFactAuthorityContracts.legalEntityId, taxFactAuthorityContractRevisions.legalEntityId),
+            eq(
+              taxFactAuthorityContracts.taxFactAuthorityContractId,
+              taxFactAuthorityContractRevisions.taxFactAuthorityContractId,
+            ),
+          ),
+        )
         .where(
           and(
-            eq(taxFactAuthorityContracts.tenantId, tenantId),
-            eq(taxFactAuthorityContracts.legalEntityId, legalEntityId),
+            eq(taxFactAuthorityContractRevisions.tenantId, tenantId),
+            eq(taxFactAuthorityContractRevisions.legalEntityId, legalEntityId),
             eq(taxFactAuthorityContracts.factFamily, request.factFamily),
           ),
         ),
     );
-    const contractIds = contracts.map((contract) => contract.taxFactAuthorityContractId);
-    const revisions =
-      contractIds.length === 0
-        ? []
-        : yield* query(
-            transaction
-              .select()
-              .from(taxFactAuthorityContractRevisions)
-              .where(
-                and(
-                  eq(taxFactAuthorityContractRevisions.tenantId, tenantId),
-                  eq(taxFactAuthorityContractRevisions.legalEntityId, legalEntityId),
-                  inArray(taxFactAuthorityContractRevisions.taxFactAuthorityContractId, contractIds),
-                ),
-              ),
-          );
+    const revisions = rows.map((row) => row.revision);
+    const contracts = rows.map((row) => row.contract);
     const current = [...currentContractRevisions(revisions).values()];
     const covering = current
       .filter((revision) => authorityCoversInstant(revision, request.instant))

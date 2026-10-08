@@ -33,17 +33,20 @@ export const handleEndTaxRuleRevision = Effect.fn('EndTaxRuleRevisionAction.hand
   payload: EndTaxRuleRevisionPayload,
   context: ActionHandlerContext<typeof domainEvents, TaxRuleGovernancePersistence>,
 ) {
-  const outcome = yield* context.services.endTaxRuleRevision({ ...payload, ...governedInvocation(context) });
+  const outcome = yield* context.services.endTaxRuleRevision({ ...payload, ...(yield* governedInvocation(context)) });
   if ('kind' in outcome) {
     return yield* failGovernance(outcome, 'Tax Rule Revision');
   }
   yield* context.recordAuditEvidence({
     action: 'END_TAX_RULE_REVISION',
     changed: outcome.ended,
+    expectedBasisFingerprint: payload.expectedBasisFingerprint,
     meaningFingerprint: outcome.meaningFingerprint,
     operation: 'END',
+    reason: payload.reason,
     resourceId: outcome.revisionId,
     resourceType: 'commerce.tax.tax-rule-revision',
+    resultingEndFactId: outcome.endFactId,
   });
   return {
     ended: outcome.ended,
