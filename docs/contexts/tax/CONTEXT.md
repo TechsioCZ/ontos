@@ -17,22 +17,20 @@ B2C/B2B purchases in CZK with a Current Czech VAT-registered Selling Legal Entit
 supported domestic Tax Classifications/Tax Rules, including mixed-rate purchases with one shared
 ancillary Shipping amount. OSS, reverse charge, export, foreign VAT regimes, generic
 exemption/special-treatment flows, additional selling currencies, and generic multi-supply Set
-monetary decomposition are not activated by Launch. Production activation of one exact scope
-(Tenant, Selling Legal Entities, activated Tax-case families, CZK) requires real owner evidence; TAX
-owner activation-ready is not full Commerce production readiness.
+monetary decomposition are not activated by Launch. TAX owner activation-ready is not full Commerce
+production readiness.
 _Avoid_: legacy feature breadth as Launch scope, implicit domestic fallback, future regime enabled
-by data presence, fixtures or GOLD status as activation evidence.
+by data presence.
 
 **Tax Decision** — Tax-owned purchase-scoped determination of tax applicability, Tax Jurisdiction,
 Tax Treatment, rate or exemption, and taxable-basis interpretation for exact inputs and one exact
 Tax-Relevant Time, preserving the exact Taxable Supply Units and their unit-specific meanings. A
 prospective (preview) evaluation carries its own Tax-Relevant Time and is Current only under its
-Currentness contract. For Launch final Order commitment, TAX performs one authoritative, recoverable
-finalization of the exact frozen purchase candidate (Commerce-owned submission/candidate identity)
-for its Commerce-owned Order Commitment Time: one canonical business result, not physical
-exactly-once evaluation. An obsolete evaluation candidate may be discarded before finalization, a
-lost response recovers the original result, changed intent under the same identity is a conflict,
-and a failed or uncommitted final result remains prospective evidence.
+Currentness contract. For Launch final Order commitment, TAX establishes one immutable, recoverable
+final Tax Decision for the exact frozen purchase candidate (Commerce-owned submission/candidate
+identity) and its Commerce-owned Order Commitment Time. An evaluation candidate whose material
+evidence was invalidated before finalization cannot become that final Tax Decision, and a failed or
+uncommitted final result remains prospective evidence.
 _Avoid_: VAT identifier as tax decision, B2B Channel as tax treatment, retained preview as Accepted
 tax, Pricing Quotation as tax guarantee, rate-only decision without exact subject/context, one
 independent Tax Decision per UI/Pricing line by default, Tax commitment proof/TTL/renewal,
@@ -60,11 +58,13 @@ Tax Result, or exactly one typed non-success meaning. Launch codes: `TAX_CASE_UN
 failure; never missing configuration), `TAX_PREREQUISITE_NOT_MET` (known-negative required Launch
 prerequisite such as authoritatively ended/non-registered seller VAT registration),
 `TAX_RULE_MISSING` (supported case with a complete authoritative empty applicable rule set),
-`TAX_RULE_OVERLAP` and `TAX_RULE_CONFLICT` (explicit rule-state failures from complete state),
+`TAX_RULE_OVERLAP` (complete rule state with simultaneously applicable revisions where mutual
+exclusion is required), `TAX_RULE_CONFLICT` (complete rule state with incompatible applicable
+meanings and no governing composition; explicit permitted composition is not conflict),
 `TAX_INPUT_STALE` (required material evidence known outside its usable Current validity),
 `TAX_DEPENDENCY_UNAVAILABLE` (required authority/dependency cannot safely be used),
-`TAX_STATE_INDETERMINATE` (complete authoritative truth cannot safely be concluded, including
-unknown prerequisite state, partial set observation and unresolved authority conflict). Unknown,
+`TAX_STATE_INDETERMINATE` (complete authoritative truth cannot safely be concluded; an incomplete
+material set or unresolved authority conflict may yield it under its owning contract). Unknown,
 unavailable and stale are never negative; none is represented as successful zero.
 _Avoid_: generic ERROR, provider-specific timeout as public Tax meaning, null/zero as failure,
 unknown or unavailable seller state as `TAX_PREREQUISITE_NOT_MET`, partial observation as
@@ -105,16 +105,19 @@ revision.
 Treatment/rate meaning for one Effective Period `[effective_from, effective_to)`. It is selected by
 Tax-Relevant Time from complete authoritative rule state, retained in Tax Evidence and Accepted Tax
 Terms, and never overwritten: a confirmed-wrong revision stays addressable while a correction
-records new Current meaning with explicit replacement/correction provenance.
+records new Current meaning with explicit replacement/correction provenance. A revision confirmed
+materially wrong already for an original Tax-Relevant Time differs from an ordinary later rule
+change, which never reopens a finalized result; the wrong-at-T disposition is the PO decision
+recorded on #907/#930.
 _Avoid_: newest/highest revision or `created_at` as selector, deleting or editing a historical
 revision, Tax Rule correction confused with a return/Billing correction.
 
 **Tax Treatment** — Explicit Tax meaning carried by an applicable Tax Rule Revision and preserved
 per Taxable Supply Unit in a Tax Decision; for Launch, supported ordinary domestic taxable treatment
-with its rate. Zero-rate and exemption are explicit treatment meanings and tax-not-applicable is an
-explicit applicability Decision meaning; each may exist in the language without being
-Launch-activated, and a purchase requiring an unactivated one is `TAX_CASE_UNSUPPORTED`. A `0 CZK`
-amount never implies any of them.
+with its rate. Zero-rate is an explicit treatment/rate meaning, exemption an explicit Tax Decision
+meaning, and tax-not-applicable an explicit applicability Decision meaning; each may exist in the
+language without being Launch-activated, and a purchase requiring an unactivated one is
+`TAX_CASE_UNSUPPORTED`. A `0 CZK` amount never implies any of them.
 _Avoid_: treatment inferred from amount, B2B Channel or buyer VAT status as treatment, missing rule
 as zero-rate/exemption/not-applicable.
 
@@ -131,12 +134,14 @@ supporting evidence. It governs authority/evidence roles; it does not itself set
 business value and is distinct from an Integration Route or provider credential. A Tax fact family
 is the unit of authority assignment: Tax-owned families may have OntOS TAX as System of Record,
 while Tax-relevant facts such as Selling Legal Entity VAT Registration keep their external declared
-System of Record. Contracts are immutable revisions with Effective Periods under governed Actions
-and may be system-preconfigured for standard public sources. One fact has one System of Record per
-business instant: two legitimate contracts for one fact/instant are an authority configuration
-conflict and none is an authority gap; both block affected determination and readiness and are
-distinct from Tax Rule overlap/conflict and from evidence-provider disagreement. An authority
-handoff is an explicit fact-level boundary; shadow results before it are never Current.
+System of Record. Contract revisions carry an explicit authority period, stay historically
+explainable and change only through governed Actions; standard public sources such as VIES/ARES may
+have system-preconfigured evidence-source defaults, which never preconfigure authority. One fact has
+one System of Record per business instant: competing System-of-Record authorities for one
+fact/instant are an authority configuration conflict and a fact without any declared authority is an
+authority gap; both block affected determination and readiness and are distinct from Tax Rule
+overlap/conflict and from evidence-provider disagreement. An authority handoff is an explicit
+fact-level boundary; shadow results before it are never Current.
 _Avoid_: ERP/VIES/ARES as global Tax authority, authority inferred from transport route, manual
 override of a source-owned fact through the authority contract.
 
@@ -144,10 +149,12 @@ override of a source-owned fact through the authority contract.
 and business-validity meaning, retained with provenance independently from the external source
 record and from the canonical Tax business fact it may support. Evaluating one assertion against its
 fact-level contract yields exactly one source acceptance outcome: `ACCEPTED` (eligible for
-owner-governed Current Tax fact resolution, not payload promotion), `REJECTED`, `NEEDS_REVIEW`
-(understandable but owner-governed undecided) or `UNVERIFIABLE` (subject, authority, scope or
-validity cannot be safely confirmed). This family is distinct from Tax Outcome codes.
-_Avoid_: provider payload as canonical Tax profile, arrival order as Currentness, source record ID as Tax fact identity.
+owner-governed Tax fact resolution, not payload promotion), `REJECTED` (a known reason prevents its
+use for the declared Tax use), `NEEDS_REVIEW` (understandable but owner-governed undecided) or
+`UNVERIFIABLE` (subject, authority, scope or validity cannot be safely confirmed). This family is
+distinct from Tax Outcome codes.
+_Avoid_: provider payload as canonical Tax profile, arrival order as Currentness, source record ID
+as Tax fact identity.
 
 **Selling Legal Entity VAT Registration** — Tax-relevant business fact that one exact Selling Legal
 Entity is VAT-registered for one jurisdiction and business-valid period under its declared System of
@@ -188,12 +195,11 @@ Pricing Line, Cart line, Order line or Catalog component. For Launch, an ordinar
 maps to one Taxable Supply Unit; a supported whole-treatment Set maps to one unit; cases requiring
 generic multi-supply Set monetary decomposition remain unsupported. Ancillary Shipping is allocated
 into affected units and is not a separate unit; a separate Shipping supply requires its own explicit
-Tax meaning. A supported Set (whole-treatment, also written one-treatment Set) has one legally valid
-Tax Treatment for its whole published amount; a Catalog Set is not by itself a statutory
-§ 47 odst. 7 goods set.
+Tax meaning. A supported whole-treatment Set has one legally valid Tax Treatment for its whole
+published amount; a Catalog Set is not by itself a statutory § 47 odst. 7 goods set.
 _Avoid_: Pricing Line as statutory supply identity, rate bucket as canonical Tax identity, merging
 equal occurrences, invented component prices, Catalog Set label as proof of the statutory goods-set
-regime.
+regime, one-treatment Set as a separate term.
 
 ## Monetary boundaries
 
@@ -246,17 +252,24 @@ sale Tax inside a return, erroneous-document remediation performed inside an ord
 Tax, final prices, basis, treatment, allocations and Taxable Supply Unit mapping are authoritative
 for a supported return/correction: the final accepted Order Snapshot for B2C where it is the final
 authoritative record, or the relevant accepted Billing Document wherever one exists for the invoiced
-supply. A missing or ambiguous record or unit mapping is an explicit typed non-success for that
-historical input, never Current reconstruction, equal-total matching or guessed zero.
+supply. A missing or ambiguous record or unit mapping is an explicit unresolved historical-input
+outcome, never Current reconstruction, equal-total matching or guessed zero.
 _Avoid_: "original invoice" read as requiring an invoice for every B2C return, consumer choosing a
 baseline by matching total, live Catalog/Inventory/Pricing/Tax Rule/registration lookup as baseline.
 
+**Accepted Cumulative Correction State** — Billing-owned, versioned cumulative corrected published
+Tax state of one original Taxable Supply Unit after all Accepted corrections, starting from the
+Authoritative Original Accepted Record. TAX reads it as a baseline and proposes a next state; only
+Billing accepts and advances it.
+_Avoid_: TAX-owned correction ledger, preview as an accepted state, state without an expected
+version.
+
 **Tax Correction Delta** — Tax-owned purpose-specific result for one supported return/correction,
-computed per original Taxable Supply Unit as the new cumulative corrected published Tax state minus
-the previously Accepted cumulative corrected state, bound to the expected previous Accepted
-correction version owned by Billing. Rounding remainder stays within that unit's lineage; full
-exhaustion of the original basis leaves exactly `0.00 CZK`. It is neither a replacement Tax Result
-nor a new sale Tax determination; a TAX preview advances no Accepted sequence.
+computed per original Taxable Supply Unit as the proposed new cumulative corrected published Tax
+state minus the Accepted Cumulative Correction State, bound to that state's expected version.
+Rounding remainder stays within that unit's lineage; full exhaustion of the original basis leaves
+exactly `0.00 CZK` remaining published Tax for that unit. It is neither a replacement Tax Result nor
+a new sale Tax determination; a TAX preview advances no Accepted sequence.
 _Avoid_: independently rounded negative sale, cross-unit balancing, Payment refund or Fulfillment
 state alone as correction, TAX as a competing Billing ledger.
 
