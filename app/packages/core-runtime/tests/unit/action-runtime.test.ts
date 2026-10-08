@@ -2351,6 +2351,100 @@ it.effect(
 );
 
 it.effect(
+  'enforces TAX management only on the exact trusted Selling Legal Entity and never on another seller',
+  Effect.fn(function* testTaxSellingLegalEntityBusinessPermission() {
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('tax.rule.manage');
+    const SellerIdSchema = Schema.String.pipe(Schema.brand('TaxSellerLegalEntityId'));
+    const InputSchema = Schema.Struct({ sellerLegalEntityId: SellerIdSchema });
+    let handlerCalls = 0;
+    const action = defineAction(
+      {
+        accessEvidencePolicy: {
+          captureMode: 'metadata_only',
+          policyKey: 'commerce.tax.create-tax-rule.access.v1',
+        },
+        actionKey: 'commerce.tax.create-tax-rule',
+        auditProfile: 'sensitive',
+        businessPermission: defineActionBusinessPermission<typeof InputSchema.Type>((payload, scope) => ({
+          permission,
+          target: {
+            kind: 'tax_selling_legal_entity',
+            legalEntityId: payload.sellerLegalEntityId,
+            tenantId: scope.tenantId,
+          },
+        })),
+        domainErrorSchema: Schema.Never,
+        domainEvents: {},
+        entrypoint: defineTenantModuleEntrypoint({
+          access: 'write',
+          authorization: { kind: 'action_execution', provisioning: 'explicit' },
+          entrypointKey: 'commerce.tax.create-tax-rule',
+          moduleKey: 'commerce.tax',
+          role: 'action',
+        }),
+        idempotency: 'required',
+        legalEntityScope: 'required',
+        owningModuleKey: 'commerce.tax',
+        payloadSchema: InputSchema,
+        policies: [],
+        resultSchema: Schema.Void,
+        schemaVersion: '1',
+      },
+      () => {
+        handlerCalls += 1;
+        return Effect.void;
+      },
+    );
+    const payload = { sellerLegalEntityId: principalLegalEntityId };
+    const run = (harness: Effect.Success<ReturnType<typeof makeHarness>>, input = payload) =>
+      harness.runtime.runAction({
+        payload: input,
+        principal,
+        registration: action,
+        transport: transport('tax-seller-target'),
+      });
+
+    const allowed = yield* makeHarness({ businessPermissionDecision: 'allowed' });
+    yield* run(allowed);
+    expect(allowed.businessPermissionChecks).toEqual([
+      {
+        principal: { principalId: principal.principalId, tenantId: principal.tenantId },
+        targets: [
+          {
+            permission,
+            target: {
+              kind: 'tax_selling_legal_entity',
+              legalEntityId: principalLegalEntityId,
+              tenantId: principal.tenantId,
+            },
+          },
+        ],
+      },
+    ]);
+    expect(allowed.flushed[0]?.transport).toEqual({
+      correlationId: 'correlation-tax-seller-target',
+      idempotencyKey: 'tax-seller-target',
+      targetModuleKey: 'commerce.tax',
+      targetResourceId: principalLegalEntityId,
+      targetResourceType: 'tax_selling_legal_entity:tax.rule.manage',
+    });
+
+    const denied = yield* makeHarness({ businessPermissionDecision: 'denied' });
+    expect(Predicate.isTagged(yield* Effect.flip(run(denied)), 'ActionPermissionDenied')).toBe(true);
+
+    const otherSeller = yield* makeHarness({ businessPermissionDecision: 'allowed' });
+    expect(
+      Predicate.isTagged(
+        yield* Effect.flip(run(otherSeller, { sellerLegalEntityId: '00000000-0000-4000-8000-000000000099' })),
+        'ActionPermissionCheckError',
+      ),
+    ).toBe(true);
+    expect(otherSeller.businessPermissionChecks).toHaveLength(0);
+    expect(handlerCalls).toBe(1);
+  }),
+);
+
+it.effect(
   'rejects a Pricing permission resolved onto a Counterparty target before checks, persistence, or handler code',
   Effect.fn(function* rejectMismatchedBusinessPermissionTarget() {
     const pricingPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('pricing.price_group.read');

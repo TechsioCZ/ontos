@@ -100,6 +100,9 @@ const sameBusinessTarget = (
       left.resource.resourceType === right.resource.resourceType
     );
   }
+  if (left.kind === 'tax_selling_legal_entity') {
+    return right.kind === 'tax_selling_legal_entity' && left.legalEntityId === right.legalEntityId;
+  }
   return (
     right.kind === 'price_group' &&
     left.pricingCatalogId === right.pricingCatalogId &&
@@ -131,6 +134,9 @@ const validIntentScope = (entry: AuthorizationMutationJournalEntry): boolean => 
   }
   if (target.legalEntityId.length === 0) {
     return false;
+  }
+  if (target.kind === 'tax_selling_legal_entity') {
+    return true;
   }
   if (target.kind === 'retail_profile') {
     return target.profileId.length > 0;

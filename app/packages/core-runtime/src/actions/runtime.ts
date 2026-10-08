@@ -514,6 +514,11 @@ const BusinessAccessTargetSchema = Schema.Union([
     }),
     tenantId: BusinessTenantIdSchema,
   }),
+  Schema.Struct({
+    kind: Schema.Literal('tax_selling_legal_entity'),
+    legalEntityId: BusinessLegalEntityIdSchema,
+    tenantId: BusinessTenantIdSchema,
+  }),
 ]);
 const ActionBusinessPermissionTargetSchema = Schema.Struct({
   permission: BusinessPermissionCodeSchema,
@@ -536,6 +541,9 @@ const businessTargetResourceId = (target: ActionBusinessPermissionTarget['target
   }
   if (target.kind === 'price_group') {
     return `${target.pricingCatalogId}:${target.priceGroupId}`;
+  }
+  if (target.kind === 'tax_selling_legal_entity') {
+    return target.legalEntityId;
   }
   return target.resource.resourceId;
 };

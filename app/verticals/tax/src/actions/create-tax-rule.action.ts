@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.tax
 // @ontos-action-slug create-tax-rule
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import { CreateTaxRulePayloadSchema, CreateTaxRuleResultSchema } from '../../shared/actions/tax-governance.ts';
@@ -65,6 +65,10 @@ export const createTaxRuleAction = defineAction(
     actionKey: 'commerce.tax.create-tax-rule',
     auditEvidenceSchema: TaxGovernanceAuditEvidenceSchema,
     auditProfile: 'sensitive',
+    businessPermission: defineActionBusinessPermission<CreateTaxRulePayload>((_payload, scope) => ({
+      permission: 'tax.rule.manage',
+      target: { kind: 'tax_selling_legal_entity', legalEntityId: scope.legalEntityId ?? '', tenantId: scope.tenantId },
+    })),
     domainErrorSchema: ActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({

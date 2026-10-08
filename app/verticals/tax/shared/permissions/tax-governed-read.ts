@@ -12,6 +12,6 @@ export const taxGovernedReadPermission = defineBusinessPermission({
   key: 'tax.governed.read',
   meaning: 'Tax Governed Read module-scoped permission.',
   owningCapability: 'commerce.tax',
-  protectedEntrypoints: [],
+  protectedEntrypoints: ['commerce.tax.api.applicable-tax-rule-set', 'commerce.tax.api.tax-fact-authority-current'],
   schemaVersion: '1',
 });

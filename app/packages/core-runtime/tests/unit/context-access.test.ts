@@ -587,6 +587,56 @@ it.effect('checks one exact tenant-qualified Inventory Resource and rejects anot
   }),
 );
 
+it.effect('checks TAX management on one exact Selling Legal Entity and keeps other sellers distinct', () =>
+  Effect.gen(function* checksTaxSellingLegalEntityPermission() {
+    const requests: v1.CheckBulkPermissionsRequest[] = [];
+    const access = makeContextAccess(
+      makeClient((request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return responseFor(request, [v1.CheckPermissionResponse_Permissionship.HAS_PERMISSION]);
+        }),
+      ),
+    );
+    const permission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('tax.rule.manage');
+    const target = {
+      permission,
+      target: { kind: 'tax_selling_legal_entity' as const, legalEntityId, tenantId },
+    };
+    const check = requireBusinessPermissions(access);
+    expect(yield* check({ principal: { principalId, tenantId }, targets: [target] })).toEqual([
+      { decision: 'allowed', key: toBusinessPermissionAccessKey(target) },
+    ]);
+    expect(requests[0]?.items[0]?.resource?.objectId).toBe(
+      toBusinessPermissionAccessObjectId(permission, target.target),
+    );
+    const otherSeller = { ...target.target, legalEntityId: '20000000-0000-4000-8000-000000000002' };
+    expect(toBusinessPermissionAccessObjectId(permission, otherSeller)).not.toBe(
+      toBusinessPermissionAccessObjectId(permission, target.target),
+    );
+    const contractPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)(
+      'tax.authority_contract.manage',
+    );
+    expect(toBusinessPermissionAccessObjectId(contractPermission, target.target)).not.toBe(
+      toBusinessPermissionAccessObjectId(permission, target.target),
+    );
+
+    const readPermission = yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('tax.governed.read');
+    for (const invalid of [
+      { permission: readPermission, target: target.target },
+      {
+        permission,
+        target: { counterpartyId: 'counterparty-1', kind: 'counterparty' as const, legalEntityId, tenantId },
+      },
+    ]) {
+      expect(yield* check({ principal: { principalId, tenantId }, targets: [invalid] })).toEqual([
+        { decision: 'unavailable', key: toBusinessPermissionAccessKey(invalid) },
+      ]);
+    }
+    expect(requests).toHaveLength(1);
+  }),
+);
+
 it.effect('accepts either an exact Storefront or exact Counterparty-wide positive grant', () =>
   Effect.gen(function* acceptsBusinessPermissionAlternatives() {
     const observedObjectIds: string[][] = [];
