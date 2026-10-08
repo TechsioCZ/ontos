@@ -6,6 +6,7 @@ import {
   TaxCorrectionPreviewRequestSchema,
   TaxCorrectionPreviewResponseSchema,
 } from '../../shared/apis/tax-correction-preview.ts';
+import { AcceptedTaxTermsContractSchema } from '../../shared/domain/tax-correction-preview-contracts.ts';
 import { previewTaxCorrection } from '../../src/api/tax-correction-preview.read.ts';
 import {
   TaxCorrectionDeltaSchema,
@@ -135,6 +136,11 @@ describe('Tax correction preview read', () => {
       }
     }),
   );
+
+  it('#946 F8-F9 owners hand over Accepted Tax Terms in the published contract shape', () => {
+    const encode = Schema.encodeSync(AcceptedTaxTermsContractSchema);
+    expect(encode(Schema.decodeUnknownSync(AcceptedTaxTermsContractSchema)(terms))).toEqual(terms);
+  });
 
   it('#948 F11 #907 F193-F194 accepts no Payment refund or Fulfillment status as correction facts', () => {
     expect(() =>

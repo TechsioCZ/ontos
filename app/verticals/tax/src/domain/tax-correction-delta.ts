@@ -112,7 +112,6 @@ export const TaxCorrectionFactsSchema = Schema.Struct({
     ),
   ),
 });
-export type TaxCorrectionFacts = typeof TaxCorrectionFactsSchema.Type;
 
 /** One supported return/correction of an Authoritative Original Accepted Record (#946 F15, #948 A). */
 export const TaxCorrectionRequestSchema = Schema.Struct({
