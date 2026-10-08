@@ -21,7 +21,6 @@ export const OwnerIssuedAmountSchema = Schema.Struct({
   amount: NonNegativeTaxExactRationalSchema,
   currency: CurrencyCodeSchema,
 });
-export type OwnerIssuedAmount = typeof OwnerIssuedAmountSchema.Type;
 
 /**
  * One contribution of the published Pricing breakdown (Price, Discount, Promotion allocation, Pricing Commercial Fee

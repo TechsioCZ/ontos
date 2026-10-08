@@ -6,7 +6,6 @@ import type { TaxCaseUnsupported, TaxNotEstablishedOutcome } from './tax-non-suc
 
 /** Launch Tax Jurisdiction is Czech domestic; any other jurisdiction is outside Launch Tax Coverage (#907 F2-F3, F12). */
 export const TaxJurisdictionSchema = Schema.Literal('CZ_DOMESTIC');
-export type TaxJurisdiction = typeof TaxJurisdictionSchema.Type;
 
 /** Place fact usable by TAX only as an owner-resolved fact with owner-qualified evidence (#927 F4-F6, H). */
 const OwnerResolvedTaxPlaceFactSchema = Schema.TaggedStruct('OWNER_RESOLVED', {
