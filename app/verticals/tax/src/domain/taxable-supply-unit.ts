@@ -1,0 +1,119 @@
+import { Array as Arr, Match, Result, Schema, pipe } from 'effect';
+import type { NonEmptyReadonlyArray } from 'effect/Array';
+
+import { PurchaseDemandOccurrenceIdSchema, PurchaseDemandOccurrenceSchema } from './purchase-binding.ts';
+import type { PurchaseDemandOccurrence, PurchaseDemandOccurrenceId } from './purchase-binding.ts';
+import { BoundedIdentifierSchema, RevisionSchema, distinctBy } from './tax-domain-primitives.ts';
+import type { TaxCaseUnsupported } from './tax-non-success-outcome.ts';
+
+/** Tax-owned identity of one Taxable Supply Unit; it is not a Pricing Line or UI row (#920 F1-F11). */
+export const TaxableSupplyUnitIdSchema = Schema.String.check(
+  Schema.isTrimmed(),
+  Schema.isMinLength(1),
+  Schema.isMaxLength(400),
+).pipe(Schema.brand('TaxableSupplyUnitId'));
+export type TaxableSupplyUnitId = typeof TaxableSupplyUnitIdSchema.Type;
+
+/** Exact pinned Set Composition Revision used for a Set's Tax meaning (#934 F3, F23; #937 F17). */
+export const SetCompositionIdSchema = BoundedIdentifierSchema.pipe(Schema.brand('SetCompositionId'));
+
+export const SetCompositionRevisionRefSchema = Schema.Struct({
+  revision: RevisionSchema,
+  setCompositionId: SetCompositionIdSchema,
+});
+
+const OrdinaryOccurrenceMappingSchema = Schema.TaggedStruct('ORDINARY_OCCURRENCE', {
+  catalogSelectionRef: BoundedIdentifierSchema,
+  occurrenceId: PurchaseDemandOccurrenceIdSchema,
+});
+
+const WholeTreatmentSetMappingSchema = Schema.TaggedStruct('WHOLE_TREATMENT_SET', {
+  catalogSelectionRef: BoundedIdentifierSchema,
+  occurrenceId: PurchaseDemandOccurrenceIdSchema,
+  setCompositionRevisionRef: SetCompositionRevisionRefSchema,
+});
+
+/**
+ * One Taxable Supply Unit with its explicit mapping to source Purchase Demand Occurrence and Catalog evidence
+ * (#920 F17-F18, F25; #937 F15-F17).
+ */
+export const TaxableSupplyUnitSchema = Schema.Struct({
+  mapping: Schema.Union([OrdinaryOccurrenceMappingSchema, WholeTreatmentSetMappingSchema]),
+  unitId: TaxableSupplyUnitIdSchema,
+});
+export type TaxableSupplyUnit = typeof TaxableSupplyUnitSchema.Type;
+
+export const taxableSupplyUnitSourceOccurrenceIds = (
+  unit: TaxableSupplyUnit,
+): NonEmptyReadonlyArray<PurchaseDemandOccurrenceId> => [unit.mapping.occurrenceId];
+
+/**
+ * Tax legal supply meaning established for one occurrence before unit mapping. Determining a Set's legal
+ * meaning belongs to #934; this mapping only consumes it.
+ */
+export const OccurrenceSupplyMeaningSchema = Schema.Union([
+  Schema.TaggedStruct('ORDINARY', { occurrence: PurchaseDemandOccurrenceSchema }),
+  Schema.TaggedStruct('WHOLE_TREATMENT_SET', {
+    occurrence: PurchaseDemandOccurrenceSchema,
+    setCompositionRevisionRef: SetCompositionRevisionRefSchema,
+  }),
+  Schema.TaggedStruct('MULTI_SUPPLY_SET', {
+    occurrence: PurchaseDemandOccurrenceSchema,
+    setCompositionRevisionRef: SetCompositionRevisionRefSchema,
+  }),
+]);
+export type OccurrenceSupplyMeaning = typeof OccurrenceSupplyMeaningSchema.Type;
+
+export const OccurrenceSupplyMeaningsSchema = Schema.NonEmptyArray(OccurrenceSupplyMeaningSchema).check(
+  distinctBy(
+    ({ occurrence }: OccurrenceSupplyMeaning) => occurrence.occurrenceId,
+    'Each Purchase Demand Occurrence must have exactly one supply meaning',
+  ),
+);
+export type OccurrenceSupplyMeanings = typeof OccurrenceSupplyMeaningsSchema.Type;
+
+/** Deterministic unit identity for the same exact occurrence (#936 F58); distinct occurrences never collide. */
+const unitIdFor = (occurrence: PurchaseDemandOccurrence): TaxableSupplyUnitId =>
+  TaxableSupplyUnitIdSchema.make(`taxable-supply-unit:${occurrence.occurrenceId}`);
+
+const unitFor = (meaning: OccurrenceSupplyMeaning): Result.Result<TaxableSupplyUnit, TaxCaseUnsupported> =>
+  Match.value(meaning).pipe(
+    Match.tag('ORDINARY', ({ occurrence }) =>
+      Result.succeed({
+        mapping: {
+          _tag: 'ORDINARY_OCCURRENCE' as const,
+          catalogSelectionRef: occurrence.catalogSelectionRef,
+          occurrenceId: occurrence.occurrenceId,
+        },
+        unitId: unitIdFor(occurrence),
+      }),
+    ),
+    Match.tag('WHOLE_TREATMENT_SET', ({ occurrence, setCompositionRevisionRef }) =>
+      Result.succeed({
+        mapping: {
+          _tag: 'WHOLE_TREATMENT_SET' as const,
+          catalogSelectionRef: occurrence.catalogSelectionRef,
+          occurrenceId: occurrence.occurrenceId,
+          setCompositionRevisionRef,
+        },
+        unitId: unitIdFor(occurrence),
+      }),
+    ),
+    Match.tag('MULTI_SUPPLY_SET', () =>
+      Result.fail({
+        _tag: 'TAX_CASE_UNSUPPORTED' as const,
+        unsupportedRequirement: 'SET_MULTI_SUPPLY_DECOMPOSITION' as const,
+      }),
+    ),
+    Match.exhaustive,
+  );
+
+/**
+ * Maps exact occurrences to Taxable Supply Units: one unit per ordinary occurrence, one unit per whole-treatment
+ * Set, never merging equal occurrences (#920 F12-F16, F25-F26). A Set requiring several separate taxable
+ * supplies is TAX_CASE_UNSUPPORTED, with no split or fallback (#920 F29-F30, #918 F39).
+ */
+export const mapTaxableSupplyUnits = (
+  meanings: OccurrenceSupplyMeanings,
+): Result.Result<NonEmptyReadonlyArray<TaxableSupplyUnit>, TaxCaseUnsupported> =>
+  Result.all(pipe(meanings, Arr.map(unitFor)));
