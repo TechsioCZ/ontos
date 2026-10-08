@@ -2,10 +2,16 @@ import { Result, Schema } from 'effect';
 
 import { PurchaseDemandOccurrenceIdSchema } from './purchase-binding.ts';
 import type { PurchaseDemandOccurrenceId } from './purchase-binding.ts';
-import { LineCommercialValueBasisSchema } from './tax-decision.ts';
 import { BoundedIdentifierSchema, CurrencyCodeSchema } from './tax-domain-primitives.ts';
 import { NonNegativeTaxExactRationalSchema, TaxExactRationalSchema } from './tax-exact-rational.ts';
 import type { TaxCaseUnsupported, TaxStateIndeterminate } from './tax-non-success-outcome.ts';
+
+/** Published Line Commercial Value of the Pricing Line for one source occurrence (#937 F27, #920 F19). */
+export const LineCommercialValueBasisSchema = Schema.TaggedStruct('LINE_COMMERCIAL_VALUE', {
+  amount: NonNegativeTaxExactRationalSchema,
+  occurrenceId: PurchaseDemandOccurrenceIdSchema,
+  pricingLineRef: BoundedIdentifierSchema,
+});
 
 /**
  * Exact owner-issued commercial amount as received by TAX, with explicit currency that TAX never relabels or

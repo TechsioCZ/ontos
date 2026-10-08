@@ -3,11 +3,11 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { sumTaxExactRationals } from '../../src/domain/tax-exact-rational.ts';
 import {
+  ShippingAllocationBasisSchema,
   ShippingAllocationInputSchema,
   ShippingAllocationSchema,
   allocateShippingTaxableBasis,
 } from '../../src/domain/shipping-allocation.ts';
-import { ShippingAllocationBasisSchema } from '../../src/domain/tax-decision.ts';
 import { exactTaxContribution, finalizeTaxableSupplyUnitTax } from '../../src/domain/tax-rounding.ts';
 import {
   decisionUnitInput,
@@ -124,15 +124,15 @@ describe('Shipping Taxable Basis allocation', () => {
     const standard = unitWith('o-1', '21', encode(allocationAt(0)));
     const reduced = unitWith('o-2', '12', encode(allocationAt(1)));
 
-    expect(exactTaxContribution(standard.taxableBasisInterpretation, standard.treatment)).toEqual(
-      Option.some({ denominator: '100', numerator: '3' }),
-    );
-    expect(exactTaxContribution(reduced.taxableBasisInterpretation, reduced.treatment)).toEqual(
-      Option.some({ denominator: '175', numerator: '18' }),
-    );
-    expect(Option.getOrThrow(finalizeTaxableSupplyUnitTax(reduced, roundingPolicy)).publishedTaxAmount.amount).toBe(
-      '0.10',
-    );
+    expect(exactTaxContribution(standard.taxableBasisInterpretation, standard.treatment)).toEqual({
+      denominator: '100',
+      numerator: '3',
+    });
+    expect(exactTaxContribution(reduced.taxableBasisInterpretation, reduced.treatment)).toEqual({
+      denominator: '175',
+      numerator: '18',
+    });
+    expect(finalizeTaxableSupplyUnitTax(reduced, roundingPolicy).publishedTaxAmount.amount).toBe('0.10');
   });
 
   it('#933 F18 BDD unequal owner-approved weights are applied instead of an equal split', () => {
@@ -172,6 +172,33 @@ describe('Shipping Taxable Basis allocation', () => {
         shippingSource: current('1.00'),
       }),
     ).toEqual(indeterminate);
+  });
+
+  it('#938 F27-F28 weights provided for one affected unit must still cover it exactly', () => {
+    expect(
+      allocate({
+        affectedTaxableSupplyUnitIds: ['u-1'],
+        allocationWeights: weights([['u-2', '1']]),
+        shippingSource: current('120.00'),
+      }),
+    ).toEqual(indeterminate);
+    expect(
+      allocate({
+        affectedTaxableSupplyUnitIds: ['u-1'],
+        allocationWeights: weights([
+          ['u-1', '1'],
+          ['u-2', '1'],
+        ]),
+        shippingSource: current('120.00'),
+      }),
+    ).toEqual(indeterminate);
+    expect(
+      amounts({
+        affectedTaxableSupplyUnitIds: ['u-1'],
+        allocationWeights: weights([['u-1', '1']]),
+        shippingSource: current('120.00'),
+      }),
+    ).toEqual([['u-1', exactDecimal('120.00')]]);
   });
 
   it('#933 F8-F10 #962 F33 stale or unavailable Shipping is never zero Shipping', () => {
@@ -242,8 +269,6 @@ describe('Shipping Taxable Basis allocation', () => {
     expect(unit.taxableBasisInterpretation.components).toHaveLength(2);
     expect(line.amount).toEqual(exactDecimal('104.00'));
     expect(Schema.is(ShippingAllocationBasisSchema)(shippingComponent)).toBe(true);
-    expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual(
-      Option.some(exactDecimal('32.34')),
-    );
+    expect(exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment)).toEqual(exactDecimal('32.34'));
   });
 });

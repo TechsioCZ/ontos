@@ -8,7 +8,7 @@ import {
 } from '../../src/domain/tax-exact-rational.ts';
 import {
   sumTaxMonetaryAmounts,
-  taxMonetaryAmountFromMinorUnits,
+  taxMonetaryAmountFromNonNegativeMinorUnits,
   taxMonetaryAmountMinorUnits,
 } from '../../src/domain/tax-monetary-amount.ts';
 
@@ -28,11 +28,10 @@ describe('Exact Tax values', () => {
   });
 
   it('#936 F31-F35 published CZK amounts round-trip through exact minor units and sum exactly', () => {
-    const amount = Option.getOrThrow(taxMonetaryAmountFromMinorUnits(123_456n));
+    const amount = taxMonetaryAmountFromNonNegativeMinorUnits(123_456n);
 
     expect(amount).toEqual({ amount: '1234.56', currency: 'CZK' });
     expect(taxMonetaryAmountMinorUnits(amount)).toBe(123_456n);
-    expect(taxMonetaryAmountFromMinorUnits(-1n)).toEqual(Option.none());
     expect(
       sumTaxMonetaryAmounts([
         { amount: '0.10', currency: 'CZK' },

@@ -30,33 +30,41 @@ export type TaxPlaceFact = typeof TaxPlaceFactSchema.Type;
  */
 const NotMaterialTaxPlaceFactSchema = Schema.TaggedStruct('NOT_MATERIAL', {});
 
+const MaterialityDeclaredTaxPlaceFactSchema = Schema.Union([TaxPlaceFactSchema, NotMaterialTaxPlaceFactSchema]);
+type MaterialityDeclaredTaxPlaceFact = typeof MaterialityDeclaredTaxPlaceFactSchema.Type;
+
 /**
- * Owner-resolved purchase facts from which TAX derives jurisdiction. The Selling Legal Entity place is always
- * required; Delivery Destination and Invoice Recipient are required only when the case declares them material
- * (#937 F52-F54, #923 F1-F2). Commerce Market, Channel, Storefront, hostname, locale, IP and currency are not
- * inputs (#927 F1-F6, F20; glossary Tax Jurisdiction).
+ * Owner-resolved purchase facts from which TAX derives jurisdiction. Each place role is required only when the case
+ * declares it material (#937 F52-F54, #923 F1-F2); the seller prerequisite is Current CZ VAT registration, owned by
+ * Launch coverage (#918 F13, #907 F5). Commerce Market, Channel, Storefront, hostname, locale, IP and currency are
+ * not inputs (#927 F1-F6, F20; glossary Tax Jurisdiction).
  */
 export const TaxJurisdictionInputSchema = Schema.Struct({
-  deliveryDestination: Schema.Union([TaxPlaceFactSchema, NotMaterialTaxPlaceFactSchema]),
-  invoiceRecipient: Schema.Union([TaxPlaceFactSchema, NotMaterialTaxPlaceFactSchema]),
-  sellingLegalEntity: TaxPlaceFactSchema,
+  deliveryDestination: MaterialityDeclaredTaxPlaceFactSchema,
+  invoiceRecipient: MaterialityDeclaredTaxPlaceFactSchema,
+  sellingLegalEntity: MaterialityDeclaredTaxPlaceFactSchema,
 });
 export type TaxJurisdictionInput = typeof TaxJurisdictionInputSchema.Type;
 
-/** Tax-owned jurisdiction determination with the owner evidence of every material place fact (#927 B, F1, H). */
+/**
+ * Tax-owned jurisdiction determination with the owner evidence of every material place fact; at least one place
+ * fact is material, as no rule defines jurisdiction without one (#927 B, F1, F19, H).
+ */
 export const TaxJurisdictionDeterminationSchema = Schema.Struct({
   jurisdiction: TaxJurisdictionSchema,
   placeEvidenceRefs: Schema.Struct({
     deliveryDestination: Schema.optionalKey(BoundedIdentifierSchema),
     invoiceRecipient: Schema.optionalKey(BoundedIdentifierSchema),
-    sellingLegalEntity: BoundedIdentifierSchema,
-  }),
+    sellingLegalEntity: Schema.optionalKey(BoundedIdentifierSchema),
+  }).check(
+    Schema.makeFilter(
+      (refs) => Object.keys(refs).length > 0 || 'Jurisdiction needs the evidence of at least one material place fact',
+    ),
+  ),
 });
 export type TaxJurisdictionDetermination = typeof TaxJurisdictionDeterminationSchema.Type;
 
 export type TaxJurisdictionFailure = TaxCaseUnsupported | TaxNotEstablishedOutcome;
-
-type MaterialityDeclaredPlaceFact = TaxJurisdictionInput['deliveryDestination'];
 
 const requireEstablishedPlace = (
   fact: TaxPlaceFact,
@@ -69,7 +77,7 @@ const requireEstablishedPlace = (
 
 /** Owner evidence of a place fact when the case declares it material; none otherwise. */
 const materialPlaceEvidence = (
-  fact: MaterialityDeclaredPlaceFact,
+  fact: MaterialityDeclaredTaxPlaceFact,
 ): Result.Result<Option.Option<string>, TaxNotEstablishedOutcome> =>
   Schema.is(NotMaterialTaxPlaceFactSchema)(fact)
     ? Result.succeed(Option.none())
@@ -78,41 +86,44 @@ const materialPlaceEvidence = (
         Result.map(({ ownerEvidenceRef }) => Option.some(ownerEvidenceRef)),
       );
 
-interface PlaceEvidenceRefs {
-  deliveryDestination?: string;
-  invoiceRecipient?: string;
-  sellingLegalEntity: string;
-}
+type PlaceEvidenceRefs = { -readonly [Role in keyof TaxJurisdictionInput]?: string };
+
+const placeRoles = ['sellingLegalEntity', 'deliveryDestination', 'invoiceRecipient'] as const;
 
 /**
  * Derives Tax Jurisdiction only from owner-resolved material place facts. Any known material place outside Czechia
  * is outside Launch scope; a material place fact that cannot be established gives a typed non-success, never a CZ
- * fallback (#927 F1-F6, F19-F20; #937 F52-F53; #938 F3, F20-F28; glossary Tax Jurisdiction). Place roles are
- * checked in a fixed order, so the reported failure never depends on input key order (#927 F16, #938 F41).
+ * fallback, and a case declaring no material place at all has no authoritative jurisdiction evidence, so it is
+ * TAX_STATE_INDETERMINATE (#927 F1-F6, F19-F20, H; #937 F52-F53; #938 F3, F20-F28; glossary Tax Jurisdiction).
+ * Place roles are checked in a fixed order, so the reported failure never depends on input key order (#927 F16,
+ * #938 F41).
  */
 export const determineTaxJurisdiction = (
   input: TaxJurisdictionInput,
 ): Result.Result<TaxJurisdictionDetermination, TaxJurisdictionFailure> => {
-  const knownNonCzechPlace = [input.sellingLegalEntity, input.deliveryDestination, input.invoiceRecipient].some(
-    (fact) => Schema.is(OwnerResolvedTaxPlaceFactSchema)(fact) && fact.countryCode !== 'CZ',
-  );
+  const knownNonCzechPlace = placeRoles.some((role) => {
+    const fact = input[role];
+    return Schema.is(OwnerResolvedTaxPlaceFactSchema)(fact) && fact.countryCode !== 'CZ';
+  });
   return knownNonCzechPlace
     ? Result.fail({ _tag: 'TAX_CASE_UNSUPPORTED', unsupportedRequirement: 'NON_CZECH_DOMESTIC_TAX_PLACE' })
     : pipe(
         Result.all({
           deliveryDestination: materialPlaceEvidence(input.deliveryDestination),
           invoiceRecipient: materialPlaceEvidence(input.invoiceRecipient),
-          sellingLegalEntity: requireEstablishedPlace(input.sellingLegalEntity),
+          sellingLegalEntity: materialPlaceEvidence(input.sellingLegalEntity),
         }),
-        Result.map(({ deliveryDestination, invoiceRecipient, sellingLegalEntity }) => {
-          const placeEvidenceRefs: PlaceEvidenceRefs = { sellingLegalEntity: sellingLegalEntity.ownerEvidenceRef };
-          if (Option.isSome(deliveryDestination)) {
-            placeEvidenceRefs.deliveryDestination = deliveryDestination.value;
+        Result.flatMap((evidence): Result.Result<TaxJurisdictionDetermination, TaxJurisdictionFailure> => {
+          const placeEvidenceRefs: PlaceEvidenceRefs = {};
+          for (const role of placeRoles) {
+            const ref = evidence[role];
+            if (Option.isSome(ref)) {
+              placeEvidenceRefs[role] = ref.value;
+            }
           }
-          if (Option.isSome(invoiceRecipient)) {
-            placeEvidenceRefs.invoiceRecipient = invoiceRecipient.value;
-          }
-          return { jurisdiction: 'CZ_DOMESTIC' as const, placeEvidenceRefs };
+          return Object.keys(placeEvidenceRefs).length === 0
+            ? Result.fail({ _tag: 'TAX_STATE_INDETERMINATE' })
+            : Result.succeed({ jurisdiction: 'CZ_DOMESTIC', placeEvidenceRefs });
         }),
       );
 };

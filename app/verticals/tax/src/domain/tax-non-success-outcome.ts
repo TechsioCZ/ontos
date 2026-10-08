@@ -54,10 +54,7 @@ export type TaxDependencyUnavailable = typeof TaxDependencyUnavailableSchema.Typ
 export const TaxStateIndeterminateSchema = Schema.TaggedStruct('TAX_STATE_INDETERMINATE', {});
 export type TaxStateIndeterminate = typeof TaxStateIndeterminateSchema.Type;
 
-/**
- * Closed set of typed non-success Tax Outcomes; none of them carries a Tax amount (#938 F2, #939 F14-F25). Each
- * distinct code lets the consumer tell which remedy applies (#938 F33-F39, H).
- */
+/** Closed set of typed non-success Tax Outcomes; none of them carries a Tax amount (#938 F2, #939 F14-F25). */
 export const TaxNonSuccessOutcomeSchema = Schema.Union([
   TaxCaseUnsupportedSchema,
   TaxPrerequisiteNotMetSchema,
@@ -74,7 +71,7 @@ export type TaxNonSuccessOutcome = typeof TaxNonSuccessOutcomeSchema.Type;
  * Why a required material input or fact cannot be established as Current: known stale, unavailable, or
  * unknown/unresolved/conflicting/unverifiable (#938 F13-F15, F20-F32).
  */
-export const TaxNotEstablishedStateSchema = Schema.Literals([
+const TaxNotEstablishedStateSchema = Schema.Literals([
   'STALE',
   'UNAVAILABLE',
   'UNKNOWN',

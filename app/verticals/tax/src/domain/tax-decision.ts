@@ -1,21 +1,16 @@
 import { Schema } from 'effect';
 
-import {
-  PurchaseDemandOccurrenceIdSchema,
-  ShippingSourceRefSchema,
-  TaxPurchaseBindingSchema,
-  isSameShippingSourceRef,
-} from './purchase-binding.ts';
+import { TaxPurchaseBindingSchema, isSameCatalogSelection, isSameShippingSourceRef } from './purchase-binding.ts';
 import type { TaxPurchaseBinding } from './purchase-binding.ts';
+import { ShippingAllocationBasisSchema, ShippingAllocationSchema } from './shipping-allocation.ts';
+import type { ShippingAllocation, ShippingAllocationBasis } from './shipping-allocation.ts';
+import { TaxClassificationSchema } from './tax-classification.ts';
 import { BoundedIdentifierSchema, RevisionSchema } from './tax-domain-primitives.ts';
-import {
-  NonNegativeTaxExactRationalSchema,
-  ZERO_TAX_EXACT_RATIONAL,
-  taxExactRationalsEqual,
-} from './tax-exact-rational.ts';
-import { TaxJurisdictionSchema } from './tax-jurisdiction.ts';
+import { taxExactRationalsEqual } from './tax-exact-rational.ts';
+import { TaxJurisdictionDeterminationSchema } from './tax-jurisdiction.ts';
 import { TaxEvaluationTimeSchema, TaxRelevantTimeSchema } from './tax-time.ts';
 import { TaxApplicabilitySchema, TaxableTreatmentSchema } from './tax-treatment.ts';
+import { LineCommercialValueBasisSchema } from './taxable-basis.ts';
 import { TaxableSupplyUnitSchema, taxableSupplyUnitSourceOccurrenceIds } from './taxable-supply-unit.ts';
 
 export const TaxDecisionIdSchema = BoundedIdentifierSchema.pipe(Schema.brand('TaxDecisionId'));
@@ -29,48 +24,8 @@ export const TaxRuleRevisionRefSchema = Schema.Struct({
   taxRuleId: TaxRuleIdSchema,
 });
 
-/** Published Line Commercial Value of the Pricing Line for one source occurrence (#937 F27, #920 F19). */
-export const LineCommercialValueBasisSchema = Schema.TaggedStruct('LINE_COMMERCIAL_VALUE', {
-  amount: NonNegativeTaxExactRationalSchema,
-  occurrenceId: PurchaseDemandOccurrenceIdSchema,
-  pricingLineRef: BoundedIdentifierSchema,
-});
-
-/**
- * Exact allocation of the separately owned Shipping amount into this unit, attributed to the exact source Shipping
- * amount revision and, when owner-approved weights were applied, to their approval evidence (#920 F31-F34,
- * #933 F17-F19, #936 F19, #937 F29-F30).
- */
-export const ShippingAllocationBasisSchema = Schema.TaggedStruct('SHIPPING_ALLOCATION', {
-  allocationWeightsEvidenceRef: Schema.optionalKey(BoundedIdentifierSchema),
-  amount: NonNegativeTaxExactRationalSchema,
-  shippingSourceRef: ShippingSourceRefSchema,
-});
-export type ShippingAllocationBasis = typeof ShippingAllocationBasisSchema.Type;
-
 const isLineCommercialValue = Schema.is(LineCommercialValueBasisSchema);
 const isShippingAllocation = Schema.is(ShippingAllocationBasisSchema);
-
-/**
- * Allocations of one Shipping amount attribute the same exact source and the same weights evidence. Weights
- * evidence may be absent only when one unit takes the whole amount or the authoritative amount is zero
- * (#933 F14, F17-F18; #962 F32; #920 F33).
- */
-export const isConsistentShippingAttribution = (allocations: readonly ShippingAllocationBasis[]): boolean => {
-  const [first] = allocations;
-  if (first === undefined) {
-    return true;
-  }
-  const weighted =
-    allocations.length > 1 &&
-    allocations.some(({ amount }) => !taxExactRationalsEqual(amount, ZERO_TAX_EXACT_RATIONAL));
-  return allocations.every(
-    ({ allocationWeightsEvidenceRef, shippingSourceRef }) =>
-      isSameShippingSourceRef(shippingSourceRef, first.shippingSourceRef) &&
-      allocationWeightsEvidenceRef === first.allocationWeightsEvidenceRef &&
-      (!weighted || allocationWeightsEvidenceRef !== undefined),
-  );
-};
 
 /** Taxable Basis interpretation of one Taxable Supply Unit (#936 F17, #920 F44). */
 export const TaxableBasisInterpretationSchema = Schema.Struct({
@@ -79,88 +34,119 @@ export const TaxableBasisInterpretationSchema = Schema.Struct({
 export type TaxableBasisInterpretation = typeof TaxableBasisInterpretationSchema.Type;
 
 /**
- * Each source Line Commercial Value and the unit's Shipping allocation enter its basis at most once, so nothing
- * already inside the published value is counted again (#931 F8-F10, #907 F80-F82).
+ * The unit's Shipping allocation enters its basis at most once, so nothing is counted again (#931 F8-F10,
+ * #907 F80-F82).
  */
-const countsEachComponentOnce = ({ components }: TaxableBasisInterpretation): boolean => {
-  const seen = new Set<string>();
-  for (const component of components) {
-    const identity = isLineCommercialValue(component) ? `line:${component.occurrenceId}` : 'shipping';
-    if (seen.has(identity)) {
-      return false;
-    }
-    seen.add(identity);
-  }
-  return true;
-};
+const countsShippingOnce = ({ components }: TaxableBasisInterpretation): boolean =>
+  components.filter(isShippingAllocation).length <= 1;
 
 /**
- * Unit-specific Tax meaning: applicability, jurisdiction, treatment with rate, Taxable Basis interpretation and
- * governing rule. A rate alone is not a Decision (#936 F9, F14-F18; #907 F109-F110).
+ * Unit-specific Tax meaning: applicability, jurisdiction with its place evidence, Tax Classification of the exact
+ * Catalog Selection, treatment with rate, Taxable Basis interpretation and governing rule. A rate alone is not a
+ * Decision (#936 F9, F14-F19; #920 F18; #927 H; #907 F109-F110).
  */
 export const TaxDecisionUnitSchema = Schema.Struct({
   applicability: TaxApplicabilitySchema,
   governingTaxRuleRevisionRef: TaxRuleRevisionRefSchema,
-  jurisdiction: TaxJurisdictionSchema,
+  jurisdiction: TaxJurisdictionDeterminationSchema,
   taxableBasisInterpretation: TaxableBasisInterpretationSchema,
   taxableSupplyUnit: TaxableSupplyUnitSchema,
+  taxClassification: TaxClassificationSchema,
   treatment: TaxableTreatmentSchema,
 }).check(
   Schema.makeFilter(({ taxableBasisInterpretation, taxableSupplyUnit }) => {
-    const sources = new Set<string>(taxableSupplyUnitSourceOccurrenceIds(taxableSupplyUnit));
+    const sources = taxableSupplyUnitSourceOccurrenceIds(taxableSupplyUnit);
+    const lines = taxableBasisInterpretation.components.filter(isLineCommercialValue);
     return (
-      taxableBasisInterpretation.components
-        .filter(isLineCommercialValue)
-        .every(({ occurrenceId }) => sources.has(occurrenceId)) ||
-      'Line Commercial Values must stay bound to the unit source occurrences'
+      (lines.length === sources.length &&
+        sources.every((occurrenceId) => lines.some((line) => line.occurrenceId === occurrenceId))) ||
+      'Each unit source occurrence must enter the basis with exactly one Line Commercial Value'
     );
   }),
   Schema.makeFilter(
     ({ taxableBasisInterpretation }) =>
-      countsEachComponentOnce(taxableBasisInterpretation) ||
-      'A Line Commercial Value or Shipping allocation must not enter one unit basis twice',
+      countsShippingOnce(taxableBasisInterpretation) || 'A Shipping allocation must not enter one unit basis twice',
+  ),
+  Schema.makeFilter(
+    ({ taxableSupplyUnit, taxClassification }) =>
+      isSameCatalogSelection(taxClassification.catalogSelection, taxableSupplyUnit.mapping.catalogSelection) ||
+      'The Tax Classification must be of the unit exact Catalog Selection',
   ),
 );
 export type TaxDecisionUnit = typeof TaxDecisionUnitSchema.Type;
 
+/** Every bound occurrence maps to exactly one distinct unit carrying the same exact Catalog Selection (#937 F13-F15). */
 const unitsPartitionOccurrences = (purchaseBinding: TaxPurchaseBinding, units: readonly TaxDecisionUnit[]): boolean => {
   const unitIds = new Set(units.map(({ taxableSupplyUnit }) => taxableSupplyUnit.unitId));
-  const mapped = units.flatMap(({ taxableSupplyUnit }) => taxableSupplyUnitSourceOccurrenceIds(taxableSupplyUnit));
-  const bound = new Set<string>(purchaseBinding.purchaseDemandOccurrences.map(({ occurrenceId }) => occurrenceId));
+  const mapped = units.map(({ taxableSupplyUnit }) => taxableSupplyUnit.mapping);
+  const bound = new Map(
+    purchaseBinding.purchaseDemandOccurrences.map((occurrence) => [occurrence.occurrenceId, occurrence]),
+  );
   return (
     unitIds.size === units.length &&
-    new Set(mapped).size === mapped.length &&
+    new Set(mapped.map(({ occurrenceId }) => occurrenceId)).size === mapped.length &&
     mapped.length === bound.size &&
-    mapped.every((occurrenceId) => bound.has(occurrenceId))
+    mapped.every(({ catalogSelection, occurrenceId }) => {
+      const occurrence = bound.get(occurrenceId);
+      return occurrence !== undefined && isSameCatalogSelection(catalogSelection, occurrence.catalogSelection);
+    })
   );
 };
 
-/** Every Shipping allocation is attributed to the purchase's exact bound Shipping source (#937 F29-F30, #920 F33). */
-const shippingAttributedToBoundSource = (
+const isSameShippingAllocationBasis = (left: ShippingAllocationBasis, right: ShippingAllocationBasis): boolean =>
+  taxExactRationalsEqual(left.amount, right.amount) &&
+  isSameShippingSourceRef(left.shippingSourceRef, right.shippingSourceRef) &&
+  left.allocationWeightsEvidenceRef === right.allocationWeightsEvidenceRef;
+
+/**
+ * Bound Shipping is complete and conserved: the purchase-level allocation is present exactly when the purchase binds
+ * a Shipping source, is attributed to that exact source, covers only Decision units, and each unit carries exactly
+ * its allocated component while every other unit carries none (#907 F85, #933 F8, F12, F19-F21, #935 F14,
+ * #920 F32-F34, #937 F29-F30). Conservation of the owner-issued amount is the allocation's own invariant.
+ */
+const shippingAllocatedCompletely = (
   purchaseBinding: TaxPurchaseBinding,
+  shippingAllocation: ShippingAllocation | undefined,
   units: readonly TaxDecisionUnit[],
 ): boolean => {
-  const allocations = units.flatMap(({ taxableBasisInterpretation }) =>
-    taxableBasisInterpretation.components.filter(isShippingAllocation),
+  if (shippingAllocation === undefined || purchaseBinding.shippingSourceRef === undefined) {
+    return (
+      shippingAllocation === undefined &&
+      purchaseBinding.shippingSourceRef === undefined &&
+      units.every(({ taxableBasisInterpretation }) => !taxableBasisInterpretation.components.some(isShippingAllocation))
+    );
+  }
+  const [first] = shippingAllocation.unitAllocations;
+  const allocated = new Map(
+    shippingAllocation.unitAllocations.map(({ basisComponent, taxableSupplyUnitId }) => [
+      taxableSupplyUnitId,
+      basisComponent,
+    ]),
   );
+  const unitIds = new Set<string>(units.map(({ taxableSupplyUnit }) => taxableSupplyUnit.unitId));
   return (
-    isConsistentShippingAttribution(allocations) &&
-    allocations.every(
-      ({ shippingSourceRef }) =>
-        purchaseBinding.shippingSourceRef !== undefined &&
-        isSameShippingSourceRef(shippingSourceRef, purchaseBinding.shippingSourceRef),
-    )
+    isSameShippingSourceRef(first.basisComponent.shippingSourceRef, purchaseBinding.shippingSourceRef) &&
+    [...allocated.keys()].every((unitId) => unitIds.has(unitId)) &&
+    units.every(({ taxableBasisInterpretation, taxableSupplyUnit }) => {
+      const [component, ...rest] = taxableBasisInterpretation.components.filter(isShippingAllocation);
+      const expected = allocated.get(taxableSupplyUnit.unitId);
+      return expected === undefined
+        ? component === undefined
+        : component !== undefined && rest.length === 0 && isSameShippingAllocationBasis(component, expected);
+    })
   );
 };
 
 /**
- * Purchase-scoped Tax Decision for one exact purchase, preserving the exact Taxable Supply Unit set (#936 F1-F19,
- * #920 F36-F43). Tax-Relevant Time is part of its meaning; Tax Evaluation Time is separate provenance of a
- * distinct type (#937 F33-F35, #941 F1, #927 H).
+ * Purchase-scoped Tax Decision for one exact purchase, preserving the exact Taxable Supply Unit set and, when the
+ * purchase binds Shipping, its exact purchase-level Shipping allocation (#936 F1-F19, #920 F32-F43, #933 F12-F21).
+ * Tax-Relevant Time is part of its meaning; Tax Evaluation Time is separate provenance of a distinct type
+ * (#937 F33-F35, #941 F1, #927 H).
  */
 export const TaxDecisionSchema = Schema.Struct({
   decisionId: TaxDecisionIdSchema,
   purchaseBinding: TaxPurchaseBindingSchema,
+  shippingAllocation: Schema.optionalKey(ShippingAllocationSchema),
   taxEvaluationTime: TaxEvaluationTimeSchema,
   taxRelevantTime: TaxRelevantTimeSchema,
   units: Schema.NonEmptyArray(TaxDecisionUnitSchema),
@@ -168,12 +154,12 @@ export const TaxDecisionSchema = Schema.Struct({
   Schema.makeFilter(
     ({ purchaseBinding, units }) =>
       unitsPartitionOccurrences(purchaseBinding, units) ||
-      'Every bound Purchase Demand Occurrence must map to exactly one distinct Taxable Supply Unit',
+      'Every bound Purchase Demand Occurrence must map to exactly one distinct Taxable Supply Unit with its exact Catalog Selection',
   ),
   Schema.makeFilter(
-    ({ purchaseBinding, units }) =>
-      shippingAttributedToBoundSource(purchaseBinding, units) ||
-      'Shipping allocations must be attributed to the exact bound Shipping source and its allocation evidence',
+    ({ purchaseBinding, shippingAllocation, units }) =>
+      shippingAllocatedCompletely(purchaseBinding, shippingAllocation, units) ||
+      'Bound Shipping must be allocated completely, exactly and only into Decision units',
   ),
 );
 export type TaxDecision = typeof TaxDecisionSchema.Type;

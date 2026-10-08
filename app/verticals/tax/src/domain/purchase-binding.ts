@@ -14,9 +14,44 @@ export const PurchaseDemandOccurrenceIdSchema = BoundedIdentifierSchema.pipe(
 );
 export type PurchaseDemandOccurrenceId = typeof PurchaseDemandOccurrenceIdSchema.Type;
 
+/** Exact pinned Set Composition Revision used for a Set's Tax meaning (#934 F3, F23; #937 F17). */
+export const SetCompositionIdSchema = BoundedIdentifierSchema.pipe(Schema.brand('SetCompositionId'));
+
+export const SetCompositionRevisionRefSchema = Schema.Struct({
+  revision: RevisionSchema,
+  setCompositionId: SetCompositionIdSchema,
+});
+
+/**
+ * Exact Catalog Selection, the one representation used from the purchase binding through Taxable Supply Units to
+ * Tax Classification. The exact Variant is always part of it; Product Configuration, Package Option with its pinned
+ * content revision and Set Composition Revision are part of it when selected. SKU and display name are not inputs
+ * (#926 F3-F5, F7; #937 F13-F14; #907 F44-F46, F48).
+ */
+export const CatalogSelectionSchema = Schema.Struct({
+  packageOption: Schema.optionalKey(
+    Schema.Struct({ packageOptionRef: BoundedIdentifierSchema, pinnedContentRevisionRef: BoundedIdentifierSchema }),
+  ),
+  productConfigurationRef: Schema.optionalKey(BoundedIdentifierSchema),
+  productRef: BoundedIdentifierSchema,
+  setCompositionRevisionRef: Schema.optionalKey(SetCompositionRevisionRefSchema),
+  variantRef: BoundedIdentifierSchema,
+});
+export type CatalogSelection = typeof CatalogSelectionSchema.Type;
+
+/** Same exact Catalog Selection; SKU and display name are never compared (#926 F9-F11, #937 F13-F14). */
+export const isSameCatalogSelection = (left: CatalogSelection, right: CatalogSelection): boolean =>
+  left.productRef === right.productRef &&
+  left.variantRef === right.variantRef &&
+  left.productConfigurationRef === right.productConfigurationRef &&
+  left.packageOption?.packageOptionRef === right.packageOption?.packageOptionRef &&
+  left.packageOption?.pinnedContentRevisionRef === right.packageOption?.pinnedContentRevisionRef &&
+  left.setCompositionRevisionRef?.setCompositionId === right.setCompositionRevisionRef?.setCompositionId &&
+  left.setCompositionRevisionRef?.revision === right.setCompositionRevisionRef?.revision;
+
 /** Exact Purchase Demand Occurrence with its Catalog Selection and Quantity + Unit (#937 F12-F14). */
 export const PurchaseDemandOccurrenceSchema = Schema.Struct({
-  catalogSelectionRef: BoundedIdentifierSchema,
+  catalogSelection: CatalogSelectionSchema,
   occurrenceId: PurchaseDemandOccurrenceIdSchema,
   quantity: Schema.Struct({
     amount: PositiveDecimalStringSchema,
@@ -80,7 +115,7 @@ export type TaxPurchaseBinding = typeof TaxPurchaseBindingSchema.Type;
 
 const sameOccurrence = (left: PurchaseDemandOccurrence, right: PurchaseDemandOccurrence) =>
   left.occurrenceId === right.occurrenceId &&
-  left.catalogSelectionRef === right.catalogSelectionRef &&
+  isSameCatalogSelection(left.catalogSelection, right.catalogSelection) &&
   left.quantity.amount === right.quantity.amount &&
   left.quantity.unitRef === right.quantity.unitRef;
 

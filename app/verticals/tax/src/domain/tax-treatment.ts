@@ -11,8 +11,7 @@ export const TaxTreatmentCategorySchema = Schema.Literals(['TAXABLE', 'ZERO_RATE
 export type TaxTreatmentCategory = typeof TaxTreatmentCategorySchema.Type;
 
 /** Launch-activated treatment categories (#918 F2-F3, #939 J). */
-export const LaunchActivatedTaxTreatmentCategorySchema = Schema.Literal('TAXABLE');
-export type LaunchActivatedTaxTreatmentCategory = typeof LaunchActivatedTaxTreatmentCategorySchema.Type;
+export type LaunchActivatedTaxTreatmentCategory = Extract<TaxTreatmentCategory, 'TAXABLE'>;
 
 /** Exact positive percentage rate; a missing rate is never 0 % (#939 F30, #918 F24). */
 export const TaxRatePercentSchema = PositiveDecimalStringSchema;

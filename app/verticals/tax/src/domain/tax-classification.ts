@@ -1,26 +1,11 @@
 import { Array as Arr, Match, Order, Result, Schema, pipe } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
+import { CatalogSelectionSchema, isSameCatalogSelection } from './purchase-binding.ts';
+import type { CatalogSelection } from './purchase-binding.ts';
 import { BoundedIdentifierSchema, distinctBy } from './tax-domain-primitives.ts';
 import { taxNotEstablishedOutcome } from './tax-non-success-outcome.ts';
 import type { TaxNotEstablishedOutcome, TaxStateIndeterminate } from './tax-non-success-outcome.ts';
-import { SetCompositionRevisionRefSchema } from './taxable-supply-unit.ts';
-
-/**
- * Exact Catalog Selection classified by TAX. The exact Variant is always part of it; Product Configuration, Package
- * Option with its pinned content revision and Set Composition Revision are part of it when selected. SKU and
- * display name are not inputs (#926 F3-F5, F7; #907 F44-F46, F48).
- */
-export const CatalogSelectionSchema = Schema.Struct({
-  packageOption: Schema.optionalKey(
-    Schema.Struct({ packageOptionRef: BoundedIdentifierSchema, pinnedContentRevisionRef: BoundedIdentifierSchema }),
-  ),
-  productConfigurationRef: Schema.optionalKey(BoundedIdentifierSchema),
-  productRef: BoundedIdentifierSchema,
-  setCompositionRevisionRef: Schema.optionalKey(SetCompositionRevisionRefSchema),
-  variantRef: BoundedIdentifierSchema,
-});
-export type CatalogSelection = typeof CatalogSelectionSchema.Type;
 
 /** Current owner-qualified Catalog evidence for one material Catalog fact revision (#926 F2, F6, H). */
 const CurrentCatalogTaxEvidenceSchema = Schema.TaggedStruct('CURRENT', {
@@ -129,15 +114,6 @@ export const classifyCatalogSelection = (
     ),
   );
 
-const sameCatalogSelection = (left: CatalogSelection, right: CatalogSelection) =>
-  left.productRef === right.productRef &&
-  left.variantRef === right.variantRef &&
-  left.productConfigurationRef === right.productConfigurationRef &&
-  left.packageOption?.packageOptionRef === right.packageOption?.packageOptionRef &&
-  left.packageOption?.pinnedContentRevisionRef === right.packageOption?.pinnedContentRevisionRef &&
-  left.setCompositionRevisionRef?.setCompositionId === right.setCompositionRevisionRef?.setCompositionId &&
-  left.setCompositionRevisionRef?.revision === right.setCompositionRevisionRef?.revision;
-
 const sameMaterialFactRevisions = (
   left: readonly CurrentCatalogTaxEvidence[],
   right: readonly CurrentCatalogTaxEvidence[],
@@ -156,5 +132,5 @@ const sameMaterialFactRevisions = (
  * requires owner evidence and is not inferred here (#926 F9-F11, H; #907 F50-F51).
  */
 export const isSameExactTaxClassificationBasis = (left: TaxClassification, right: TaxClassification): boolean =>
-  sameCatalogSelection(left.catalogSelection, right.catalogSelection) &&
+  isSameCatalogSelection(left.catalogSelection, right.catalogSelection) &&
   sameMaterialFactRevisions(left.materialCatalogEvidence, right.materialCatalogEvidence);

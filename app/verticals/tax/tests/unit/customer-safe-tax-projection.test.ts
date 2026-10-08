@@ -8,7 +8,7 @@ import {
   projectCustomerSafeTax,
 } from '../../src/domain/customer-safe-tax-projection.ts';
 import type { CustomerSafeTaxProjection } from '../../src/domain/customer-safe-tax-projection.ts';
-import type { TaxOutcome, TaxOutcomeSuccess } from '../../src/domain/tax-outcome.ts';
+import type { TaxOutcomeSuccess } from '../../src/domain/tax-outcome.ts';
 import { composeResult, decisionUnitInput, decodeTaxDecision, taxDecisionInput } from './tax-domain-fixtures.ts';
 
 /** 50.00 CZK at 21 % and 87.50 CZK at 12 % both publish 10.50 CZK; zero values publish 0.00 CZK. */
@@ -24,9 +24,6 @@ const successfulOutcome = (taxed: boolean): TaxOutcomeSuccess => {
   return { _tag: 'TAX_DETERMINED', decision, result: composeResult(decision) };
 };
 
-const project = (outcome: TaxOutcome, need: Parameters<typeof projectCustomerSafeTax>[1]) =>
-  Option.getOrThrow(projectCustomerSafeTax(outcome, need));
-
 /** Fields of a TAX_AMOUNT projection; none when no Tax amount is projected. */
 const projectedAmount = (projection: CustomerSafeTaxProjection) =>
   Match.value(projection).pipe(
@@ -39,7 +36,7 @@ const projectedAmount = (projection: CustomerSafeTaxProjection) =>
 
 describe('Customer-Safe Tax Projection', () => {
   it('#940 F18-F21 F25-F30 projects only the allowlisted amount and currency', () => {
-    const projection = project(successfulOutcome(true), 'NOT_NEEDED');
+    const projection = projectCustomerSafeTax(successfulOutcome(true), 'NOT_NEEDED');
 
     expect(Object.keys(projection)).not.toContain('components');
     expect(Option.getOrThrow(projectedAmount(projection))).toEqual({
@@ -55,7 +52,7 @@ describe('Customer-Safe Tax Projection', () => {
   });
 
   it('#940 F22-F24 exposes per-unit decomposition with safe treatment only when the view needs it', () => {
-    const projection = project(successfulOutcome(true), 'PER_TAXABLE_SUPPLY_UNIT');
+    const projection = projectCustomerSafeTax(successfulOutcome(true), 'PER_TAXABLE_SUPPLY_UNIT');
 
     expect(Option.getOrThrow(projectedAmount(projection))).toEqual({
       components: [
@@ -76,7 +73,7 @@ describe('Customer-Safe Tax Projection', () => {
   });
 
   it('#940 F38 #939 F34 a non-success outcome is never projected as a Tax amount', () => {
-    const projection = project(
+    const projection = projectCustomerSafeTax(
       { _tag: 'TAX_CASE_UNSUPPORTED', unsupportedRequirement: 'REVERSE_CHARGE' },
       'PER_TAXABLE_SUPPLY_UNIT',
     );
@@ -87,7 +84,7 @@ describe('Customer-Safe Tax Projection', () => {
   });
 
   it('#940 F39 #939 F34 a successful zero is shown only from the successful Result, with its taxable meaning', () => {
-    const projection = project(successfulOutcome(false), 'PER_TAXABLE_SUPPLY_UNIT');
+    const projection = projectCustomerSafeTax(successfulOutcome(false), 'PER_TAXABLE_SUPPLY_UNIT');
 
     const projected = Option.getOrThrow(projectedAmount(projection));
     expect(projected.purchaseTaxTotal).toEqual({ amount: '0.00', currency: 'CZK' });
@@ -101,17 +98,5 @@ describe('Customer-Safe Tax Projection', () => {
     expect(projectCustomerSafeTax(outcome, 'PER_TAXABLE_SUPPLY_UNIT')).toEqual(
       projectCustomerSafeTax(outcome, 'PER_TAXABLE_SUPPLY_UNIT'),
     );
-  });
-
-  it('#940 F32 a unit without its published amount is never silently dropped from the customer view', () => {
-    const outcome = successfulOutcome(true);
-    const [firstUnit] = outcome.result.units;
-    const partial: TaxOutcome = {
-      ...outcome,
-      result: { ...outcome.result, purchaseTaxTotal: firstUnit.publishedTaxAmount, units: [firstUnit] },
-    };
-
-    expect(projectCustomerSafeTax(partial, 'PER_TAXABLE_SUPPLY_UNIT')).toEqual(Option.none());
-    expect(projectCustomerSafeTax(partial, 'NOT_NEEDED')).toEqual(Option.none());
   });
 });

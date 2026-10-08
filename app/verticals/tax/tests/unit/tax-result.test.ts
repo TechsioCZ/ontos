@@ -1,12 +1,13 @@
-import { Option, Schema } from 'effect';
+import { Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { TaxResultSchema, composeTaxResult, taxResultBindsDecision } from '../../src/domain/tax-result.ts';
+import { TaxResultSchema, composeTaxResult, taxResultFollowsFromDecision } from '../../src/domain/tax-result.ts';
 import { TaxableTreatmentSchema } from '../../src/domain/tax-treatment.ts';
 import {
   composeResult,
   decisionUnitInput,
   decodeTaxDecision,
+  exactDecimal,
   roundingPolicy,
   taxDecisionInput,
 } from './tax-domain-fixtures.ts';
@@ -16,6 +17,15 @@ interface AmountInput {
   readonly amount: string | number;
   readonly currency: string;
 }
+
+/** Rounding evidence of a unit whose exact contribution already sits on the 0.01 CZK grid. */
+const unitInput = (taxableSupplyUnitId: string, amount: AmountInput) => ({
+  exactTaxContribution: exactDecimal(String(amount.amount)),
+  publishedTaxAmount: amount,
+  taxableSupplyUnitId,
+  taxRoundingAdjustment: exactDecimal('0'),
+  taxRoundingPolicy: roundingPolicy,
+});
 
 const resultInput = (units: readonly object[], total: AmountInput, currency = 'CZK') => ({
   currency,
@@ -32,18 +42,35 @@ describe('Tax Result', () => {
     );
     const result = composeResult(decision);
 
-    expect(result.units).toEqual([
-      { publishedTaxAmount: { amount: '21.00', currency: 'CZK' }, taxableSupplyUnitId: 'taxable-supply-unit:o-1' },
-      { publishedTaxAmount: { amount: '10.50', currency: 'CZK' }, taxableSupplyUnitId: 'taxable-supply-unit:o-2' },
+    expect(
+      result.units.map(({ publishedTaxAmount, taxableSupplyUnitId }) => [taxableSupplyUnitId, publishedTaxAmount]),
+    ).toEqual([
+      ['taxable-supply-unit:o-1', { amount: '21.00', currency: 'CZK' }],
+      ['taxable-supply-unit:o-2', { amount: '10.50', currency: 'CZK' }],
     ]);
     expect(result.currency).toBe('CZK');
     expect(result.taxDecisionId).toBe(decision.decisionId);
-    expect(taxResultBindsDecision(decision, result)).toBe(true);
+    expect(taxResultFollowsFromDecision(decision, result)).toBe(true);
+  });
+
+  it('#935 F35-F36 #907 F106 each Result unit keeps its exact contribution, rounding adjustment and policy revision', () => {
+    const decision = decodeTaxDecision(taxDecisionInput(['o-1'], { units: [decisionUnitInput('o-1', '0.03')] }));
+    const [unit] = composeResult(decision).units;
+
+    expect(unit.publishedTaxAmount).toEqual({ amount: '0.01', currency: 'CZK' });
+    expect(unit.exactTaxContribution).toEqual(exactDecimal('0.0063'));
+    expect(unit.taxRoundingAdjustment).toEqual(exactDecimal('0.0037'));
+    expect(unit.taxRoundingPolicy.revision).toBe(1);
+    const encoded = Schema.encodeSync(TaxResultSchema)(composeResult(decision));
+    const [encodedUnit] = encoded.units;
+    expect(() =>
+      decodeResult({ ...encoded, units: [{ ...encodedUnit, taxRoundingAdjustment: exactDecimal('0') }] }),
+    ).toThrow();
   });
 
   it('#936 F32 F56 #935 F56 the Result retains the Tax Rounding policy revision that published it', () => {
     const decision = decodeTaxDecision(taxDecisionInput(['o-1']));
-    const revision2 = Option.getOrThrow(composeTaxResult(decision, { ...roundingPolicy, revision: 2 }));
+    const revision2 = composeTaxResult(decision, { ...roundingPolicy, revision: 2 });
 
     expect(composeResult(decision).taxRoundingPolicy.revision).toBe(1);
     expect(revision2.taxRoundingPolicy.revision).toBe(2);
@@ -66,8 +93,8 @@ describe('Tax Result', () => {
       decodeResult(
         resultInput(
           [
-            { publishedTaxAmount: { amount: '0.01', currency: 'CZK' }, taxableSupplyUnitId: 'u-1' },
-            { publishedTaxAmount: { amount: '0.02', currency: 'CZK' }, taxableSupplyUnitId: 'u-2' },
+            unitInput('u-1', { amount: '0.01', currency: 'CZK' }),
+            unitInput('u-2', { amount: '0.02', currency: 'CZK' }),
           ],
           { amount: '0.02', currency: 'CZK' },
         ),
@@ -76,7 +103,7 @@ describe('Tax Result', () => {
   });
 
   it('#936 F31 #921 F26-F28 currency is explicit CZK and amounts are exact 0.01 decimals', () => {
-    const unit = { publishedTaxAmount: { amount: '1.00', currency: 'CZK' }, taxableSupplyUnitId: 'u-1' };
+    const unit = unitInput('u-1', { amount: '1.00', currency: 'CZK' });
 
     expect(decodeResult(resultInput([unit], unit.publishedTaxAmount)).currency).toBe('CZK');
     expect(() => decodeResult(resultInput([unit], unit.publishedTaxAmount, 'EUR'))).toThrow();
@@ -100,9 +127,9 @@ describe('Tax Result', () => {
     const otherDecision = decodeTaxDecision(taxDecisionInput(['o-1', 'o-2'], { decisionId: 'tax-decision-2' }));
     const oneUnitDecision = decodeTaxDecision(taxDecisionInput(['o-1']));
 
-    expect(taxResultBindsDecision(otherDecision, composeResult(decision))).toBe(false);
-    expect(taxResultBindsDecision(oneUnitDecision, composeResult(oneUnitDecision))).toBe(true);
-    expect(taxResultBindsDecision(decision, composeResult(oneUnitDecision))).toBe(false);
+    expect(taxResultFollowsFromDecision(otherDecision, composeResult(decision))).toBe(false);
+    expect(taxResultFollowsFromDecision(oneUnitDecision, composeResult(oneUnitDecision))).toBe(true);
+    expect(taxResultFollowsFromDecision(decision, composeResult(oneUnitDecision))).toBe(false);
   });
 
   it('#936 F27 #939 F3-F4 a successful zero keeps the taxable Decision that explains it', () => {
