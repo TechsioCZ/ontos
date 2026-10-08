@@ -312,6 +312,7 @@ describe('Tax Correction Delta', () => {
       { remainingQuantity: '11' },
       { remainingLineBasis: '1000', remainingPublishedTax: '210.00' },
       { remainingLineBasis: '10', remainingPublishedTax: '2.10', remainingQuantity: '0' },
+      { remainingLineBasis: '999.90', remainingPublishedTax: '209.98', remainingQuantity: '1' },
     ]) {
       const outcome = forged(state);
       expect(isUnresolved(outcome)).toBe(true);
