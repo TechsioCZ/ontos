@@ -232,12 +232,13 @@ Price mode.
 including exact Taxable Supply Unit mapping, the Order Commitment Time used as Tax-Relevant Time,
 Tax Rounding policy/revision, amounts, and safe source/rule evidence. For an Accepted Order they
 preserve lineage to the exact final Tax Decision/Tax Result from the accepted Bundle and its
-original Order Commitment Time; actual recording/proof times stay separate. Later Current changes
-never recompute that Order. An ordinary supported return or correction gets no fresh Tax
-determination: it uses the fixed Tax and final prices of the Authoritative Original Accepted Record
-and yields a Tax Correction Delta. Only a genuinely independent supported Tax-relevant event (for
-example a later first supply) receives its own declared-purpose Tax determination with its own
-Tax-Relevant Time, scoped to the affected subset and retaining original unit lineage.
+original Order Commitment Time, which is the Order's business acceptance time; actual
+recording/proof times stay separate. Later Current changes never recompute that Order. An ordinary
+supported return or correction gets no fresh Tax determination: it uses the fixed Tax and final
+prices of the Authoritative Original Accepted Record and yields a Tax Correction Delta. Only a
+genuinely independent supported Tax-relevant event (for example a later first supply) receives its
+own declared-purpose Tax determination with its own Tax-Relevant Time, scoped to the affected subset
+and retaining original unit lineage.
 _Legal_: for later supply timing see [ZDPH § 20a](https://www.zakonyprolidi.cz/cs/2004-235#p20a),
 [§ 21](https://www.zakonyprolidi.cz/cs/2004-235#p21), and rate timing in
 [§ 47 odst. 2](https://www.zakonyprolidi.cz/cs/2004-235#p47); for supported corrections see
@@ -295,7 +296,8 @@ domains.
   see [ZDPH § 21](https://www.zakonyprolidi.cz/cs/2004-235#p21) and rate timing in
   [§ 47 odst. 2](https://www.zakonyprolidi.cz/cs/2004-235#p47). Order Commitment Time is not
   declared by OntOS to be statutory DUZP merely because it is the Launch order-side Tax-Relevant
-  Time; actual Order acceptance/recording times are preserved separately.
+  Time. If commitment succeeds, it is the Accepted Order's business acceptance time; only actual
+  proof-check, authorization and recording times are preserved separately.
 - **Tax Rounding** — statutory calculation/basis anchors:
   [ZDPH § 36](https://www.zakonyprolidi.cz/cs/2004-235#p36) and
   [§ 37](https://www.zakonyprolidi.cz/cs/2004-235#p37). Supporting administrative guidance:
