@@ -232,20 +232,21 @@ const endsRevision = (
 };
 
 /**
- * A confirmed correction replaces the wrong revision for its whole Effective Period, so the wrong revision can never
- * become applicable again (#930 F8-F9, #949 F16).
+ * A confirmed correction replaces the wrong revision for exactly its Effective Period: the wrong revision can never
+ * become applicable again, and the correction never fabricates a different historical truth by overlapping a
+ * neighbour or filling a gap (#930 F8-F9, #949 F16, F47). It is open-ended only when the wrong revision is.
  */
-const coversWholePeriod = (
+const coversExactPeriod = (
   correcting: TaxRuleRevisionContent,
   wrong: RevisionRow,
   basis: TaxRuleRevisionBasis,
 ): boolean => {
-  const startsInTime = DateTime.isLessThanOrEqualTo(correcting.effectiveFrom, utc(wrong.effectiveFrom));
-  if (correcting.effectiveTo === undefined) {
-    return startsInTime;
-  }
   const wrongEnd = effectiveEndOf(wrong, basis);
-  return startsInTime && wrongEnd !== undefined && DateTime.isGreaterThanOrEqualTo(correcting.effectiveTo, wrongEnd);
+  const sameEnd =
+    correcting.effectiveTo === undefined || wrongEnd === undefined
+      ? correcting.effectiveTo === wrongEnd
+      : DateTime.Equivalence(correcting.effectiveTo, wrongEnd);
+  return DateTime.Equivalence(correcting.effectiveFrom, utc(wrong.effectiveFrom)) && sameEnd;
 };
 
 /** Same invocation and same semantic content replays; anything else reuses the key (#955). */
@@ -675,7 +676,8 @@ export const taxRuleGovernancePersistenceForScope = (
     if (!keepsRuleMeaning(state.revisions, input.correctingContent)) {
       return conflict('MEANING_CHANGED');
     }
-    if (!coversWholePeriod(input.correctingContent, wrong, basis)) {
+    // An already-corrected revision is never applicable again; correcting it twice would fork historical truth.
+    if (basis.correctedBy.length > 0 || !coversExactPeriod(input.correctingContent, wrong, basis)) {
       return conflict('LIFECYCLE');
     }
     const revisionNumber = yield* nextRevisionNumber(input, wrong.taxRuleId);
