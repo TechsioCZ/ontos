@@ -6,6 +6,7 @@ import {
   TaxClassificationInputSchema,
   classifyCatalogSelection,
   isSameExactTaxClassificationBasis,
+  launchTaxClassificationInterpretation,
 } from '../../src/domain/tax-classification.ts';
 import type { TaxClassificationBasis, TaxClassificationInterpretation } from '../../src/domain/tax-classification.ts';
 
@@ -13,11 +14,18 @@ const decodeInput = Schema.decodeUnknownSync(TaxClassificationInputSchema);
 
 type ClassificationInputEncoded = typeof TaxClassificationInputSchema.Encoded;
 
-const current = (catalogFactRef: string, catalogFactRevisionRef: string) =>
+const current = (
+  catalogFactRef: string,
+  catalogFactRevisionRef: string,
+  factKind = 'TAX_CATEGORY',
+  factValue = 'cz-standard-goods',
+) =>
   ({
     _tag: 'CURRENT',
     catalogFactRef,
     catalogFactRevisionRef,
+    factKind,
+    factValue,
     ownerEvidenceRef: `owner-evidence:${catalogFactRef}`,
   }) as const;
 
@@ -35,10 +43,12 @@ const classificationInput = (overrides: Partial<ClassificationInputEncoded> = {}
 const interpretByFactRevisions: TaxClassificationInterpretation = ({
   materialCatalogEvidence,
 }: TaxClassificationBasis) =>
-  TaxClassificationCodeSchema.make(
-    materialCatalogEvidence
-      .map(({ catalogFactRef, catalogFactRevisionRef }) => `${catalogFactRef}@${catalogFactRevisionRef}`)
-      .join('|'),
+  Result.succeed(
+    TaxClassificationCodeSchema.make(
+      materialCatalogEvidence
+        .map(({ catalogFactRef, catalogFactRevisionRef }) => `${catalogFactRef}@${catalogFactRevisionRef}`)
+        .join('|'),
+    ),
   );
 
 const classify = (overrides: Partial<ClassificationInputEncoded> = {}) =>
@@ -176,5 +186,40 @@ describe('Tax Classification', () => {
 
   it('#926 F13 a classification never proceeds without material Catalog evidence', () => {
     expect(() => decodeInput({ ...baseInput, materialCatalogEvidence: [] })).toThrow();
+  });
+
+  describe('Launch interpretation (PO decision D9 default)', () => {
+    const launchClassify = (overrides: Partial<ClassificationInputEncoded> = {}) =>
+      classifyCatalogSelection(classificationInput(overrides), launchTaxClassificationInterpretation);
+
+    it('#926 F1 exactly one Current TAX_CATEGORY fact gives its value as the Tax Classification code', () => {
+      const classification = Result.getOrThrow(
+        launchClassify({
+          materialCatalogEvidence: [
+            current('variant-1:tax-category', 'r1', 'TAX_CATEGORY', 'cz-reduced-food'),
+            current('category-ancestry', 'r4', 'CATEGORY_ANCESTRY', 'food'),
+          ],
+        }),
+      );
+
+      expect(classification.classificationCode).toBe('cz-reduced-food');
+    });
+
+    it('#926 F12-F13 no TAX_CATEGORY fact is indeterminate, never a default category', () => {
+      expect(
+        launchClassify({ materialCatalogEvidence: [current('category-ancestry', 'r4', 'CATEGORY_ANCESTRY', 'food')] }),
+      ).toEqual(Result.fail({ _tag: 'TAX_STATE_INDETERMINATE' }));
+    });
+
+    it('#926 F12-F13 two TAX_CATEGORY facts are indeterminate, never a chosen winner', () => {
+      expect(
+        launchClassify({
+          materialCatalogEvidence: [
+            current('variant-1:tax-category', 'r1', 'TAX_CATEGORY', 'cz-standard-goods'),
+            current('product-1:tax-category', 'r2', 'TAX_CATEGORY', 'cz-reduced-food'),
+          ],
+        }),
+      ).toEqual(Result.fail({ _tag: 'TAX_STATE_INDETERMINATE' }));
+    });
   });
 });

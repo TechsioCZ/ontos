@@ -22,6 +22,14 @@ import type { TaxRoundingPolicy, TaxUnitRoundingEvidence } from '../../shared/do
 export { TaxRoundingPolicySchema, TaxUnitRoundingEvidenceSchema } from '../../shared/domain/tax-kernel/tax-rounding.ts';
 export type { TaxRoundingPolicy, TaxUnitRoundingEvidence } from '../../shared/domain/tax-kernel/tax-rounding.ts';
 
+/** Launch CZ Tax Rounding policy revision 1: 0.01 CZK, ROUND_HALF_UP, once per Taxable Supply Unit (#935 F20-F24). */
+export const LAUNCH_CZK_TAX_ROUNDING_POLICY: TaxRoundingPolicy = {
+  currency: 'CZK',
+  mode: 'ROUND_HALF_UP',
+  precision: '0.01',
+  revision: 1,
+};
+
 /**
  * Exact Tax contribution of one unit: its exact non-negative Taxable Basis (all components summed without any
  * rounding) times its exact positive rate, so it is non-negative (#935 F12-F19, F53; #907 F97).
