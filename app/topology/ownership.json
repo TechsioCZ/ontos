@@ -412,6 +412,22 @@
           ]
         }
       }
+    },
+    {
+      "id": "tax",
+      "package": "@app/tax",
+      "path": "verticals/tax",
+      "ownership": {
+        "team": "super-app-platform",
+        "slack": "#super-app-platform",
+        "pagerDuty": "pd-super-app-platform",
+        "runbookRef": "runbooks/verticals/tax.md",
+        "adrRef": "docs/super-app-rfc-adr/verticals.md#tax",
+        "blastRadius": {
+          "tier": "tier-2-vertical",
+          "references": ["docs/super-app-rfc-adr/blast-radius.md#tax"]
+        }
+      }
     }
   ]
 }
