@@ -259,7 +259,10 @@ const evaluateCurrentMeasure = (input: TaxPrivacyMeasureEvaluationInput): Privac
   }
   const currentContent = new Set(coverage.coverageParts.flatMap(({ foundContentRefs }) => foundContentRefs));
   if (!measure.targetContentRefs.every((contentRef) => currentContent.has(contentRef))) {
-    return outcomeOf(input, 'BUSINESS_REJECTED', 'TARGET_CONTENT_NOT_IN_CURRENT_TAX_OWNER_COVERAGE');
+    // Absence from partial coverage proves nothing (#956 F20): only complete coverage settles a missing target.
+    return coverage.coverageStatus === 'COMPLETE'
+      ? outcomeOf(input, 'BUSINESS_REJECTED', 'TARGET_CONTENT_NOT_IN_CURRENT_TAX_OWNER_COVERAGE')
+      : outcomeOf(input, 'INDETERMINATE', 'TAX_OWNER_SCOPE_COVERAGE_INCOMPLETE');
   }
   const targets = new Set(measure.targetContentRefs);
   const blocked = input.blockers.some(({ contentRefs }) => contentRefs.some((contentRef) => targets.has(contentRef)));
@@ -269,15 +272,26 @@ const evaluateCurrentMeasure = (input: TaxPrivacyMeasureEvaluationInput): Privac
   return outcomeOf(input, 'BUSINESS_REJECTED', 'NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION');
 };
 
+/** Settled outcomes TAX itself produces; any other supplied status is not TAX evidence and is never replayed. */
+const settledTaxStatuses: ReadonlySet<PrivacyOwnerExecutionOutcomeEncoded['status']> = new Set([
+  'BLOCKED',
+  'BUSINESS_REJECTED',
+  'NOT_APPLICABLE',
+]);
+
+const isSettledTaxOutcome = (outcome: PrivacyOwnerExecutionOutcomeEncoded): boolean =>
+  settledTaxStatuses.has(outcome.status);
+
 /**
  * Evaluates TAX's truthful owner response to an approved Privacy Measure. Every TAX row is append-only governance
  * evidence and TAX has no approved privacy mutation lifecycle, so TAX never alters an artifact and keeps presenting
  * it as the original (#956 F38-F40) and never reports ACHIEVED, PARTIAL or an anti-resurrection protection for an
  * effect it cannot perform (F32, F35, F42). Owner Execution Outcome stays separate from the Privacy decision (F29).
  *
- * Retry keeps the measure identity (F47): a changed identity is rejected and a settled outcome is replayed. An
+ * Retry keeps the measure identity (F47): a changed identity is rejected and a settled TAX outcome is replayed. An
  * INDETERMINATE outcome here only ever means coverage was incomplete; no TAX effect was attempted, so the owner
- * reconciliation is a fresh evaluation against Current coverage and can never duplicate an effect (F48-F49).
+ * reconciliation is a fresh evaluation against Current coverage and can never duplicate an effect (F48-F49). A
+ * supplied previous status TAX cannot produce (e.g. ACHIEVED) is re-evaluated, never echoed (F32, F35).
  */
 export const evaluateTaxPrivacyMeasure = (
   input: TaxPrivacyMeasureEvaluationInput,
@@ -289,5 +303,5 @@ export const evaluateTaxPrivacyMeasure = (
   if (!isSameTaxPrivacyMeasureIdentity(previous.measure, input.measure)) {
     return outcomeOf(input, 'BUSINESS_REJECTED', 'IDEMPOTENCY_IDENTITY_OR_MEASURE_SCOPE_CONFLICT');
   }
-  return previous.outcome.status === 'INDETERMINATE' ? evaluateCurrentMeasure(input) : previous.outcome;
+  return isSettledTaxOutcome(previous.outcome) ? previous.outcome : evaluateCurrentMeasure(input);
 };
