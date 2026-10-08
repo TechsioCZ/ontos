@@ -58,6 +58,8 @@ export const CreateTaxRuleRevisionPayloadSchema = Schema.Struct({
   expectedBasisFingerprint: FingerprintSchema,
   provenanceRef: ProvenanceRefSchema,
   reason: ReasonSchema,
+  /** Optional replacement provenance: the revision of the same Tax Rule this revision replaces (#949 F45). */
+  replacesRevisionRef: Schema.optionalKey(TaxRuleRevisionRefSchema),
   taxRuleRef: TaxRuleRefSchema,
 });
 export type CreateTaxRuleRevisionPayload = typeof CreateTaxRuleRevisionPayloadSchema.Type;
