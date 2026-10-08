@@ -22,6 +22,7 @@ describe('Tax module contract', () => {
       'applicable-tax-rule-set',
       'selling-legal-entity-vat-registration-state',
       'tax-fact-authority-current',
+      'tax-privacy-owner-coverage',
       'tax-rule-history',
       'tax-source-assertion-history',
       'tax-source-conflict-detail',

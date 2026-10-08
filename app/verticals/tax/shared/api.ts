@@ -19,6 +19,7 @@ import { RecordTaxSourceAssertionActionApi } from './apis/record-tax-source-asse
 import { ReviseTaxFactAuthorityContractActionApi } from './apis/revise-tax-fact-authority-contract-action.ts';
 import { SellingLegalEntityVatRegistrationStateApi } from './apis/selling-legal-entity-vat-registration-state.ts';
 import { TaxFactAuthorityCurrentApi } from './apis/tax-fact-authority-current.ts';
+import { TaxPrivacyOwnerCoverageApi } from './apis/tax-privacy-owner-coverage.ts';
 import { TaxRuleHistoryApi } from './apis/tax-rule-history.ts';
 import { TaxSourceAssertionHistoryApi } from './apis/tax-source-assertion-history.ts';
 import { TaxSourceConflictDetailApi } from './apis/tax-source-conflict-detail.ts';
@@ -61,6 +62,7 @@ export const taxApi = HttpApi.make('TaxApi')
   .addHttpApi(ReviseTaxFactAuthorityContractActionApi)
   .addHttpApi(SellingLegalEntityVatRegistrationStateApi)
   .addHttpApi(TaxFactAuthorityCurrentApi)
+  .addHttpApi(TaxPrivacyOwnerCoverageApi)
   .addHttpApi(TaxRuleHistoryApi)
   .addHttpApi(TaxSourceAssertionHistoryApi)
   .addHttpApi(TaxSourceConflictDetailApi)
