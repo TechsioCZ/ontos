@@ -193,10 +193,10 @@ const seller = (runtime: CoreTestDatabase) => {
   return { createRule, establishAuthority, evaluate, launchRules, legalEntityId, recordRegistration };
 };
 
-const EvaluatedSchema = Schema.Struct({ _tag: Schema.Literal('EVALUATED') });
+const EvaluatedSchema = Schema.TaggedStruct('EVALUATED', {});
 const isEvaluated = Schema.is(EvaluatedSchema);
 const isRejected = Schema.is(
-  Schema.Struct({ _tag: Schema.Literal('TAX_EVALUATION_REQUEST_REJECTED'), reasons: Schema.Array(Schema.String) }),
+  Schema.TaggedStruct('TAX_EVALUATION_REQUEST_REJECTED', { reasons: Schema.Array(Schema.String) }),
 );
 const isSuccess = Schema.is(TaxOutcomeSuccessSchema);
 
@@ -318,6 +318,14 @@ it.live('#950 F24 #942 F22 the trusted scope and a future Tax-Relevant Time boun
         purchase: purchaseBindingInput(['o1', 'o2'], { sellingLegalEntityRef: randomUUID(), tenantId }),
       });
       expect(Option.isNone(foreign)).toBe(true);
+      // A purchase naming another Tenant is not visible either, whatever its seller (#950 F24).
+      const otherTenant = yield* subject.evaluate({
+        purchase: purchaseBindingInput(['o1', 'o2'], {
+          sellingLegalEntityRef: subject.legalEntityId,
+          tenantId: randomUUID(),
+        }),
+      });
+      expect(Option.isNone(otherTenant)).toBe(true);
 
       const future = Option.getOrThrow(yield* subject.evaluate({ taxRelevantTime: '2099-01-01T00:00:00.000Z' }));
       expect(isRejected(future) && future.reasons).toEqual(['FUTURE_TAX_RELEVANT_TIME']);
