@@ -257,6 +257,24 @@ describe('#956 TAX Privacy Measure execution', () => {
     expect(incomplete.reason).toBe('TAX_OWNER_SCOPE_COVERAGE_INCOMPLETE');
   });
 
+  it('settles a found target on partial coverage but never rejects a target that partial coverage cannot see (F20)', () => {
+    const partialFound = assess(
+      completeObservations({ SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY: [assertionContent] }).map((observation) =>
+        observation.scopePart === 'ACTOR_PRINCIPAL_ATTRIBUTION'
+          ? { ...observation, coverageStatus: 'PARTIAL' as const, unresolvedReason: 'OTHER_SELLERS_NOT_OBSERVED' }
+          : observation,
+      ),
+    );
+    expect(partialFound.coverageStatus).toBe('PARTIAL');
+    expect(evaluate({ coverage: partialFound }).reason).toBe('NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION');
+    const unseen = evaluate({
+      coverage: partialFound,
+      measure: { ...measure, targetContentRefs: ['commerce.tax.tax-rule:other-seller'] },
+    });
+    expect(decodeOutcome(unseen).status).toBe('INDETERMINATE');
+    expect(unseen.reason).toBe('TAX_OWNER_SCOPE_COVERAGE_INCOMPLETE');
+  });
+
   it('rejects coverage that belongs to another Privacy scope', () => {
     const outcome = evaluate({
       coverage: { ...foundCoverage, scope: { ...scope, requestedScopeRef: 'privacy-owner-scope:tax/other' } },
@@ -298,6 +316,26 @@ describe('#956 TAX Privacy Measure execution', () => {
       ];
     });
     expect(statuses.filter((status) => status === 'ACHIEVED' || status === 'PARTIAL')).toEqual([]);
+  });
+
+  it('never echoes a supplied previous ACHIEVED or PARTIAL outcome that TAX cannot produce (F32, F35)', () => {
+    const settled = evaluate();
+    const claimed = [
+      { ...settled, reason: 'CLAIMED', remainingContentRefs: [], status: 'ACHIEVED' as const },
+      {
+        ...settled,
+        affectedContentRefs: [assertionContent],
+        reason: 'CLAIMED',
+        remainingContentRefs: ['commerce.tax.tax-rule:remaining'],
+        status: 'PARTIAL' as const,
+      },
+    ];
+    for (const outcome of claimed) {
+      expect(decodeOutcome(outcome).status).toBe(outcome.status);
+      const retried = evaluate({ previousAttempt: { measure, outcome } });
+      expect(retried.reason).toBe('NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION');
+      expect(retried.affectedContentRefs).toEqual([]);
+    }
   });
 });
 
