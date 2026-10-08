@@ -23,6 +23,7 @@ describe('Tax module contract', () => {
       'applicable-tax-rule-set',
       'final-order-tax',
       'selling-legal-entity-vat-registration-state',
+      'tax-correction-preview',
       'tax-evaluation',
       'tax-fact-authority-current',
       'tax-materiality-comparison',

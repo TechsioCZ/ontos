@@ -18,6 +18,7 @@ import { recordTaxSourceAssertionAction } from './src/actions/record-tax-source-
 import { reviseTaxFactAuthorityContractAction } from './src/actions/revise-tax-fact-authority-contract.action.ts';
 import { SellingLegalEntityVatRegistrationStateApi } from './shared/apis/selling-legal-entity-vat-registration-state.ts';
 import { taxAuthorityContractManagePermission } from './shared/permissions/tax-authority-contract-manage.ts';
+import { TaxCorrectionPreviewApi } from './shared/apis/tax-correction-preview.ts';
 import { TaxEvaluationApi } from './shared/apis/tax-evaluation.ts';
 import { taxEvidenceReadPermission } from './shared/permissions/tax-evidence-read.ts';
 import { taxFactAuthorityContractResourceDescriptor } from './shared/resources/tax-fact-authority-contract.ts';
@@ -67,6 +68,7 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
       'applicable-tax-rule-set': ApplicableTaxRuleSetApi,
       'final-order-tax': FinalOrderTaxApi,
       'selling-legal-entity-vat-registration-state': SellingLegalEntityVatRegistrationStateApi,
+      'tax-correction-preview': TaxCorrectionPreviewApi,
       'tax-evaluation': TaxEvaluationApi,
       'tax-fact-authority-current': TaxFactAuthorityCurrentApi,
       'tax-materiality-comparison': TaxMaterialityComparisonApi,
