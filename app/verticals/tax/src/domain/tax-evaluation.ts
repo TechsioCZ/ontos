@@ -337,9 +337,10 @@ const reportedFailure = (parts: readonly AnyEvaluated[]): Option.Option<TaxNonSu
 
 /**
  * Prospective Launch Tax evaluation of one structurally bound request over one coherent TAX own state (#942, #937,
- * #941 F6). Evaluated parts, in order: Launch coverage (currency, regime, supply mapping, seller prerequisite), place
- * jurisdiction, then per unit in canonical order the published line, the classification and the complete applicable
- * rule set, then Shipping allocation. Any failure is the typed non-success chosen by `reportedFailure`; success is a
+ * #941 F6). Evaluated parts, in order: place jurisdiction (scope is decided before the seller prerequisite,
+ * #938 F7), Launch coverage (currency, regime, supply mapping, seller prerequisite), then per unit in canonical order
+ * the published line, the classification and the complete applicable rule set, then Shipping allocation. Any failure
+ * is the typed non-success chosen by `reportedFailure`; success is a
  * Decision with its Result under the Launch rounding policy (#936, #935).
  */
 export const evaluateProspectiveLaunchTax = (
@@ -369,7 +370,7 @@ export const evaluateProspectiveLaunchTax = (
   const allocation: Evaluated<Option.Option<ShippingAllocation>> = Result.isSuccess(units)
     ? shippingAllocationOf(request, units.success)
     : Result.succeed(Option.none());
-  const evaluated = Option.match(reportedFailure([coverage, jurisdiction, ...meanings, allocation]), {
+  const evaluated = Option.match(reportedFailure([jurisdiction, coverage, ...meanings, allocation]), {
     onNone: (): Evaluated<TaxOutcomeSuccess> =>
       pipe(
         Result.all({ allocation, determination: jurisdiction, unitMeanings: Result.all(meanings) }),
