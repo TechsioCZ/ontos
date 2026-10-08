@@ -6,7 +6,6 @@ import type { NonNegativeTaxExactRational } from './tax-exact-rational.ts';
 
 /** Launch Tax currency is explicit and closed to CZK (#918 F31, #936 F31, #937 F23-F24). */
 export const TaxCurrencySchema = Schema.Literal('CZK');
-export type TaxCurrency = typeof TaxCurrencySchema.Type;
 
 const publishedTaxAmountPattern = /^(?:0|[1-9]\d*)\.\d{2}$/u;
 

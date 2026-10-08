@@ -37,13 +37,10 @@ export type TaxPrerequisiteNotMet = typeof TaxPrerequisiteNotMetSchema.Type;
 
 /** Supported case with a complete authoritative empty applicable rule set (#938 F16). */
 export const TaxRuleMissingSchema = Schema.TaggedStruct('TAX_RULE_MISSING', {});
-export type TaxRuleMissing = typeof TaxRuleMissingSchema.Type;
 /** Illegal overlap of applicable rule revisions (#938 F17). */
 export const TaxRuleOverlapSchema = Schema.TaggedStruct('TAX_RULE_OVERLAP', {});
-export type TaxRuleOverlap = typeof TaxRuleOverlapSchema.Type;
 /** Incompatible applicable rule meanings without explicit composition (#938 F18). */
 export const TaxRuleConflictSchema = Schema.TaggedStruct('TAX_RULE_CONFLICT', {});
-export type TaxRuleConflict = typeof TaxRuleConflictSchema.Type;
 /** Required material evidence is known outside its usable Current validity (#938 F20-F21). */
 export const TaxInputStaleSchema = Schema.TaggedStruct('TAX_INPUT_STALE', {});
 export type TaxInputStale = typeof TaxInputStaleSchema.Type;
