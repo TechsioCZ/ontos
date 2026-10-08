@@ -15,6 +15,7 @@ import {
   conflict,
   isOwnerId,
   mutation,
+  notBackdated,
   notFound,
   query,
   sameInstant,
@@ -77,11 +78,14 @@ const revisionBasisMeaning = (basis: TaxRuleRevisionBasis) => ({
   semanticFingerprint: basis.semanticFingerprint,
 });
 
-/** Expected-current basis for ending or correcting one revision (#949 F20, #955). */
+/** Lifecycle-aware identity of one revision inside the completeness token of a governed read. */
 export const taxRuleRevisionBasisFingerprint = (basis: TaxRuleRevisionBasis): string =>
   taxMeaningFingerprint(revisionBasisMeaning(basis));
 
-/** Expected-current basis of the complete governing revision set of one Tax Rule (#949 F20, #955). */
+/**
+ * Expected-current basis of the complete governing revision set of one Tax Rule. Creating, ending and correcting a
+ * revision are all guarded by it, so any intervening governance change of the rule is detected (#949 F19-F20, #955).
+ */
 export const taxRuleBasisFingerprint = (taxRuleId: string, bases: readonly TaxRuleRevisionBasis[]): string =>
   taxMeaningFingerprint({
     revisions: bases.toSorted((left, right) => left.revisionNumber - right.revisionNumber).map(revisionBasisMeaning),
@@ -106,7 +110,7 @@ export type CreateTaxRuleRevisionOutcome =
   | GovernanceNotFound
   | GovernanceStale;
 export type EndTaxRuleRevisionOutcome =
-  | Readonly<{ ended: boolean; meaningFingerprint: string; revisionId: string }>
+  | Readonly<{ ended: boolean; endFactId: string; meaningFingerprint: string; revisionId: string }>
   | GovernanceConflict
   | GovernanceNotFound
   | GovernanceStale;
@@ -192,6 +196,57 @@ const scoped = (table: typeof taxRuleRevisions | typeof taxRules, input: Governe
   and(eq(table.tenantId, input.tenantId), eq(table.legalEntityId, input.legalEntityId));
 
 type CorrectionRow = typeof taxRuleCorrections.$inferSelect;
+
+const utc = (value: Date): DateTime.Utc => DateTime.makeUnsafe(value);
+
+/** Effective end of a revision: the earlier of its declared end and its end fact; undefined is open-ended. */
+const effectiveEndOf = (revision: RevisionRow, basis: TaxRuleRevisionBasis): DateTime.Utc | undefined => {
+  const declared = revision.effectiveTo === null ? undefined : utc(revision.effectiveTo);
+  if (basis.endedEffectiveTo === null) {
+    return declared;
+  }
+  const ended = utc(basis.endedEffectiveTo);
+  return declared === undefined ? ended : DateTime.min(declared, ended);
+};
+
+/**
+ * An end fact only shortens a revision that is not ended yet, is never backdated before the trusted operation time
+ * (#929 F19, #949 F16-F17), and lies inside `(effective_from, effective_to)`. Ending exactly at `effective_from`
+ * withdraws a scheduled revision that has not become effective yet (#929 F8, #949 D).
+ */
+const endsRevision = (
+  revision: RevisionRow,
+  basis: TaxRuleRevisionBasis,
+  endedEffectiveTo: Date,
+  input: GovernedInvocation,
+): boolean => {
+  const end = utc(endedEffectiveTo);
+  const from = utc(revision.effectiveFrom);
+  const withdrawsScheduled = DateTime.Equivalence(end, from) && DateTime.isGreaterThan(from, utc(input.operationTime));
+  return (
+    basis.endedEffectiveTo === null &&
+    notBackdated(endedEffectiveTo, input) &&
+    (DateTime.isGreaterThan(end, from) || withdrawsScheduled) &&
+    (revision.effectiveTo === null || DateTime.isLessThan(end, utc(revision.effectiveTo)))
+  );
+};
+
+/**
+ * A confirmed correction replaces the wrong revision for its whole Effective Period, so the wrong revision can never
+ * become applicable again (#930 F8-F9, #949 F16).
+ */
+const coversWholePeriod = (
+  correcting: TaxRuleRevisionContent,
+  wrong: RevisionRow,
+  basis: TaxRuleRevisionBasis,
+): boolean => {
+  const startsInTime = DateTime.isLessThanOrEqualTo(correcting.effectiveFrom, utc(wrong.effectiveFrom));
+  if (correcting.effectiveTo === undefined) {
+    return startsInTime;
+  }
+  const wrongEnd = effectiveEndOf(wrong, basis);
+  return startsInTime && wrongEnd !== undefined && DateTime.isGreaterThanOrEqualTo(correcting.effectiveTo, wrongEnd);
+};
 
 /** Same invocation and same semantic content replays; anything else reuses the key (#955). */
 const matchesCorrectionReplay = (
@@ -421,7 +476,12 @@ export const taxRuleGovernancePersistenceForScope = (
   const createTaxRuleRevision: TaxRuleGovernancePersistence['createTaxRuleRevision'] = Effect.fn(
     'taxRuleGovernancePersistence.createTaxRuleRevision',
   )(function* createTaxRuleRevisionEffect(input) {
-    if (!trustedInvocation(scope, input, [input.taxRuleRef.tenantId])) {
+    const replacesRevisionId = input.replacesRevisionRef?.resourceId ?? null;
+    const refTenantIds =
+      input.replacesRevisionRef === undefined
+        ? [input.taxRuleRef.tenantId]
+        : [input.taxRuleRef.tenantId, input.replacesRevisionRef.tenantId];
+    if (!trustedInvocation(scope, input, refTenantIds)) {
       return yield* unavailable();
     }
     const meaningFingerprint = taxRuleRevisionContentFingerprint(input.content);
@@ -431,7 +491,7 @@ export const taxRuleGovernancePersistenceForScope = (
         sameAttribution(replay, input) &&
         replay.legalEntityId === input.legalEntityId &&
         replay.taxRuleId === input.taxRuleRef.resourceId &&
-        replay.supersedesRevisionId === null &&
+        replay.supersedesRevisionId === replacesRevisionId &&
         replay.semanticFingerprint === meaningFingerprint;
       return matches
         ? {
@@ -457,12 +517,24 @@ export const taxRuleGovernancePersistenceForScope = (
     if (!keepsRuleMeaning(state.revisions, input.content)) {
       return conflict('MEANING_CHANGED');
     }
+    // Replacement provenance may only name a revision of the same Tax Rule (#949 F45).
+    if (
+      replacesRevisionId !== null &&
+      !state.revisions.some((revision) => revision.taxRuleRevisionId === replacesRevisionId)
+    ) {
+      return conflict('LIFECYCLE');
+    }
     const revisionNumber = yield* nextRevisionNumber(input, taxRuleId);
     const rows = yield* mutation(
       transaction
         .insert(taxRuleRevisions)
         .values(
-          revisionValues(input, { content: input.content, revisionNumber, supersedesRevisionId: null, taxRuleId }),
+          revisionValues(input, {
+            content: input.content,
+            revisionNumber,
+            supersedesRevisionId: replacesRevisionId,
+            taxRuleId,
+          }),
         )
         .returning({ taxRuleRevisionId: taxRuleRevisions.taxRuleRevisionId }),
     );
@@ -505,7 +577,9 @@ export const taxRuleGovernancePersistenceForScope = (
         replay.legalEntityId === input.legalEntityId &&
         replay.taxRuleRevisionId === revisionId &&
         sameInstant(replay.endedEffectiveTo, endedEffectiveTo);
-      return matches ? { ended: false, meaningFingerprint, revisionId } : conflict('IDEMPOTENCY_REUSED');
+      return matches
+        ? { ended: false, endFactId: replay.taxRuleRevisionEndFactId, meaningFingerprint, revisionId }
+        : conflict('IDEMPOTENCY_REUSED');
     }
     if (!isOwnerId(revisionId)) {
       return notFound;
@@ -520,15 +594,10 @@ export const taxRuleGovernancePersistenceForScope = (
     if (basis === undefined) {
       return yield* unavailable();
     }
-    if (input.expectedBasisFingerprint !== taxRuleRevisionBasisFingerprint(basis)) {
+    if (input.expectedBasisFingerprint !== taxRuleBasisFingerprint(revision.taxRuleId, state.bases)) {
       return staleBasis;
     }
-    // Ending only shortens a revision that is not ended yet: the end lies inside (effective_from, effective_to).
-    const shortens =
-      basis.endedEffectiveTo === null &&
-      endedEffectiveTo.getTime() > revision.effectiveFrom.getTime() &&
-      (revision.effectiveTo === null || endedEffectiveTo.getTime() < revision.effectiveTo.getTime());
-    if (!shortens) {
+    if (!endsRevision(revision, basis, endedEffectiveTo, input)) {
       return conflict('LIFECYCLE');
     }
     const inserted = yield* mutation(
@@ -550,7 +619,10 @@ export const taxRuleGovernancePersistenceForScope = (
     if ('kind' in inserted) {
       return inserted;
     }
-    return { ended: true, meaningFingerprint, revisionId };
+    const [endFact] = inserted;
+    return endFact === undefined
+      ? yield* unavailable()
+      : { ended: true, endFactId: endFact.endFactId, meaningFingerprint, revisionId };
   });
 
   const correctTaxRuleRevision: TaxRuleGovernancePersistence['correctTaxRuleRevision'] = Effect.fn(
@@ -597,11 +669,14 @@ export const taxRuleGovernancePersistenceForScope = (
     if (basis === undefined) {
       return yield* unavailable();
     }
-    if (input.expectedBasisFingerprint !== taxRuleRevisionBasisFingerprint(basis)) {
+    if (input.expectedBasisFingerprint !== taxRuleBasisFingerprint(wrong.taxRuleId, state.bases)) {
       return staleBasis;
     }
     if (!keepsRuleMeaning(state.revisions, input.correctingContent)) {
       return conflict('MEANING_CHANGED');
+    }
+    if (!coversWholePeriod(input.correctingContent, wrong, basis)) {
+      return conflict('LIFECYCLE');
     }
     const revisionNumber = yield* nextRevisionNumber(input, wrong.taxRuleId);
     // The correcting revision and its provenance row commit atomically; the wrong revision is never mutated.

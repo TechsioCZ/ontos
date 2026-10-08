@@ -93,6 +93,15 @@ const rateMeaning = (revision: TaxRuleRevisionState) => {
 };
 
 /**
+ * Simultaneously applicable revisions of one Tax Rule, or of different EXCLUSIVE rules with the same meaning, are an
+ * overlap (#930 F2); different rules with incompatible meanings and no governing composition are a conflict (F3).
+ */
+const hasIncompatibleRules = (applicable: readonly TaxRuleRevisionState[]): boolean =>
+  applicable.some((left) =>
+    applicable.some((right) => left.taxRuleId !== right.taxRuleId && rateMeaning(left) !== rateMeaning(right)),
+  );
+
+/**
  * Selects the applicable Tax Rule Revision for a Tax-Relevant Time from the complete owner state (#929 F11-F18,
  * #930 F1-F8, #942 F11-F15). It uses only Effective Periods, end facts and confirmed correction provenance; never
  * created_at, updated_at, insertion order or the highest revision number.
@@ -113,16 +122,21 @@ export const selectApplicableTaxRuleRevision = (input: {
   const effective = completeState.revisions.filter((revision) =>
     isTaxRuleRevisionEffectiveAt(revision, taxRelevantTime),
   );
-  const effectiveIds = new Set(effective.map((revision) => revision.revisionId));
+  // A confirmed-wrong revision is never applicable again, whatever later happens to its correcting revision
+  // (#930 F8-F9, #949 F16); its provenance is returned instead.
   const excludedByCorrection = effective
     .flatMap((revision) =>
-      revision.correctedBy.flatMap((correctingRevisionId) =>
-        effectiveIds.has(correctingRevisionId) ? [{ correctingRevisionId, wrongRevisionId: revision.revisionId }] : [],
-      ),
+      revision.correctedBy.map((correctingRevisionId) => ({
+        correctingRevisionId,
+        wrongRevisionId: revision.revisionId,
+      })),
     )
-    .toSorted((left, right) => left.wrongRevisionId.localeCompare(right.wrongRevisionId, 'en'));
-  const excludedIds = new Set(excludedByCorrection.map((provenance) => provenance.wrongRevisionId));
-  const applicable = effective.filter((revision) => !excludedIds.has(revision.revisionId)).toSorted(byIdentity);
+    .toSorted(
+      (left, right) =>
+        left.wrongRevisionId.localeCompare(right.wrongRevisionId, 'en') ||
+        left.correctingRevisionId.localeCompare(right.correctingRevisionId, 'en'),
+    );
+  const applicable = effective.filter((revision) => revision.correctedBy.length === 0).toSorted(byIdentity);
   const [only] = applicable;
   if (only === undefined) {
     return { applicable, excludedByCorrection, kind: 'NOT_SELECTED', outcome: TaxRuleMissingSchema.make({}) };
@@ -141,11 +155,10 @@ export const selectApplicableTaxRuleRevision = (input: {
       treatmentCategory: only.treatmentCategory,
     };
   }
-  const meanings = new Set(applicable.map(rateMeaning));
   return {
     applicable,
     excludedByCorrection,
     kind: 'NOT_SELECTED',
-    outcome: meanings.size > 1 ? TaxRuleConflictSchema.make({}) : TaxRuleOverlapSchema.make({}),
+    outcome: hasIncompatibleRules(applicable) ? TaxRuleConflictSchema.make({}) : TaxRuleOverlapSchema.make({}),
   };
 };

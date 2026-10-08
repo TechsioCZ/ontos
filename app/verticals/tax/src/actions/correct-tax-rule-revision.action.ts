@@ -34,17 +34,23 @@ export const handleCorrectTaxRuleRevision = Effect.fn('CorrectTaxRuleRevisionAct
     payload: CorrectTaxRuleRevisionPayload,
     context: ActionHandlerContext<typeof domainEvents, TaxRuleGovernancePersistence>,
   ) {
-    const outcome = yield* context.services.correctTaxRuleRevision({ ...payload, ...governedInvocation(context) });
+    const outcome = yield* context.services.correctTaxRuleRevision({
+      ...payload,
+      ...(yield* governedInvocation(context)),
+    });
     if ('kind' in outcome) {
       return yield* failGovernance(outcome, 'Tax Rule Revision');
     }
     yield* context.recordAuditEvidence({
       action: 'CORRECT_TAX_RULE_REVISION',
       changed: outcome.created,
+      expectedBasisFingerprint: payload.expectedBasisFingerprint,
       meaningFingerprint: outcome.meaningFingerprint,
       operation: 'CORRECT',
+      reason: payload.reason,
       resourceId: outcome.wrongRevisionId,
       resourceType: 'commerce.tax.tax-rule-revision',
+      resultingRevisionId: outcome.correctingRevisionId,
     });
     return {
       correctingRevisionRef: taxRuleRevisionRef(context.scope.tenantId, outcome.correctingRevisionId),

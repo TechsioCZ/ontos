@@ -37,17 +37,20 @@ export const handleEndTaxFactAuthorityContract = Effect.fn('EndTaxFactAuthorityC
     payload: EndTaxFactAuthorityContractPayload,
     context: ActionHandlerContext<typeof domainEvents, TaxAuthorityGovernancePersistence>,
   ) {
-    const outcome = yield* context.services.endContract({ ...payload, ...governedInvocation(context) });
+    const outcome = yield* context.services.endContract({ ...payload, ...(yield* governedInvocation(context)) });
     if ('kind' in outcome) {
       return yield* failGovernance(outcome, 'Tax Fact Authority Contract');
     }
     yield* context.recordAuditEvidence({
       action: 'END_TAX_FACT_AUTHORITY_CONTRACT',
       changed: outcome.created,
+      expectedBasisFingerprint: payload.expectedBasisFingerprint,
       meaningFingerprint: outcome.meaningFingerprint,
       operation: 'END',
+      reason: payload.reason,
       resourceId: outcome.contractId,
       resourceType: 'commerce.tax.tax-fact-authority-contract',
+      resultingRevisionId: outcome.revisionId,
     });
     return {
       contractRef: taxFactAuthorityContractRef(context.scope.tenantId, outcome.contractId),

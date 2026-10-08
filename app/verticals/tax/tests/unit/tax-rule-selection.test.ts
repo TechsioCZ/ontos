@@ -68,7 +68,7 @@ describe('Tax Rule selection', () => {
     expect(selectedId(select(state(ended), boundary))).toBe('TAX_RULE_MISSING');
   });
 
-  it('#930 F2 two exclusive revisions with the same meaning at T are TAX_RULE_OVERLAP, never a winner', () => {
+  it('#930 F2 two simultaneously applicable revisions of one Tax Rule are TAX_RULE_OVERLAP, whatever their rates', () => {
     const duplicate = revision('duplicate', { ratePercent: '21.00', revisionNumber: 2 });
     const selection = select(state(revision('r1'), duplicate), boundary);
     expect(selectedId(selection)).toBe('TAX_RULE_OVERLAP');
@@ -76,27 +76,41 @@ describe('Tax Rule selection', () => {
       'r1',
       'duplicate',
     ]);
+    const differentRate = revision('different-rate', { ratePercent: '12', revisionNumber: 2 });
+    expect(selectedId(select(state(revision('r1'), differentRate), boundary))).toBe('TAX_RULE_OVERLAP');
   });
 
-  it('#930 F3 incompatible rates at T without a governing composition are TAX_RULE_CONFLICT', () => {
+  it('#930 F2 different EXCLUSIVE Tax Rules applicable at once with the same meaning are TAX_RULE_OVERLAP', () => {
+    const sameMeaning = revision('same-meaning', {
+      ratePercent: '21.0',
+      taxRuleId: '00000000-0000-4000-8000-000000000002',
+    });
+    expect(selectedId(select(state(revision('r1'), sameMeaning), boundary))).toBe('TAX_RULE_OVERLAP');
+  });
+
+  it('#930 F3 different Tax Rules with incompatible rates at T and no governing composition are TAX_RULE_CONFLICT', () => {
     const competing = revision('competing', { ratePercent: '12', taxRuleId: '00000000-0000-4000-8000-000000000002' });
     expect(selectedId(select(state(revision('r1'), competing), boundary))).toBe('TAX_RULE_CONFLICT');
   });
 
-  it('#930 F8 a confirmed correction covering T excludes the wrong revision and returns provenance', () => {
+  it('#930 F8-F9 a confirmed-wrong revision is never applicable and its provenance is returned', () => {
     const wrong = revision('wrong', { correctedBy: ['correcting'] });
-    const correcting = revision('correcting', {
-      effectiveFrom: instant(boundary),
-      ratePercent: '12',
-      revisionNumber: 2,
-    });
+    const correcting = revision('correcting', { ratePercent: '12', revisionNumber: 2 });
     const corrected = select(state(wrong, correcting), boundary);
     expect(selectedId(corrected)).toBe('correcting');
     expect(corrected.excludedByCorrection).toEqual([{ correctingRevisionId: 'correcting', wrongRevisionId: 'wrong' }]);
-    // Before the correcting revision is effective, the wrong revision remains the only applicable meaning.
-    const before = select(state(wrong, correcting), beforeBoundary);
-    expect(selectedId(before)).toBe('wrong');
-    expect(before.excludedByCorrection).toEqual([]);
+  });
+
+  it('#930 F8-F9 #949 F16 ending the correcting revision never revives the confirmed-wrong revision', () => {
+    const wrong = revision('wrong', { correctedBy: ['correcting'] });
+    const endedCorrecting = revision('correcting', {
+      endedEffectiveTo: Option.some(instant(boundary)),
+      ratePercent: '12',
+      revisionNumber: 2,
+    });
+    const afterEnd = select(state(wrong, endedCorrecting), boundary);
+    expect(selectedId(afterEnd)).toBe('TAX_RULE_MISSING');
+    expect(afterEnd.excludedByCorrection).toEqual([{ correctingRevisionId: 'correcting', wrongRevisionId: 'wrong' }]);
   });
 
   it('#929 F13 F18 #907 F59 selection is deterministic and ignores insertion order and revision number', () => {
