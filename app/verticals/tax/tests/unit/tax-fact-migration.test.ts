@@ -89,7 +89,12 @@ const only = (outcomes: readonly TaxMigrationOutcome[]): TaxMigrationOutcome => 
   const [outcome] = outcomes;
   expect(outcomes).toHaveLength(1);
   return (
-    outcome ?? TaxMigrationReviewRequiredSchema.make({ provenance: prov('none'), reason: 'MEANING_NOT_ESTABLISHED' })
+    outcome ??
+    TaxMigrationReviewRequiredSchema.make({
+      provenance: prov('none'),
+      reason: 'MEANING_NOT_ESTABLISHED',
+      sourceFamily: Option.none(),
+    })
   );
 };
 
@@ -105,7 +110,11 @@ describe('#960 Migration maps business meaning, not legacy storage shape', () =>
       evaluateTaxMigrationCandidates([candidate('legacy-row-1', { _tag: 'UNESTABLISHED', legacyFieldNames: ['VAT'] })]),
     );
     expect(outcome).toEqual(
-      TaxMigrationReviewRequiredSchema.make({ provenance: prov('legacy-row-1'), reason: 'MEANING_NOT_ESTABLISHED' }),
+      TaxMigrationReviewRequiredSchema.make({
+        provenance: prov('legacy-row-1'),
+        reason: 'MEANING_NOT_ESTABLISHED',
+        sourceFamily: Option.none(),
+      }),
     );
   });
 
@@ -119,6 +128,7 @@ describe('#960 Migration maps business meaning, not legacy storage shape', () =>
       TaxMigrationRejectedUnmappedSchema.make({
         provenance: prov('legacy-row-2'),
         reason: 'FOREIGN_OWNER',
+        sourceFamily: Option.none(),
         targetOwner: 'commerce.party-registry',
       }),
     );
@@ -147,6 +157,7 @@ describe('#960 Only Launch-critical Current Tax meaning is promoted', () => {
       TaxMigrationRejectedUnmappedSchema.make({
         provenance: prov('order-77-line-1'),
         reason: 'HISTORICAL_ACCEPTED_VALUE',
+        sourceFamily: Option.none(),
         targetOwner: 'commerce.order',
       }),
     );
@@ -158,6 +169,7 @@ describe('#960 Only Launch-critical Current Tax meaning is promoted', () => {
       TaxMigrationRejectedUnmappedSchema.make({
         provenance: prov('legacy-oss-1'),
         reason: 'UNSUPPORTED_BREADTH',
+        sourceFamily: Option.some('TAX_RULE'),
         targetOwner: 'commerce.tax',
       }),
     );
@@ -173,10 +185,15 @@ describe('#960 Only Launch-critical Current Tax meaning is promoted', () => {
       taxRule('legacy-negative', { ratePercent: '-21' }),
     ]);
     expect(outcomes).toEqual([
-      TaxMigrationReviewRequiredSchema.make({ provenance: prov('legacy-negative'), reason: 'TARGET_MEANING_INVALID' }),
+      TaxMigrationReviewRequiredSchema.make({
+        provenance: prov('legacy-negative'),
+        reason: 'TARGET_MEANING_INVALID',
+        sourceFamily: Option.some('TAX_RULE'),
+      }),
       TaxMigrationIncompleteSchema.make({
         missing: ['effectiveFrom', 'ratePercent', 'taxClassificationCode'],
         provenance: prov('legacy-partial'),
+        sourceFamily: Option.some('TAX_RULE'),
       }),
     ]);
   });
@@ -197,10 +214,19 @@ describe('#960 Only Launch-critical Current Tax meaning is promoted', () => {
       TaxMigrationRejectedUnmappedSchema.make({
         provenance: prov('legacy-dup'),
         reason: 'DUPLICATE_SOURCE_RECORD',
+        sourceFamily: Option.some('TAX_RULE'),
         targetOwner: 'commerce.tax',
       }),
-      TaxMigrationConflictingSchema.make({ counterparts: [prov('legacy-split')], provenance: prov('legacy-split') }),
-      TaxMigrationConflictingSchema.make({ counterparts: [prov('legacy-split')], provenance: prov('legacy-split') }),
+      TaxMigrationConflictingSchema.make({
+        counterparts: [prov('legacy-split')],
+        provenance: prov('legacy-split'),
+        sourceFamily: Option.some('TAX_RULE'),
+      }),
+      TaxMigrationConflictingSchema.make({
+        counterparts: [prov('legacy-split')],
+        provenance: prov('legacy-split'),
+        sourceFamily: Option.some('TAX_RULE'),
+      }),
     ]);
   });
 
@@ -367,7 +393,15 @@ describe('#960 Migration allows dual running but never dual authority', () => {
 const readyEvidence = (family: TaxMigrationFamily): TaxMigrationFamilyEvidence => ({
   completeness: TaxMigrationCompleteSchema.make({ family, rowCount: 1 }),
   family,
-  handoff: TaxAuthorityHandoffValidSchema.make({ boundaries: [] }),
+  handoff: TaxAuthorityHandoffValidSchema.make({
+    boundaries: [
+      {
+        at: at('2026-06-01T00:00:00.000Z'),
+        fromSystemOfRecordRef: 'fixture:legacy-vat',
+        toSystemOfRecordRef: 'commerce.tax',
+      },
+    ],
+  }),
   outcomes: [],
   shadowDifferences: [TaxShadowSameSchema.make({ probeRef: 'probe' })],
   targetDifferences: [],
@@ -509,14 +543,22 @@ describe('#960 review round 1 regressions (Sol, Opus, Fable)', () => {
     ]);
     expect(Schema.is(TaxMigrationMappedAcceptedSchema)(mapped)).toBe(true);
     expect(mismatched).toEqual(
-      TaxMigrationReviewRequiredSchema.make({ provenance: prov('v2'), reason: 'PROVENANCE_MISMATCH' }),
+      TaxMigrationReviewRequiredSchema.make({
+        provenance: prov('v2'),
+        reason: 'PROVENANCE_MISMATCH',
+        sourceFamily: Option.some('SELLING_LEGAL_ENTITY_VAT_REGISTRATION'),
+      }),
     );
   });
 
   it('never drops an unknown legacy key silently (F1, F9, F34)', () => {
     const outcome = only(evaluateTaxMigrationCandidates([taxRule('r-extra', { reverseCharge: 'true' })]));
     expect(outcome).toEqual(
-      TaxMigrationReviewRequiredSchema.make({ provenance: prov('r-extra'), reason: 'TARGET_MEANING_INVALID' }),
+      TaxMigrationReviewRequiredSchema.make({
+        provenance: prov('r-extra'),
+        reason: 'TARGET_MEANING_INVALID',
+        sourceFamily: Option.some('TAX_RULE'),
+      }),
     );
   });
 
@@ -527,8 +569,16 @@ describe('#960 review round 1 regressions (Sol, Opus, Fable)', () => {
   it('marks two records for the same exact Tax Rule fact with different rates CONFLICTING (G, F16)', () => {
     const outcomes = evaluateTaxMigrationCandidates([taxRule('row-a'), taxRule('row-b', { ratePercent: '12' })]);
     expect(outcomes).toEqual([
-      TaxMigrationConflictingSchema.make({ counterparts: [prov('row-b')], provenance: prov('row-a') }),
-      TaxMigrationConflictingSchema.make({ counterparts: [prov('row-a')], provenance: prov('row-b') }),
+      TaxMigrationConflictingSchema.make({
+        counterparts: [prov('row-b')],
+        provenance: prov('row-a'),
+        sourceFamily: Option.some('TAX_RULE'),
+      }),
+      TaxMigrationConflictingSchema.make({
+        counterparts: [prov('row-a')],
+        provenance: prov('row-b'),
+        sourceFamily: Option.some('TAX_RULE'),
+      }),
     ]);
   });
 
@@ -631,5 +681,97 @@ describe('#960 review round 1 regressions (Sol, Opus, Fable)', () => {
     const evidence = assessTaxMigrationReadiness(scope, []);
     expect(Schema.is(TaxMigrationNotReadySchema)(evidence.verdict)).toBe(true);
     expect(evidence.scope).toEqual(scope);
+  });
+});
+
+describe('#960 review round 2 regressions (Opus)', () => {
+  it('never lets records of another Tax-owned family satisfy a family claim, mapped or not (F17-F18)', () => {
+    const claim = { declaredBy: 'fixture:owner', expectedSourceRecords: [src('v1')], family: 'TAX_RULE' as const };
+    const duplicated = evaluateTaxMigrationCandidates([vatCandidate('v1'), vatCandidate('v1')]);
+    const outOfScope = evaluateTaxMigrationCandidates([vatCandidate('v1', { jurisdiction: 'EU_OSS' })]);
+    for (const outcomes of [duplicated, outOfScope]) {
+      expect(
+        Schema.is(TaxMigrationNotCompleteSchema)(verifyTaxMigrationCompleteness('TAX_RULE', claim, outcomes)),
+      ).toBe(true);
+    }
+  });
+
+  it('keeps a copy of a record of unknown meaning open instead of naming TAX its owner (F3, F34)', () => {
+    const unknown = candidate('u1', { _tag: 'UNESTABLISHED', legacyFieldNames: ['VAT'] });
+    const outcomes = evaluateTaxMigrationCandidates([unknown, unknown]);
+    expect(outcomes.every((outcome) => Schema.is(TaxMigrationReviewRequiredSchema)(outcome))).toBe(true);
+  });
+
+  it('keeps a duplicate of a foreign-owned record with its foreign owner (F3)', () => {
+    const party = candidate('p1', { _tag: 'FOREIGN_OWNER', targetOwner: 'commerce.party-registry' });
+    const [, copy] = evaluateTaxMigrationCandidates([party, party]);
+    expect(copy).toEqual(
+      TaxMigrationRejectedUnmappedSchema.make({
+        provenance: prov('p1'),
+        reason: 'DUPLICATE_SOURCE_RECORD',
+        sourceFamily: Option.none(),
+        targetOwner: 'commerce.party-registry',
+      }),
+    );
+  });
+
+  it('treats differing copies of one unmapped Tax-owned record as CONFLICTING, not duplicates (G, F16)', () => {
+    const outcomes = evaluateTaxMigrationCandidates([
+      taxRule('o1', { jurisdiction: 'EU_OSS' }),
+      taxRule('o1', { jurisdiction: 'DE_OSS' }),
+    ]);
+    expect(outcomes.every((outcome) => Schema.is(TaxMigrationConflictingSchema)(outcome))).toBe(true);
+  });
+
+  it('keeps two records with the identical meaning for one fact as one mapping and one duplicate (G)', () => {
+    const outcomes = evaluateTaxMigrationCandidates([taxRule('same-a'), taxRule('same-b', { ratePercent: '21.0' })]);
+    expect(outcomes.map((outcome) => Schema.is(TaxMigrationMappedAcceptedSchema)(outcome))).toEqual([true, false]);
+  });
+
+  it('never repairs a malformed rate into a valid one (F15)', () => {
+    const outcome = only(evaluateTaxMigrationCandidates([taxRule('bad-rate', { ratePercent: '21.' })]));
+    expect(Schema.is(TaxMigrationReviewRequiredSchema)(outcome)).toBe(true);
+  });
+
+  it('names the legacy side when the pre-cutover value is unresolved (F19-F20)', () => {
+    const shadow = compareShadowVatRegistration({
+      candidateState: { authorities: [], eligibleAssertions: [] },
+      evaluationTime: at('2026-03-01T00:00:00.000Z'),
+      legacyState: 'UNRESOLVED',
+      probeRef: 'seller@2026-03-01',
+    });
+    expect(shadow).toEqual(
+      TaxShadowNotComparableSchema.make({ probeRef: 'seller@2026-03-01', reason: 'LEGACY_UNRESOLVED' }),
+    );
+  });
+});
+
+describe('#960 review round 2 regressions (Sol, Astra)', () => {
+  it('never merges two source identities whose parts only look alike when joined (F11, F17)', () => {
+    const left = taxRule('c', { taxClassificationCode: 'left' }, prov('c', 'fixture:a b'));
+    const right = taxRule('b c', { taxClassificationCode: 'right' }, prov('b c', 'fixture:a'));
+    const outcomes = evaluateTaxMigrationCandidates([left]);
+    const claim = {
+      declaredBy: 'fixture:owner',
+      expectedSourceRecords: [src('c', 'fixture:a b'), src('b c', 'fixture:a')],
+      family: 'TAX_RULE' as const,
+    };
+    expect(verifyTaxMigrationCompleteness('TAX_RULE', claim, outcomes)).toEqual(
+      expect.objectContaining({ missingSourceRecords: [src('b c', 'fixture:a')] }),
+    );
+    expect(
+      evaluateTaxMigrationCandidates([left, right]).every((outcome) =>
+        Schema.is(TaxMigrationMappedAcceptedSchema)(outcome),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('#960 review round 2 regressions (Fable)', () => {
+  it('does not count contiguous periods of one System of Record as a handoff (F23, F25)', () => {
+    const legacyLater = contract('legacy-later', 'fixture:legacy-vat', Option.some('2026-06-01T00:00:00.000Z'));
+    expect(evaluateTaxAuthorityHandoff([legacyAuthority, legacyLater])).toEqual(
+      TaxAuthorityHandoffIndeterminateSchema.make({ reason: 'NO_AUTHORITY_BOUNDARY_DECLARED' }),
+    );
   });
 });
