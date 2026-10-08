@@ -68,7 +68,10 @@ const strict = { onExcessProperty: 'error' } as const;
 
 /** Exact decimal text without insignificant trailing zeros: `21.00` and `21` are the same rate (#938, #960 F15). */
 const canonicalRate = (ratePercent: string): string =>
-  ratePercent.replace(/(?<significant>\.\d*?[1-9])0+$/u, '$<significant>').replace(/\.0+$/u, '');
+  // Only a well-formed decimal is normalized; anything else reaches the governed schema unchanged and is rejected.
+  /^\d+(?:\.\d+)?$/u.test(ratePercent)
+    ? ratePercent.replace(/(?<significant>\.\d*?[1-9])0+$/u, '$<significant>').replace(/\.0+$/u, '')
+    : ratePercent;
 
 /** Unambiguous composite key: each part is length-prefixed, so no part content can imitate a separator (#960 F11). */
 const tupleKey = (parts: readonly string[]): string => parts.map((part) => `${part.length}:${part}`).join('|');
@@ -160,10 +163,12 @@ interface EvaluatedCandidate {
 }
 
 const rawMeaningOf = (family: TaxMigrationFamily, targetMeaning: TargetMeaning): string =>
-  `${family} ${Object.entries(targetMeaning)
-    .toSorted(([left], [right]) => left.localeCompare(right, 'en'))
-    .map(([key, value]) => `${key}=${value}`)
-    .join('&')}`;
+  tupleKey([
+    family,
+    ...Object.entries(targetMeaning)
+      .toSorted(([left], [right]) => left.localeCompare(right, 'en'))
+      .flatMap(([key, value]) => [key, value]),
+  ]);
 
 const evaluateTaxOwned = (
   provenance: TaxMigrationProvenance,
@@ -414,9 +419,16 @@ export const verifyTaxMigrationCompleteness = (
   const unexpectedSourceRecords = [...observed]
     .flatMap(([key, record]) => (expected.has(key) ? [] : [record]))
     .toSorted(bySource);
-  const openSourceRecords = familyOutcomes
-    .flatMap((outcome) => (isOpenTaxMigrationOutcome(outcome) ? [sourceOf(outcome.provenance)] : []))
-    .toSorted(bySource);
+  // One entry per open source record, however many copies of it are open.
+  const openSourceRecords = [
+    ...new Map(
+      familyOutcomes.flatMap((outcome) =>
+        isOpenTaxMigrationOutcome(outcome)
+          ? [[sourceKey(outcome.provenance), sourceOf(outcome.provenance)] as const]
+          : [],
+      ),
+    ).values(),
+  ].toSorted(bySource);
   if (missingSourceRecords.length === 0 && unexpectedSourceRecords.length === 0 && openSourceRecords.length === 0) {
     return TaxMigrationCompleteSchema.make({ family, rowCount });
   }

@@ -725,12 +725,26 @@ describe('#960 review round 2 regressions (Opus)', () => {
 
   it('keeps two records with the identical meaning for one fact as one mapping and one duplicate (G)', () => {
     const outcomes = evaluateTaxMigrationCandidates([taxRule('same-a'), taxRule('same-b', { ratePercent: '21.0' })]);
-    expect(outcomes.map((outcome) => Schema.is(TaxMigrationMappedAcceptedSchema)(outcome))).toEqual([true, false]);
+    expect(outcomes).toEqual([
+      TaxMigrationMappedAcceptedSchema.make({
+        family: 'TAX_RULE',
+        provenance: prov('same-a'),
+        targetMeaningKey: keyOf(),
+      }),
+      TaxMigrationRejectedUnmappedSchema.make({
+        provenance: prov('same-b'),
+        reason: 'DUPLICATE_SOURCE_RECORD',
+        sourceFamily: Option.some('TAX_RULE'),
+        targetOwner: 'commerce.tax',
+      }),
+    ]);
   });
 
   it('never repairs a malformed rate into a valid one (F15)', () => {
-    const outcome = only(evaluateTaxMigrationCandidates([taxRule('bad-rate', { ratePercent: '21.' })]));
-    expect(Schema.is(TaxMigrationReviewRequiredSchema)(outcome)).toBe(true);
+    for (const ratePercent of ['21.', '21.5.0', '21.00.00']) {
+      const outcome = only(evaluateTaxMigrationCandidates([taxRule('bad-rate', { ratePercent })]));
+      expect(Schema.is(TaxMigrationReviewRequiredSchema)(outcome)).toBe(true);
+    }
   });
 
   it('names the legacy side when the pre-cutover value is unresolved (F19-F20)', () => {
@@ -772,6 +786,30 @@ describe('#960 review round 2 regressions (Fable)', () => {
     const legacyLater = contract('legacy-later', 'fixture:legacy-vat', Option.some('2026-06-01T00:00:00.000Z'));
     expect(evaluateTaxAuthorityHandoff([legacyAuthority, legacyLater])).toEqual(
       TaxAuthorityHandoffIndeterminateSchema.make({ reason: 'NO_AUTHORITY_BOUNDARY_DECLARED' }),
+    );
+  });
+});
+
+describe('#960 review round 3 regressions (Astra)', () => {
+  it('never takes differing raw copies of one record for duplicates, whatever their characters (G, F16)', () => {
+    const outcomes = evaluateTaxMigrationCandidates([
+      taxRule('raw', { jurisdiction: 'EU_OSS', zNote: 'x&b=y' }),
+      taxRule('raw', { jurisdiction: 'EU_OSS', zb: 'y', zNote: 'x' }),
+    ]);
+    expect(outcomes.every((outcome) => Schema.is(TaxMigrationConflictingSchema)(outcome))).toBe(true);
+  });
+
+  it('rejects HANDOFF_VALID evidence without a boundary (F23)', () => {
+    const decode = Schema.decodeUnknownResult(TaxAuthorityHandoffValidSchema);
+    expect(Result.isSuccess(decode({ _tag: 'HANDOFF_VALID', boundaries: [] }))).toBe(false);
+  });
+});
+
+describe('#960 review round 3 regressions (Fable)', () => {
+  it('lists an open record once in completeness, however many copies are open (F18)', () => {
+    const outcomes = evaluateTaxMigrationCandidates([taxRule('split'), taxRule('split', { ratePercent: '12' })]);
+    expect(verifyTaxMigrationCompleteness('TAX_RULE', ruleClaim(['split']), outcomes)).toEqual(
+      expect.objectContaining({ openSourceRecords: [src('split')] }),
     );
   });
 });
