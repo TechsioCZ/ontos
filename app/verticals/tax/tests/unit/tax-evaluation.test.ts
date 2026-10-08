@@ -1,7 +1,9 @@
-import { DateTime, Schema } from 'effect';
+import { ReadHandlerUnavailable } from '@app/core-runtime';
+import { DateTime, Effect, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import type { SellingLegalEntityVatRegistrationState } from '../../src/domain/selling-legal-entity-vat-registration.ts';
+import { readTaxEvaluation } from '../../src/api/tax-evaluation.read.ts';
 import { taxEvaluationRequestRejections } from '../../src/domain/tax-evaluation-request.ts';
 import { requiredTaxClassificationCodes, taxDecisionIdFor } from '../../src/domain/tax-evaluation.ts';
 import {
@@ -19,8 +21,10 @@ import { TaxOutcomeSuccessSchema } from '../../src/domain/tax-outcome.ts';
 import type { TaxOutcome, TaxOutcomeSuccess } from '../../src/domain/tax-outcome.ts';
 import { TaxEvaluationTimeSchema } from '../../src/domain/tax-time.ts';
 import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
+import { unavailable } from '../../src/services/tax-governance-persistence.ts';
 import { exactDecimal, occurrenceInput, purchaseBindingInput } from './tax-domain-fixtures.ts';
 import {
+  PRICING_RESULT_REF,
   REDUCED_CODE,
   STANDARD_CODE,
   catalogEntry,
@@ -102,6 +106,14 @@ const withReducedOutcome = (outcome: 'TAX_RULE_MISSING' | 'TAX_RULE_OVERLAP' | '
     }),
   );
 
+const eurLineOnO2 = () =>
+  evaluationRequest({
+    pricing: {
+      pricingResultRef: PRICING_RESULT_REF,
+      publishedLines: [pricingLine('o1', '1000.00'), pricingLine('o2', '10', 'EUR')],
+    },
+  });
+
 describe('Prospective Launch Tax evaluation', () => {
   it('#936 #935 #942 mixed rates: one Decision with one Result per Taxable Supply Unit, rounded once per unit', () => {
     const outcome = success(evaluate());
@@ -131,7 +143,10 @@ describe('Prospective Launch Tax evaluation', () => {
   });
 
   it('#935 F21-F22 a unit is published ROUND_HALF_UP at 0.01 CZK from its exact contribution', () => {
-    const request = evaluationRequest({ pricing: { publishedLines: [pricingLine('o1', '33.33')] } }, ['o1']);
+    const request = evaluationRequest(
+      { pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '33.33')] } },
+      ['o1'],
+    );
 
     expect(publishedByUnit(evaluate(request))).toEqual(new Map([['taxable-supply-unit:o1', '7.00']]));
   });
@@ -144,7 +159,10 @@ describe('Prospective Launch Tax evaluation', () => {
     it('input order, Tax Evaluation Time and traceability context never change it', () => {
       const shuffled = evaluationRequest({
         catalog: [catalogEntry('o2', REDUCED_CODE), catalogEntry('o1', STANDARD_CODE)],
-        pricing: { publishedLines: [pricingLine('o2', '500.00'), pricingLine('o1', '1000.00')] },
+        pricing: {
+          pricingResultRef: PRICING_RESULT_REF,
+          publishedLines: [pricingLine('o2', '500.00'), pricingLine('o1', '1000.00')],
+        },
         purchase: purchaseBindingInput(['o2', 'o1'], { traceabilityContext: { channel: 'B2B', locale: 'cs-CZ' } }),
       });
       const later = TaxEvaluationTimeSchema.make(DateTime.makeUnsafe('2026-10-08T11:00:00.000Z'));
@@ -230,13 +248,18 @@ describe('Prospective Launch Tax evaluation', () => {
     });
 
     it('#931 F14 a missing published line is never estimated', () => {
-      const request = evaluationRequest({ pricing: { publishedLines: [pricingLine('o1', '1000.00')] } });
+      const request = evaluationRequest({
+        pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '1000.00')] },
+      });
 
       expect(evaluate(request)).toEqual(indeterminate);
     });
 
     it('#931 F15-F16 a non-CZK published line is never relabelled', () => {
-      const request = evaluationRequest({ pricing: { publishedLines: [pricingLine('o1', '10', 'EUR')] } }, ['o1']);
+      const request = evaluationRequest(
+        { pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', '10', 'EUR')] } },
+        ['o1'],
+      );
 
       expect(evaluate(request)).toEqual(TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NON_CZK_CURRENCY' }));
     });
@@ -247,6 +270,36 @@ describe('Prospective Launch Tax evaluation', () => {
       expect(evaluate(request)).toEqual(
         TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'SET_MULTI_SUPPLY_DECOMPOSITION' }),
       );
+    });
+  });
+
+  describe('#938 F3 F7 F16 unsupported scope is reported before prerequisites and configuration', () => {
+    const nonCzk = TaxCaseUnsupportedSchema.make({ unsupportedRequirement: 'NON_CZK_CURRENCY' });
+
+    it("one unit's missing rule never masks another unit's unsupported currency", () => {
+      const state = ownState({
+        ruleSets: new Map([
+          [STANDARD_CODE, { applicable: [], outcome: 'TAX_RULE_MISSING' }],
+          [REDUCED_CODE, selected('12', 'rule-reduced')],
+        ]),
+      });
+
+      expect(evaluate(eurLineOnO2(), state)).toEqual(nonCzk);
+    });
+
+    it('a known-negative seller never masks an unsupported unit', () => {
+      expect(evaluate(eurLineOnO2(), ownState({ sellerVatRegistration: 'KNOWN_ENDED_OR_NON_REGISTERED' }))).toEqual(
+        nonCzk,
+      );
+    });
+
+    it('#931 F14 a purchase without any published line is indeterminate, not rejected', () => {
+      const request = evaluationRequest({ pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [] } }, [
+        'o1',
+      ]);
+
+      expect(taxEvaluationRequestRejections(request)).toEqual([]);
+      expect(evaluate(request)).toEqual(indeterminate);
     });
   });
 
@@ -329,11 +382,41 @@ describe('Structural binding of the evaluation request (#937 F11-F30)', () => {
 
   it('a published line of an unbound occurrence is rejected', () => {
     const request = evaluationRequest(
-      { pricing: { publishedLines: [pricingLine('o1', '1000.00'), pricingLine('o9', '1.00')] } },
+      {
+        pricing: {
+          pricingResultRef: PRICING_RESULT_REF,
+          publishedLines: [pricingLine('o1', '1000.00'), pricingLine('o9', '1.00')],
+        },
+      },
       ['o1'],
     );
 
     expect(taxEvaluationRequestRejections(request)).toEqual(['STRUCTURAL_BINDING_INVALID']);
+  });
+
+  it('#937 F26-F28 published lines must come from the exact Pricing Result the binding names', () => {
+    const otherResult = evaluationRequest({
+      pricing: {
+        pricingResultRef: { pricingResultId: 'pricing-result-2', revision: 1 },
+        publishedLines: [pricingLine('o1', '1000.00'), pricingLine('o2', '500.00')],
+      },
+    });
+
+    expect(taxEvaluationRequestRejections(otherResult)).toEqual(['STRUCTURAL_BINDING_INVALID']);
+  });
+
+  it('#937 F27 one Pricing Line never stands for two occurrences', () => {
+    const shared = evaluationRequest({
+      pricing: {
+        pricingResultRef: PRICING_RESULT_REF,
+        publishedLines: [
+          pricingLine('o1', '1000.00'),
+          { ...pricingLine('o2', '500.00'), pricingLineRef: 'pricing-line-o1' },
+        ],
+      },
+    });
+
+    expect(taxEvaluationRequestRejections(shared)).toEqual(['STRUCTURAL_BINDING_INVALID']);
   });
 
   it('#937 F29-F30 Shipping evidence must be the exact source revision the binding names', () => {
@@ -355,4 +438,27 @@ describe('Structural binding of the evaluation request (#937 F11-F30)', () => {
       'SET_MEANING_UNDECLARED',
     ]);
   });
+});
+
+describe('Tax evaluation read handler', () => {
+  it.effect('a failed TAX own read is a retryable unavailable read, never a guessed Tax Outcome', () =>
+    Effect.gen(function* unavailableOwnState() {
+      const failure = yield* Effect.flip(
+        readTaxEvaluation(evaluationRequest(), {
+          readKey: 'commerce.tax.api.tax-evaluation',
+          scope: {
+            authContextRef: 'better-auth-session:test',
+            authMethod: 'session',
+            correlationId: 'correlation-1',
+            legalEntityId: 'selling-legal-entity-1',
+            principalId: 'principal-1',
+            tenantId: 'tenant-1',
+          },
+          services: { evaluations: { evaluate: () => Effect.fail(unavailable()) } },
+        }),
+      );
+
+      expect(failure).toBeInstanceOf(ReadHandlerUnavailable);
+    }),
+  );
 });

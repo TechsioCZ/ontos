@@ -13,6 +13,8 @@ export type TaxEvaluationRequestInput = typeof TaxEvaluationRequestSchema.Encode
 
 export const decodeEvaluationRequest = Schema.decodeUnknownSync(TaxEvaluationRequestSchema);
 
+export const PRICING_RESULT_REF = { pricingResultId: 'pricing-result-1', revision: 1 } as const;
+
 export const STANDARD_CODE = 'cz-standard-goods';
 export const REDUCED_CODE = 'cz-reduced-food';
 
@@ -68,6 +70,7 @@ export const evaluationRequestInput = (
     sellingLegalEntity: { _tag: 'OWNER_RESOLVED', countryCode: 'CZ', ownerEvidenceRef: 'seller-place-evidence-1' },
   },
   pricing: {
+    pricingResultRef: PRICING_RESULT_REF,
     publishedLines: [
       pricingLine(occurrenceIds[0], '1000.00'),
       ...occurrenceIds.slice(1).map((occurrenceId) => pricingLine(occurrenceId, '500.00')),

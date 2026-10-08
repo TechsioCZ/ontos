@@ -2,6 +2,7 @@ import { Match, Schema } from 'effect';
 
 import { CustomerSafeTaxDecompositionNeedSchema } from './customer-safe-tax-projection.ts';
 import {
+  PricingResultRefSchema,
   PurchaseDemandOccurrenceIdSchema,
   TaxPurchaseBindingSchema,
   isSameCatalogSelection,
@@ -60,7 +61,10 @@ export const TaxEvaluationRequestSchema = Schema.Struct({
   catalog: Schema.NonEmptyArray(OccurrenceCatalogEvidenceSchema).check(distinctOccurrenceIds),
   decompositionNeed: CustomerSafeTaxDecompositionNeedSchema,
   places: TaxJurisdictionInputSchema,
-  pricing: Schema.Struct({ publishedLines: Schema.NonEmptyArray(PublishedPricingLineSchema) }),
+  pricing: Schema.Struct({
+    pricingResultRef: PricingResultRefSchema,
+    publishedLines: Schema.Array(PublishedPricingLineSchema),
+  }),
   purchase: TaxPurchaseBindingSchema,
   setSupplyMeanings: Schema.optionalKey(Schema.Array(SetSupplyMeaningDeclarationSchema).check(distinctOccurrenceIds)),
   shipping: Schema.optionalKey(ShippingEvaluationInputSchema),
@@ -93,6 +97,26 @@ const catalogBound = (request: TaxEvaluationRequest): boolean => {
         isSameCatalogSelection(entry.classificationInput.catalogSelection, occurrence.catalogSelection)
       );
     })
+  );
+};
+
+/**
+ * Published lines come from the exact Pricing Result the binding names, name only bound occurrences, and one Pricing
+ * Line never stands for two occurrences (#937 F26-F28). A missing line is not a rejection; the kernel gives it its
+ * typed non-success (#931 F14).
+ */
+const pricingBound = (request: TaxEvaluationRequest, occurrenceIds: ReadonlySet<string>): boolean => {
+  const { pricing, purchase } = request;
+  const occurrenceByLine = new Map<string, string>();
+  const linesBound = pricing.publishedLines.every(({ occurrenceId, pricingLineRef }) => {
+    const bound = occurrenceByLine.get(pricingLineRef);
+    occurrenceByLine.set(pricingLineRef, occurrenceId);
+    return occurrenceIds.has(occurrenceId) && (bound === undefined || bound === occurrenceId);
+  });
+  return (
+    linesBound &&
+    pricing.pricingResultRef.pricingResultId === purchase.pricingResultRef.pricingResultId &&
+    pricing.pricingResultRef.revision === purchase.pricingResultRef.revision
   );
 };
 
@@ -147,10 +171,7 @@ export const taxEvaluationRequestRejections = (
   );
   const structurallyBound =
     catalogBound(request) &&
-    subsetOf(
-      request.pricing.publishedLines.map(({ occurrenceId }) => occurrenceId),
-      occurrenceIds,
-    ) &&
+    pricingBound(request, occurrenceIds) &&
     shippingBound(request, occurrenceIds) &&
     subsetOf([...declared.keys()], setOccurrenceIds);
   const setMeaningsDeclared = [...setOccurrenceIds].every((occurrenceId) => declared.has(occurrenceId));

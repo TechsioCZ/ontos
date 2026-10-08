@@ -7,6 +7,7 @@ import {
   TaxMaterialityUnverifiableSchema,
   TaxNonMaterialAttestationSchema,
   compareTaxMateriality,
+  taxOutcomeVisibleInScope,
 } from '../../src/domain/tax-materiality.ts';
 import type { TaxMaterialityConclusion } from '../../src/domain/tax-materiality.ts';
 import { TaxRuleMissingSchema } from '../../src/domain/tax-non-success-outcome.ts';
@@ -14,8 +15,9 @@ import { TaxOutcomeSuccessSchema } from '../../src/domain/tax-outcome.ts';
 import type { TaxOutcome, TaxOutcomeSuccess } from '../../src/domain/tax-outcome.ts';
 import { TaxEvaluationTimeSchema } from '../../src/domain/tax-time.ts';
 import { taxMeaningFingerprint } from '../../src/services/tax-governance-fingerprint.ts';
-import { purchaseBindingInput } from './tax-domain-fixtures.ts';
+import { exactDecimal, purchaseBindingInput } from './tax-domain-fixtures.ts';
 import {
+  PRICING_RESULT_REF,
   REDUCED_CODE,
   STANDARD_CODE,
   catalogEntry,
@@ -57,7 +59,33 @@ const withStandardRule = (standard: ReturnType<typeof selected>) =>
   });
 
 const singleLine = (value: string) =>
-  evaluationRequest({ pricing: { publishedLines: [pricingLine('o1', value)] } }, ['o1']);
+  evaluationRequest({ pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [pricingLine('o1', value)] } }, [
+    'o1',
+  ]);
+
+const withWeights = (o1Weight: string) =>
+  evaluate(
+    evaluationRequest({
+      purchase: purchaseBindingInput(['o1', 'o2'], {
+        shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
+      }),
+      shipping: {
+        affectedOccurrenceIds: ['o1', 'o2'],
+        allocationWeights: {
+          approvalEvidenceRef: 'weights-approval-1',
+          weights: [
+            { occurrenceId: 'o1', weight: exactDecimal(o1Weight) },
+            { occurrenceId: 'o2', weight: exactDecimal('1') },
+          ],
+        },
+        source: {
+          _tag: 'CURRENT',
+          amount: { amount: exactDecimal('100.00'), currency: 'CZK' },
+          shippingSourceRef: { revision: 1, shippingAmountId: 'shipping-1' },
+        },
+      },
+    }),
+  );
 
 describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
   const approved = evaluate();
@@ -160,5 +188,21 @@ describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
     );
 
     expect(materialReasons(compare(approved, reclassified))).toEqual(Option.some(['CLASSIFICATION']));
+  });
+
+  it('#943 F3 a changed Shipping allocation is material', () => {
+    expect(materialReasons(compare(withWeights('3'), withWeights('1')))).toEqual(
+      Option.some(['SHIPPING_ALLOCATION', 'PUBLISHED_TAX_AMOUNT', 'PURCHASE_TAX_TOTAL']),
+    );
+  });
+
+  it('#950 F21-F25 a compared outcome is visible only to its own Tenant and Selling Legal Entity', () => {
+    const binding = success(approved).decision.purchaseBinding;
+    const own = { legalEntityId: binding.sellingLegalEntityRef, tenantId: binding.tenantId };
+
+    expect(taxOutcomeVisibleInScope(approved, own)).toBe(true);
+    expect(taxOutcomeVisibleInScope(approved, { ...own, tenantId: 'tenant-2' })).toBe(false);
+    expect(taxOutcomeVisibleInScope(approved, { ...own, legalEntityId: 'selling-legal-entity-2' })).toBe(false);
+    expect(taxOutcomeVisibleInScope(TaxRuleMissingSchema.make({}), { ...own, tenantId: 'tenant-2' })).toBe(true);
   });
 });
