@@ -62,10 +62,10 @@ describe('Accepted Tax Terms', () => {
     const terms = decodeAcceptedTaxTerms(input());
 
     expect(Option.getOrThrow(originalUnitBaseline(terms, unitIdOf('o-1')))).toEqual({
-      originalBasis: exactDecimal('1009.9'),
       originalLineBasis: exactDecimal('999.9'),
       originalPublishedTax: { amount: '212.08', currency: 'CZK' },
       originalQuantity: exactDecimal('10'),
+      originalShippingBasis: exactDecimal('10'),
       rate: exactDecimal('0.21'),
       taxRoundingPolicy: terms.finalTax.result.taxRoundingPolicy,
     });

@@ -3,6 +3,7 @@ import { Array as Arr, Match, Option, Order, Result, Schema, pipe } from 'effect
 import {
   AcceptedTaxTermsSchema,
   AuthoritativeOriginalAcceptedRecordSchema,
+  OrderLineageSchema,
   originalUnitBaseline,
 } from './accepted-tax-terms.ts';
 import type { AcceptedTaxTerms, OriginalUnitBaseline } from './accepted-tax-terms.ts';
@@ -18,7 +19,7 @@ import {
   subtractTaxExactRationals,
   taxExactRationalFromMinorUnits,
 } from './tax-exact-rational.ts';
-import type { NonNegativeTaxExactRational, TaxExactRational } from './tax-exact-rational.ts';
+import type { TaxExactRational } from './tax-exact-rational.ts';
 import {
   TAX_HISTORICAL_INPUT_UNRESOLVED,
   TaxHistoricalInputUnresolvedReasonSchema,
@@ -37,11 +38,16 @@ import type { TaxMonetaryAmount } from './tax-monetary-amount.ts';
 import { TaxRoundingPolicySchema } from './tax-rounding.ts';
 import { TaxableSupplyUnitIdSchema } from './taxable-supply-unit.ts';
 
-/** Cumulative corrected published Tax state of one original Taxable Supply Unit (#948 F17-F19). */
+/**
+ * Cumulative corrected state of one original Taxable Supply Unit: remaining accepted quantity, the remaining exact
+ * Line Commercial Value and allocated Shipping share of its Taxable Basis, and the remaining published Tax. The two
+ * basis components stay separate so the original source allocation remains explainable (#948 F8, F17-F19, F25).
+ */
 export const CumulativeUnitTaxStateSchema = Schema.Struct({
-  remainingBasis: NonNegativeTaxExactRationalSchema,
+  remainingLineBasis: NonNegativeTaxExactRationalSchema,
   remainingPublishedTax: TaxMonetaryAmountSchema,
   remainingQuantity: NonNegativeTaxExactRationalSchema,
+  remainingShippingBasis: NonNegativeTaxExactRationalSchema,
 });
 export type CumulativeUnitTaxState = typeof CumulativeUnitTaxStateSchema.Type;
 
@@ -60,18 +66,28 @@ export const AcceptedCumulativeCorrectionStateSchema = Schema.Union([
 ]);
 export type AcceptedCumulativeCorrectionState = typeof AcceptedCumulativeCorrectionStateSchema.Type;
 
-const nonZero = Schema.makeFilter(
-  (value: TaxExactRational) => value.numerator !== '0' || 'A correction must change quantity or value',
+/**
+ * A supported ordinary return/correction reduces the original supply; it is never a repricing upward or a reversal
+ * of an Accepted corrective document, which stays in the sequence (#948 F9, F19 "the remaining state decreases",
+ * #948 E arbitrary post-order repricing).
+ */
+const NegativeDeltaSchema = TaxExactRationalSchema.check(
+  Schema.makeFilter(
+    (value: TaxExactRational) => value.numerator.startsWith('-') || 'A supported correction must reduce the original',
+  ),
 );
 
 /**
- * Explicit authorized change of one original unit: a signed quantity delta in the unit's accepted quantity unit, or
- * a signed commercial-value delta of its Taxable Basis in CZK. Never inferred from a refund, a customer-facing total
- * or a Fulfillment status (#948 F10-F11, #907 F187, F193-F194).
+ * Explicit authorized reduction of one original unit: a negative quantity delta in the unit's accepted quantity unit,
+ * or a negative commercial-value delta of one named basis component in CZK. Never inferred from a refund, a
+ * customer-facing total or a Fulfillment status (#948 F10-F11, F25, #907 F187, F193-F194).
  */
 export const TaxCorrectionChangeSchema = Schema.Union([
-  Schema.TaggedStruct('QUANTITY', { quantityDelta: TaxExactRationalSchema.check(nonZero) }),
-  Schema.TaggedStruct('VALUE', { valueDelta: TaxExactRationalSchema.check(nonZero) }),
+  Schema.TaggedStruct('QUANTITY', { quantityDelta: NegativeDeltaSchema }),
+  Schema.TaggedStruct('VALUE', {
+    basisComponent: Schema.Literals(['LINE_COMMERCIAL_VALUE', 'SHIPPING_ALLOCATION']),
+    valueDelta: NegativeDeltaSchema,
+  }),
 ]);
 export type TaxCorrectionChange = typeof TaxCorrectionChangeSchema.Type;
 
@@ -96,6 +112,7 @@ export const TaxCorrectionFactsSchema = Schema.Struct({
     ),
   ),
 });
+export type TaxCorrectionFacts = typeof TaxCorrectionFactsSchema.Type;
 
 /** One supported return/correction of an Authoritative Original Accepted Record (#946 F15, #948 A). */
 export const TaxCorrectionRequestSchema = Schema.Struct({
@@ -121,15 +138,16 @@ export const TaxCorrectionUnitDeltaSchema = Schema.Struct({
 export type TaxCorrectionUnitDelta = typeof TaxCorrectionUnitDeltaSchema.Type;
 
 /**
- * Tax Correction Delta of one correction: a purpose-specific result bound to its original record, Decision and
- * rounding policy; not a replacement original Tax Result, a Pricing Result, a refund or a payable amount
- * (#948 F13-F15, #921 F20, #907 F186, F192).
+ * Tax Correction Delta of one correction: a purpose-specific result bound to its original record with its exact
+ * Order/Bundle lineage, Decision and rounding policy; not a replacement original Tax Result, a Pricing Result, a
+ * refund or a payable amount (#948 F13-F15, #921 F20, #907 F183, F186, F192).
  */
 export const TaxCorrectionDeltaSchema = Schema.TaggedStruct('TAX_CORRECTION_DELTA', {
   correctionEventRef: BoundedIdentifierSchema,
   correctionReason: BoundedIdentifierSchema,
   correctionTaxDelta: SignedTaxMonetaryAmountSchema,
   currency: TaxCurrencySchema,
+  originalOrderLineage: OrderLineageSchema,
   originalRecord: AuthoritativeOriginalAcceptedRecordSchema,
   originalTaxDecisionId: TaxDecisionIdSchema,
   taxRoundingPolicy: TaxRoundingPolicySchema,
@@ -145,21 +163,28 @@ type UnresolvedUnit = typeof UnresolvedUnitSchema.Type;
 const isUnresolvedUnit = Schema.is(UnresolvedUnitSchema);
 
 const OutOfBoundsUnitSchema = Schema.Struct({
-  reason: Schema.Literals(['QUANTITY_OUTSIDE_ORIGINAL', 'BASIS_OUTSIDE_ORIGINAL']),
+  reason: Schema.Literals(['EXCEEDS_REMAINING_QUANTITY', 'EXCEEDS_REMAINING_BASIS_COMPONENT']),
   taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
 });
 type OutOfBoundsUnit = typeof OutOfBoundsUnitSchema.Type;
 const isOutOfBoundsUnit = Schema.is(OutOfBoundsUnitSchema);
 
-/** Explicit unresolved historical input of one or more requested units (#947 F13, #948 F7, PO default D4). */
+/**
+ * Explicit unresolved historical input (#947 F13, #948 F7, PO default D4): the Authoritative Original Accepted Record
+ * handed over is incomplete or ambiguous as a whole, or named units cannot be established from it. No Tax amount,
+ * guessed zero or Current-source fallback.
+ */
 export const TaxCorrectionHistoricalInputUnresolvedSchema = Schema.TaggedStruct(TAX_HISTORICAL_INPUT_UNRESOLVED, {
-  units: Schema.Array(UnresolvedUnitSchema).check(Schema.isMinLength(1)),
+  unresolved: Schema.Union([
+    Schema.TaggedStruct('ORIGINAL_RECORD_INCOMPLETE', {}),
+    Schema.TaggedStruct('UNITS', { units: Schema.Array(UnresolvedUnitSchema).check(Schema.isMinLength(1)) }),
+  ]),
 });
 
 /**
- * The authorized change would leave the original unit's quantity or basis outside `[0, original]`: already corrected
- * quantity or basis would be consumed twice, or the correction would reprice above the original sale. It is
- * rejected, never clamped or moved to another unit (#948 F9, F16, F24).
+ * The authorized reduction exceeds what remains of the original unit's quantity or of the named basis component:
+ * already corrected quantity or basis would be consumed twice. It is rejected, never clamped or moved to another
+ * unit (#948 F16, F24).
  */
 export const TaxCorrectionOutOfBoundsSchema = Schema.TaggedStruct('TAX_CORRECTION_OUT_OF_BOUNDS', {
   units: Schema.Array(OutOfBoundsUnitSchema).check(Schema.isMinLength(1)),
@@ -180,18 +205,26 @@ const exactValueOf = (amount: TaxMonetaryAmount): TaxExactRational =>
 const isAtMost = (value: TaxExactRational, limit: TaxExactRational) =>
   isNonNegativeTaxExactRational(subtractTaxExactRationals(limit, value));
 
-/** Published Tax of a remaining basis at the original rate and the original single per-unit boundary (#948 F18, F21). */
-const publishedTaxOf = (baseline: OriginalUnitBaseline, basis: NonNegativeTaxExactRational) => {
-  const exact = NonNegativeTaxExactRationalSchema.make(multiplyTaxExactRationals(basis, baseline.rate));
+const isZero = (value: TaxExactRational) => value.numerator === '0';
+
+/**
+ * Published Tax of a remaining basis at the original rate and the original single per-unit boundary; the basis is the
+ * exact sum of its components, never rounded before this boundary (#948 F18, F21; #935 F12-F22).
+ */
+const publishedTaxOf = (baseline: OriginalUnitBaseline, line: TaxExactRational, shipping: TaxExactRational) => {
+  const exact = NonNegativeTaxExactRationalSchema.make(
+    multiplyTaxExactRationals(addTaxExactRationals(line, shipping), baseline.rate),
+  );
   const published = publishedTaxAmountRoundedHalfUp(exact);
   return { adjustment: subtractTaxExactRationals(exactValueOf(published), exact), exact, published };
 };
 
 /** The original record is the initial Accepted state of every unit (#948 F19). */
 const initialState = (baseline: OriginalUnitBaseline): CumulativeUnitTaxState => ({
-  remainingBasis: baseline.originalBasis,
+  remainingLineBasis: baseline.originalLineBasis,
   remainingPublishedTax: baseline.originalPublishedTax,
   remainingQuantity: NonNegativeTaxExactRationalSchema.make(baseline.originalQuantity),
+  remainingShippingBasis: baseline.originalShippingBasis,
 });
 
 const previousStateOf = (baseline: OriginalUnitBaseline, expected: AcceptedCumulativeCorrectionState) =>
@@ -203,40 +236,59 @@ const previousStateOf = (baseline: OriginalUnitBaseline, expected: AcceptedCumul
   );
 
 /**
- * An Accepted state can only have followed from the original record by this arithmetic: within the original quantity
- * and basis, and published at the original rate and boundary. Anything else is an unresolved historical input for
- * Billing to recover, not a state TAX repairs (#947 F13-F14, #948 F7).
+ * An Accepted state can only have followed from the original record by this arithmetic: each remaining quantity and
+ * basis component within the original, no goods value left once no quantity is left, and published at the original
+ * rate and boundary. Anything else is an unresolved historical input for Billing to recover, not a state TAX repairs
+ * (#947 F13-F14, #948 F7).
  */
 const followsFromOriginalRecord = (baseline: OriginalUnitBaseline, state: CumulativeUnitTaxState) =>
   isAtMost(state.remainingQuantity, baseline.originalQuantity) &&
-  isAtMost(state.remainingBasis, baseline.originalBasis) &&
-  publishedTaxOf(baseline, state.remainingBasis).published.amount === state.remainingPublishedTax.amount;
+  isAtMost(state.remainingLineBasis, baseline.originalLineBasis) &&
+  isAtMost(state.remainingShippingBasis, baseline.originalShippingBasis) &&
+  (!isZero(state.remainingQuantity) || isZero(state.remainingLineBasis)) &&
+  publishedTaxOf(baseline, state.remainingLineBasis, state.remainingShippingBasis).published.amount ===
+    state.remainingPublishedTax.amount;
 
 /**
- * Next remaining basis. A quantity change moves the unit's original Line Commercial Value pro rata to the accepted
- * quantity; an allocated Shipping share changes only through an explicit value change, so arithmetic never invents
- * a Shipping refund. A value change moves the basis by exactly the authorized amount (#948 F8, F10-F11, F25).
+ * Next remaining quantity and basis components. A quantity reduction removes the same share of the remaining Line
+ * Commercial Value as of the remaining quantity, so earlier value corrections are respected and returning the last
+ * quantity leaves no goods value; an allocated Shipping share changes only through an explicit value reduction of
+ * that component, so arithmetic never invents a Shipping refund. A value reduction moves exactly the named component
+ * (#948 F8, F10-F11, F22, F25).
  */
-const nextRemaining = (baseline: OriginalUnitBaseline, previous: CumulativeUnitTaxState, change: TaxCorrectionChange) =>
+const nextRemaining = (
+  previous: CumulativeUnitTaxState,
+  change: TaxCorrectionChange,
+): Result.Result<{ line: TaxExactRational; quantity: TaxExactRational; shipping: TaxExactRational }, 'QUANTITY'> =>
   Match.value(change).pipe(
     Match.tagsExhaustive({
-      QUANTITY: ({ quantityDelta }) => ({
-        basis: Option.match(
-          divideTaxExactRationals(
-            multiplyTaxExactRationals(baseline.originalLineBasis, quantityDelta),
-            baseline.originalQuantity,
-          ),
-          {
-            onNone: () => previous.remainingBasis,
-            onSome: (share) => addTaxExactRationals(previous.remainingBasis, share),
-          },
-        ),
-        quantity: addTaxExactRationals(previous.remainingQuantity, quantityDelta),
-      }),
-      VALUE: ({ valueDelta }) => ({
-        basis: addTaxExactRationals(previous.remainingBasis, valueDelta),
-        quantity: previous.remainingQuantity,
-      }),
+      QUANTITY: ({ quantityDelta }) => {
+        const quantity = addTaxExactRationals(previous.remainingQuantity, quantityDelta);
+        return isNonNegativeTaxExactRational(quantity)
+          ? Result.fromOption(
+              divideTaxExactRationals(quantity, previous.remainingQuantity),
+              () => 'QUANTITY' as const,
+            ).pipe(
+              Result.map((share) => ({
+                line: multiplyTaxExactRationals(previous.remainingLineBasis, share),
+                quantity,
+                shipping: previous.remainingShippingBasis,
+              })),
+            )
+          : Result.fail('QUANTITY' as const);
+      },
+      VALUE: ({ basisComponent, valueDelta }) =>
+        Result.succeed({
+          line:
+            basisComponent === 'LINE_COMMERCIAL_VALUE'
+              ? addTaxExactRationals(previous.remainingLineBasis, valueDelta)
+              : previous.remainingLineBasis,
+          quantity: previous.remainingQuantity,
+          shipping:
+            basisComponent === 'SHIPPING_ALLOCATION'
+              ? addTaxExactRationals(previous.remainingShippingBasis, valueDelta)
+              : previous.remainingShippingBasis,
+        }),
     }),
   );
 
@@ -254,22 +306,24 @@ const calculateUnit = (
   if (!followsFromOriginalRecord(baseline, previous)) {
     return Result.fail({ reason: 'STATE_INCONSISTENT_WITH_ORIGINAL_RECORD', taxableSupplyUnitId });
   }
-  const next = nextRemaining(baseline, previous, request.change);
-  if (!isNonNegative(next.quantity) || !isAtMost(next.quantity, baseline.originalQuantity)) {
-    return Result.fail({ reason: 'QUANTITY_OUTSIDE_ORIGINAL', taxableSupplyUnitId });
+  const next = nextRemaining(previous, request.change);
+  if (Result.isFailure(next) || !isNonNegative(next.success.quantity)) {
+    return Result.fail({ reason: 'EXCEEDS_REMAINING_QUANTITY', taxableSupplyUnitId });
   }
-  if (!isNonNegative(next.basis) || !isAtMost(next.basis, baseline.originalBasis)) {
-    return Result.fail({ reason: 'BASIS_OUTSIDE_ORIGINAL', taxableSupplyUnitId });
+  const { line, quantity, shipping } = next.success;
+  if (!isNonNegative(quantity) || !isNonNegative(line) || !isNonNegative(shipping)) {
+    return Result.fail({ reason: 'EXCEEDS_REMAINING_BASIS_COMPONENT', taxableSupplyUnitId });
   }
-  const tax = publishedTaxOf(baseline, next.basis);
+  const tax = publishedTaxOf(baseline, line, shipping);
   return Result.succeed({
     exactTaxContribution: tax.exact,
     expectedPreviousState: request.expectedPreviousState,
     previous,
     proposedNext: {
-      remainingBasis: next.basis,
+      remainingLineBasis: line,
       remainingPublishedTax: tax.published,
-      remainingQuantity: next.quantity,
+      remainingQuantity: quantity,
+      remainingShippingBasis: shipping,
     },
     taxableSupplyUnitId,
     taxCorrectionDelta: signedTaxMonetaryAmountFromMinorUnits(
@@ -304,7 +358,7 @@ export const calculateTaxCorrectionDelta = (request: TaxCorrectionRequest): TaxC
   return Result.match(Result.all(calculations), {
     onFailure: (): TaxCorrectionOutcome =>
       Arr.isReadonlyArrayNonEmpty(unresolved)
-        ? { _tag: TAX_HISTORICAL_INPUT_UNRESOLVED, units: unresolved }
+        ? { _tag: TAX_HISTORICAL_INPUT_UNRESOLVED, unresolved: { _tag: 'UNITS', units: unresolved } }
         : { _tag: 'TAX_CORRECTION_OUT_OF_BOUNDS', units: outOfBounds },
     onSuccess: (units): TaxCorrectionOutcome => ({
       _tag: 'TAX_CORRECTION_DELTA',
@@ -314,6 +368,7 @@ export const calculateTaxCorrectionDelta = (request: TaxCorrectionRequest): TaxC
         units.reduce((total, unit) => total + signedTaxMonetaryAmountMinorUnits(unit.taxCorrectionDelta), 0n),
       ),
       currency: result.currency,
+      originalOrderLineage: request.acceptedTaxTerms.orderLineage,
       originalRecord: request.acceptedTaxTerms.authoritativeRecord,
       originalTaxDecisionId: decision.decisionId,
       taxRoundingPolicy: result.taxRoundingPolicy,

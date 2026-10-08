@@ -1,9 +1,9 @@
-import { Array as Arr, DateTime, Option, Schema, pipe } from 'effect';
+import { DateTime, Option, Schema } from 'effect';
 
 import { BoundedIdentifierSchema } from './tax-domain-primitives.ts';
 import {
   NonNegativeTaxExactRationalSchema,
-  sumTaxExactRationals,
+  ZERO_TAX_EXACT_RATIONAL,
   taxExactFractionOfPercent,
   taxExactRationalFromDecimal,
 } from './tax-exact-rational.ts';
@@ -13,9 +13,11 @@ import { TaxOutcomeSuccessSchema } from './tax-outcome.ts';
 import type { TaxRoundingPolicy } from './tax-rounding.ts';
 import { OrderCommitmentTimeSchema } from './tax-time.ts';
 import type { TaxableSupplyUnitId } from './taxable-supply-unit.ts';
+import { ShippingAllocationBasisSchema } from './shipping-allocation.ts';
 import { LineCommercialValueBasisSchema } from './taxable-basis.ts';
 
 const isLineCommercialValue = Schema.is(LineCommercialValueBasisSchema);
+const isShippingAllocation = Schema.is(ShippingAllocationBasisSchema);
 
 /**
  * The Authoritative Original Accepted Record whose recorded Tax is the return baseline: the final accepted B2C Order
@@ -26,6 +28,12 @@ export const AuthoritativeOriginalAcceptedRecordSchema = Schema.Union([
   Schema.TaggedStruct('ORDER_SNAPSHOT', {}),
   Schema.TaggedStruct('BILLING_DOCUMENT', { billingDocumentRef: BoundedIdentifierSchema }),
 ]);
+
+/** Exact lineage of the accepted Order and the Bundle whose final Tax the record retains (#945 D, #907 F183). */
+export const OrderLineageSchema = Schema.Struct({
+  bundleRef: BoundedIdentifierSchema,
+  orderRef: BoundedIdentifierSchema,
+});
 
 /**
  * Accepted Tax Terms: the immutable Tax meaning actually used by one successful Accepted handoff. They are exactly
@@ -39,7 +47,7 @@ export const AcceptedTaxTermsSchema = Schema.Struct({
   authoritativeRecord: AuthoritativeOriginalAcceptedRecordSchema,
   finalTax: TaxOutcomeSuccessSchema,
   orderCommitmentTime: OrderCommitmentTimeSchema,
-  orderLineage: Schema.Struct({ bundleRef: BoundedIdentifierSchema, orderRef: BoundedIdentifierSchema }),
+  orderLineage: OrderLineageSchema,
 }).check(
   Schema.makeFilter(
     ({ finalTax, orderCommitmentTime }) =>
@@ -51,17 +59,17 @@ export type AcceptedTaxTerms = typeof AcceptedTaxTermsSchema.Type;
 
 /** Exact original meaning of one Taxable Supply Unit as recorded on the Authoritative Original Accepted Record. */
 export interface OriginalUnitBaseline {
-  readonly originalBasis: NonNegativeTaxExactRational;
   readonly originalLineBasis: NonNegativeTaxExactRational;
   readonly originalPublishedTax: TaxMonetaryAmount;
   readonly originalQuantity: TaxExactRational;
+  readonly originalShippingBasis: NonNegativeTaxExactRational;
   readonly rate: TaxExactRational;
   readonly taxRoundingPolicy: TaxRoundingPolicy;
 }
 
 /**
- * Baseline of one original unit read only from the accepted record: its exact basis (Line Commercial Value plus any
- * allocated Shipping), original rate and published Tax, the accepted quantity of its source occurrence and the used
+ * Baseline of one original unit read only from the accepted record: its exact basis components (Line Commercial
+ * Value and any allocated Shipping, zero when none), original rate and published Tax, the accepted quantity of its source occurrence and the used
  * rounding policy. No Catalog, Pricing, Tax Rule or registration source is consulted. A unit outside the record's
  * exact partition has no baseline (#945 F12-F14, #946 F10-F11, #948 F2-F5, F8).
  */
@@ -76,21 +84,15 @@ export const originalUnitBaseline = (
     ({ occurrenceId }) => occurrenceId === unit?.taxableSupplyUnit.mapping.occurrenceId,
   );
   const line = unit?.taxableBasisInterpretation.components.find(isLineCommercialValue);
+  const shipping = unit?.taxableBasisInterpretation.components.find(isShippingAllocation);
   if (unit === undefined || published === undefined || occurrence === undefined || line === undefined) {
     return Option.none();
   }
   return Option.map(taxExactRationalFromDecimal(occurrence.quantity.amount), (originalQuantity) => ({
-    originalBasis: NonNegativeTaxExactRationalSchema.make(
-      sumTaxExactRationals(
-        pipe(
-          unit.taxableBasisInterpretation.components,
-          Arr.map(({ amount }) => amount),
-        ),
-      ),
-    ),
     originalLineBasis: line.amount,
     originalPublishedTax: published.publishedTaxAmount,
     originalQuantity,
+    originalShippingBasis: shipping?.amount ?? NonNegativeTaxExactRationalSchema.make(ZERO_TAX_EXACT_RATIONAL),
     rate: taxExactFractionOfPercent(unit.treatment.ratePercent),
     taxRoundingPolicy: result.taxRoundingPolicy,
   }));
