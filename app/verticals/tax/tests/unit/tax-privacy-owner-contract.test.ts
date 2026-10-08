@@ -282,24 +282,21 @@ describe('#956 TAX Privacy Measure execution', () => {
     expect(outcome.reason).toBe('OWNER_COVERAGE_SCOPE_DOES_NOT_MATCH_MEASURE_SCOPE');
   });
 
-  it('replays a retry of the same measure without a second effect and rejects a changed identity (F47)', () => {
+  it('evaluates a retry of the same measure afresh and rejects a changed identity (F47)', () => {
     const first = evaluate();
-    expect(evaluate({ previousAttempt: { measure, outcome: first } })).toEqual(first);
-    const changed = evaluate({
-      measure: { ...measure, intendedOutcome: 'ANONYMIZE' },
-      previousAttempt: { measure, outcome: first },
-    });
+    expect(evaluate({ previousMeasure: measure })).toEqual(first);
+    const changed = evaluate({ measure: { ...measure, intendedOutcome: 'ANONYMIZE' }, previousMeasure: measure });
     expect(changed.reason).toBe('IDEMPOTENCY_IDENTITY_OR_MEASURE_SCOPE_CONFLICT');
   });
 
-  it('re-evaluates an indeterminate attempt against Current coverage because no TAX effect was attempted (F48-F49)', () => {
-    const indeterminate = evaluate({ coverage: assess([]) });
-    const retried = evaluate({ previousAttempt: { measure, outcome: indeterminate } });
+  it('re-evaluates a retry against Current coverage because no TAX effect was ever attempted (F48-F49)', () => {
+    expect(evaluate({ coverage: assess([]) }).status).toBe('INDETERMINATE');
+    const retried = evaluate({ previousMeasure: measure });
     expect(retried.reason).toBe('NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION');
     expect(retried.affectedContentRefs).toEqual([]);
   });
 
-  it('never reports ACHIEVED or PARTIAL for any intended outcome or retry path (F32, F42)', () => {
+  it('never reports ACHIEVED or PARTIAL for any intended outcome, first attempt or retry (F32, F35, F42)', () => {
     const intendedOutcomes = [
       'RECTIFY',
       'ENFORCE_DISPOSITION_RESTRICTION',
@@ -307,58 +304,17 @@ describe('#956 TAX Privacy Measure execution', () => {
       'ANONYMIZE',
       'DELETE',
     ] as const;
-    const statuses = intendedOutcomes.flatMap((intendedOutcome) => {
+    const outcomes = intendedOutcomes.flatMap((intendedOutcome) => {
       const candidate = { ...measure, intendedOutcome };
-      const indeterminate = evaluate({ coverage: assess([]), measure: candidate });
-      return [
-        evaluate({ measure: candidate }).status,
-        evaluate({ measure: candidate, previousAttempt: { measure: candidate, outcome: indeterminate } }).status,
-      ];
+      return [evaluate({ measure: candidate }), evaluate({ measure: candidate, previousMeasure: candidate })];
     });
-    expect(statuses.filter((status) => status === 'ACHIEVED' || status === 'PARTIAL')).toEqual([]);
-  });
-
-  it('never replays a settled outcome that belongs to another measure, decision, scope or content (F47)', () => {
-    const blocked = evaluate({
-      blockers: [{ blockerRef: 'privacy:legal-hold-956', contentRefs: [assertionContent], kind: 'LEGAL_HOLD' }],
-    });
-    expect(evaluate({ previousAttempt: { measure, outcome: blocked } })).toEqual(blocked);
-    const notApplicable = evaluate({ coverage: assess(completeObservations()) });
+    expect(outcomes.filter(({ status }) => status === 'ACHIEVED' || status === 'PARTIAL')).toEqual([]);
     expect(
-      evaluate({ coverage: assess(completeObservations()), previousAttempt: { measure, outcome: notApplicable } }),
-    ).toEqual(notApplicable);
-    const foreign = [
-      { ...blocked, measureRef: 'privacy-measure:other' },
-      { ...blocked, sourceDecisionRevision: 'revision-other' },
-      { ...blocked, scope: { ...scope, tenantId: 'tenant-other' } },
-      { ...blocked, remainingContentRefs: ['commerce.tax.tax-rule:unrelated'] },
-      { ...blocked, remainingContentRefs: [] },
-    ];
-    for (const outcome of foreign) {
-      const retried = evaluate({ previousAttempt: { measure, outcome } });
-      expect(retried.reason).toBe('NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION');
-      expect(retried.measureRef).toBe(measure.measureRef);
-    }
-  });
-
-  it('never echoes a supplied previous ACHIEVED or PARTIAL outcome that TAX cannot produce (F32, F35)', () => {
-    const settled = evaluate();
-    const claimed = [
-      { ...settled, reason: 'CLAIMED', remainingContentRefs: [], status: 'ACHIEVED' as const },
-      {
-        ...settled,
-        affectedContentRefs: [assertionContent],
-        reason: 'CLAIMED',
-        remainingContentRefs: ['commerce.tax.tax-rule:remaining'],
-        status: 'PARTIAL' as const,
-      },
-    ];
-    for (const outcome of claimed) {
-      expect(decodeOutcome(outcome).status).toBe(outcome.status);
-      const retried = evaluate({ previousAttempt: { measure, outcome } });
-      expect(retried.reason).toBe('NO_SUPPORTED_TAX_PRIVACY_LIFECYCLE_OPERATION');
-      expect(retried.affectedContentRefs).toEqual([]);
-    }
+      outcomes.every(
+        ({ affectedContentRefs, remainingContentRefs }) =>
+          affectedContentRefs.length === 0 && remainingContentRefs.length === 1,
+      ),
+    ).toBe(true);
   });
 });
 
