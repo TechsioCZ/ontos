@@ -125,7 +125,7 @@ export function SiteFooter() {
                   <li key={`${item.href}-${item.label}`}>
                     <Footer.Link
                       as={NextLink}
-                      className="akros-footer__customer-link"
+                      className="akros-footer__customer-link underline"
                       href={item.href}
                     >
                       {item.label}
