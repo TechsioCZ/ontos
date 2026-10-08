@@ -167,7 +167,7 @@ const principal = (id: string): TaxPrivacyOwnerLookupEncoded => ({
   principalId: id,
 });
 
-/** Table names of the content found for one responsibility; refs are `commerce.tax/<table>/<row id>`. */
+/** Content kinds found for one responsibility; refs are `commerce.tax.<kind>:<record id>`. */
 const foundIn = (
   result: Option.Option<TaxPrivacyOwnerCoverageResponse>,
   scopePart: Parameters<typeof taxPrivacyOwnerScopeRef>[0],
@@ -175,7 +175,7 @@ const foundIn = (
   Option.getOrThrow(result)
     .coverage.coverageParts.filter(({ scopeRef }) => scopeRef === taxPrivacyOwnerScopeRef(scopePart))
     .flatMap(({ foundContentRefs }) => foundContentRefs)
-    .map((ref) => ref.split('/')[1] ?? '');
+    .map((ref) => ref.slice('commerce.tax.'.length).split(':')[0] ?? '');
 
 it.live('#956 F19 a seller with no TAX content is complete NO_DATA over every TAX responsibility', () =>
   Effect.scoped(
@@ -185,6 +185,7 @@ it.live('#956 F19 a seller with no TAX content is complete NO_DATA over every TA
       expect(result.coverage.coverageStatus).toBe('COMPLETE');
       expect(result.coverage.contentStatus).toBe('NO_DATA');
       expect(result.coverage.coverageParts.map(({ scopeRef }) => scopeRef)).toEqual(taxPrivacyOwnerScopeRefs);
+      expect(result.ownerDeclaration.acceptedTaxTermsCopyHolders.length).toBeGreaterThan(0);
     }),
   ),
 );
@@ -195,10 +196,10 @@ it.live('#956 F13-F16 a sole-trader seller finds exact TAX content per responsib
       const runtime = yield* acquireSeededDatabase;
       const result = yield* coverageOf(runtime, scopeA, [seller(sellerA)]);
       expect(Option.getOrThrow(result).coverage.contentStatus).toBe('FOUND');
-      expect(foundIn(result, 'SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY')).toEqual(['tax_source_assertions']);
+      expect(foundIn(result, 'SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY')).toEqual(['tax-source-assertion']);
       expect(foundIn(result, 'TAX_FACT_AUTHORITY_CONTRACT_HISTORY').toSorted(byText)).toEqual([
-        'tax_fact_authority_contract_revisions',
-        'tax_fact_authority_contracts',
+        'tax-fact-authority-contract',
+        'tax-fact-authority-contract-revision',
       ]);
       expect(foundIn(result, 'ACCEPTED_TAX_TERMS_COPIES')).toEqual([]);
       expect(foundIn(result, 'ACTOR_PRINCIPAL_ATTRIBUTION')).toEqual([]);
@@ -206,19 +207,28 @@ it.live('#956 F13-F16 a sole-trader seller finds exact TAX content per responsib
   ),
 );
 
-it.live('#956 F23-F25 a staff principal finds only the TAX rows that attribute that principal', () =>
+it.live('#956 F19-F25 a staff principal finds only attributing TAX rows and never seller-local NO_DATA', () =>
   Effect.scoped(
     Effect.gen(function* principalCoverage() {
       const runtime = yield* acquireSeededDatabase;
       const attributed = yield* coverageOf(runtime, scopeA, [principal(principalId)]);
+      const attribution = Option.getOrThrow(attributed).coverage.coverageParts.find(
+        ({ scopeRef }) => scopeRef === taxPrivacyOwnerScopeRef('ACTOR_PRINCIPAL_ATTRIBUTION'),
+      );
+      expect(attribution?.coverageStatus).toBe('PARTIAL');
+      expect(attribution?.evidenceRefs.every((ref) => ref.includes(`/${sellerA}/`))).toBe(true);
       expect(foundIn(attributed, 'ACTOR_PRINCIPAL_ATTRIBUTION').toSorted(byText)).toEqual([
-        'tax_fact_authority_contract_revisions',
-        'tax_fact_authority_contracts',
-        'tax_source_assertions',
+        'tax-fact-authority-contract',
+        'tax-fact-authority-contract-revision',
+        'tax-source-assertion',
       ]);
       expect(foundIn(attributed, 'SELLING_LEGAL_ENTITY_SOURCE_ASSERTION_HISTORY')).toEqual([]);
+      // The same principal under seller B: rows under seller A are invisible, so coverage stays unresolved.
+      const otherSeller = Option.getOrThrow(yield* coverageOf(runtime, scopeB, [principal(principalId)]));
+      expect(otherSeller.coverage.coverageStatus).toBe('PARTIAL');
+      expect(otherSeller.coverage.contentStatus).toBe('UNKNOWN');
       const other = Option.getOrThrow(yield* coverageOf(runtime, scopeA, [principal(otherPrincipalId)]));
-      expect(other.coverage.contentStatus).toBe('NO_DATA');
+      expect(other.coverage.contentStatus).toBe('UNKNOWN');
     }),
   ),
 );
