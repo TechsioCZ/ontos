@@ -18,6 +18,7 @@ import {
   TaxMigrationReviewRequiredSchema,
   TaxMigrationUnverifiableSchema,
   TaxShadowDifferentSchema,
+  TaxShadowNotComparableSchema,
   TaxShadowSameSchema,
 } from '../../shared/domain/tax-migration-contracts.ts';
 import type {
@@ -26,6 +27,7 @@ import type {
   TaxMigrationFamilyEvidence,
   TaxMigrationMapping,
   TaxMigrationOutcome,
+  TaxMigrationProvenance,
 } from '../../shared/domain/tax-migration-contracts.ts';
 import { evaluateTaxAuthorityHandoff, placeTaxMigrationAssertion } from '../../src/domain/tax-authority-handoff.ts';
 import type { TaxAuthorityHandoffPeriod } from '../../src/domain/tax-authority-handoff.ts';
@@ -44,15 +46,18 @@ import {
 import { TaxRelevantTimeSchema } from '../../src/domain/tax-time.ts';
 
 /** Every fixture dataset is explicitly NON_PRODUCTION; no real legacy data is used (#960, #907 F271-F272). */
-const candidate = (sourceRecordRef: string, mapping: TaxMigrationMapping): TaxMigrationCandidate => ({
-  mapping,
-  provenance: {
-    datasetLabel: 'NON_PRODUCTION',
-    datasetRef: 'fixture:legacy-erp/2026-09',
-    sourceRecordRef,
-    sourceSystemRef: 'fixture:legacy-vat',
-  },
-});
+const prov = (
+  sourceRecordRef: string,
+  sourceSystemRef = 'fixture:legacy-vat',
+  datasetRef = 'fixture:legacy-erp/2026-09',
+): TaxMigrationProvenance => ({ datasetLabel: 'NON_PRODUCTION', datasetRef, sourceRecordRef, sourceSystemRef });
+const src = (sourceRecordRef: string, sourceSystemRef = 'fixture:legacy-vat') => ({ sourceRecordRef, sourceSystemRef });
+
+const candidate = (
+  sourceRecordRef: string,
+  mapping: TaxMigrationMapping,
+  provenance: TaxMigrationProvenance = prov(sourceRecordRef),
+): TaxMigrationCandidate => ({ mapping, provenance });
 
 const standardRate = {
   compositionKind: 'EXCLUSIVE',
@@ -62,29 +67,35 @@ const standardRate = {
   taxClassificationCode: 'standard',
   treatmentCategory: 'TAXABLE',
 };
-const taxRule = (sourceRecordRef: string, overrides: Readonly<Record<string, string>> = {}) =>
-  candidate(sourceRecordRef, {
-    _tag: 'TAX_OWNED',
-    family: 'TAX_RULE',
-    targetMeaning: { ...standardRate, ...overrides },
-  });
+const taxRule = (
+  sourceRecordRef: string,
+  overrides: Readonly<Record<string, string>> = {},
+  provenance: TaxMigrationProvenance = prov(sourceRecordRef),
+) =>
+  candidate(
+    sourceRecordRef,
+    { _tag: 'TAX_OWNED', family: 'TAX_RULE', targetMeaning: { ...standardRate, ...overrides } },
+    provenance,
+  );
 
 const keyOf = (overrides: Readonly<Record<string, string>> = {}) =>
   Result.getOrThrow(taxMigrationTargetMeaningKey('TAX_RULE', { ...standardRate, ...overrides }));
 
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 
+const scope = { sellingLegalEntityRef: 'fixture:seller-a', tenantRef: 'fixture:tenant-a' };
+
 const only = (outcomes: readonly TaxMigrationOutcome[]): TaxMigrationOutcome => {
   const [outcome] = outcomes;
   expect(outcomes).toHaveLength(1);
   return (
-    outcome ?? TaxMigrationReviewRequiredSchema.make({ reason: 'MEANING_NOT_ESTABLISHED', sourceRecordRef: 'none' })
+    outcome ?? TaxMigrationReviewRequiredSchema.make({ provenance: prov('none'), reason: 'MEANING_NOT_ESTABLISHED' })
   );
 };
 
-const ruleClaim = (expectedSourceRecordRefs: readonly string[]) => ({
+const ruleClaim = (expectedRecordRefs: readonly string[]) => ({
   declaredBy: 'fixture:legacy-vat',
-  expectedSourceRecordRefs,
+  expectedSourceRecords: expectedRecordRefs.map((ref) => src(ref)),
   family: 'TAX_RULE' as const,
 });
 
@@ -94,7 +105,7 @@ describe('#960 Migration maps business meaning, not legacy storage shape', () =>
       evaluateTaxMigrationCandidates([candidate('legacy-row-1', { _tag: 'UNESTABLISHED', legacyFieldNames: ['VAT'] })]),
     );
     expect(outcome).toEqual(
-      TaxMigrationReviewRequiredSchema.make({ reason: 'MEANING_NOT_ESTABLISHED', sourceRecordRef: 'legacy-row-1' }),
+      TaxMigrationReviewRequiredSchema.make({ provenance: prov('legacy-row-1'), reason: 'MEANING_NOT_ESTABLISHED' }),
     );
   });
 
@@ -106,8 +117,8 @@ describe('#960 Migration maps business meaning, not legacy storage shape', () =>
     );
     expect(outcome).toEqual(
       TaxMigrationRejectedUnmappedSchema.make({
+        provenance: prov('legacy-row-2'),
         reason: 'FOREIGN_OWNER',
-        sourceRecordRef: 'legacy-row-2',
         targetOwner: 'commerce.party-registry',
       }),
     );
@@ -120,7 +131,7 @@ describe('#960 Only Launch-critical Current Tax meaning is promoted', () => {
     expect(outcome).toEqual(
       TaxMigrationMappedAcceptedSchema.make({
         family: 'TAX_RULE',
-        sourceRecordRef: 'legacy-rate-21',
+        provenance: prov('legacy-rate-21'),
         targetMeaningKey: keyOf({ ratePercent: '21.00' }),
       }),
     );
@@ -134,8 +145,8 @@ describe('#960 Only Launch-critical Current Tax meaning is promoted', () => {
     );
     expect(outcome).toEqual(
       TaxMigrationRejectedUnmappedSchema.make({
+        provenance: prov('order-77-line-1'),
         reason: 'HISTORICAL_ACCEPTED_VALUE',
-        sourceRecordRef: 'order-77-line-1',
         targetOwner: 'commerce.order',
       }),
     );
@@ -145,8 +156,8 @@ describe('#960 Only Launch-critical Current Tax meaning is promoted', () => {
     const outcome = only(evaluateTaxMigrationCandidates([taxRule('legacy-oss-1', { jurisdiction: 'EU_OSS' })]));
     expect(outcome).toEqual(
       TaxMigrationRejectedUnmappedSchema.make({
+        provenance: prov('legacy-oss-1'),
         reason: 'UNSUPPORTED_BREADTH',
-        sourceRecordRef: 'legacy-oss-1',
         targetOwner: 'commerce.tax',
       }),
     );
@@ -162,10 +173,10 @@ describe('#960 Only Launch-critical Current Tax meaning is promoted', () => {
       taxRule('legacy-negative', { ratePercent: '-21' }),
     ]);
     expect(outcomes).toEqual([
-      TaxMigrationReviewRequiredSchema.make({ reason: 'TARGET_MEANING_INVALID', sourceRecordRef: 'legacy-negative' }),
+      TaxMigrationReviewRequiredSchema.make({ provenance: prov('legacy-negative'), reason: 'TARGET_MEANING_INVALID' }),
       TaxMigrationIncompleteSchema.make({
         missing: ['effectiveFrom', 'ratePercent', 'taxClassificationCode'],
-        sourceRecordRef: 'legacy-partial',
+        provenance: prov('legacy-partial'),
       }),
     ]);
   });
@@ -180,16 +191,16 @@ describe('#960 Only Launch-critical Current Tax meaning is promoted', () => {
     expect(outcomes).toEqual([
       TaxMigrationMappedAcceptedSchema.make({
         family: 'TAX_RULE',
-        sourceRecordRef: 'legacy-dup',
+        provenance: prov('legacy-dup'),
         targetMeaningKey: keyOf(),
       }),
       TaxMigrationRejectedUnmappedSchema.make({
+        provenance: prov('legacy-dup'),
         reason: 'DUPLICATE_SOURCE_RECORD',
-        sourceRecordRef: 'legacy-dup',
         targetOwner: 'commerce.tax',
       }),
-      TaxMigrationConflictingSchema.make({ counterpartRecordRefs: ['legacy-split'], sourceRecordRef: 'legacy-split' }),
-      TaxMigrationConflictingSchema.make({ counterpartRecordRefs: ['legacy-split'], sourceRecordRef: 'legacy-split' }),
+      TaxMigrationConflictingSchema.make({ counterparts: [prov('legacy-split')], provenance: prov('legacy-split') }),
+      TaxMigrationConflictingSchema.make({ counterparts: [prov('legacy-split')], provenance: prov('legacy-split') }),
     ]);
   });
 
@@ -205,10 +216,10 @@ describe('#960 Migration completeness requires business evidence', () => {
     expect(verifyTaxMigrationCompleteness('TAX_RULE', ruleClaim(['r1', 'r2']), outcomes)).toEqual(
       TaxMigrationNotCompleteSchema.make({
         family: 'TAX_RULE',
-        missingRecordRefs: ['r2'],
-        openRecordRefs: [],
+        missingSourceRecords: [src('r2')],
+        openSourceRecords: [],
         rowCount: 1,
-        unexpectedRecordRefs: [],
+        unexpectedSourceRecords: [],
       }),
     );
     expect(verifyTaxMigrationCompleteness('TAX_RULE', undefined, outcomes)).toEqual(
@@ -226,18 +237,21 @@ describe('#960 Migration completeness requires business evidence', () => {
     ]);
     const completeness = verifyTaxMigrationCompleteness('TAX_RULE', ruleClaim(['r1', 'r2']), outcomes);
     expect(Schema.is(TaxMigrationNotCompleteSchema)(completeness)).toBe(true);
-    expect(completeness).toEqual(expect.objectContaining({ missingRecordRefs: [], openRecordRefs: ['r2'] }));
+    expect(completeness).toEqual(expect.objectContaining({ missingSourceRecords: [], openSourceRecords: [src('r2')] }));
   });
 
   it('BDD Row counts match but semantics differ: Reconciliation does not pass (F14-F15)', () => {
-    const outcomes = evaluateTaxMigrationCandidates([taxRule('r1'), taxRule('r2', { ratePercent: '12' })]);
+    const outcomes = evaluateTaxMigrationCandidates([
+      taxRule('r1'),
+      taxRule('r2', { ratePercent: '12', taxClassificationCode: 'reduced' }),
+    ]);
     const target = [
-      { sourceRecordRef: 'r1', targetMeaningKey: keyOf() },
-      { sourceRecordRef: 'r2', targetMeaningKey: keyOf({ ratePercent: '15' }) },
+      { source: src('r1'), targetMeaningKey: keyOf() },
+      { source: src('r2'), targetMeaningKey: keyOf({ ratePercent: '15', taxClassificationCode: 'reduced' }) },
     ];
     expect(target).toHaveLength(outcomes.length);
     expect(reconcileTaxMigrationTarget(outcomes, target)).toEqual([
-      { difference: 'MEANING_DIFFERS', sourceRecordRef: 'r2' },
+      { difference: 'MEANING_DIFFERS', source: src('r2') },
     ]);
   });
 });
@@ -361,7 +375,7 @@ const readyEvidence = (family: TaxMigrationFamily): TaxMigrationFamilyEvidence =
 
 describe('#960 Tax-specific readiness evidence for P6', () => {
   it('is READY only when every family is complete, reconciled, agreeing and handed off; never claims cutover (F32)', () => {
-    const evidence = assessTaxMigrationReadiness(taxMigrationFamilies.map(readyEvidence), taxMigrationFamilies);
+    const evidence = assessTaxMigrationReadiness(scope, taxMigrationFamilies.map(readyEvidence));
     expect(evidence.verdict).toEqual(TaxMigrationReadySchema.make({}));
     expect(evidence.globalCutoverClaim).toBe('NONE');
     expect(evidence.datasetLabel).toBe('NON_PRODUCTION');
@@ -375,24 +389,17 @@ describe('#960 Tax-specific readiness evidence for P6', () => {
       probeRef: 'seller@2026-03-01',
     });
     expect(shadow).toEqual(
-      TaxShadowDifferentSchema.make({
-        legacyValue: 'CURRENT_POSITIVE',
-        ontosValue: 'UNKNOWN',
-        probeRef: 'seller@2026-03-01',
-      }),
+      TaxShadowNotComparableSchema.make({ probeRef: 'seller@2026-03-01', reason: 'AUTHORITY_MISSING' }),
     );
-    const evidence = assessTaxMigrationReadiness(
-      [
-        {
-          ...readyEvidence('TAX_RULE'),
-          completeness: TaxMigrationUnverifiableSchema.make({ family: 'TAX_RULE', rowCount: 3 }),
-          handoff: TaxAuthorityGapSchema.make({ from: at('2026-06-01T00:00:00.000Z'), to: Option.none() }),
-          shadowDifferences: [shadow],
-          targetDifferences: [{ difference: 'MEANING_DIFFERS', sourceRecordRef: 'r2' }],
-        },
-      ],
-      taxMigrationFamilies,
-    );
+    const evidence = assessTaxMigrationReadiness(scope, [
+      {
+        ...readyEvidence('TAX_RULE'),
+        completeness: TaxMigrationUnverifiableSchema.make({ family: 'TAX_RULE', rowCount: 3 }),
+        handoff: TaxAuthorityGapSchema.make({ from: at('2026-06-01T00:00:00.000Z'), to: Option.none() }),
+        shadowDifferences: [shadow],
+        targetDifferences: [{ difference: 'MEANING_DIFFERS', source: src('r2') }],
+      },
+    ]);
     expect(evidence.verdict).toEqual(
       TaxMigrationNotReadySchema.make({
         blockers: [
@@ -404,5 +411,225 @@ describe('#960 Tax-specific readiness evidence for P6', () => {
         ],
       }),
     );
+  });
+});
+
+describe('#960 review round 1 regressions', () => {
+  it('keeps two source systems with the same record ref as two records with their own provenance (F11, F17)', () => {
+    const outcomes = evaluateTaxMigrationCandidates([
+      taxRule('r1', {}, prov('r1', 'fixture:legacy-vat')),
+      taxRule('r1', { ratePercent: '12' }, prov('r1', 'fixture:legacy-shop')),
+    ]);
+    expect(outcomes.map(({ provenance }) => provenance.sourceSystemRef)).toEqual([
+      'fixture:legacy-shop',
+      'fixture:legacy-vat',
+    ]);
+    const claim = { declaredBy: 'fixture:owner', expectedSourceRecords: [src('r1')], family: 'TAX_RULE' as const };
+    expect(verifyTaxMigrationCompleteness('TAX_RULE', claim, outcomes)).toEqual(
+      expect.objectContaining({ unexpectedSourceRecords: [src('r1', 'fixture:legacy-shop')] }),
+    );
+  });
+
+  it('reports a target holding several meanings for one record as a conflict in any order (F15-F16)', () => {
+    const outcomes = evaluateTaxMigrationCandidates([taxRule('r1')]);
+    const target = [
+      { source: src('r1'), targetMeaningKey: keyOf({ ratePercent: '12' }) },
+      { source: src('r1'), targetMeaningKey: keyOf() },
+    ];
+    const conflict = [{ difference: 'TARGET_CONFLICT', source: src('r1') }];
+    expect(reconcileTaxMigrationTarget(outcomes, target)).toEqual(conflict);
+    expect(reconcileTaxMigrationTarget(outcomes, target.toReversed())).toEqual(conflict);
+  });
+
+  it('is never READY while a family still holds an open outcome, whatever completeness claims (F16-F18)', () => {
+    const open = evaluateTaxMigrationCandidates([
+      candidate('r9', { _tag: 'UNESTABLISHED', legacyFieldNames: ['VAT'] }),
+    ]);
+    const evidence = assessTaxMigrationReadiness(
+      scope,
+      taxMigrationFamilies.map((family) => ({ ...readyEvidence(family), outcomes: family === 'TAX_RULE' ? open : [] })),
+    );
+    expect(evidence.verdict).toEqual(
+      TaxMigrationNotReadySchema.make({ blockers: [{ blocker: 'OPEN_OUTCOME', family: 'TAX_RULE' }] }),
+    );
+  });
+
+  it('never places an assertion as Current while authorities overlap at the evaluation instant (F21-F22, F27)', () => {
+    const legacyOpen = {
+      ...legacyAuthority,
+      authorityFrom: at('2026-01-01T00:00:00.000Z'),
+      authorityTo: Option.none(),
+    };
+    const ontosFromJune = { ...ontosAuthority, authorityFrom: at('2026-06-01T00:00:00.000Z') };
+    expect(
+      placeTaxMigrationAssertion({
+        businessInstant: at('2026-03-01T00:00:00.000Z'),
+        evaluationInstant: at('2026-07-01T00:00:00.000Z'),
+        periods: [legacyOpen, ontosFromJune],
+        sourceRef: 'fixture:legacy-vat',
+      }),
+    ).toEqual({ placement: 'NO_SINGLE_AUTHORITY', systemOfRecordRef: Option.none() });
+  });
+
+  it('never counts an unresolved registration state on both sides as shadow agreement (F28-F29, F34)', () => {
+    const shadow = compareShadowVatRegistration({
+      candidateState: { authorities: [], eligibleAssertions: [] },
+      evaluationTime: at('2026-03-01T00:00:00.000Z'),
+      legacyState: 'UNKNOWN',
+      probeRef: 'seller@2026-03-01',
+    });
+    expect(Schema.is(TaxShadowNotComparableSchema)(shadow)).toBe(true);
+  });
+});
+
+const vatMeaning = (sourceRecordRef: string, overrides: Readonly<Record<string, string>> = {}) => ({
+  factFamily: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
+  jurisdiction: 'CZ_DOMESTIC',
+  provenanceRef: 'migration:fixture',
+  reason: 'Migrated seller VAT registration evidence',
+  registrationMeaning: 'REGISTERED',
+  sourceAssertionKey: `assertion-${sourceRecordRef}`,
+  sourceRecordRef,
+  sourceRef: 'fixture:legacy-vat',
+  validFrom: '2026-01-01T00:00:00.000Z',
+  ...overrides,
+});
+const vatCandidate = (sourceRecordRef: string, overrides: Readonly<Record<string, string>> = {}) =>
+  candidate(sourceRecordRef, {
+    _tag: 'TAX_OWNED',
+    family: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
+    targetMeaning: vatMeaning(sourceRecordRef, overrides),
+  });
+
+describe('#960 review round 1 regressions (Sol, Opus, Fable)', () => {
+  it('maps a seller VAT registration assertion and rejects one naming another source or record (F11)', () => {
+    const [mapped, mismatched] = evaluateTaxMigrationCandidates([
+      vatCandidate('v1'),
+      vatCandidate('v2', { sourceRecordRef: 'someone-else' }),
+    ]);
+    expect(Schema.is(TaxMigrationMappedAcceptedSchema)(mapped)).toBe(true);
+    expect(mismatched).toEqual(
+      TaxMigrationReviewRequiredSchema.make({ provenance: prov('v2'), reason: 'PROVENANCE_MISMATCH' }),
+    );
+  });
+
+  it('never drops an unknown legacy key silently (F1, F9, F34)', () => {
+    const outcome = only(evaluateTaxMigrationCandidates([taxRule('r-extra', { reverseCharge: 'true' })]));
+    expect(outcome).toEqual(
+      TaxMigrationReviewRequiredSchema.make({ provenance: prov('r-extra'), reason: 'TARGET_MEANING_INVALID' }),
+    );
+  });
+
+  it('treats 21 and 21.00 as the same rate meaning (F15)', () => {
+    expect(keyOf({ ratePercent: '21.00' })).toBe(keyOf());
+  });
+
+  it('marks two records for the same exact Tax Rule fact with different rates CONFLICTING (G, F16)', () => {
+    const outcomes = evaluateTaxMigrationCandidates([taxRule('row-a'), taxRule('row-b', { ratePercent: '12' })]);
+    expect(outcomes).toEqual([
+      TaxMigrationConflictingSchema.make({ counterparts: [prov('row-b')], provenance: prov('row-a') }),
+      TaxMigrationConflictingSchema.make({ counterparts: [prov('row-a')], provenance: prov('row-b') }),
+    ]);
+  });
+
+  it('keeps different owners of one record CONFLICTING in any order (F3)', () => {
+    const party = candidate('dup', { _tag: 'FOREIGN_OWNER', targetOwner: 'commerce.party-registry' });
+    const order = candidate('dup', { _tag: 'HISTORICAL_ACCEPTED_VALUE', historicalOwner: 'commerce.order' });
+    const forward = evaluateTaxMigrationCandidates([party, order]);
+    expect(forward.every((outcome) => Schema.is(TaxMigrationConflictingSchema)(outcome))).toBe(true);
+    expect(evaluateTaxMigrationCandidates([order, party])).toEqual(forward);
+  });
+
+  it('does not let a record mapped into another family satisfy a family claim (F17)', () => {
+    const outcomes = evaluateTaxMigrationCandidates([vatCandidate('v1')]);
+    const claim = { declaredBy: 'fixture:owner', expectedSourceRecords: [src('v1')], family: 'TAX_RULE' as const };
+    expect(verifyTaxMigrationCompleteness('TAX_RULE', claim, outcomes)).toEqual(
+      expect.objectContaining({ missingSourceRecords: [src('v1')] }),
+    );
+  });
+
+  it('reports records missing from and unexpected in the TAX target (F15)', () => {
+    const outcomes = evaluateTaxMigrationCandidates([taxRule('r1')]);
+    expect(reconcileTaxMigrationTarget(outcomes, [{ source: src('r9'), targetMeaningKey: keyOf() }])).toEqual([
+      { difference: 'MISSING_IN_TARGET', source: src('r1') },
+      { difference: 'UNEXPECTED_IN_TARGET', source: src('r9') },
+    ]);
+  });
+
+  it('certifies a handoff only with an explicit boundary (F23)', () => {
+    const legacyOnly = contract('legacy-open', 'fixture:legacy-vat', Option.some('2026-01-01T00:00:00.000Z'));
+    expect(evaluateTaxAuthorityHandoff([legacyOnly])).toEqual(
+      TaxAuthorityHandoffIndeterminateSchema.make({ reason: 'NO_AUTHORITY_BOUNDARY_DECLARED' }),
+    );
+    expect(evaluateTaxAuthorityHandoff([])).toEqual(
+      TaxAuthorityHandoffIndeterminateSchema.make({ reason: 'NO_AUTHORITY_CONFIGURED' }),
+    );
+  });
+
+  it('places assertions by source and business instant: Current, not from the System of Record (F24-F26, F30)', () => {
+    const periods = [legacyAuthority, ontosAuthority].map((period) => ({
+      ...period,
+      authorityFrom: Option.getOrThrow(period.authorityFrom),
+    }));
+    expect(
+      placeTaxMigrationAssertion({
+        businessInstant: at('2026-07-01T00:00:00.000Z'),
+        evaluationInstant: at('2026-07-02T00:00:00.000Z'),
+        periods,
+        sourceRef: 'commerce.tax',
+      }),
+    ).toEqual({ placement: 'CURRENT_UNDER_ITS_AUTHORITY', systemOfRecordRef: Option.some('commerce.tax') });
+    // Newest-wins never applies: a legacy assertion about a post-boundary instant is not authority (F26).
+    expect(
+      placeTaxMigrationAssertion({
+        businessInstant: at('2026-07-01T00:00:00.000Z'),
+        evaluationInstant: at('2026-07-02T00:00:00.000Z'),
+        periods,
+        sourceRef: 'fixture:legacy-vat',
+      }),
+    ).toEqual({ placement: 'NOT_FROM_SYSTEM_OF_RECORD', systemOfRecordRef: Option.some('commerce.tax') });
+  });
+
+  it('reports shadow agreement and an unselectable candidate rule as not comparable (F19-F20)', () => {
+    const state = {
+      predicateFingerprint: 'fixture-predicate',
+      revisions: [
+        {
+          compositionKind: 'EXCLUSIVE' as const,
+          correctedBy: [],
+          effectiveFrom: at('2026-01-01T00:00:00.000Z'),
+          effectiveTo: Option.none(),
+          endedEffectiveTo: Option.none(),
+          ratePercent: '21',
+          revisionId: 'candidate-r1',
+          revisionNumber: 1,
+          taxRuleId: 'candidate-rule',
+          treatmentCategory: 'TAXABLE' as const,
+        },
+      ],
+    };
+    const probe = (iso: string) => TaxRelevantTimeSchema.make(at(iso));
+    expect(
+      compareShadowTaxRule({
+        candidateState: state,
+        legacyRatePercent: '21.00',
+        probeRef: 'p1',
+        taxRelevantTime: probe('2026-03-01T00:00:00.000Z'),
+      }),
+    ).toEqual(TaxShadowSameSchema.make({ probeRef: 'p1' }));
+    expect(
+      compareShadowTaxRule({
+        candidateState: state,
+        legacyRatePercent: '21',
+        probeRef: 'p0',
+        taxRelevantTime: probe('2025-03-01T00:00:00.000Z'),
+      }),
+    ).toEqual(TaxShadowNotComparableSchema.make({ probeRef: 'p0', reason: 'TAX_RULE_MISSING' }));
+  });
+
+  it('never reports READY for an empty family list and names the evidence scope (C, F32)', () => {
+    const evidence = assessTaxMigrationReadiness(scope, []);
+    expect(Schema.is(TaxMigrationNotReadySchema)(evidence.verdict)).toBe(true);
+    expect(evidence.scope).toEqual(scope);
   });
 });

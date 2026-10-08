@@ -27,6 +27,15 @@ export const TaxMigrationProvenanceSchema = Schema.Struct({
   sourceRecordRef: ReferenceSchema,
   sourceSystemRef: ReferenceSchema,
 });
+export type TaxMigrationProvenance = typeof TaxMigrationProvenanceSchema.Type;
+
+/** Identity of one source record: the same record ref in two source systems is two records (#960 F11). */
+export const TaxMigrationSourceRecordSchema = Schema.Struct({
+  sourceRecordRef: ReferenceSchema,
+  sourceSystemRef: ReferenceSchema,
+});
+export type TaxMigrationSourceRecord = typeof TaxMigrationSourceRecordSchema.Type;
+const SourceRecords = Schema.Array(TaxMigrationSourceRecordSchema);
 
 /**
  * The semantic mapping of one legacy record. A legacy field or table name never decides meaning (#960 F1, F13): the
@@ -53,30 +62,30 @@ export type TaxMigrationCandidate = typeof TaxMigrationCandidateSchema.Type;
 
 export const TaxMigrationMappedAcceptedSchema = Schema.TaggedStruct('MAPPED_ACCEPTED', {
   family: TaxMigrationFamilySchema,
-  sourceRecordRef: ReferenceSchema,
+  provenance: TaxMigrationProvenanceSchema,
   targetMeaningKey: TaxMigrationTargetMeaningKeySchema,
 });
 export const TaxMigrationRejectedUnmappedSchema = Schema.TaggedStruct('REJECTED_UNMAPPED', {
+  provenance: TaxMigrationProvenanceSchema,
   reason: Schema.Literals([
     'DUPLICATE_SOURCE_RECORD',
     'FOREIGN_OWNER',
     'HISTORICAL_ACCEPTED_VALUE',
     'UNSUPPORTED_BREADTH',
   ]),
-  sourceRecordRef: ReferenceSchema,
   targetOwner: ReferenceSchema,
 });
 export const TaxMigrationConflictingSchema = Schema.TaggedStruct('CONFLICTING', {
-  counterpartRecordRefs: References,
-  sourceRecordRef: ReferenceSchema,
+  counterparts: Schema.Array(TaxMigrationProvenanceSchema),
+  provenance: TaxMigrationProvenanceSchema,
 });
 export const TaxMigrationIncompleteSchema = Schema.TaggedStruct('INCOMPLETE', {
   missing: Schema.Array(Schema.String),
-  sourceRecordRef: ReferenceSchema,
+  provenance: TaxMigrationProvenanceSchema,
 });
 export const TaxMigrationReviewRequiredSchema = Schema.TaggedStruct('REVIEW_REQUIRED', {
-  reason: Schema.Literals(['MEANING_NOT_ESTABLISHED', 'TARGET_MEANING_INVALID']),
-  sourceRecordRef: ReferenceSchema,
+  provenance: TaxMigrationProvenanceSchema,
+  reason: Schema.Literals(['MEANING_NOT_ESTABLISHED', 'PROVENANCE_MISMATCH', 'TARGET_MEANING_INVALID']),
 });
 
 /** Exactly the five reconciliation outcomes of #960 F16. */
@@ -95,7 +104,7 @@ export type TaxMigrationOutcome = typeof TaxMigrationOutcomeSchema.Type;
  */
 export const TaxMigrationCompletenessClaimSchema = Schema.Struct({
   declaredBy: ReferenceSchema,
-  expectedSourceRecordRefs: References,
+  expectedSourceRecords: SourceRecords,
   family: TaxMigrationFamilySchema,
 });
 export type TaxMigrationCompletenessClaim = typeof TaxMigrationCompletenessClaimSchema.Type;
@@ -106,10 +115,10 @@ export const TaxMigrationCompleteSchema = Schema.TaggedStruct('COMPLETE', {
 });
 export const TaxMigrationNotCompleteSchema = Schema.TaggedStruct('NOT_COMPLETE', {
   family: TaxMigrationFamilySchema,
-  missingRecordRefs: References,
-  openRecordRefs: References,
+  missingSourceRecords: SourceRecords,
+  openSourceRecords: SourceRecords,
   rowCount: Schema.Finite,
-  unexpectedRecordRefs: References,
+  unexpectedSourceRecords: SourceRecords,
 });
 export const TaxMigrationUnverifiableSchema = Schema.TaggedStruct('UNVERIFIABLE', {
   family: TaxMigrationFamilySchema,
@@ -125,14 +134,14 @@ export type TaxMigrationCompleteness = typeof TaxMigrationCompletenessSchema.Typ
 
 /** Canonical meaning the TAX target holds for a migrated source record, read through TAX's own contracts. */
 export const TaxMigrationTargetFactSchema = Schema.Struct({
-  sourceRecordRef: ReferenceSchema,
+  source: TaxMigrationSourceRecordSchema,
   targetMeaningKey: TaxMigrationTargetMeaningKeySchema,
 });
 export type TaxMigrationTargetFact = typeof TaxMigrationTargetFactSchema.Type;
 
 export const TaxMigrationTargetDifferenceSchema = Schema.Struct({
-  difference: Schema.Literals(['MEANING_DIFFERS', 'MISSING_IN_TARGET', 'UNEXPECTED_IN_TARGET']),
-  sourceRecordRef: ReferenceSchema,
+  difference: Schema.Literals(['MEANING_DIFFERS', 'MISSING_IN_TARGET', 'TARGET_CONFLICT', 'UNEXPECTED_IN_TARGET']),
+  source: TaxMigrationSourceRecordSchema,
 });
 export type TaxMigrationTargetDifference = typeof TaxMigrationTargetDifferenceSchema.Type;
 
@@ -154,7 +163,7 @@ export const TaxAuthorityHandoffValidSchema = Schema.TaggedStruct('HANDOFF_VALID
   boundaries: Schema.Array(TaxAuthorityBoundarySchema),
 });
 export const TaxAuthorityHandoffIndeterminateSchema = Schema.TaggedStruct('INDETERMINATE', {
-  reason: Schema.Literals(['AUTHORITY_BOUNDARY_UNKNOWN', 'NO_AUTHORITY_CONFIGURED']),
+  reason: Schema.Literals(['AUTHORITY_BOUNDARY_UNKNOWN', 'NO_AUTHORITY_BOUNDARY_DECLARED', 'NO_AUTHORITY_CONFIGURED']),
 });
 export const TaxAuthorityHandoffEvaluationSchema = Schema.Union([
   TaxAuthorityConflictSchema,
@@ -210,6 +219,7 @@ export const TaxMigrationReadinessBlockerSchema = Schema.Struct({
     'AUTHORITY_GAP',
     'AUTHORITY_INDETERMINATE',
     'COMPLETENESS_NOT_VERIFIED',
+    'OPEN_OUTCOME',
     'SHADOW_DIFFERENCE',
     'TARGET_MEANING_DIFFERENCE',
   ]),
@@ -226,10 +236,18 @@ export const TaxMigrationNotReadySchema = Schema.TaggedStruct('NOT_READY', {
  * TAX readiness evidence handed to P6. It is Tax-specific only and never claims the global cutover complete
  * (#960 F32); the dataset is NON_PRODUCTION by construction.
  */
+/** The exact fact scope of the evidence: authority stays per fact family and Selling Legal Entity (#960 C, F21). */
+export const TaxMigrationScopeSchema = Schema.Struct({
+  sellingLegalEntityRef: ReferenceSchema,
+  tenantRef: ReferenceSchema,
+});
+export type TaxMigrationScope = typeof TaxMigrationScopeSchema.Type;
+
 export const TaxMigrationReadinessEvidenceSchema = Schema.Struct({
   datasetLabel: TaxMigrationDatasetLabelSchema,
   families: Schema.Array(TaxMigrationFamilyEvidenceSchema),
   globalCutoverClaim: Schema.Literal('NONE'),
+  scope: TaxMigrationScopeSchema,
   verdict: Schema.Union([TaxMigrationReadySchema, TaxMigrationNotReadySchema]),
 });
 export type TaxMigrationReadinessEvidence = typeof TaxMigrationReadinessEvidenceSchema.Type;
