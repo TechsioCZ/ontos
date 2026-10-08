@@ -18,7 +18,9 @@ import { EstablishTaxFactAuthorityContractActionApi } from './apis/establish-tax
 import { RecordTaxSourceAssertionActionApi } from './apis/record-tax-source-assertion-action.ts';
 import { ReviseTaxFactAuthorityContractActionApi } from './apis/revise-tax-fact-authority-contract-action.ts';
 import { SellingLegalEntityVatRegistrationStateApi } from './apis/selling-legal-entity-vat-registration-state.ts';
+import { TaxEvaluationApi } from './apis/tax-evaluation.ts';
 import { TaxFactAuthorityCurrentApi } from './apis/tax-fact-authority-current.ts';
+import { TaxMaterialityComparisonApi } from './apis/tax-materiality-comparison.ts';
 import { TaxRuleHistoryApi } from './apis/tax-rule-history.ts';
 import { TaxSourceAssertionHistoryApi } from './apis/tax-source-assertion-history.ts';
 import { TaxSourceConflictDetailApi } from './apis/tax-source-conflict-detail.ts';
@@ -60,7 +62,9 @@ export const taxApi = HttpApi.make('TaxApi')
   .addHttpApi(RecordTaxSourceAssertionActionApi)
   .addHttpApi(ReviseTaxFactAuthorityContractActionApi)
   .addHttpApi(SellingLegalEntityVatRegistrationStateApi)
+  .addHttpApi(TaxEvaluationApi)
   .addHttpApi(TaxFactAuthorityCurrentApi)
+  .addHttpApi(TaxMaterialityComparisonApi)
   .addHttpApi(TaxRuleHistoryApi)
   .addHttpApi(TaxSourceAssertionHistoryApi)
   .addHttpApi(TaxSourceConflictDetailApi)

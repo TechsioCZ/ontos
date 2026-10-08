@@ -15,10 +15,12 @@ import { recordTaxSourceAssertionAction } from './src/actions/record-tax-source-
 import { reviseTaxFactAuthorityContractAction } from './src/actions/revise-tax-fact-authority-contract.action.ts';
 import { SellingLegalEntityVatRegistrationStateApi } from './shared/apis/selling-legal-entity-vat-registration-state.ts';
 import { taxAuthorityContractManagePermission } from './shared/permissions/tax-authority-contract-manage.ts';
+import { TaxEvaluationApi } from './shared/apis/tax-evaluation.ts';
 import { taxEvidenceReadPermission } from './shared/permissions/tax-evidence-read.ts';
 import { taxFactAuthorityContractResourceDescriptor } from './shared/resources/tax-fact-authority-contract.ts';
 import { TaxFactAuthorityCurrentApi } from './shared/apis/tax-fact-authority-current.ts';
 import { taxGovernedReadPermission } from './shared/permissions/tax-governed-read.ts';
+import { TaxMaterialityComparisonApi } from './shared/apis/tax-materiality-comparison.ts';
 import { TaxRuleHistoryApi } from './shared/apis/tax-rule-history.ts';
 import { taxRuleManagePermission } from './shared/permissions/tax-rule-manage.ts';
 import { taxRuleResourceDescriptor } from './shared/resources/tax-rule.ts';
@@ -60,7 +62,9 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
       // <generated-module-manifest-apis>
       'applicable-tax-rule-set': ApplicableTaxRuleSetApi,
       'selling-legal-entity-vat-registration-state': SellingLegalEntityVatRegistrationStateApi,
+      'tax-evaluation': TaxEvaluationApi,
       'tax-fact-authority-current': TaxFactAuthorityCurrentApi,
+      'tax-materiality-comparison': TaxMaterialityComparisonApi,
       'tax-rule-history': TaxRuleHistoryApi,
       'tax-source-assertion-history': TaxSourceAssertionHistoryApi,
       'tax-source-conflict-detail': TaxSourceConflictDetailApi,

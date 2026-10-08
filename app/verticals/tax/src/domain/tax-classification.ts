@@ -13,6 +13,8 @@ import type {
   TaxClassificationInput,
 } from '../../shared/domain/tax-kernel/tax-classification.ts';
 
+import { TaxClassificationCodeSchema } from '../../shared/domain/tax-kernel/tax-classification.ts';
+
 export {
   TaxClassificationCodeSchema,
   TaxClassificationInputSchema,
@@ -30,7 +32,26 @@ export interface TaxClassificationBasis {
   readonly materialCatalogEvidence: NonEmptyReadonlyArray<CurrentCatalogTaxEvidence>;
 }
 
-export type TaxClassificationInterpretation = (basis: TaxClassificationBasis) => TaxClassificationCode;
+/** A Tax-owned interpretation either derives one code or cannot conclude one; it never guesses (#926 F12-F13). */
+export type TaxClassificationInterpretation = (
+  basis: TaxClassificationBasis,
+) => Result.Result<TaxClassificationCode, TaxStateIndeterminate>;
+
+/** Catalog fact kind carrying the Launch Tax category (PO decision D9 default, pending on #907). */
+export const LAUNCH_TAX_CATEGORY_FACT_KIND = 'TAX_CATEGORY';
+
+/**
+ * Launch interpretation: exactly one Current `TAX_CATEGORY` fact of the exact Catalog Selection; its value is the
+ * classification code Tax Rules are governed by. None or several are indeterminate, never a default category
+ * (#926 F1, F12-F13; PO decision D9 default, pending on #907).
+ */
+export const launchTaxClassificationInterpretation: TaxClassificationInterpretation = ({ materialCatalogEvidence }) => {
+  const categories = materialCatalogEvidence.filter(({ factKind }) => factKind === LAUNCH_TAX_CATEGORY_FACT_KIND);
+  const [category] = categories;
+  return category !== undefined && categories.length === 1
+    ? Result.succeed(TaxClassificationCodeSchema.make(category.factValue))
+    : Result.fail({ _tag: 'TAX_STATE_INDETERMINATE' });
+};
 
 export type TaxClassificationFailure = TaxNotEstablishedOutcome;
 
@@ -69,9 +90,12 @@ export const classifyCatalogSelection = (
     Result.flatMap((materialCatalogEvidence) =>
       pipe(
         requireOwnerVerifiedCompleteness(input.materialEvidenceCompleteness),
-        Result.map((completenessEvidenceRef) => {
+        Result.flatMap((completenessEvidenceRef) => {
           const basis = { catalogSelection: input.catalogSelection, materialCatalogEvidence };
-          return { ...basis, classificationCode: interpret(basis), completenessEvidenceRef };
+          return pipe(
+            interpret(basis),
+            Result.map((classificationCode) => ({ ...basis, classificationCode, completenessEvidenceRef })),
+          );
         }),
       ),
     ),
