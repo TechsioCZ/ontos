@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Array as Arr, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { TaxResultSchema, composeTaxResult, taxResultFollowsFromDecision } from '../../src/domain/tax-result.ts';
@@ -130,6 +130,24 @@ describe('Tax Result', () => {
     expect(taxResultFollowsFromDecision(otherDecision, composeResult(decision))).toBe(false);
     expect(taxResultFollowsFromDecision(oneUnitDecision, composeResult(oneUnitDecision))).toBe(true);
     expect(taxResultFollowsFromDecision(decision, composeResult(oneUnitDecision))).toBe(false);
+  });
+
+  it('#937 F7 #936 F28-F29 an otherwise valid Result with its units in another order follows from the Decision', () => {
+    const decision = decodeTaxDecision(
+      taxDecisionInput(['o-1', 'o-2'], {
+        units: [decisionUnitInput('o-1', '50.00'), decisionUnitInput('o-2', '100.00', '12')],
+      }),
+    );
+    const result = composeResult(decision);
+    const [first] = result.units;
+    const reordered = { ...result, units: Arr.reverse(result.units) };
+
+    expect(reordered.units.map(({ taxableSupplyUnitId }) => taxableSupplyUnitId)).toEqual([
+      'taxable-supply-unit:o-2',
+      'taxable-supply-unit:o-1',
+    ]);
+    expect(taxResultFollowsFromDecision(decision, reordered)).toBe(true);
+    expect(taxResultFollowsFromDecision(decision, { ...result, units: [first, first] as const })).toBe(false);
   });
 
   it('#936 F27 #939 F3-F4 a successful zero keeps the taxable Decision that explains it', () => {

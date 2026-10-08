@@ -263,7 +263,13 @@ describe('Tax Decision', () => {
     expect(() => decodeTaxDecisionUnit(withoutClassification)).toThrow();
     expect(() => decodeTaxDecisionUnit({ ...unit, jurisdiction: 'CZ_DOMESTIC' })).toThrow();
     expect(() =>
-      decodeTaxDecisionUnit({ ...unit, jurisdiction: { jurisdiction: 'CZ_DOMESTIC', placeEvidenceRefs: {} } }),
+      decodeTaxDecisionUnit({
+        ...unit,
+        jurisdiction: {
+          jurisdiction: 'CZ_DOMESTIC',
+          placeEvidenceRefs: { deliveryDestination: 'delivery-destination-evidence-1' },
+        },
+      }),
     ).toThrow();
   });
 

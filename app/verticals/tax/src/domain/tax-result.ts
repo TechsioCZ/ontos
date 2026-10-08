@@ -68,18 +68,23 @@ const isSameUnitEvidence = (left: TaxUnitRoundingEvidence, right: TaxUnitRoundin
 
 /**
  * The Result is bound to and follows from its Decision: same Decision identity, currency and exact unit set, and
- * every amount equals what the Decision composes under the Result's own rounding policy. A check, not a second
- * source of truth (#936 F19, F27-F29, F32; #939 F2; #907 F132).
+ * every amount equals what the Decision composes under the Result's own rounding policy. Units are joined by their
+ * Taxable Supply Unit identity, never by array position (#937 F7). A check, not a second source of truth (#936 F19,
+ * F27-F29, F32; #939 F2; #907 F132).
  */
 export const taxResultFollowsFromDecision = (decision: TaxDecision, result: TaxResult): boolean => {
   const expected = composeTaxResult(decision, result.taxRoundingPolicy);
+  const expectedByUnitId = new Map<string, TaxUnitRoundingEvidence>(
+    expected.units.map((unit) => [unit.taxableSupplyUnitId, unit]),
+  );
   return (
     result.taxDecisionId === expected.taxDecisionId &&
     result.currency === expected.currency &&
     result.purchaseTaxTotal.amount === expected.purchaseTaxTotal.amount &&
+    new Set(result.units.map(({ taxableSupplyUnitId }) => taxableSupplyUnitId)).size === expected.units.length &&
     result.units.length === expected.units.length &&
-    result.units.every((unit, index) => {
-      const expectedUnit = expected.units[index];
+    result.units.every((unit) => {
+      const expectedUnit = expectedByUnitId.get(unit.taxableSupplyUnitId);
       return expectedUnit !== undefined && isSameUnitEvidence(unit, expectedUnit);
     })
   );

@@ -1,7 +1,11 @@
 import { Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { TaxJurisdictionInputSchema, determineTaxJurisdiction } from '../../src/domain/tax-jurisdiction.ts';
+import {
+  TaxJurisdictionDeterminationSchema,
+  TaxJurisdictionInputSchema,
+  determineTaxJurisdiction,
+} from '../../src/domain/tax-jurisdiction.ts';
 
 const decodeInput = Schema.decodeUnknownSync(TaxJurisdictionInputSchema);
 
@@ -86,29 +90,17 @@ describe('Tax Jurisdiction', () => {
     );
   });
 
-  it('#937 F52-F54 #918 F13 #907 F5 a declared-material seller place is required; a not-material one is not', () => {
+  it('#927 F6 F19 #937 F40 the Selling Legal Entity place fact is always required', () => {
     expect(jurisdictionFor({ sellingLegalEntity: { _tag: 'NOT_ESTABLISHED', state: 'STALE' } })).toEqual(
       Result.fail({ _tag: 'TAX_INPUT_STALE' }),
     );
-    expect(jurisdictionFor({ sellingLegalEntity: { _tag: 'NOT_MATERIAL' } })).toEqual(
-      Result.succeed({
+    expect(() => decodeInput({ ...baseInput, sellingLegalEntity: { _tag: 'NOT_MATERIAL' } })).toThrow();
+    expect(() =>
+      Schema.decodeUnknownSync(TaxJurisdictionDeterminationSchema)({
         jurisdiction: 'CZ_DOMESTIC',
-        placeEvidenceRefs: {
-          deliveryDestination: 'delivery-destination-evidence-1',
-          invoiceRecipient: 'invoice-recipient-evidence-1',
-        },
+        placeEvidenceRefs: { deliveryDestination: 'delivery-destination-evidence-1' },
       }),
-    );
-  });
-
-  it('#927 F19-F20 H #938 F27 a case declaring no material place has no jurisdiction and no CZ fallback', () => {
-    expect(
-      jurisdictionFor({
-        deliveryDestination: { _tag: 'NOT_MATERIAL' },
-        invoiceRecipient: { _tag: 'NOT_MATERIAL' },
-        sellingLegalEntity: { _tag: 'NOT_MATERIAL' },
-      }),
-    ).toEqual(Result.fail({ _tag: 'TAX_STATE_INDETERMINATE' }));
+    ).toThrow();
   });
 
   it('#937 F52-F54 a declared-material Invoice Recipient is required; a not-material one is not', () => {

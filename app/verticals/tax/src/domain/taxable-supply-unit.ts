@@ -5,9 +5,8 @@ import {
   CatalogSelectionSchema,
   PurchaseDemandOccurrenceIdSchema,
   PurchaseDemandOccurrenceSchema,
-  SetCompositionRevisionRefSchema,
 } from './purchase-binding.ts';
-import type { PurchaseDemandOccurrence, PurchaseDemandOccurrenceId } from './purchase-binding.ts';
+import type { CatalogSelection, PurchaseDemandOccurrence, PurchaseDemandOccurrenceId } from './purchase-binding.ts';
 import { distinctBy } from './tax-domain-primitives.ts';
 import type { TaxCaseUnsupported } from './tax-non-success-outcome.ts';
 
@@ -24,11 +23,18 @@ const OrdinaryOccurrenceMappingSchema = Schema.TaggedStruct('ORDINARY_OCCURRENCE
   occurrenceId: PurchaseDemandOccurrenceIdSchema,
 });
 
+/**
+ * A Set's Tax meaning uses the exact pinned Set Composition Revision, which has one canonical place: the exact
+ * Catalog Selection (#934 F3, F23; #937 F13, F17).
+ */
+const pinsSetCompositionRevision = (catalogSelection: CatalogSelection) =>
+  catalogSelection.setCompositionRevisionRef !== undefined ||
+  'A Set must carry its pinned Set Composition Revision in its exact Catalog Selection';
+
 const WholeTreatmentSetMappingSchema = Schema.TaggedStruct('WHOLE_TREATMENT_SET', {
   catalogSelection: CatalogSelectionSchema,
   occurrenceId: PurchaseDemandOccurrenceIdSchema,
-  setCompositionRevisionRef: SetCompositionRevisionRefSchema,
-});
+}).check(Schema.makeFilter(({ catalogSelection }) => pinsSetCompositionRevision(catalogSelection)));
 
 /**
  * One Taxable Supply Unit with its explicit mapping to source Purchase Demand Occurrence and Catalog evidence
@@ -44,20 +50,18 @@ export const taxableSupplyUnitSourceOccurrenceIds = (
   unit: TaxableSupplyUnit,
 ): NonEmptyReadonlyArray<PurchaseDemandOccurrenceId> => [unit.mapping.occurrenceId];
 
+const SetOccurrenceSchema = PurchaseDemandOccurrenceSchema.check(
+  Schema.makeFilter(({ catalogSelection }) => pinsSetCompositionRevision(catalogSelection)),
+);
+
 /**
  * Tax legal supply meaning established for one occurrence before unit mapping. Determining a Set's legal
  * meaning belongs to #934; this mapping only consumes it.
  */
 export const OccurrenceSupplyMeaningSchema = Schema.Union([
   Schema.TaggedStruct('ORDINARY', { occurrence: PurchaseDemandOccurrenceSchema }),
-  Schema.TaggedStruct('WHOLE_TREATMENT_SET', {
-    occurrence: PurchaseDemandOccurrenceSchema,
-    setCompositionRevisionRef: SetCompositionRevisionRefSchema,
-  }),
-  Schema.TaggedStruct('MULTI_SUPPLY_SET', {
-    occurrence: PurchaseDemandOccurrenceSchema,
-    setCompositionRevisionRef: SetCompositionRevisionRefSchema,
-  }),
+  Schema.TaggedStruct('WHOLE_TREATMENT_SET', { occurrence: SetOccurrenceSchema }),
+  Schema.TaggedStruct('MULTI_SUPPLY_SET', { occurrence: SetOccurrenceSchema }),
 ]);
 export type OccurrenceSupplyMeaning = typeof OccurrenceSupplyMeaningSchema.Type;
 
@@ -85,13 +89,12 @@ const unitFor = (meaning: OccurrenceSupplyMeaning): Result.Result<TaxableSupplyU
         unitId: unitIdFor(occurrence),
       }),
     ),
-    Match.tag('WHOLE_TREATMENT_SET', ({ occurrence, setCompositionRevisionRef }) =>
+    Match.tag('WHOLE_TREATMENT_SET', ({ occurrence }) =>
       Result.succeed({
         mapping: {
           _tag: 'WHOLE_TREATMENT_SET' as const,
           catalogSelection: occurrence.catalogSelection,
           occurrenceId: occurrence.occurrenceId,
-          setCompositionRevisionRef,
         },
         unitId: unitIdFor(occurrence),
       }),

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { LaunchTaxCoverageInputSchema, evaluateLaunchTaxCoverage } from '../../src/domain/launch-coverage.ts';
 import type { TaxUnsupportedRequirement } from '../../src/domain/tax-non-success-outcome.ts';
-import { occurrenceInput } from './tax-domain-fixtures.ts';
+import { catalogSelectionInput, occurrenceInput } from './tax-domain-fixtures.ts';
 
 const decodeInput = Schema.decodeUnknownSync(LaunchTaxCoverageInputSchema);
 
@@ -88,8 +88,13 @@ describe('Launch Tax Coverage', () => {
         supplyMeanings: [
           {
             _tag: 'MULTI_SUPPLY_SET',
-            occurrence: occurrenceInput('set-o-1'),
-            setCompositionRevisionRef: { revision: 1, setCompositionId: 'set-composition-1' },
+            occurrence: {
+              ...occurrenceInput('set-o-1'),
+              catalogSelection: {
+                ...catalogSelectionInput('set-variant-1'),
+                setCompositionRevisionRef: { revision: 1, setCompositionId: 'set-composition-1' },
+              },
+            },
           },
         ],
       }),

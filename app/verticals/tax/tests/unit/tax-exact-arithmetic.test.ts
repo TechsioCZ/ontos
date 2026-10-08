@@ -13,6 +13,8 @@ import {
 } from '../../src/domain/tax-exact-rational.ts';
 import { exactDecimal } from './tax-domain-fixtures.ts';
 
+const nonNegative = (value: string) => NonNegativeTaxExactRationalSchema.make(exactDecimal(value));
+
 describe('Exact Tax arithmetic', () => {
   it('#935 F1-F2 #907 F95-F96 adds finite decimals exactly without binary floating point', () => {
     expect(addTaxExactRationals(exactDecimal('0.1'), exactDecimal('0.2'))).toEqual(exactDecimal('0.3'));
@@ -29,11 +31,16 @@ describe('Exact Tax arithmetic', () => {
     expect(divideTaxExactRationals(exactDecimal('1'), exactDecimal('0'))).toEqual(Option.none());
   });
 
-  it('#935 F21-F22 rounds values HALF_UP to whole minor units', () => {
-    expect(roundHalfUpToMinorUnits(exactDecimal('0.004'), 100n)).toBe(0n);
-    expect(roundHalfUpToMinorUnits(exactDecimal('0.005'), 100n)).toBe(1n);
-    expect(roundHalfUpToMinorUnits({ denominator: '175', numerator: '3' }, 100n)).toBe(2n);
-    expect(roundHalfUpToMinorUnits(exactDecimal('-0.006'), 100n)).toBe(-1n);
-    expect(Schema.is(NonNegativeTaxExactRationalSchema)(exactDecimal('-0.01'))).toBe(false);
+  it('#935 F21-F22 rounds non-negative values HALF_UP to whole minor units', () => {
+    expect(roundHalfUpToMinorUnits(nonNegative('0.004'), 100n)).toBe(0n);
+    expect(roundHalfUpToMinorUnits(nonNegative('0.005'), 100n)).toBe(1n);
+    expect(
+      roundHalfUpToMinorUnits(NonNegativeTaxExactRationalSchema.make({ denominator: '175', numerator: '3' }), 100n),
+    ).toBe(2n);
+  });
+
+  it('#935 F21-F22 HALF_UP has no negative input: a negative exact value is not a non-negative rounding input', () => {
+    expect(Schema.is(NonNegativeTaxExactRationalSchema)(exactDecimal('-0.005'))).toBe(false);
+    expect(NonNegativeTaxExactRationalSchema.makeOption(exactDecimal('-0.006'))).toEqual(Option.none());
   });
 });

@@ -12,7 +12,7 @@ import {
   sumTaxExactRationals,
   taxExactRationalsEqual,
 } from './tax-exact-rational.ts';
-import type { TaxExactRational } from './tax-exact-rational.ts';
+import type { NonNegativeTaxExactRational } from './tax-exact-rational.ts';
 import { taxNotEstablishedOutcome } from './tax-non-success-outcome.ts';
 import type { TaxCaseUnsupported, TaxNotEstablishedOutcome, TaxStateIndeterminate } from './tax-non-success-outcome.ts';
 import { OwnerIssuedAmountSchema } from './taxable-basis.ts';
@@ -86,11 +86,11 @@ export const ShippingAllocationInputSchema = Schema.Struct({
 });
 export type ShippingAllocationInput = typeof ShippingAllocationInputSchema.Type;
 
-export const UnitShippingAllocationSchema = Schema.Struct({
+const UnitShippingAllocationSchema = Schema.Struct({
   basisComponent: ShippingAllocationBasisSchema,
   taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
 });
-export type UnitShippingAllocation = typeof UnitShippingAllocationSchema.Type;
+type UnitShippingAllocation = typeof UnitShippingAllocationSchema.Type;
 
 const basisComponentsOf = (unitAllocations: NonEmptyReadonlyArray<UnitShippingAllocation>) =>
   pipe(
@@ -132,7 +132,7 @@ export type ShippingAllocation = typeof ShippingAllocationSchema.Type;
 export type ShippingAllocationFailure = TaxCaseUnsupported | TaxNotEstablishedOutcome;
 
 interface CurrentCzkShipping {
-  readonly amount: TaxExactRational;
+  readonly amount: NonNegativeTaxExactRational;
   readonly shippingSourceRef: ShippingSourceRef;
 }
 
@@ -179,7 +179,7 @@ const proportionalAllocations = (
             basisComponent: {
               _tag: 'SHIPPING_ALLOCATION',
               allocationWeightsEvidenceRef: weights.approvalEvidenceRef,
-              amount: multiplyTaxExactRationals(shipping.amount, share),
+              amount: NonNegativeTaxExactRationalSchema.make(multiplyTaxExactRationals(shipping.amount, share)),
               shippingSourceRef: shipping.shippingSourceRef,
             },
             taxableSupplyUnitId,

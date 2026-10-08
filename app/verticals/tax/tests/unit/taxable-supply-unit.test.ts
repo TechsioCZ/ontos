@@ -1,11 +1,17 @@
 import { Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { OccurrenceSupplyMeaningsSchema, mapTaxableSupplyUnits } from '../../src/domain/taxable-supply-unit.ts';
+import {
+  TaxableSupplyUnitSchema,
+  OccurrenceSupplyMeaningsSchema,
+  mapTaxableSupplyUnits,
+} from '../../src/domain/taxable-supply-unit.ts';
 import { catalogSelectionInput, occurrenceInput } from './tax-domain-fixtures.ts';
 
 const decodeMeanings = Schema.decodeUnknownSync(OccurrenceSupplyMeaningsSchema);
 const setComposition = { revision: 3, setCompositionId: 'set-composition-1' };
+const setSelection = { ...catalogSelectionInput('set-variant-1'), setCompositionRevisionRef: setComposition };
+const setOccurrence = (occurrenceId: string) => ({ ...occurrenceInput(occurrenceId), catalogSelection: setSelection });
 
 describe('Taxable Supply Unit mapping', () => {
   it('#920 F12 F17 maps one ordinary occurrence to one traceable Taxable Supply Unit', () => {
@@ -37,35 +43,52 @@ describe('Taxable Supply Unit mapping', () => {
 
   it('#920 F25-F26 #934 F11 F22-F23 maps a whole-treatment Set to one unit without component prices', () => {
     const mapped = mapTaxableSupplyUnits(
-      decodeMeanings([
-        {
-          _tag: 'WHOLE_TREATMENT_SET',
-          occurrence: occurrenceInput('set-o-1'),
-          setCompositionRevisionRef: setComposition,
-        },
-      ]),
+      decodeMeanings([{ _tag: 'WHOLE_TREATMENT_SET', occurrence: setOccurrence('set-o-1') }]),
     );
 
     expect(mapped).toEqual(
       Result.succeed([
         {
-          mapping: {
-            _tag: 'WHOLE_TREATMENT_SET',
-            catalogSelection: catalogSelectionInput(),
-            occurrenceId: 'set-o-1',
-            setCompositionRevisionRef: setComposition,
-          },
+          mapping: { _tag: 'WHOLE_TREATMENT_SET', catalogSelection: setSelection, occurrenceId: 'set-o-1' },
           unitId: 'taxable-supply-unit:set-o-1',
         },
       ]),
     );
   });
 
+  it('#934 F3 F23 #937 F13 F17 a Set meaning or mapping without its pinned Set Composition Revision in the exact Catalog Selection is rejected', () => {
+    const decodeUnit = Schema.decodeUnknownSync(TaxableSupplyUnitSchema);
+    const unpinned = catalogSelectionInput('set-variant-1');
+
+    for (const _tag of ['WHOLE_TREATMENT_SET', 'MULTI_SUPPLY_SET'] as const) {
+      expect(() =>
+        decodeMeanings([{ _tag, occurrence: occurrenceInput('set-o-1'), setCompositionRevisionRef: setComposition }]),
+      ).toThrow();
+    }
+    expect(() =>
+      decodeUnit({
+        mapping: {
+          _tag: 'WHOLE_TREATMENT_SET',
+          catalogSelection: unpinned,
+          occurrenceId: 'set-o-1',
+          setCompositionRevisionRef: setComposition,
+        },
+        unitId: 'taxable-supply-unit:set-o-1',
+      }),
+    ).toThrow();
+    expect(
+      decodeUnit({
+        mapping: { _tag: 'WHOLE_TREATMENT_SET', catalogSelection: setSelection, occurrenceId: 'set-o-1' },
+        unitId: 'taxable-supply-unit:set-o-1',
+      }).mapping.catalogSelection.setCompositionRevisionRef,
+    ).toEqual(setComposition);
+  });
+
   it('#920 F29-F30 #918 F39 a Set requiring several taxable supplies is TAX_CASE_UNSUPPORTED with no split', () => {
     const mapped = mapTaxableSupplyUnits(
       decodeMeanings([
         { _tag: 'ORDINARY', occurrence: occurrenceInput('o-1') },
-        { _tag: 'MULTI_SUPPLY_SET', occurrence: occurrenceInput('set-o-2'), setCompositionRevisionRef: setComposition },
+        { _tag: 'MULTI_SUPPLY_SET', occurrence: setOccurrence('set-o-2') },
       ]),
     );
 

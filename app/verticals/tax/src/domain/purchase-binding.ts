@@ -15,9 +15,9 @@ export const PurchaseDemandOccurrenceIdSchema = BoundedIdentifierSchema.pipe(
 export type PurchaseDemandOccurrenceId = typeof PurchaseDemandOccurrenceIdSchema.Type;
 
 /** Exact pinned Set Composition Revision used for a Set's Tax meaning (#934 F3, F23; #937 F17). */
-export const SetCompositionIdSchema = BoundedIdentifierSchema.pipe(Schema.brand('SetCompositionId'));
+const SetCompositionIdSchema = BoundedIdentifierSchema.pipe(Schema.brand('SetCompositionId'));
 
-export const SetCompositionRevisionRefSchema = Schema.Struct({
+const SetCompositionRevisionRefSchema = Schema.Struct({
   revision: RevisionSchema,
   setCompositionId: SetCompositionIdSchema,
 });

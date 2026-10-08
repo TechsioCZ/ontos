@@ -7,26 +7,22 @@ import {
   NonNegativeTaxExactRationalSchema,
   TaxExactRationalSchema,
   multiplyTaxExactRationals,
-  roundHalfUpToMinorUnits,
   subtractTaxExactRationals,
   sumTaxExactRationals,
-  taxExactRationalFromCanonicalDecimal,
   taxExactRationalFromMinorUnits,
   taxExactRationalsEqual,
 } from './tax-exact-rational.ts';
-import type { TaxExactRational } from './tax-exact-rational.ts';
+import type { NonNegativeTaxExactRational, TaxExactRational } from './tax-exact-rational.ts';
 import {
   CZK_MINOR_UNITS_PER_MAJOR_UNIT,
   TaxCurrencySchema,
   TaxMonetaryAmountSchema,
-  taxMonetaryAmountFromNonNegativeMinorUnits,
+  publishedTaxAmountRoundedHalfUp,
   taxMonetaryAmountMinorUnits,
 } from './tax-monetary-amount.ts';
 import type { TaxMonetaryAmount } from './tax-monetary-amount.ts';
 import type { TaxableTreatment } from './tax-treatment.ts';
 import { TaxableSupplyUnitIdSchema } from './taxable-supply-unit.ts';
-
-const ONE_HUNDREDTH: TaxExactRational = { denominator: '100', numerator: '1' };
 
 /**
  * Versioned Tax Rounding policy. Launch CZ publishes once per Taxable Supply Unit at 0.01 CZK with ROUND_HALF_UP,
@@ -40,12 +36,6 @@ export const TaxRoundingPolicySchema = Schema.Struct({
   revision: RevisionSchema,
 });
 export type TaxRoundingPolicy = typeof TaxRoundingPolicySchema.Type;
-
-/** Published amount of a non-negative exact contribution (non-negative basis times positive rate). */
-const publishedAmountOf = (exactTaxContribution: TaxExactRational): TaxMonetaryAmount =>
-  taxMonetaryAmountFromNonNegativeMinorUnits(
-    roundHalfUpToMinorUnits(exactTaxContribution, CZK_MINOR_UNITS_PER_MAJOR_UNIT),
-  );
 
 const exactValueOf = (amount: TaxMonetaryAmount): TaxExactRational =>
   taxExactRationalFromMinorUnits(taxMonetaryAmountMinorUnits(amount), CZK_MINOR_UNITS_PER_MAJOR_UNIT);
@@ -64,7 +54,7 @@ export const TaxUnitRoundingEvidenceSchema = Schema.Struct({
 }).check(
   Schema.makeFilter(
     ({ exactTaxContribution, publishedTaxAmount }) =>
-      publishedAmountOf(exactTaxContribution).amount === publishedTaxAmount.amount ||
+      publishedTaxAmountRoundedHalfUp(exactTaxContribution).amount === publishedTaxAmount.amount ||
       'The published unit Tax amount must be ROUND_HALF_UP of the exact contribution at 0.01 CZK',
   ),
   Schema.makeFilter(
@@ -77,22 +67,33 @@ export const TaxUnitRoundingEvidenceSchema = Schema.Struct({
 );
 export type TaxUnitRoundingEvidence = typeof TaxUnitRoundingEvidenceSchema.Type;
 
+/** Exact fraction of a schema-checked positive decimal rate percent, e.g. `21` is 21/100, read without floats. */
+const exactRateFraction = ({ ratePercent }: TaxableTreatment): TaxExactRational => {
+  const [integerDigits = '0', fractionDigits = ''] = ratePercent.split('.');
+  return taxExactRationalFromMinorUnits(
+    BigInt(`${integerDigits}${fractionDigits}`),
+    100n * 10n ** BigInt(fractionDigits.length),
+  );
+};
+
 /**
- * Exact Tax contribution of one unit: its exact Taxable Basis (all components summed without any rounding) times
- * its exact rate (#935 F12-F19, F53; #907 F97).
+ * Exact Tax contribution of one unit: its exact non-negative Taxable Basis (all components summed without any
+ * rounding) times its exact positive rate, so it is non-negative (#935 F12-F19, F53; #907 F97).
  */
 export const exactTaxContribution = (
   basis: TaxableBasisInterpretation,
   treatment: TaxableTreatment,
-): TaxExactRational =>
-  multiplyTaxExactRationals(
-    sumTaxExactRationals(
-      pipe(
-        basis.components,
-        Arr.map(({ amount }) => amount),
+): NonNegativeTaxExactRational =>
+  NonNegativeTaxExactRationalSchema.make(
+    multiplyTaxExactRationals(
+      sumTaxExactRationals(
+        pipe(
+          basis.components,
+          Arr.map(({ amount }) => amount),
+        ),
       ),
+      exactRateFraction(treatment),
     ),
-    multiplyTaxExactRationals(taxExactRationalFromCanonicalDecimal(treatment.ratePercent), ONE_HUNDREDTH),
   );
 
 /**
@@ -105,7 +106,7 @@ export const finalizeTaxableSupplyUnitTax = (
   policy: TaxRoundingPolicy,
 ): TaxUnitRoundingEvidence => {
   const exact = exactTaxContribution(unit.taxableBasisInterpretation, unit.treatment);
-  const publishedTaxAmount = publishedAmountOf(exact);
+  const publishedTaxAmount = publishedTaxAmountRoundedHalfUp(exact);
   return {
     exactTaxContribution: exact,
     publishedTaxAmount,

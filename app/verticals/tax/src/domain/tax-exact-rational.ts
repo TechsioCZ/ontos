@@ -43,7 +43,8 @@ export const isNonNegativeTaxExactRational = (value: TaxExactRational) => !value
 /** Exact non-negative value, e.g. an owner-issued commercial amount, a Taxable Basis component or a weight. */
 export const NonNegativeTaxExactRationalSchema = TaxExactRationalSchema.check(
   Schema.makeFilter((value) => isNonNegativeTaxExactRational(value) || 'The exact value must be non-negative'),
-);
+).pipe(Schema.brand('NonNegativeTaxExactRational'));
+export type NonNegativeTaxExactRational = typeof NonNegativeTaxExactRationalSchema.Type;
 
 export const ZERO_TAX_EXACT_RATIONAL: TaxExactRational = { denominator: '1', numerator: '0' };
 
@@ -61,11 +62,8 @@ const normalize = (numerator: bigint, denominator: bigint): TaxExactRational => 
 export const makeTaxExactRational = (numerator: bigint, denominator: bigint): Option.Option<TaxExactRational> =>
   denominator === 0n ? Option.none() : Option.some(normalize(numerator, denominator));
 
-/**
- * Exact value of a decimal string already validated as canonical base-10 (e.g. a schema-checked Tax rate percent),
- * read without binary floating point.
- */
-export const taxExactRationalFromCanonicalDecimal = (value: string): TaxExactRational => {
+/** Exact value of a decimal string already validated as canonical base-10, read without binary floating point. */
+const taxExactRationalFromCanonicalDecimal = (value: string): TaxExactRational => {
   const [integerPart = '0', fractionDigits = ''] = value.split('.');
   return normalize(BigInt(`${integerPart}${fractionDigits}`), 10n ** BigInt(fractionDigits.length));
 };
@@ -123,12 +121,11 @@ export const taxExactRationalsEqual = (left: TaxExactRational, right: TaxExactRa
   left.numerator === right.numerator && left.denominator === right.denominator;
 
 /**
- * ROUND_HALF_UP of an exact value to whole minor units: the nearest minor unit, with an exact midpoint going up
+ * ROUND_HALF_UP of a non-negative exact value to whole minor units: the nearest minor unit, with an exact midpoint
+ * going up. HALF_UP is defined only for the non-negative published Tax, so a negative value is not an input
  * (#935 F21-F22).
  */
-export const roundHalfUpToMinorUnits = (value: TaxExactRational, minorUnitsPerMajorUnit: bigint): bigint => {
+export const roundHalfUpToMinorUnits = (value: NonNegativeTaxExactRational, minorUnitsPerMajorUnit: bigint): bigint => {
   const { denominator, numerator } = partsOf(value);
-  const doubled = 2n * numerator * minorUnitsPerMajorUnit + denominator;
-  const divisor = 2n * denominator;
-  return doubled >= 0n ? doubled / divisor : -((-doubled + divisor - 1n) / divisor);
+  return (2n * numerator * minorUnitsPerMajorUnit + denominator) / (2n * denominator);
 };

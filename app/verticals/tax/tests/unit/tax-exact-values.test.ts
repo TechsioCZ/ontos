@@ -2,15 +2,17 @@ import { Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
+  NonNegativeTaxExactRationalSchema,
   TaxExactRationalSchema,
   makeTaxExactRational,
   taxExactRationalFromDecimal,
 } from '../../src/domain/tax-exact-rational.ts';
 import {
+  publishedTaxAmountRoundedHalfUp,
   sumTaxMonetaryAmounts,
-  taxMonetaryAmountFromNonNegativeMinorUnits,
   taxMonetaryAmountMinorUnits,
 } from '../../src/domain/tax-monetary-amount.ts';
+import { exactDecimal } from './tax-domain-fixtures.ts';
 
 describe('Exact Tax values', () => {
   it('#907 F95-F96 reads decimals exactly without binary floating point', () => {
@@ -28,7 +30,7 @@ describe('Exact Tax values', () => {
   });
 
   it('#936 F31-F35 published CZK amounts round-trip through exact minor units and sum exactly', () => {
-    const amount = taxMonetaryAmountFromNonNegativeMinorUnits(123_456n);
+    const amount = publishedTaxAmountRoundedHalfUp(NonNegativeTaxExactRationalSchema.make(exactDecimal('1234.555')));
 
     expect(amount).toEqual({ amount: '1234.56', currency: 'CZK' });
     expect(taxMonetaryAmountMinorUnits(amount)).toBe(123_456n);
