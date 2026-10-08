@@ -152,7 +152,7 @@ export function SiteHeader() {
                 key={item.href}
                 as={NextLink}
                 aria-current={pathname === item.href ? "page" : undefined}
-                className="inline-flex h-8 items-center px-2 underline aria-[current=page]:bg-primary"
+                className="inline-flex h-form-control-sm items-center px-(--dimension-12) text-sm underline max-xl:px-(--dimension-8) aria-[current=page]:bg-primary"
                 href={item.href}
               >
                 {item.label}
