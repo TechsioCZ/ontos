@@ -4,15 +4,32 @@
 import { defineVerticalRuntimeRegistration } from '@app/core-runtime';
 import { taxManifest } from './vertical.manifest.ts';
 // <generated-module-registration-imports>
+import { correctTaxRuleRevisionAction } from './src/actions/correct-tax-rule-revision.action.ts';
+import { createTaxRuleAction } from './src/actions/create-tax-rule.action.ts';
+import { createTaxRuleRevisionAction } from './src/actions/create-tax-rule-revision.action.ts';
+import { endTaxFactAuthorityContractAction } from './src/actions/end-tax-fact-authority-contract.action.ts';
+import { endTaxRuleRevisionAction } from './src/actions/end-tax-rule-revision.action.ts';
+import { establishTaxFactAuthorityContractAction } from './src/actions/establish-tax-fact-authority-contract.action.ts';
+import { reviseTaxFactAuthorityContractAction } from './src/actions/revise-tax-fact-authority-contract.action.ts';
 // </generated-module-registration-imports>
 export const taxRegistration = defineVerticalRuntimeRegistration({
   actions: [
     // <generated-module-registration-actions>
+    correctTaxRuleRevisionAction,
+    createTaxRuleAction,
+    createTaxRuleRevisionAction,
+    endTaxFactAuthorityContractAction,
+    endTaxRuleRevisionAction,
+    establishTaxFactAuthorityContractAction,
+    reviseTaxFactAuthorityContractAction,
     // </generated-module-registration-actions>
   ],
   entrypoints: {
     api: {
       // <generated-module-registration-apis>
+      'applicable-tax-rule-set': () => import('./src/api/applicable-tax-rule-set-client.ts'),
+      'tax-fact-authority-current': () => import('./src/api/tax-fact-authority-current-client.ts'),
+      'tax-rule-history': () => import('./src/api/tax-rule-history-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

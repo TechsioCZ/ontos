@@ -165,6 +165,7 @@ const main = Effect.scoped(
     yield* migrate('verticals/inventory', 'drizzle.config.ts');
     yield* migrate('verticals/pricing', 'drizzle.config.ts');
     yield* migrate('verticals/storefront-registry', 'drizzle.config.ts');
+    yield* migrate('verticals/tax', 'drizzle.config.ts');
     yield* runAppScript('scripts/postgres/bootstrap-runtime-role.mts');
     if (Option.isSome(portalAuthDatabase)) {
       yield* migrate('verticals/commerce-customer-context', 'drizzle.portal-auth.config.ts');
