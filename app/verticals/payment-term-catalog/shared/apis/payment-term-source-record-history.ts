@@ -5,23 +5,20 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup } from 'effect/unstable/httpapi'
 import {
   AcceptPaymentTermSourceStatementResultSchema,
   PaymentTermSourceRecordKeySchema,
+  PaymentTermSourceRevisionSchema,
   SourceStatementIdSchema,
 } from '../domain/payment-term-source.ts';
 import { PaymentTermInstantSchema } from '../domain/payment-term.ts';
 import { PaymentTermRefSchema } from '../resources/payment-term.ts';
 
-const sourceRevision = Schema.Finite.check(
-  Schema.isInt(),
-  Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }),
-);
 const limit = Schema.Number.check(Schema.isInt(), Schema.isBetween({ maximum: 200, minimum: 1 }));
 const PaymentTermSourceDecisionSchema = Schema.Struct({
-  authorityRevision: sourceRevision,
+  authorityRevision: PaymentTermSourceRevisionSchema,
   businessObservedAt: PaymentTermInstantSchema,
   recordedAt: PaymentTermInstantSchema,
   result: AcceptPaymentTermSourceStatementResultSchema,
   sourceCode: Schema.String,
-  sourceRevision,
+  sourceRevision: PaymentTermSourceRevisionSchema,
   sourceStatementId: SourceStatementIdSchema,
   supersededBySourceStatementId: Schema.OptionFromNullOr(SourceStatementIdSchema),
   supersedesSourceStatementId: Schema.OptionFromNullOr(SourceStatementIdSchema),
@@ -35,7 +32,7 @@ export const PaymentTermSourceRecordHistoryResponseSchema = Schema.Struct({
   currentAccepted: Schema.OptionFromNullOr(
     Schema.Struct({
       paymentTermRef: PaymentTermRefSchema,
-      sourceRevision,
+      sourceRevision: PaymentTermSourceRevisionSchema,
       sourceStatementId: SourceStatementIdSchema,
     }),
   ),

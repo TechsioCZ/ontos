@@ -1,6 +1,7 @@
 import { expect, it } from 'effect-rstest';
 import { Effect, Option, Predicate, Schema } from 'effect';
 import { createActionCollector } from '../../../../packages/core-runtime/src/actions/collector.ts';
+import { decideModuleStateAccess } from '../../../../packages/core-runtime/src/modules/module-state-gate.ts';
 import { AcceptPaymentTermSourceStatementPayloadSchema } from '../../shared/domain/payment-term-source.ts';
 import {
   acceptPaymentTermSourceStatementAction,
@@ -14,7 +15,10 @@ import {
 import { PaymentTermDefinitionSchema } from '../../shared/domain/payment-term.ts';
 import { PaymentTermSourceStatementResponseSchema } from '../../shared/apis/payment-term-source-statement.ts';
 import { PaymentTermSourceRecordHistoryResponseSchema } from '../../shared/apis/payment-term-source-record-history.ts';
-import { readPaymentTermSourceRecordHistory } from '../../src/api/payment-term-source-record-history.read.ts';
+import {
+  paymentTermSourceRecordHistoryRead,
+  readPaymentTermSourceRecordHistory,
+} from '../../src/api/payment-term-source-record-history.read.ts';
 import { readPaymentTermSourceStatement } from '../../src/api/payment-term-source-statement.read.ts';
 
 const scope = {
@@ -225,6 +229,13 @@ it.effect('governed source-record history publishes bounded decision identity wi
     expect(read.highestObserved.sourceStatementId).toBe('statement-3');
   }),
 );
+it('keeps source-record history available when the owning module is inactive', () => {
+  const {
+    entrypoint: { access },
+  } = paymentTermSourceRecordHistoryRead.descriptor;
+  expect(access).toBe('historical_read');
+  expect(decideModuleStateAccess('inactive', access)).toBe('allow');
+});
 it.effect(
   'actual canonical source creation emits original create and statement outboxes once; replay emits neither',
   () =>
