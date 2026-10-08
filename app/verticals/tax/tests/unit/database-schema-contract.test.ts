@@ -11,6 +11,8 @@ import {
   taxRuleCorrections,
   taxRuleRevisionEndFacts,
   taxRuleRevisions,
+  taxSourceAssertions,
+  taxSourceConflicts,
 } from '../../src/database/schema.ts';
 
 const migrationRoot = new URL('../../drizzle/', import.meta.url);
@@ -56,7 +58,11 @@ it('owns only the private, tenant and Selling Legal Entity scoped TAX governance
         `${config.name}.${column}`,
       ).toBe(true);
     }
-    expect(uniqueColumns(table)).toContain('tenant_id,idempotency_key');
+    // Core invocation identity is unique per row; a conflict row is unique per invocation, kind and counterpart.
+    expect(
+      uniqueColumns(table).some((columns) => columns.startsWith('tenant_id,idempotency_key')),
+      `${config.name} idempotency`,
+    ).toBe(true);
   }
 });
 
@@ -82,4 +88,46 @@ it('models immutable revisions, end facts and correction provenance without tech
     expect(sql).toContain(`ALTER TABLE "tax"."${name}" FORCE ROW LEVEL SECURITY`);
     expect(sql).toContain(`CREATE TRIGGER "${name}_append_only" BEFORE UPDATE OR DELETE ON "tax"."${name}"`);
   }
+});
+
+it('#958 F1-F16 F21-F22 keeps provider, Source Record, assertion and fact identities and every time meaning distinct', () => {
+  expect(columnNames(taxSourceAssertions)).toEqual(
+    expect.arrayContaining([
+      'source_ref',
+      'source_record_ref',
+      'source_assertion_key',
+      'fact_family',
+      'jurisdiction',
+      'registration_meaning',
+      'valid_from',
+      'valid_to',
+      'observed_at',
+      'issued_at',
+      'recorded_at',
+      'semantic_fingerprint',
+      'eligibility',
+      'authority_role',
+      'authority_contract_revision_id',
+      'delivery_ref',
+    ]),
+  );
+  // Canonical TAX semantics are never keyed on an adapter or route identity (#958 F22).
+  expect(columnNames(taxSourceAssertions).filter((name) => /adapter|connector|route|payload/u.test(name))).toEqual([]);
+  for (const name of ['valid_from', 'valid_to', 'observed_at', 'issued_at']) {
+    expect(getTableConfig(taxSourceAssertions).columns.find((column) => column.name === name)?.notNull, name).toBe(
+      false,
+    );
+  }
+  expect(uniqueColumns(taxSourceAssertions)).toContain('tenant_id,legal_entity_id,source_ref,source_assertion_key');
+  expect(uniqueColumns(taxSourceConflicts)).toContain('tenant_id,idempotency_key,conflict_kind,related_assertion_id');
+  expect(columnNames(taxSourceAssertions)).not.toContain('updated_at');
+  const sql = migrations();
+  expect(sql).toContain('"tax_source_assertions_validity_ck" CHECK ("valid_from" is null or "valid_to" is null');
+  expect(sql).toContain('"tax_source_conflicts_status_ck" CHECK ("status" = \'OPEN\')');
+  // Only time-independent eligibility is stored; the #957 acceptance depends on the authority contracts and is
+  // always evaluated, never stored (#959 F25).
+  expect(sql).toContain(
+    '"tax_source_assertions_eligibility_ck" CHECK ("eligibility" in (\'ELIGIBLE\', \'VALIDITY_UNKNOWN\'))',
+  );
+  expect(columnNames(taxSourceAssertions)).not.toContain('acceptance_outcome');
 });

@@ -14,14 +14,17 @@ import {
   EstablishTaxFactAuthorityContractPayloadSchema,
   ReviseTaxFactAuthorityContractPayloadSchema,
 } from '../../shared/actions/tax-governance.ts';
+import { RecordTaxSourceAssertionPayloadSchema } from '../../shared/actions/tax-source-assertion.ts';
 import { taxAuthorityContractManagePermission } from '../../shared/permissions/tax-authority-contract-manage.ts';
 import { taxRuleManagePermission } from '../../shared/permissions/tax-rule-manage.ts';
+import { taxSourceAssertionRecordPermission } from '../../shared/permissions/tax-source-assertion-record.ts';
 import { correctTaxRuleRevisionAction } from '../../src/actions/correct-tax-rule-revision.action.ts';
 import { createTaxRuleRevisionAction } from '../../src/actions/create-tax-rule-revision.action.ts';
 import { createTaxRuleAction } from '../../src/actions/create-tax-rule.action.ts';
 import { endTaxFactAuthorityContractAction } from '../../src/actions/end-tax-fact-authority-contract.action.ts';
 import { endTaxRuleRevisionAction } from '../../src/actions/end-tax-rule-revision.action.ts';
 import { establishTaxFactAuthorityContractAction } from '../../src/actions/establish-tax-fact-authority-contract.action.ts';
+import { recordTaxSourceAssertionAction } from '../../src/actions/record-tax-source-assertion.action.ts';
 import { reviseTaxFactAuthorityContractAction } from '../../src/actions/revise-tax-fact-authority-contract.action.ts';
 
 const tenantId = '10000000-0000-4000-8000-000000000001';
@@ -215,5 +218,63 @@ it.effect('#950 BDD Czech jurisdiction is not global administrator scope', () =>
       expect(Object.keys(otherCzechSeller?.target ?? {}).toSorted()).toEqual(['kind', 'legalEntityId', 'tenantId']);
       expect(sellerAManager(otherCzechSeller)).toBe(false);
     }
+  }),
+);
+
+const recordFor = Effect.gen(function* decodeRecordAction() {
+  const payload = yield* Schema.decodeEffect(RecordTaxSourceAssertionPayloadSchema)({
+    ...attribution,
+    factFamily: 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
+    jurisdiction: 'CZ_DOMESTIC',
+    registrationMeaning: 'REGISTERED',
+    sourceAssertionKey: 'erp-assertion-1',
+    sourceRecordRef: 'erp-record-1',
+    sourceRef: 'erp.finance',
+    validFrom: '2027-01-01T00:00:00.000Z',
+  });
+  return (scope: OperationalScope) =>
+    getActionBusinessPermissionTargetResolver(recordTaxSourceAssertionAction)?.(payload, scope);
+});
+
+it('#950 F18-F22 recording source evidence is its own seller-bound purpose, protecting only the record Action', () => {
+  expect(taxSourceAssertionRecordPermission.allowedScopeKinds).toEqual(['tax_selling_legal_entity']);
+  expect(taxSourceAssertionRecordPermission.protectedEntrypoints).toEqual([
+    recordTaxSourceAssertionAction.descriptor.entrypoint.entrypointKey,
+  ]);
+  expect(taxAuthorityContractManagePermission.protectedEntrypoints).not.toContain(
+    recordTaxSourceAssertionAction.descriptor.entrypoint.entrypointKey,
+  );
+});
+
+it.effect('#950 F19 an authority-contract manager cannot record source-owned participant facts', () =>
+  Effect.gen(function* contractManagerCannotRecord() {
+    const resolveFor = yield* recordFor;
+    const contractManager = grantedTo([
+      {
+        permission: 'tax.authority_contract.manage',
+        target: { kind: 'tax_selling_legal_entity', legalEntityId: sellerA, tenantId },
+      },
+      { permission: 'tax.rule.manage', target: { kind: 'tax_selling_legal_entity', legalEntityId: sellerA, tenantId } },
+    ]);
+    const resolved = resolveFor(scopeFor(sellerA));
+    expect(resolved).toEqual({
+      permission: 'tax.source_assertion.record',
+      target: { kind: 'tax_selling_legal_entity', legalEntityId: sellerA, tenantId },
+    });
+    expect(contractManager(resolved)).toBe(false);
+  }),
+);
+
+it.effect('#950 F24-F28 a recorder for seller A cannot record evidence for seller B', () =>
+  Effect.gen(function* recorderBoundToSeller() {
+    const resolveFor = yield* recordFor;
+    const sellerARecorder = grantedTo([
+      {
+        permission: 'tax.source_assertion.record',
+        target: { kind: 'tax_selling_legal_entity', legalEntityId: sellerA, tenantId },
+      },
+    ]);
+    expect(sellerARecorder(resolveFor(scopeFor(sellerA)))).toBe(true);
+    expect(sellerARecorder(resolveFor(scopeFor(sellerB)))).toBe(false);
   }),
 );

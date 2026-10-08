@@ -147,12 +147,14 @@ override of a source-owned fact through the authority contract.
 
 **Tax Source Assertion** — One immutable source statement about one exact Tax fact subject, scope
 and business-validity meaning, retained with provenance independently from the external source
-record and from the canonical Tax business fact it may support. Evaluating one assertion against its
-fact-level contract yields exactly one source acceptance outcome: `ACCEPTED` (eligible for
-owner-governed Tax fact resolution, not payload promotion), `REJECTED` (a known reason prevents its
-use for the declared Tax use), `NEEDS_REVIEW` (understandable but owner-governed undecided) or
-`UNVERIFIABLE` (subject, authority, scope or validity cannot be safely confirmed). This family is
-distinct from Tax Outcome codes.
+record and from the canonical Tax business fact it may support. Evaluating one assertion against the
+Tax Fact Authority Contract covering its claimed business validity yields exactly one source
+acceptance outcome: `ACCEPTED` (eligible for owner-governed Tax fact resolution, not payload
+promotion), `REJECTED` (a known reason prevents its use for the declared Tax use), `NEEDS_REVIEW`
+(understandable but owner-governed undecided) or `UNVERIFIABLE` (subject, authority, scope or
+validity cannot be safely confirmed). Authority is judged per business instant: the source's role
+(System of Record, evidence or none) comes from the contract covering that instant, never from the
+contract at recording time. This family is distinct from Tax Outcome codes.
 _Avoid_: provider payload as canonical Tax profile, arrival order as Currentness, source record ID
 as Tax fact identity.
 
