@@ -146,7 +146,6 @@ const isEquivalentToCanonical = (definition: ResolvedPaymentTermDefinition, cano
 
 const historicalResolution = (
   request: CurrentPaymentTermReferenceRequest,
-  effectiveAt: string,
   trustedTenantId: string,
   outcome: ResolvedPaymentTermOutcome,
   exactDefinition: ResolvedPaymentTermDefinition | undefined,
@@ -155,43 +154,20 @@ const historicalResolution = (
   if (exactDefinition === undefined || !isEquivalentToCanonical(exactDefinition, outcome.definition)) {
     return incompatible(request, requestedPaymentTermRef, outcome.definition);
   }
-  if (request.paymentTermRef.resourceId === outcome.canonicalPaymentTermId) {
-    return resolutionOutcome(request, trustedTenantId, outcome);
-  }
-  if (Predicate.isTagged(outcome, 'retired')) {
-    return {
-      definition: {
-        ...exactDefinition,
-        lifecycle: outcome.definition.lifecycle,
-        retired: outcome.definition.retired,
-      },
-      kind: 'RETIRED',
-      requestedPaymentTermRef,
-    };
-  }
-  if (effectiveAt < exactDefinition.lifecycle.effectiveFrom) {
-    return broken(
-      requestedPaymentTermRef,
-      `Payment Term is not active before ${exactDefinition.lifecycle.effectiveFrom}`,
-    );
-  }
-  if (exactDefinition.lifecycle.effectiveTo !== null && exactDefinition.lifecycle.effectiveTo <= effectiveAt) {
-    return {
-      definition: exactDefinition,
-      kind: 'RETIRED',
-      requestedPaymentTermRef,
-    };
-  }
+  // Current preserves the requested immutable meaning while applying today's authoritative eligibility lifecycle.
   return {
-    definition: exactDefinition,
-    kind: 'USABLE',
+    definition: {
+      ...exactDefinition,
+      lifecycle: outcome.definition.lifecycle,
+      retired: outcome.definition.retired,
+    },
+    kind: Predicate.isTagged(outcome, 'retired') ? 'RETIRED' : 'USABLE',
     requestedPaymentTermRef,
   };
 };
 
 const preserveRequestedSemanticRevision = (
   request: CurrentPaymentTermsRequest['references'][number],
-  effectiveAt: string,
   trustedTenantId: string,
   outcome: ResolveStoredPaymentTermOutcome,
   services: PaymentTermCatalogPersistence,
@@ -213,9 +189,7 @@ const preserveRequestedSemanticRevision = (
           .pipe(Effect.mapError(unavailable), Effect.map(Option.getOrUndefined))
       : historicalDefinition(services, outcome.requestedPaymentTermId, expectedSemanticRevisionId);
   return requestedDefinition.pipe(
-    Effect.map((exactDefinition) =>
-      historicalResolution(request, effectiveAt, trustedTenantId, outcome, exactDefinition),
-    ),
+    Effect.map((exactDefinition) => historicalResolution(request, trustedTenantId, outcome, exactDefinition)),
   );
 };
 
@@ -244,9 +218,7 @@ export const readCurrentPaymentTerms = Effect.fn('CurrentPaymentTermsRead.read')
         )
         .pipe(
           Effect.mapError(unavailable),
-          Effect.flatMap((outcome) =>
-            preserveRequestedSemanticRevision(request, input.at, trustedTenantId, outcome, services),
-          ),
+          Effect.flatMap((outcome) => preserveRequestedSemanticRevision(request, trustedTenantId, outcome, services)),
         );
     },
     { concurrency: 1 },

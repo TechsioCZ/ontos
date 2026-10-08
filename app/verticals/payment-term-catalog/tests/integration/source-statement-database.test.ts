@@ -14,6 +14,7 @@ import type {
   ConfigurePaymentTermSourceAuthorityPayload,
   PaymentTermSourceKey,
 } from '../../shared/domain/payment-term-source.ts';
+import type { PaymentTermSourceRecordHistoryRequest } from '../../shared/apis/payment-term-source-record-history.ts';
 import { PaymentTermDefinitionSchema } from '../../shared/domain/payment-term.ts';
 
 interface MutationIdentity {
@@ -22,10 +23,12 @@ interface MutationIdentity {
 }
 type SourceRoutineInput =
   | PaymentTermSourceKey
+  | PaymentTermSourceRecordHistoryRequest
   | (AcceptPaymentTermSourceStatementPayload & MutationIdentity)
   | (ConfigurePaymentTermSourceAuthorityPayload & MutationIdentity);
 const migrationRoot = new URL('../../drizzle/', import.meta.url);
-const taskMigration = '20261007193711_canonical-source-authority';
+const drizzleKit = new URL('../../node_modules/.bin/drizzle-kit', import.meta.url).pathname;
+const taskMigrations = new Set(['20261007193711_canonical-source-authority', '20261008033335_cheerful_oracle']);
 const semantics = {
   calculationRuleVersion: 2,
   calendarRule: 'CALENDAR_DAYS',
@@ -39,7 +42,11 @@ const call = (
   client: PgClient.PgClient,
   tenant: string,
   legalEntity: string,
-  routine: 'accept_source_statement' | 'configure_source_authority' | 'get_source_statement',
+  routine:
+    | 'accept_source_statement'
+    | 'configure_source_authority'
+    | 'get_source_record_history'
+    | 'get_source_statement',
   input: SourceRoutineInput,
 ) => {
   // Fixed owner routine SQL is infrastructure test evidence; business input remains parameterized.
@@ -48,6 +55,8 @@ const call = (
       'select payload from payment_term_catalog.accept_source_statement($1::uuid,$2::uuid,$3::jsonb)',
     configure_source_authority:
       'select payload from payment_term_catalog.configure_source_authority($1::uuid,$2::uuid,$3::jsonb)',
+    get_source_record_history:
+      'select payload from payment_term_catalog.get_source_record_history($1::uuid,$2::uuid,$3::jsonb)',
     get_source_statement: 'select payload from payment_term_catalog.get_source_statement($1::uuid,$2::uuid,$3::jsonb)',
   };
   return client
@@ -96,10 +105,10 @@ const migrateOwner = (temporaryDirectory: string, folder: string, adminUrl: stri
     );
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const status = yield* spawner.exitCode(
-      ChildProcess.make('mise', ['exec', '--', 'pnpm', 'exec', 'drizzle-kit', 'migrate', '--config', configPath], {
+      ChildProcess.make('mise', ['exec', '--', drizzleKit, 'migrate', '--config', configPath], {
         env: { C15_PROOF_ADMIN_URL: adminUrl },
         extendEnv: true,
-        stderr: 'ignore',
+        stderr: 'inherit',
         stdout: 'ignore',
       }),
     );
@@ -136,7 +145,7 @@ const proveDatabase = (populated: boolean) =>
       );
       const folders = yield* Effect.tryPromise(() => readdir(migrationRoot));
       for (const folder of EffectArray.sort(folders, Order.String)) {
-        if (folder !== taskMigration) {
+        if (!taskMigrations.has(folder)) {
           yield* Effect.tryPromise(() =>
             cp(new URL(`${folder}/`, migrationRoot), path.join(oldMigrations, folder), { recursive: true }),
           );
@@ -271,6 +280,34 @@ const proveDatabase = (populated: boolean) =>
       ).toBe(true);
       yield* runtime.unsafe('COMMIT');
       yield* inScope(runtime, tenant, legalEntity);
+      const mismatchedQualifications = yield* Effect.forEach(
+        [
+          { changes: { externalBusinessSystemId: 'unconfigured-erp' }, suffix: 'ebs' },
+          { changes: { integrationRoute: 'unconfigured-route' }, suffix: 'route' },
+          { changes: { namespace: 'unconfigured-namespace' }, suffix: 'namespace' },
+        ],
+        ({ changes, suffix }) =>
+          invoke(
+            'accept_source_statement',
+            acceptance({
+              ...changes,
+              sourceRecordId: `mismatch-${suffix}`,
+              sourceStatementId: `mismatch-${suffix}`,
+            }),
+          ),
+      );
+      expect(mismatchedQualifications).toMatchObject([
+        { changed: false, result: { reason: 'UNAUTHORIZED_SOURCE' } },
+        { changed: false, result: { reason: 'UNAUTHORIZED_SOURCE' } },
+        { changed: false, result: { reason: 'UNAUTHORIZED_SOURCE' } },
+      ]);
+      yield* runtime.unsafe('COMMIT');
+      expect(
+        yield* admin.unsafe(
+          "select count(*)::int as count from payment_term_catalog.payment_term_source_statements where source_statement_id like 'mismatch-%'",
+        ),
+      ).toEqual([{ count: 0 }]);
+      yield* inScope(runtime, tenant, legalEntity);
       const originalRaw = yield* invoke('accept_source_statement', acceptance());
       const original = yield* Schema.decodeUnknownEffect(decision)(originalRaw);
       const accepted = yield* Schema.decodeUnknownEffect(acceptedDefinition)(originalRaw);
@@ -304,6 +341,184 @@ const proveDatabase = (populated: boolean) =>
       );
       const replacementDefinition = yield* Schema.decodeUnknownEffect(acceptedDefinition)(replacement);
       expect(replacementDefinition.result.definition.paymentTermRef).not.toEqual(oldRef);
+
+      // The source-record ordering barrier advances for every authorized persisted
+      // decision, including a rejected observation. The accepted mapping remains
+      // unchanged until a later accepted revision supersedes it explicitly.
+      const orderedRecord = {
+        mapping: { kind: 'EXISTING' as const, paymentTermId: oldRef.resourceId },
+        sourceRecordId: 'record-ordering',
+        sourceStatementId: 'ordering-1',
+      };
+      const orderingOne = yield* invoke('accept_source_statement', acceptance(orderedRecord));
+      expect(orderingOne).toMatchObject({ changed: true, result: { _tag: 'ACCEPTED', sourceRevision: 1 } });
+      const orderingRejected = acceptance({
+        ...orderedRecord,
+        semantics: { evidence: 'Upstream revision cannot be interpreted', kind: 'UNSUPPORTED' },
+        sourceRevision: 3,
+        sourceStatementId: 'ordering-3-rejected',
+      });
+      const rejectedThree = yield* Schema.decodeUnknownEffect(decision)(
+        yield* invoke('accept_source_statement', orderingRejected),
+      );
+      expect(rejectedThree).toMatchObject({
+        changed: true,
+        result: { reason: 'UNSUPPORTED_SEMANTICS', sourceRevision: 3 },
+      });
+      expect(
+        yield* invoke(
+          'accept_source_statement',
+          acceptance({ ...orderedRecord, sourceRevision: 2, sourceStatementId: 'ordering-2-delayed' }),
+        ),
+      ).toMatchObject({ changed: true, result: { reason: 'STALE_REVISION', sourceRevision: 2 } });
+      expect(
+        yield* invoke(
+          'accept_source_statement',
+          acceptance({ ...orderedRecord, sourceRevision: 3, sourceStatementId: 'ordering-3-competing' }),
+        ),
+      ).toMatchObject({ changed: true, result: { reason: 'AMBIGUOUS_MAPPING', sourceRevision: 3 } });
+      const orderingFour = yield* invoke(
+        'accept_source_statement',
+        acceptance({
+          ...orderedRecord,
+          mapping: {
+            kind: 'EXISTING',
+            paymentTermId: replacementDefinition.result.definition.paymentTermRef.resourceId,
+          },
+          semantics: { ...semantics, days: 30 },
+          sourceRevision: 4,
+          sourceStatementId: 'ordering-4',
+        }),
+      );
+      expect(orderingFour).toMatchObject({ changed: true, result: { _tag: 'ACCEPTED', sourceRevision: 4 } });
+      expect(yield* invoke('accept_source_statement', orderingRejected)).toEqual({
+        canonicalCreated: false,
+        changed: false,
+        result: rejectedThree.result,
+      });
+
+      yield* runtime.unsafe('COMMIT');
+      const orderedState = yield* admin.unsafe<{
+        readonly acceptedStatement: string;
+        readonly highestObservedRevision: string;
+        readonly highestStatement: string;
+      }>(
+        `select accepted.source_statement_id as "acceptedStatement",
+          state.highest_observed_revision::text as "highestObservedRevision",
+          highest.source_statement_id as "highestStatement"
+        from payment_term_catalog.payment_term_source_record_states state
+        join payment_term_catalog.payment_term_source_statements highest
+          on highest.source_statement_ledger_id=state.highest_observed_statement_ledger_id
+        join payment_term_catalog.payment_term_source_statements accepted
+          on accepted.source_statement_ledger_id=state.current_accepted_statement_ledger_id
+        where state.tenant_id=$1 and state.legal_entity_id=$2
+          and state.external_business_system_id=$3 and state.namespace=$4
+          and state.integration_route=$5 and state.source_record_id=$6`,
+        [
+          tenant,
+          legalEntity,
+          source.externalBusinessSystemId,
+          source.namespace,
+          source.integrationRoute,
+          orderedRecord.sourceRecordId,
+        ],
+      );
+      expect(orderedState).toEqual([
+        { acceptedStatement: 'ordering-4', highestObservedRevision: '4', highestStatement: 'ordering-4' },
+      ]);
+      expect(
+        yield* admin.unsafe(
+          `select previous.source_statement_id as predecessor
+          from payment_term_catalog.payment_term_source_acceptance_lineage lineage
+          join payment_term_catalog.payment_term_source_statements current
+            on current.source_statement_ledger_id=lineage.accepted_statement_ledger_id
+          join payment_term_catalog.payment_term_source_statements previous
+            on previous.source_statement_ledger_id=lineage.predecessor_statement_ledger_id
+          where current.source_statement_id=$1`,
+          ['ordering-4'],
+        ),
+      ).toEqual([{ predecessor: 'ordering-1' }]);
+      yield* inScope(runtime, tenant, legalEntity);
+      expect(
+        yield* invoke('get_source_record_history', {
+          externalBusinessSystemId: source.externalBusinessSystemId,
+          integrationRoute: source.integrationRoute,
+          limit: 2,
+          namespace: source.namespace,
+          sourceRecordId: orderedRecord.sourceRecordId,
+        }),
+      ).toMatchObject({
+        currentAccepted: {
+          paymentTermRef: replacementDefinition.result.definition.paymentTermRef,
+          sourceRevision: 4,
+          sourceStatementId: 'ordering-4',
+        },
+        decisions: [
+          { sourceRevision: 4, sourceStatementId: 'ordering-4', supersedesSourceStatementId: 'ordering-1' },
+          { sourceRevision: 3 },
+        ],
+        highestObserved: { sourceRevision: 4, sourceStatementId: 'ordering-4' },
+        sourceRecord: { sourceRecordId: orderedRecord.sourceRecordId },
+        truncated: true,
+      });
+      yield* runtime.unsafe('COMMIT');
+
+      // Persisted statement identity is immutable evidence. Exact replay and
+      // conflict detection precede mutable authority checks, while a novel
+      // statement must satisfy the current route/principal binding and writes nothing otherwise.
+      const rotationRoute = 'symmy-payment-terms-rotation';
+      const principalB = randomUUID();
+      const rotationAuthority = { ...configure(0), integrationRoute: rotationRoute };
+      yield* inScope(runtime, tenant, legalEntity);
+      expect(
+        Schema.is(Schema.TaggedStruct('configured', { authorityRevision: Schema.Literal(1) }))(
+          yield* invoke('configure_source_authority', rotationAuthority),
+        ),
+      ).toBe(true);
+      const rotatedStatement = acceptance({
+        integrationRoute: rotationRoute,
+        mapping: { kind: 'EXISTING', paymentTermId: oldRef.resourceId },
+        sourceRecordId: 'record-rotation',
+        sourceStatementId: 'rotation-1',
+      });
+      const rotationAccepted = yield* Schema.decodeUnknownEffect(decision)(
+        yield* invoke('accept_source_statement', rotatedStatement),
+      );
+      expect(rotationAccepted).toMatchObject({ changed: true, result: { _tag: 'ACCEPTED' } });
+      expect(
+        Schema.is(Schema.TaggedStruct('configured', { authorityRevision: Schema.Literal(2) }))(
+          yield* invoke('configure_source_authority', {
+            ...rotationAuthority,
+            actionInvocationId: randomUUID(),
+            expectedRevision: 1,
+            ingestPrincipalId: principalB,
+          }),
+        ),
+      ).toBe(true);
+      expect(yield* invoke('accept_source_statement', rotatedStatement)).toEqual({
+        canonicalCreated: false,
+        changed: false,
+        result: rotationAccepted.result,
+      });
+      expect(
+        yield* invoke('accept_source_statement', { ...rotatedStatement, sourceCode: 'CHANGED-AFTER-ROTATION' }),
+      ).toMatchObject({ changed: false, result: { reason: 'STATEMENT_CONFLICT' } });
+      expect(
+        yield* invoke('accept_source_statement', {
+          ...rotatedStatement,
+          actionInvocationId: randomUUID(),
+          sourceRevision: 2,
+          sourceStatementId: 'rotation-2-unauthorized',
+        }),
+      ).toMatchObject({ changed: false, result: { reason: 'UNAUTHORIZED_SOURCE' } });
+      expect(
+        yield* admin.unsafe(
+          `select count(*)::int as count
+          from payment_term_catalog.payment_term_source_statements
+          where integration_route=$1 and source_statement_id=$2`,
+          [rotationRoute, 'rotation-2-unauthorized'],
+        ),
+      ).toEqual([{ count: 0 }]);
       expect(
         yield* invoke('accept_source_statement', acceptance({ sourceRevision: 0, sourceStatementId: 'delayed' })),
       ).toMatchObject({ result: { reason: 'STALE_REVISION' } });
@@ -329,7 +544,7 @@ const proveDatabase = (populated: boolean) =>
       expect(
         yield* invoke(
           'accept_source_statement',
-          acceptance({ semantics: { ...semantics, days: 45 }, sourceRevision: 3, sourceStatementId: 'code-conflict' }),
+          acceptance({ semantics: { ...semantics, days: 45 }, sourceRevision: 4, sourceStatementId: 'code-conflict' }),
         ),
       ).toMatchObject({ result: { reason: 'BUSINESS_CODE_CONFLICT' } });
       expect(
@@ -338,7 +553,7 @@ const proveDatabase = (populated: boolean) =>
           acceptance({
             mapping: { kind: 'EXISTING', paymentTermId: oldRef.resourceId },
             semantics: { ...semantics, days: 45 },
-            sourceRevision: 3,
+            sourceRevision: 5,
             sourceStatementId: 'wrong-map',
           }),
         ),
@@ -538,6 +753,24 @@ const proveDatabase = (populated: boolean) =>
           staleCorrection[0]?.payload,
         ),
       ).toBe(true);
+      yield* inScope(admin, tenant, legalEntity);
+      expect(
+        yield* Effect.isFailure(
+          admin.unsafe(
+            `insert into payment_term_catalog.payment_term_revisions
+            select (jsonb_populate_record(null::payment_term_catalog.payment_term_revisions,
+              to_jsonb(revision) || jsonb_build_object(
+                'payment_term_revision_id',$1::text,
+                'revision_number',99,
+                'net_days',15,
+                'action_invocation_id',$2::text
+              ))).* from payment_term_catalog.payment_term_revisions revision
+            where revision.payment_term_id=$3 and revision.revision_number=1`,
+            [randomUUID(), randomUUID(), oldRef.resourceId],
+          ),
+        ),
+      ).toBe(true);
+      yield* admin.unsafe('ROLLBACK');
       const staleRetirement = yield* runtime.unsafe<{ readonly payload: unknown }>(
         'select payload from payment_term_catalog.retire_term($1,$2,$3)',
         [
@@ -600,9 +833,23 @@ const proveDatabase = (populated: boolean) =>
         [tenant, legalEntity, oldRef.resourceId],
       );
       expect(history[0]?.payload).toMatchObject({
+        lifecycle: [
+          { effectiveAt: '2026-10-01T00:00:00.000Z', eventKind: 'ACTIVATED' },
+          { effectiveAt: '2026-11-01T00:00:00.000Z', eventKind: 'RETIRED' },
+        ],
         revisions: [
-          { definitionRevisionId: accepted.result.definition.definitionRevisionId, semantics },
-          { definitionRevisionId: corrected.definition.definitionRevisionId, semantics },
+          {
+            definitionRevisionId: accepted.result.definition.definitionRevisionId,
+            lifecycle: { effectiveTo: null, state: 'ACTIVE' },
+            retired: null,
+            semantics,
+          },
+          {
+            definitionRevisionId: corrected.definition.definitionRevisionId,
+            lifecycle: { effectiveTo: null, state: 'ACTIVE' },
+            retired: null,
+            semantics,
+          },
         ],
       });
       expect(yield* invoke('get_source_statement', source)).toEqual(original.result);

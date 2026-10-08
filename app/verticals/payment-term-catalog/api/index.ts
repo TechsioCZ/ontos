@@ -41,6 +41,7 @@ import { correctPaymentTermActionApiLive } from './correct-payment-term-action-s
 import { createPaymentTermActionApiLive } from './create-payment-term-action-server.ts';
 import { currentPaymentTermsReadApiLive } from './current-payment-terms-read-server.ts';
 import { paymentTermHistoryReadApiLive } from './payment-term-history-read-server.ts';
+import { paymentTermSourceRecordHistoryReadApiLive } from './payment-term-source-record-history-read-server.ts';
 import { paymentTermSourceStatementReadApiLive } from './payment-term-source-statement-read-server.ts';
 import { reconcilePaymentTermReferenceActionApiLive } from './reconcile-payment-term-reference-action-server.ts';
 import { retirePaymentTermActionApiLive } from './retire-payment-term-action-server.ts';
@@ -148,6 +149,7 @@ export const makePaymentTermCatalogApiRuntime = (
     createPaymentTermActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     currentPaymentTermsReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentTermHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+    paymentTermSourceRecordHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     paymentTermSourceStatementReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
     reconcilePaymentTermReferenceActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
     retirePaymentTermActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),

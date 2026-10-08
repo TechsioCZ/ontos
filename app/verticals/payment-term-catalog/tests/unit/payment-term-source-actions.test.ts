@@ -13,6 +13,8 @@ import {
 
 import { PaymentTermDefinitionSchema } from '../../shared/domain/payment-term.ts';
 import { PaymentTermSourceStatementResponseSchema } from '../../shared/apis/payment-term-source-statement.ts';
+import { PaymentTermSourceRecordHistoryResponseSchema } from '../../shared/apis/payment-term-source-record-history.ts';
+import { readPaymentTermSourceRecordHistory } from '../../src/api/payment-term-source-record-history.read.ts';
 import { readPaymentTermSourceStatement } from '../../src/api/payment-term-source-statement.read.ts';
 
 const scope = {
@@ -67,6 +69,7 @@ it.effect(
               });
             },
             configureSourceAuthority: unused,
+            getSourceRecordHistory: unused,
             getSourceStatement: unused,
           },
         });
@@ -105,6 +108,7 @@ it.effect('authority optimistic conflict has no configuration event or outbox', 
         services: {
           acceptSourceStatement: unused,
           configureSourceAuthority: () => Effect.succeed({ _tag: 'revision_conflict', actualRevision: 2 }),
+          getSourceRecordHistory: unused,
           getSourceStatement: unused,
         },
       },
@@ -158,6 +162,7 @@ it.effect('governed source recovery read returns FOUND with exact retained resul
     const found = yield* readPaymentTermSourceStatement(statement, {
       acceptSourceStatement: unused,
       configureSourceAuthority: unused,
+      getSourceRecordHistory: unused,
       getSourceStatement: () => Effect.succeed(Option.some(result)),
     });
     expect(Schema.is(PaymentTermSourceStatementResponseSchema)(found)).toBe(true);
@@ -169,9 +174,55 @@ it.effect('governed source recovery read returns FOUND with exact retained resul
     const missing = yield* readPaymentTermSourceStatement(statement, {
       acceptSourceStatement: unused,
       configureSourceAuthority: unused,
+      getSourceRecordHistory: unused,
       getSourceStatement: () => Effect.succeed(Option.none()),
     });
     expect(Predicate.isTagged(missing, 'MISSING')).toBe(true);
+  }),
+);
+it.effect('governed source-record history publishes bounded decision identity without private ledger ids', () =>
+  Effect.gen(function* sourceRecordHistory() {
+    const result = {
+      _tag: 'REJECTED' as const,
+      reason: 'UNSUPPORTED_SEMANTICS' as const,
+      sourceRevision: 3,
+      sourceStatementId: 'statement-3',
+    };
+    const decision = {
+      authorityRevision: 2,
+      businessObservedAt: statement.businessObservedAt,
+      recordedAt: statement.businessObservedAt,
+      result,
+      sourceCode: statement.sourceCode,
+      sourceRevision: 3,
+      sourceStatementId: 'statement-3',
+      supersededBySourceStatementId: Option.none(),
+      supersedesSourceStatementId: Option.none(),
+    };
+    const history = {
+      currentAccepted: Option.none(),
+      decisions: [decision],
+      highestObserved: decision,
+      sourceRecord: {
+        externalBusinessSystemId: statement.externalBusinessSystemId,
+        integrationRoute: statement.integrationRoute,
+        namespace: statement.namespace,
+        sourceRecordId: statement.sourceRecordId,
+      },
+      truncated: false,
+    };
+    const read = yield* readPaymentTermSourceRecordHistory(
+      { ...history.sourceRecord, limit: 25 },
+      {
+        acceptSourceStatement: unused,
+        configureSourceAuthority: unused,
+        getSourceRecordHistory: () => Effect.succeed(Option.some(history)),
+        getSourceStatement: unused,
+      },
+    );
+    expect(Schema.is(PaymentTermSourceRecordHistoryResponseSchema)(read)).toBe(true);
+    expect(read).not.toHaveProperty('sourceStatementLedgerId');
+    expect(read.highestObserved.sourceStatementId).toBe('statement-3');
   }),
 );
 it.effect(
@@ -247,6 +298,7 @@ it.effect(
                 },
               }),
             configureSourceAuthority: unused,
+            getSourceRecordHistory: unused,
             getSourceStatement: unused,
           },
         });

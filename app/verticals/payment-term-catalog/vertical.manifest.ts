@@ -12,6 +12,7 @@ import { CurrentPaymentTermsApi } from './shared/apis/current-payment-terms.ts';
 import { paymentTermCatalogRootResourceDescriptor } from './shared/resources/payment-term-catalog-root.ts';
 import { PaymentTermHistoryApi } from './shared/apis/payment-term-history.ts';
 import { paymentTermResourceDescriptor } from './shared/resources/payment-term.ts';
+import { PaymentTermSourceRecordHistoryApi } from './shared/apis/payment-term-source-record-history.ts';
 import { PaymentTermSourceStatementApi } from './shared/apis/payment-term-source-statement.ts';
 import { reconcilePaymentTermReferenceAction } from './src/actions/reconcile-payment-term-reference.action.ts';
 import { retirePaymentTermAction } from './src/actions/retire-payment-term.action.ts';
@@ -46,6 +47,7 @@ export const paymentTermCatalogManifest: OntosModuleManifestInput = defineOntosM
       // <generated-module-manifest-apis>
       'current-payment-terms': CurrentPaymentTermsApi,
       'payment-term-history': PaymentTermHistoryApi,
+      'payment-term-source-record-history': PaymentTermSourceRecordHistoryApi,
       'payment-term-source-statement': PaymentTermSourceStatementApi,
       // </generated-module-manifest-apis>
     },

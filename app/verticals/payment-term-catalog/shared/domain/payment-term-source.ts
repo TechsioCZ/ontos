@@ -15,9 +15,9 @@ const revision = Schema.Finite.check(
   Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }),
 );
 const brandedText = (brand: string) => text.pipe(Schema.brand(brand), Schema.decodeTo(text));
-const ExternalBusinessSystemIdSchema = brandedText('ExternalBusinessSystemId');
-const SourceRecordIdSchema = brandedText('SourceRecordId');
-const SourceStatementIdSchema = brandedText('SourceStatementId');
+export const ExternalBusinessSystemIdSchema = brandedText('ExternalBusinessSystemId');
+export const SourceRecordIdSchema = brandedText('SourceRecordId');
+export const SourceStatementIdSchema = brandedText('SourceStatementId');
 const checkedId = Schema.String.check(Schema.isUUID());
 const IngestPrincipalIdSchema = checkedId.pipe(Schema.brand('IngestPrincipalId'), Schema.decodeTo(checkedId));
 const PaymentTermIdSchema = checkedId.pipe(Schema.brand('PaymentTermId'), Schema.decodeTo(checkedId));
@@ -27,6 +27,12 @@ export const PaymentTermSourceKeySchema = Schema.Struct({
   namespace: text,
   sourceRecordId: SourceRecordIdSchema,
   sourceStatementId: SourceStatementIdSchema,
+});
+export const PaymentTermSourceRecordKeySchema = Schema.Struct({
+  externalBusinessSystemId: ExternalBusinessSystemIdSchema,
+  integrationRoute: text,
+  namespace: text,
+  sourceRecordId: SourceRecordIdSchema,
 });
 export const ConfigurePaymentTermSourceAuthorityPayloadSchema = Schema.Struct({
   expectedRevision: revision,

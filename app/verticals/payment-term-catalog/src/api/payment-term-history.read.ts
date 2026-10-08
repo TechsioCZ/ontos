@@ -67,6 +67,7 @@ export const readPaymentTermHistory = Effect.fn('PaymentTermHistoryRead.read')(f
   return {
     aliases: history.aliases,
     canonicalPaymentTermRef: directAlias?.canonicalRef ?? input.paymentTermRef,
+    lifecycle: history.lifecycle,
     observedAt,
     requestedPaymentTermRef: input.paymentTermRef,
     revisions,

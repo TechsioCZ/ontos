@@ -8,6 +8,8 @@ import {
   paymentTermAliases,
   paymentTermLifecycleEvents,
   paymentTermRevisions,
+  paymentTermSourceAcceptanceLineage,
+  paymentTermSourceRecordStates,
   paymentTerms,
 } from '../../src/database/schema.ts';
 
@@ -25,13 +27,32 @@ it('owns the exact Payment Term Catalog in one legal-entity-scoped schema', () =
     'payment_term_aliases',
     'payment_term_lifecycle_events',
     'payment_term_revisions',
+    'payment_term_source_acceptance_lineage',
     'payment_term_source_authorities',
+    'payment_term_source_record_states',
     'payment_term_source_statements',
     'payment_terms',
   ]);
   expect(qualifiedNames).toEqual(
     PAYMENT_TERM_CATALOG_TABLE_INVENTORY.map((tableName) => `payment_term_catalog.${tableName}`),
   );
+});
+
+it('stores source-record high-water state and accepted lineage without exposing ledger mutation', () => {
+  const states = getTableConfig(paymentTermSourceRecordStates);
+  const lineage = getTableConfig(paymentTermSourceAcceptanceLineage);
+  expect(states.uniqueConstraints.map((constraint) => constraint.name)).toContain(
+    'payment_term_catalog_source_record_states_identity_uk',
+  );
+  expect(states.foreignKeys.map((foreignKey) => foreignKey.getName())).toEqual([
+    'payment_term_catalog_source_record_states_highest_fk',
+    'payment_term_catalog_source_record_states_accepted_fk',
+    'payment_term_catalog_source_record_states_term_fk',
+  ]);
+  expect(lineage.uniqueConstraints.map((constraint) => constraint.name)).toEqual([
+    'payment_term_catalog_source_acceptance_lineage_accepted_uk',
+    'payment_term_catalog_source_acceptance_lineage_predecessor_uk',
+  ]);
 });
 
 it('forces every governed table through tenant and legal-entity policy dimensions', () => {

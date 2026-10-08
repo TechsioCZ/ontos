@@ -22,7 +22,9 @@ export const PAYMENT_TERM_CATALOG_TABLE_INVENTORY = [
   'payment_term_aliases',
   'payment_term_lifecycle_events',
   'payment_term_revisions',
+  'payment_term_source_acceptance_lineage',
   'payment_term_source_authorities',
+  'payment_term_source_record_states',
   'payment_term_source_statements',
   'payment_terms',
 ] as const;
@@ -351,11 +353,104 @@ export const paymentTermSourceStatements = paymentTermCatalogSchema.table.withRL
   ],
 );
 
+export const paymentTermSourceRecordStates = paymentTermCatalogSchema.table.withRLS(
+  'payment_term_source_record_states',
+  {
+    sourceRecordStateId: uuid('source_record_state_id').defaultRandom().primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    externalBusinessSystemId: text('external_business_system_id').notNull(),
+    namespace: text('namespace').notNull(),
+    integrationRoute: text('integration_route').notNull(),
+    sourceRecordId: text('source_record_id').notNull(),
+    highestObservedRevision: bigint('highest_observed_revision', { mode: 'number' }).notNull(),
+    highestObservedStatementLedgerId: uuid('highest_observed_statement_ledger_id').notNull(),
+    currentAcceptedStatementLedgerId: uuid('current_accepted_statement_ledger_id'),
+    currentPaymentTermId: uuid('current_payment_term_id'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    unique('payment_term_catalog_source_record_states_identity_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.externalBusinessSystemId,
+      table.namespace,
+      table.integrationRoute,
+      table.sourceRecordId,
+    ),
+    foreignKey({
+      columns: [table.highestObservedStatementLedgerId],
+      foreignColumns: [paymentTermSourceStatements.sourceStatementLedgerId],
+      name: 'payment_term_catalog_source_record_states_highest_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.currentAcceptedStatementLedgerId],
+      foreignColumns: [paymentTermSourceStatements.sourceStatementLedgerId],
+      name: 'payment_term_catalog_source_record_states_accepted_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.currentPaymentTermId],
+      foreignColumns: [paymentTerms.tenantId, paymentTerms.legalEntityId, paymentTerms.paymentTermId],
+      name: 'payment_term_catalog_source_record_states_term_fk',
+    }).onDelete('restrict'),
+    check(
+      'payment_term_catalog_source_record_states_revision_ck',
+      sql`${table.highestObservedRevision} between 0 and 9007199254740991`,
+    ),
+    check(
+      'payment_term_catalog_source_record_states_mapping_ck',
+      sql`(${table.currentAcceptedStatementLedgerId} is null) = (${table.currentPaymentTermId} is null)`,
+    ),
+    ...tenantLegalEntityRlsPolicies(
+      'payment_term_catalog_source_record_states_scope',
+      table.tenantId,
+      table.legalEntityId,
+    ),
+  ],
+);
+
+export const paymentTermSourceAcceptanceLineage = paymentTermCatalogSchema.table.withRLS(
+  'payment_term_source_acceptance_lineage',
+  {
+    sourceAcceptanceLineageId: uuid('source_acceptance_lineage_id').defaultRandom().primaryKey(),
+    tenantId: uuid('tenant_id').notNull(),
+    legalEntityId: uuid('legal_entity_id').notNull(),
+    acceptedStatementLedgerId: uuid('accepted_statement_ledger_id').notNull(),
+    predecessorStatementLedgerId: uuid('predecessor_statement_ledger_id'),
+    recordedAt: recordedAt(),
+  },
+  (table) => [
+    unique('payment_term_catalog_source_acceptance_lineage_accepted_uk').on(table.acceptedStatementLedgerId),
+    unique('payment_term_catalog_source_acceptance_lineage_predecessor_uk').on(table.predecessorStatementLedgerId),
+    foreignKey({
+      columns: [table.acceptedStatementLedgerId],
+      foreignColumns: [paymentTermSourceStatements.sourceStatementLedgerId],
+      name: 'payment_term_catalog_source_acceptance_lineage_accepted_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.predecessorStatementLedgerId],
+      foreignColumns: [paymentTermSourceStatements.sourceStatementLedgerId],
+      name: 'payment_term_catalog_source_acceptance_lineage_predecessor_fk',
+    }).onDelete('restrict'),
+    check(
+      'payment_term_catalog_source_acceptance_lineage_not_self_ck',
+      sql`${table.predecessorStatementLedgerId} is null or ${table.predecessorStatementLedgerId} <> ${table.acceptedStatementLedgerId}`,
+    ),
+    ...tenantLegalEntityRlsPolicies(
+      'payment_term_catalog_source_acceptance_lineage_scope',
+      table.tenantId,
+      table.legalEntityId,
+    ),
+  ],
+);
+
 const paymentTermCatalogDatabaseSchema = {
   paymentTermAliases,
   paymentTermLifecycleEvents,
   paymentTermRevisions,
+  paymentTermSourceAcceptanceLineage,
   paymentTermSourceAuthorities,
+  paymentTermSourceRecordStates,
   paymentTermSourceStatements,
   paymentTerms,
 } as const;
@@ -364,7 +459,9 @@ export const PAYMENT_TERM_CATALOG_TABLES = [
   paymentTermAliases,
   paymentTermLifecycleEvents,
   paymentTermRevisions,
+  paymentTermSourceAcceptanceLineage,
   paymentTermSourceAuthorities,
+  paymentTermSourceRecordStates,
   paymentTermSourceStatements,
   paymentTerms,
 ] as const;
