@@ -83,7 +83,10 @@ export const evaluateTaxAuthorityHandoff = (
       });
     }
   }
-  return TaxAuthorityHandoffValidSchema.make({ boundaries });
+  // A handoff is an explicit boundary changing authority; a single unbounded authority hands nothing over (F23).
+  return boundaries.length === 0
+    ? TaxAuthorityHandoffIndeterminateSchema.make({ reason: 'NO_AUTHORITY_BOUNDARY_DECLARED' })
+    : TaxAuthorityHandoffValidSchema.make({ boundaries });
 };
 
 /**
@@ -105,6 +108,11 @@ export const placeTaxMigrationAssertion = (input: {
   const systemOfRecordRef = Option.some(authorityThen.systemOfRecordRef);
   if (authorityThen.systemOfRecordRef !== input.sourceRef) {
     return { placement: 'NOT_FROM_SYSTEM_OF_RECORD', systemOfRecordRef };
+  }
+  // Current placement needs exactly one System of Record at the evaluation instant too (#960 F21-F22, F27).
+  const authoritiesNow = authoritiesCoveringInstant(input.periods, input.evaluationInstant);
+  if (authoritiesNow.length > 1) {
+    return { placement: 'NO_SINGLE_AUTHORITY', systemOfRecordRef: Option.none() };
   }
   const stillCurrent = periodCoversInstant(
     Option.some(authorityThen.authorityFrom),
