@@ -2,11 +2,12 @@ import { Schema } from 'effect';
 
 import { TaxDecisionSchema } from './tax-decision.ts';
 import { TaxNonSuccessOutcomeSchema } from './tax-non-success-outcome.ts';
-import { TaxResultSchema, taxResultBindsDecision } from './tax-result.ts';
+import { TaxResultSchema, taxResultFollowsFromDecision } from './tax-result.ts';
 
 /**
- * Successful Tax Outcome: one purchase-scoped Tax Decision with its exactly bound Tax Result (#936 F7, F20, F28;
- * #938 F1). A successful zero is valid only here, explained by its Decision (#936 F27, #939 F2).
+ * Successful Tax Outcome: one purchase-scoped Tax Decision with its exactly bound Tax Result whose amounts follow
+ * from that Decision (#936 F7, F19-F20, F27-F28, F32; #938 F1; #907 F132). A successful zero is valid only here,
+ * explained by its Decision (#936 F27, #939 F2).
  */
 export const TaxOutcomeSuccessSchema = Schema.TaggedStruct('TAX_DETERMINED', {
   decision: TaxDecisionSchema,
@@ -14,7 +15,8 @@ export const TaxOutcomeSuccessSchema = Schema.TaggedStruct('TAX_DETERMINED', {
 }).check(
   Schema.makeFilter(
     ({ decision, result }) =>
-      taxResultBindsDecision(decision, result) || 'Tax Result must be exactly bound to its Tax Decision',
+      taxResultFollowsFromDecision(decision, result) ||
+      'Tax Result must be exactly bound to its Tax Decision and follow from it',
   ),
 );
 export type TaxOutcomeSuccess = typeof TaxOutcomeSuccessSchema.Type;

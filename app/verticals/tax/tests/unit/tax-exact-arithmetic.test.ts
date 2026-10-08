@@ -6,7 +6,7 @@ import {
   addTaxExactRationals,
   divideTaxExactRationals,
   multiplyTaxExactRationals,
-  roundNonNegativeHalfUpToMinorUnits,
+  roundHalfUpToMinorUnits,
   subtractTaxExactRationals,
   sumTaxExactRationals,
   taxExactRationalsEqual,
@@ -29,11 +29,11 @@ describe('Exact Tax arithmetic', () => {
     expect(divideTaxExactRationals(exactDecimal('1'), exactDecimal('0'))).toEqual(Option.none());
   });
 
-  it('#935 F21-F22 rounds non-negative values HALF_UP to whole minor units', () => {
-    expect(roundNonNegativeHalfUpToMinorUnits(exactDecimal('0.004'), 100n)).toEqual(Option.some(0n));
-    expect(roundNonNegativeHalfUpToMinorUnits(exactDecimal('0.005'), 100n)).toEqual(Option.some(1n));
-    expect(roundNonNegativeHalfUpToMinorUnits({ denominator: '175', numerator: '3' }, 100n)).toEqual(Option.some(2n));
-    expect(roundNonNegativeHalfUpToMinorUnits(exactDecimal('-0.005'), 100n)).toEqual(Option.none());
+  it('#935 F21-F22 rounds values HALF_UP to whole minor units', () => {
+    expect(roundHalfUpToMinorUnits(exactDecimal('0.004'), 100n)).toBe(0n);
+    expect(roundHalfUpToMinorUnits(exactDecimal('0.005'), 100n)).toBe(1n);
+    expect(roundHalfUpToMinorUnits({ denominator: '175', numerator: '3' }, 100n)).toBe(2n);
+    expect(roundHalfUpToMinorUnits(exactDecimal('-0.006'), 100n)).toBe(-1n);
     expect(Schema.is(NonNegativeTaxExactRationalSchema)(exactDecimal('-0.01'))).toBe(false);
   });
 });
