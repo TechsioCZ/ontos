@@ -86,7 +86,6 @@ export const TaxRuleHistoryResponseContractSchema = Schema.Struct({
   revisions: Schema.Array(
     Schema.Struct({
       ...GovernedAttributionFields,
-      basisFingerprint: FingerprintSchema,
       compositionKind: Schema.Literal('EXCLUSIVE'),
       effectiveFrom: InstantSchema,
       effectiveTo: Schema.OptionFromNullOr(InstantSchema),
