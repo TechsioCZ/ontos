@@ -88,9 +88,24 @@ export const allowOwnerAuthorizationOverlay: OwnerAuthorizationOverlayService = 
  * treating an omitted owner adapter as an allow would turn a partial deployment into an
  * authorization bypass. Keep this fallback deliberately small and target-based; owner-neutral
  * operations remain available while every owner-governed target fails closed as unavailable.
+ *
+ * A TAX Selling Legal Entity target names no owner-held record: it is a Core Legal Entity, so Core
+ * decides it alone, but only while it is the exact Legal Entity of the trusted scope.
  */
+const isCoreDecidedBusinessTarget = (
+  target: Extract<OwnerAuthorizationTarget, { readonly kind: 'business_permission' }>,
+  scope: OperationalScope,
+): boolean =>
+  target.target.kind === 'tax_selling_legal_entity' &&
+  target.target.tenantId === scope.tenantId &&
+  target.target.legalEntityId === scope.legalEntityId;
+
 export const failClosedOwnerAuthorizationDecision = (input: OwnerAuthorizationInput): OwnerAuthorizationDecision =>
-  input.targets.some((target) => target.kind === 'business_permission' || target.kind === 'assortment_permission')
+  input.targets.some(
+    (target) =>
+      target.kind === 'assortment_permission' ||
+      (target.kind === 'business_permission' && !isCoreDecidedBusinessTarget(target, input.scope)),
+  )
     ? 'unavailable'
     : 'allowed';
 

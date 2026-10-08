@@ -57,3 +57,32 @@ it('fails closed for Assortment owner targets while keeping owner-neutral target
   expect(assortmentDecision).toBe('unavailable');
   expect(neutralDecision).toBe('allowed');
 });
+
+it('lets Core decide a TAX Selling Legal Entity target only for the exact trusted Legal Entity', () => {
+  const { scope } = input({ kind: 'module', moduleId: 'commerce.tax' });
+  const taxDecision = (legalEntityId: string | undefined, tenantId = scope.tenantId) =>
+    failClosedOwnerAuthorizationDecision(
+      input({
+        kind: 'business_permission',
+        permission: 'tax.rule.manage',
+        target: { kind: 'tax_selling_legal_entity', legalEntityId: legalEntityId ?? '', tenantId },
+      }),
+    );
+  const ownerHeldDecision = failClosedOwnerAuthorizationDecision(
+    input({
+      kind: 'business_permission',
+      permission: 'retail.profile.read',
+      target: {
+        kind: 'retail_profile',
+        legalEntityId: scope.legalEntityId ?? '',
+        profileId: 'profile-1',
+        tenantId: scope.tenantId,
+      },
+    }),
+  );
+
+  expect(taxDecision(scope.legalEntityId)).toBe('allowed');
+  expect(taxDecision('30000000-0000-4000-8000-000000000002')).toBe('unavailable');
+  expect(taxDecision(scope.legalEntityId, '10000000-0000-4000-8000-000000000002')).toBe('unavailable');
+  expect(ownerHeldDecision).toBe('unavailable');
+});
