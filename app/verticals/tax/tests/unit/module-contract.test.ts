@@ -21,6 +21,7 @@ describe('Tax module contract', () => {
     expect(Object.keys(taxManifest.publicSurface.api).toSorted()).toEqual([
       'applicable-tax-rule-set',
       'selling-legal-entity-vat-registration-state',
+      'tax-correction-preview',
       'tax-fact-authority-current',
       'tax-rule-history',
       'tax-source-assertion-history',

@@ -32,6 +32,7 @@ export const taxRegistration = defineVerticalRuntimeRegistration({
       'applicable-tax-rule-set': () => import('./src/api/applicable-tax-rule-set-client.ts'),
       'selling-legal-entity-vat-registration-state': () =>
         import('./src/api/selling-legal-entity-vat-registration-state-client.ts'),
+      'tax-correction-preview': () => import('./src/api/tax-correction-preview-client.ts'),
       'tax-fact-authority-current': () => import('./src/api/tax-fact-authority-current-client.ts'),
       'tax-rule-history': () => import('./src/api/tax-rule-history-client.ts'),
       'tax-source-assertion-history': () => import('./src/api/tax-source-assertion-history-client.ts'),
