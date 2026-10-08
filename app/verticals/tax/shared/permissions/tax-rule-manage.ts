@@ -4,14 +4,19 @@
 import { defineBusinessPermission } from '@app/core-runtime';
 
 export const taxRuleManagePermission = defineBusinessPermission({
-  allowedScopeKinds: ['module'],
+  allowedScopeKinds: ['tax_selling_legal_entity'],
   auditSensitivity: 'sensitive',
   authorityGroups: [],
   customerDelegable: false,
   internalGrantable: false,
   key: 'tax.rule.manage',
-  meaning: 'Tax Rule Manage module-scoped permission.',
+  meaning: 'Tax Rule Manage business permission.',
   owningCapability: 'commerce.tax',
-  protectedEntrypoints: [],
+  protectedEntrypoints: [
+    'commerce.tax.create-tax-rule',
+    'commerce.tax.create-tax-rule-revision',
+    'commerce.tax.correct-tax-rule-revision',
+    'commerce.tax.end-tax-rule-revision',
+  ],
   schemaVersion: '1',
 });

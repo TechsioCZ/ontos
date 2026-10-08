@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.tax
 // @ontos-action-slug end-tax-rule-revision
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -63,6 +63,10 @@ export const endTaxRuleRevisionAction = defineAction(
     actionKey: 'commerce.tax.end-tax-rule-revision',
     auditEvidenceSchema: TaxGovernanceAuditEvidenceSchema,
     auditProfile: 'sensitive',
+    businessPermission: defineActionBusinessPermission<EndTaxRuleRevisionPayload>((_payload, scope) => ({
+      permission: 'tax.rule.manage',
+      target: { kind: 'tax_selling_legal_entity', legalEntityId: scope.legalEntityId ?? '', tenantId: scope.tenantId },
+    })),
     domainErrorSchema: ActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({

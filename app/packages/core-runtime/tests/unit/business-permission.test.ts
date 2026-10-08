@@ -114,6 +114,41 @@ it('accepts Inventory permissions only for exact Inventory Resource scope', () =
   ).toThrow(/incompatible target scope/u);
 });
 
+it('accepts TAX management permissions only for exact Selling Legal Entity scope', () => {
+  for (const key of ['tax.rule.manage', 'tax.authority_contract.manage']) {
+    expect(
+      defineBusinessPermission({
+        ...readPermission,
+        allowedScopeKinds: ['tax_selling_legal_entity'],
+        key,
+      }).allowedScopeKinds,
+    ).toEqual(['tax_selling_legal_entity']);
+    for (const scope of ['module', 'counterparty'] as const) {
+      expect(() =>
+        defineBusinessPermission({
+          ...readPermission,
+          allowedScopeKinds: [scope],
+          key,
+        }),
+      ).toThrow(/incompatible target scope/u);
+    }
+  }
+  expect(
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['module'],
+      key: 'tax.governed.read',
+    }).allowedScopeKinds,
+  ).toEqual(['module']);
+  expect(() =>
+    defineBusinessPermission({
+      ...readPermission,
+      allowedScopeKinds: ['tax_selling_legal_entity'],
+      key: 'tax.governed.read',
+    }),
+  ).toThrow(/incompatible target scope/u);
+});
+
 it('models module-scoped context permissions without admitting a business target scope', () => {
   expect(
     defineBusinessPermission({

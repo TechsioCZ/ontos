@@ -12,6 +12,9 @@ const vertical = 'customer-context';
 const moduleId = 'commerce.customer-context';
 const inventoryVertical = 'inventory';
 const inventoryModuleId = 'commerce.inventory';
+const taxVertical = 'tax';
+const taxModuleId = 'commerce.tax';
+const taxRuleManagePermission = 'tax.rule.manage';
 const addressBookPermission = 'counterparty.address_book.use';
 const paymentTermPreferencePermission = 'retail.settings.payment_term_preference.manage';
 const repeatOrderPermission = 'retail.repeat_order';
@@ -42,6 +45,7 @@ const PermissionScopeSchema = Schema.Literals([
   'price_group',
   'pricing_catalog',
   'retail_profile',
+  'tax_selling_legal_entity',
 ]);
 type PermissionScope = typeof PermissionScopeSchema.Type;
 const json = (value: typeof Schema.Json.Type): string => `${JSON.stringify(value, null, 2)}\n`;
@@ -125,6 +129,7 @@ export const manifest = {
 
 const withFixture = withCreatedFixture(createFixture());
 const withInventoryFixture = withCreatedFixture(createFixture(inventoryVertical, inventoryModuleId));
+const withTaxFixture = withCreatedFixture(createFixture(taxVertical, taxModuleId));
 const scaffoldPermission = (
   root: string,
   permission = addressBookPermission,
@@ -146,7 +151,7 @@ it.live('permission help is write-free and documents exact business scopes', () 
       expect(result.help).toMatch(/module\|retail_profile/u);
       expect(result.help).toMatch(/pricing_catalog\|price_group/u);
       expect(result.help).toMatch(
-        /module\|retail_profile\|counterparty\|counterparty_storefront\|inventory_resource\|pricing_catalog\|price_group\|assortment_configuration\|assortment_decision\|assortment_rule\|assortment_binding\|assortment_boundary/u,
+        /module\|retail_profile\|counterparty\|counterparty_storefront\|inventory_resource\|pricing_catalog\|price_group\|assortment_configuration\|assortment_decision\|assortment_rule\|assortment_binding\|assortment_boundary\|tax_selling_legal_entity/u,
       );
       expect(result.help).toMatch(/start non-delegable/u);
     }
@@ -252,6 +257,47 @@ it.live('rejects Inventory permissions for a wrong owning module without partial
         Effect.flip,
       );
       expect(String(Cause.squash(failure))).toMatch(/inventory\.\*.*commerce\.inventory/u);
+      expect(yield* snapshotTree(root)).toEqual(before);
+    }),
+  ),
+);
+
+it.live('generates TAX management permissions only for the exact Selling Legal Entity scope and TAX owner', () =>
+  withTaxFixture(
+    Effect.fn(function* generatesTaxPermission(root) {
+      const before = yield* snapshotTree(root);
+      for (const [permission, scope] of [
+        [taxRuleManagePermission, 'module'],
+        ['tax.governed.read', 'tax_selling_legal_entity'],
+      ] as const) {
+        const rejected = yield* scaffoldPermission(root, permission, scope, taxVertical).pipe(
+          Effect.sandbox,
+          Effect.flip,
+        );
+        expect(String(Cause.squash(rejected))).toMatch(/scope/u);
+        expect(yield* snapshotTree(root)).toEqual(before);
+      }
+      const result = yield* scaffoldPermission(root, taxRuleManagePermission, 'tax_selling_legal_entity', taxVertical);
+      expect(result.kind).toBe('generated');
+      const permissionSource = yield* Effect.promise(() =>
+        readFile(path.join(root, `verticals/${taxVertical}/shared/permissions/tax-rule-manage.ts`), 'utf-8'),
+      );
+      expect(permissionSource).toMatch(/key: 'tax\.rule\.manage'/u);
+      expect(permissionSource).toMatch(/allowedScopeKinds: \['tax_selling_legal_entity'\]/u);
+      expect(permissionSource).toMatch(/owningCapability: 'commerce\.tax'/u);
+    }),
+  ),
+);
+
+it.live('rejects TAX management permissions for a wrong owning module without partial writes', () =>
+  withFixture(
+    Effect.fn(function* rejectsWrongTaxOwner(root) {
+      const before = yield* snapshotTree(root);
+      const failure = yield* scaffoldPermission(root, taxRuleManagePermission, 'tax_selling_legal_entity').pipe(
+        Effect.sandbox,
+        Effect.flip,
+      );
+      expect(String(Cause.squash(failure))).toMatch(/TAX management permissions must be owned by the commerce\.tax/u);
       expect(yield* snapshotTree(root)).toEqual(before);
     }),
   ),

@@ -213,6 +213,27 @@ it.effect('fails closed before transport for cross-tenant or untrusted storefron
   }),
 );
 
+it.effect('writes legal-entity and grantee relationships for one exact TAX Selling Legal Entity grant', () =>
+  Effect.gen(function* grantTaxSellingLegalEntityPermission() {
+    const requests: v1.WriteRelationshipsRequest[] = [];
+    const service = makeBusinessPermissionRelationshipMutation({
+      writeRelationships: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return v1.WriteRelationshipsResponse.create({});
+        }),
+    });
+    yield* service.mutate({
+      operation: 'grant',
+      permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('tax.rule.manage'),
+      principal: { principalId, tenantId },
+      target: { kind: 'tax_selling_legal_entity', legalEntityId, tenantId },
+    });
+
+    expect(requests[0]?.updates.map(({ relationship }) => relationship?.relation)).toEqual(['legal_entity', 'grantee']);
+  }),
+);
+
 it.effect('rejects incompatible permission targets and noncanonical Pricing identifiers before transport', () =>
   Effect.gen(function* rejectInvalidBusinessTarget() {
     let calls = 0;
@@ -261,6 +282,18 @@ it.effect('rejects incompatible permission targets and noncanonical Pricing iden
           },
           tenantId,
         },
+      },
+      {
+        operation: 'grant' as const,
+        permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('tax.rule.manage'),
+        principal: { principalId, tenantId },
+        target: { kind: 'tax_selling_legal_entity' as const, legalEntityId: '', tenantId },
+      },
+      {
+        operation: 'grant' as const,
+        permission: yield* Schema.decodeEffect(BusinessPermissionCodeSchema)('tax.governed.read'),
+        principal: { principalId, tenantId },
+        target: { kind: 'tax_selling_legal_entity' as const, legalEntityId, tenantId },
       },
     ];
 

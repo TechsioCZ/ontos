@@ -73,7 +73,8 @@ const prepare = (
   const targetRequiresLegalEntity =
     input.target.kind === 'retail_profile' ||
     input.target.kind === 'counterparty' ||
-    input.target.kind === 'counterparty_storefront';
+    input.target.kind === 'counterparty_storefront' ||
+    input.target.kind === 'tax_selling_legal_entity';
   const invalidScope =
     !isBusinessPermissionTargetCompatible({ permission: input.permission, target: input.target }) ||
     !hasCanonicalPricingAuthorizationTargetIds(input.target) ||

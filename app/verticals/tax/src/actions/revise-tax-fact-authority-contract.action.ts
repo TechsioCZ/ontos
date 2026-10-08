@@ -2,7 +2,7 @@
 // @ontos-action-owner commerce.tax
 // @ontos-action-slug revise-tax-fact-authority-contract
 import type { ActionHandlerContext } from '@app/core-runtime';
-import { defineAction, defineTenantModuleEntrypoint } from '@app/core-runtime';
+import { defineAction, defineActionBusinessPermission, defineTenantModuleEntrypoint } from '@app/core-runtime';
 import { Effect, Schema } from 'effect';
 
 import {
@@ -69,6 +69,10 @@ export const reviseTaxFactAuthorityContractAction = defineAction(
     actionKey: 'commerce.tax.revise-tax-fact-authority-contract',
     auditEvidenceSchema: TaxGovernanceAuditEvidenceSchema,
     auditProfile: 'sensitive',
+    businessPermission: defineActionBusinessPermission<ReviseTaxFactAuthorityContractPayload>((_payload, scope) => ({
+      permission: 'tax.authority_contract.manage',
+      target: { kind: 'tax_selling_legal_entity', legalEntityId: scope.legalEntityId ?? '', tenantId: scope.tenantId },
+    })),
     domainErrorSchema: ActionErrorSchema,
     domainEvents,
     entrypoint: defineTenantModuleEntrypoint({
