@@ -182,7 +182,11 @@ it.live('runs owner callbacks once inside every current legal-entity scope of th
       explanation: 'Proves that owner failure rolls back the owner routine write',
       paymentTermId: '52000000-0000-4000-8000-000000000001',
       reason: 'Core fan-out transaction rollback integration evidence',
-      semantics: { kind: 'IMMEDIATE' },
+      semantics: {
+        calculationRuleVersion: 2,
+        calendarRule: 'NOT_APPLICABLE',
+        kind: 'IMMEDIATE',
+      },
     } as const;
     const ownerFailure = yield* Effect.flip(
       fanout.forEachScope(context, (scope) =>
