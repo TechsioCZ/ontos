@@ -186,6 +186,28 @@ export function CatalogNavigation({
   );
 }
 
+export function CatalogHelpNavigation() {
+  return (
+    <VerticalNavigation
+      aria-label={cs.catalog.recommendations}
+      className="shrink-0"
+      data-akros-catalog-help=""
+      size="sm"
+    >
+      <VerticalNavigation.Group>
+        <VerticalNavigation.GroupLabel>{cs.catalog.recommendations}</VerticalNavigation.GroupLabel>
+        <VerticalNavigation.Separator />
+        <NextLink
+          className="flex min-h-(--dimension-44) items-center self-start text-xs font-normal underline"
+          href="/faq"
+        >
+          {cs.catalog.firstSteps}
+        </NextLink>
+      </VerticalNavigation.Group>
+    </VerticalNavigation>
+  );
+}
+
 export function CatalogSidebar({
   activeSlug,
   categories,
@@ -194,14 +216,18 @@ export function CatalogSidebar({
   categories: CatalogCategory[];
 }) {
   return (
-    <aside className="akros-sidebar" aria-label={cs.catalog.title}>
-      <div className="akros-sidebar__desktop">
+    <aside
+      className="akros-sidebar flex max-h-(--akros-sidebar-max-height) flex-col gap-(--dimension-24)"
+      aria-label={cs.catalog.title}
+    >
+      <div className="akros-sidebar__desktop min-h-0 shrink">
         <CatalogNavigation
           activeSlug={activeSlug}
           categories={categories}
           navigationId="catalog-desktop"
         />
       </div>
+      <CatalogHelpNavigation />
     </aside>
   );
 }

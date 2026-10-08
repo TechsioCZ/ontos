@@ -55,6 +55,7 @@ export const cs = {
     categoryDescription: "Vyberte podkategorii nebo pokračujte rovnou k produktům.",
     emptyCategory: "V této kategorii momentálně nejsou žádné produkty.",
     recommendations: "Mohlo by vás zajímat…",
+    firstSteps: "První kroky v e-shopu",
   },
   home: {
     partnerTitle: "Partnerský program",

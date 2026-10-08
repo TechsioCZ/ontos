@@ -202,9 +202,7 @@ body {
 @media (min-width: 1024px) {
   .akros-sidebar__desktop {
     /* Account for the shell's initial top margin and leave room below the menu. */
-    max-height: calc(
-      100dvh - var(--akros-header-height) - var(--dimension-24) - var(--dimension-16)
-    );
+    max-height: var(--akros-sidebar-max-height);
     overflow-y: auto;
     overscroll-behavior-y: contain;
     scrollbar-width: thin;

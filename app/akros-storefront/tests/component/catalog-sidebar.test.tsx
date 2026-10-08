@@ -2,7 +2,11 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { CatalogNavigation, CatalogSidebar } from "@/components/catalog-sidebar";
+import {
+  CatalogHelpNavigation,
+  CatalogNavigation,
+  CatalogSidebar,
+} from "@/components/catalog-sidebar";
 import { cs } from "@/i18n/cs";
 import { getSidebarCategories } from "@/mock-storefront/catalog";
 
@@ -38,17 +42,35 @@ describe("CatalogSidebar", () => {
     expect(within(navigation).queryByText("Speciální spojovací materiál")).toBeNull();
   });
 
+  it("keeps the first steps link outside the scrolling catalog panel", () => {
+    const { container } = render(<CatalogSidebar categories={[]} />);
+    const help = screen.getByRole("navigation", { name: cs.catalog.recommendations });
+    expect(container.querySelector(".akros-sidebar__desktop")?.contains(help)).toBe(false);
+    expect(within(help).getByRole("heading", { name: cs.catalog.recommendations })).toBeTruthy();
+    expect(
+      within(help).getByRole("link", { name: cs.catalog.firstSteps }).getAttribute("href"),
+    ).toBe("/faq");
+  });
+
   it("supports compact collapsed roots in the shared mobile navigation", async () => {
     const user = userEvent.setup();
     const categories = getSidebarCategories();
     render(
-      <CatalogNavigation
-        categories={categories}
-        expandRoots={false}
-        navigationId="catalog-mobile"
-      />,
+      <>
+        <CatalogNavigation
+          categories={categories}
+          expandRoots={false}
+          navigationId="catalog-mobile"
+        />
+        <CatalogHelpNavigation />
+      </>,
     );
     const mobileNavigation = screen.getByRole("navigation", { name: cs.catalog.title });
+    expect(
+      within(screen.getByRole("navigation", { name: cs.catalog.recommendations }))
+        .getByRole("link", { name: cs.catalog.firstSteps })
+        .getAttribute("href"),
+    ).toBe("/faq");
     expect(
       within(mobileNavigation)
         .getByRole("button", { name: cs.catalog.specialCategories })

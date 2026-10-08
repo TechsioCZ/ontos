@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "@techsio/ui-kit/atoms/link";
 import { LinkButton } from "@techsio/ui-kit/atoms/link-button";
 import { Drawer } from "@techsio/ui-kit/molecules/drawer";
-import { CatalogNavigation } from "@/components/catalog-sidebar";
+import { CatalogHelpNavigation, CatalogNavigation } from "@/components/catalog-sidebar";
 import { HeaderSearch } from "@/components/header-search";
 
 import { MiniCart } from "@/features/cart/mini-cart";
@@ -95,6 +95,7 @@ function MobileNavigation({ pathname }: { pathname: string }) {
                     expandRoots={false}
                     navigationId="catalog-mobile"
                   />
+                  <CatalogHelpNavigation />
                 </section>
                 <section>
                   <h3 className="akros-mobile-menu__section-title">

@@ -1,4 +1,7 @@
 :root {
+  --akros-sidebar-max-height: calc(
+    100dvh - var(--akros-header-height) - var(--dimension-24) - var(--dimension-16)
+  );
   --radius-vertical-navigation-item: var(--radius-none);
   --color-akros-catalog-path-level-0: var(--color-bg-primary-base);
   --color-akros-catalog-path-level-1: color-mix(
@@ -21,6 +24,18 @@
     var(--color-bg-primary-base) 15%,
     var(--color-vertical-navigation-surface)
   );
+}
+
+[data-akros-catalog-help] {
+  --text-vertical-navigation-label-sm: var(--text-sm);
+  --color-vertical-navigation-group-fg-plain: var(--color-base-dark);
+  --color-vertical-navigation-label-fg: var(--color-base-dark);
+  --color-vertical-navigation-separator-bg: var(--color-base-dark);
+  --font-weight-vertical-navigation-label: var(--font-weight-bold);
+  --padding-vertical-navigation-group: var(--dimension-0);
+  --padding-vertical-navigation-item-x-sm: var(--dimension-0);
+  --spacing-vertical-navigation-group: var(--dimension-0);
+  --spacing-vertical-navigation-separator: var(--border-md);
 }
 
 [data-akros-catalog] [data-part="branch"][data-state="open"] > [data-akros-depth="0"],
