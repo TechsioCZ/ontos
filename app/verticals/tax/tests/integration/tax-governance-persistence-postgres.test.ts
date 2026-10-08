@@ -409,6 +409,10 @@ it.live(
         expect(evidence.revisions[1]?.ratePercent).toBe('23');
         expect(evidence.revisions[2]?.supersedesRevisionRef).toEqual(Option.some(revisionRef(future.revisionId)));
         expect(evidence.revisions[0]?.endFact.pipe(Option.isSome)).toBe(true);
+        // Only the rule-level expected-current basis is a governed token; no Action accepts a per-revision one.
+        for (const revision of evidence.revisions) {
+          expect(revision).not.toHaveProperty('basisFingerprint');
+        }
         expect(evidence.corrections.map(({ wrongRevisionRef }) => wrongRevisionRef.resourceId)).toEqual([
           future.revisionId,
         ]);
@@ -887,8 +891,12 @@ it.live(
           )).ended,
         ).toBe(true);
 
-        // #930 F8-F9 a correction must replace the wrong revision for its whole Effective Period.
-        const correctInput = (correctingContent: ReturnType<typeof content>, expectedBasisFingerprint: string) =>
+        // #930 F8-F9 #949 F47 a correction replaces the wrong revision for exactly its Effective Period.
+        const correctInput = (
+          correctingContent: ReturnType<typeof content>,
+          expectedBasisFingerprint: string,
+          wrongRevisionId: string = rev3.revisionId,
+        ) =>
           Effect.gen(function* correctLifecycleInput() {
             return {
               ...(yield* Schema.decodeEffect(CorrectTaxRuleRevisionPayloadSchema)({
@@ -897,7 +905,7 @@ it.live(
                 expectedBasisFingerprint,
                 provenanceRef: 'acceptance:lifecycle-correction',
                 reason: 'Announced rate was wrong',
-                wrongRevisionRef: revisionRef(rev3.revisionId),
+                wrongRevisionRef: revisionRef(wrongRevisionId),
               })),
               ...invocation(scopeA),
             };
@@ -910,6 +918,8 @@ it.live(
             effectiveTo: '2028-01-01T00:00:00.000Z',
             ratePercent: '21',
           }),
+          // Starting earlier would overlap the neighbouring revision 1 and rewrite its history.
+          content({ effectiveFrom: '2026-06-01T00:00:00.000Z', ratePercent: '21' }),
         ]) {
           const partialInput = yield* correctInput(partial, basisBeforeCorrection);
           expect(yield* rules((persistence) => persistence.correctTaxRuleRevision(partialInput))).toEqual({
@@ -939,6 +949,50 @@ it.live(
         expect(gap.excludedByCorrection.map(({ wrongRevisionRef }) => wrongRevisionRef.resourceId)).toEqual([
           rev3.revisionId,
         ]);
+
+        // #949 F47 correcting the now-bounded correcting revision never fills the MISSING gap after its end.
+        const basisAfterEnd = (yield* history(rule.taxRuleId)).basisFingerprint;
+        for (const overshoot of [
+          content({ effectiveFrom: '2027-01-01T00:00:00.000Z', ratePercent: '20' }),
+          content({
+            effectiveFrom: '2027-01-01T00:00:00.000Z',
+            effectiveTo: '2029-01-01T00:00:00.000Z',
+            ratePercent: '20',
+          }),
+        ]) {
+          const overshootInput = yield* correctInput(overshoot, basisAfterEnd, corrected.correctingRevisionId);
+          expect(yield* rules((persistence) => persistence.correctTaxRuleRevision(overshootInput))).toEqual({
+            conflict: 'LIFECYCLE',
+            kind: 'conflict',
+          });
+        }
+        expect((yield* applicableAt('2028-06-01T00:00:00.000Z')).outcome).toBe('TAX_RULE_MISSING');
+
+        // An already-corrected revision is never corrected again, even for exactly its period (#930 F8).
+        const recorrect = yield* correctInput(
+          content({ effectiveFrom: '2027-01-01T00:00:00.000Z', ratePercent: '20' }),
+          basisAfterEnd,
+        );
+        expect(yield* rules((persistence) => persistence.correctTaxRuleRevision(recorrect))).toEqual({
+          conflict: 'LIFECYCLE',
+          kind: 'conflict',
+        });
+
+        // The exact period of the bounded correcting revision, including its end fact, is a valid correction.
+        const exactInput = yield* correctInput(
+          content({
+            effectiveFrom: '2027-01-01T00:00:00.000Z',
+            effectiveTo: '2028-01-01T00:00:00.000Z',
+            ratePercent: '20',
+          }),
+          basisAfterEnd,
+          corrected.correctingRevisionId,
+        );
+        yield* rules((persistence) => persistence.correctTaxRuleRevision(exactInput)).pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(CorrectedSchema)),
+        );
+        expect((yield* applicableAt('2027-06-01T00:00:00.000Z')).applicable[0]?.ratePercent).toBe('20');
+        expect((yield* applicableAt('2028-06-01T00:00:00.000Z')).outcome).toBe('TAX_RULE_MISSING');
 
         // #955 G a replay arriving after newer unrelated revisions still returns its original outcome.
         const replayed = yield* rules((persistence) => persistence.createTaxRuleRevision(rev2Input)).pipe(

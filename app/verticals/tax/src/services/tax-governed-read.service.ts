@@ -113,13 +113,11 @@ const toSelectionState = (
 
 /** One revision of the evidence history, echoing the stored row and its separate lifecycle facts. */
 const historyRevision = ({
-  corrections,
   endFacts,
   meaning,
   revision,
   tenantId,
 }: Readonly<{
-  corrections: readonly CorrectionRow[];
   endFacts: readonly EndFactRow[];
   meaning: StoredRevisionMeaning;
   revision: RevisionRow;
@@ -128,7 +126,6 @@ const historyRevision = ({
   const endFact = endFacts.find((candidate) => candidate.taxRuleRevisionId === revision.taxRuleRevisionId);
   return {
     ...meaning,
-    basisFingerprint: taxRuleRevisionBasisFingerprint(basisOf(revision, endFacts, corrections)),
     effectiveFrom: instant(revision.effectiveFrom),
     effectiveTo: optionalInstant(revision.effectiveTo),
     endFact: Option.map(Option.fromUndefinedOr(endFact), (fact) => ({
@@ -308,7 +305,7 @@ export const taxGovernedReadsForScope = (transaction: ScopedTransaction, scope: 
         ordered,
         (revision) =>
           decodeStoredMeaning(revision).pipe(
-            Effect.map((meaning) => historyRevision({ corrections, endFacts, meaning, revision, tenantId })),
+            Effect.map((meaning) => historyRevision({ endFacts, meaning, revision, tenantId })),
           ),
         { concurrency: 1 },
       );
