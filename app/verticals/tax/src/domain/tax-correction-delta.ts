@@ -154,6 +154,15 @@ export const TaxCorrectionDeltaSchema = Schema.TaggedStruct('TAX_CORRECTION_DELT
 });
 export type TaxCorrectionDelta = typeof TaxCorrectionDeltaSchema.Type;
 
+/**
+ * The owner (Order or Billing) cannot establish the Authoritative Original Accepted Record of the supply to correct:
+ * it is missing, or several records could be it. The owner must recover it; TAX never reconstructs it from Current
+ * sources, equal totals or a guessed zero (#946 F12, #947 F13, #948 F7).
+ */
+export const OriginalRecordUnavailableSchema = Schema.TaggedStruct('ORIGINAL_RECORD_UNAVAILABLE', {
+  reason: Schema.Literals(['MISSING', 'AMBIGUOUS']),
+});
+
 const UnresolvedUnitSchema = Schema.Struct({
   reason: TaxHistoricalInputUnresolvedReasonSchema,
   taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
@@ -169,13 +178,13 @@ type OutOfBoundsUnit = typeof OutOfBoundsUnitSchema.Type;
 const isOutOfBoundsUnit = Schema.is(OutOfBoundsUnitSchema);
 
 /**
- * Explicit unresolved historical input (#947 F13, #948 F7, PO default D4): the Authoritative Original Accepted Record
- * handed over is incomplete or ambiguous as a whole, or named units cannot be established from it. No Tax amount,
+ * Explicit unresolved historical input (#947 F13, #948 F7, PO default D4): the owner cannot establish its Authoritative
+ * Original Accepted Record (missing or ambiguous), or named units cannot be established from the record it handed over. No Tax amount,
  * guessed zero or Current-source fallback.
  */
 export const TaxCorrectionHistoricalInputUnresolvedSchema = Schema.TaggedStruct(TAX_HISTORICAL_INPUT_UNRESOLVED, {
   unresolved: Schema.Union([
-    Schema.TaggedStruct('ORIGINAL_RECORD_INCOMPLETE', {}),
+    OriginalRecordUnavailableSchema,
     Schema.TaggedStruct('UNITS', { units: Schema.Array(UnresolvedUnitSchema).check(Schema.isMinLength(1)) }),
   ]),
 });

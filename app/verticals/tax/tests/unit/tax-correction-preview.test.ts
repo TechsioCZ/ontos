@@ -6,7 +6,6 @@ import {
   TaxCorrectionPreviewRequestSchema,
   TaxCorrectionPreviewResponseSchema,
 } from '../../shared/apis/tax-correction-preview.ts';
-import { AcceptedTaxTermsContractSchema } from '../../shared/domain/tax-correction-preview-contracts.ts';
 import { previewTaxCorrection } from '../../src/api/tax-correction-preview.read.ts';
 import {
   TaxCorrectionDeltaSchema,
@@ -113,33 +112,36 @@ describe('Tax correction preview read', () => {
     }),
   );
 
-  it.effect('#947 F13 #948 F7 an incomplete original record is the explicit unresolved outcome, not a rejection', () =>
-    Effect.gen(function* answersIncompleteRecord() {
-      const { finalTax, ...withoutFinalTax } = terms;
-      const withoutQuantity = {
-        ...terms,
-        finalTax: {
-          ...finalTax,
-          decision: {
-            ...finalTax.decision,
-            purchaseBinding: { ...finalTax.decision.purchaseBinding, purchaseDemandOccurrences: [] },
-          },
-        },
-      };
-      for (const incomplete of [withoutFinalTax, withoutQuantity, {}]) {
+  it.effect('#947 F13 #948 F7 an original record the owner cannot establish is the explicit unresolved outcome', () =>
+    Effect.gen(function* answersUnavailableRecord() {
+      for (const reason of ['MISSING', 'AMBIGUOUS'] as const) {
         const result = yield* preview(
-          { acceptedTaxTerms: incomplete, declaredPurpose: { _tag: 'HISTORICAL_READ' } },
+          {
+            acceptedTaxTerms: { _tag: 'ORIGINAL_RECORD_UNAVAILABLE', reason },
+            declaredPurpose: { _tag: 'HISTORICAL_READ' },
+          },
           { ...scope, tenantId: 'tenant-2' },
         );
         expect(Schema.is(TaxCorrectionHistoricalInputUnresolvedSchema)(result)).toBe(true);
-        expect(encodeResponse(result)).toMatchObject({ unresolved: { _tag: 'ORIGINAL_RECORD_INCOMPLETE' } });
+        expect(encodeResponse(result)).toMatchObject({ unresolved: { _tag: 'ORIGINAL_RECORD_UNAVAILABLE', reason } });
       }
     }),
   );
 
-  it('#946 F8-F9 owners hand over Accepted Tax Terms in the published contract shape', () => {
-    const encode = Schema.encodeSync(AcceptedTaxTermsContractSchema);
-    expect(encode(Schema.decodeSync(AcceptedTaxTermsContractSchema)(terms))).toEqual(terms);
+  it('#946 F8-F9 a malformed or inconsistent handover is a contract violation, not a guessed baseline', () => {
+    const { finalTax, ...withoutFinalTax } = terms;
+    for (const malformed of [
+      withoutFinalTax,
+      { ...terms, orderCommitmentTime: '2026-10-08T10:00:02.000Z' },
+      { ...terms, finalTax: { ...finalTax, decision: { ...finalTax.decision, units: [] } } },
+    ]) {
+      expect(() =>
+        Schema.decodeUnknownSync(TaxCorrectionPreviewRequestSchema)({
+          acceptedTaxTerms: malformed,
+          declaredPurpose: { _tag: 'HISTORICAL_READ' },
+        }),
+      ).toThrow();
+    }
   });
 
   it('#948 F11 #907 F193-F194 accepts no Payment refund or Fulfillment status as correction facts', () => {
