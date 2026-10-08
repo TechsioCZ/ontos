@@ -1,4 +1,4 @@
-import { Match, Result, Schema } from 'effect';
+import { DateTime, Match, Option, Result, Schema } from 'effect';
 
 import { TaxRuleRevisionContentSchema } from '../../shared/actions/tax-governance.ts';
 import { RecordTaxSourceAssertionPayloadSchema } from '../../shared/actions/tax-source-assertion.ts';
@@ -19,6 +19,8 @@ import type {
   TaxMigrationCompletenessClaim,
   TaxMigrationFamily,
   TaxMigrationOutcome,
+  TaxMigrationProvenance,
+  TaxMigrationSourceRecord,
   TaxMigrationTargetDifference,
   TaxMigrationTargetFact,
 } from '../../shared/domain/tax-migration-contracts.ts';
@@ -62,124 +64,245 @@ const requiredKeys = {
 
 const TaxRuleTargetTextSchema = Schema.fromJsonString(TaxRuleRevisionContentSchema);
 const VatRegistrationTargetTextSchema = Schema.fromJsonString(RecordTaxSourceAssertionPayloadSchema);
+const strict = { onExcessProperty: 'error' } as const;
+
+/** Exact decimal text without insignificant trailing zeros: `21.00` and `21` are the same rate (#938, #960 F15). */
+const canonicalRate = (ratePercent: string): string =>
+  ratePercent.includes('.') ? ratePercent.replace(/0+$/u, '').replace(/\.$/u, '') : ratePercent;
+
+const withCanonicalRate = (targetMeaning: TargetMeaning) =>
+  Object.fromEntries(
+    Object.entries(targetMeaning).map(([key, value]) => [key, key === 'ratePercent' ? canonicalRate(value) : value]),
+  );
+
+interface CanonicalTarget {
+  /** Identity of the one exact target fact this meaning would be for, independent of its value. */
+  readonly factKey: string;
+  readonly targetMeaningKey: typeof TaxMigrationTargetMeaningKeySchema.Type;
+}
 
 /**
- * Canonical target meaning: decoded with the governed TAX Action schema and re-encoded in schema field order, so the
- * same business meaning always yields the same key whatever its legacy representation (#960 F2, F15).
+ * Canonical target meaning: decoded strictly with the governed TAX Action schema (an unknown legacy key is never
+ * silently dropped) and re-encoded in schema field order, so the same business meaning always yields the same key
+ * whatever its legacy representation (#960 F1-F2, F15, F34).
  */
+const canonicalTarget = (
+  family: TaxMigrationFamily,
+  targetMeaning: TargetMeaning,
+): Result.Result<CanonicalTarget, Schema.SchemaError> =>
+  family === 'TAX_RULE'
+    ? Schema.decodeUnknownResult(
+        TaxRuleRevisionContentSchema,
+        strict,
+      )(withCanonicalRate(targetMeaning)).pipe(
+        Result.flatMap((content) =>
+          Schema.encodeResult(TaxRuleTargetTextSchema)(content).pipe(
+            Result.map((text) => ({
+              factKey: `TAX_RULE ${content.jurisdiction} ${content.taxClassificationCode} ${DateTime.formatIso(content.effectiveFrom)}`,
+              targetMeaningKey: TaxMigrationTargetMeaningKeySchema.make(text),
+            })),
+          ),
+        ),
+      )
+    : Schema.decodeUnknownResult(
+        RecordTaxSourceAssertionPayloadSchema,
+        strict,
+      )(targetMeaning).pipe(
+        Result.flatMap((payload) =>
+          Schema.encodeResult(VatRegistrationTargetTextSchema)(payload).pipe(
+            Result.map((text) => ({
+              factKey: `SELLING_LEGAL_ENTITY_VAT_REGISTRATION ${payload.sourceRef} ${payload.sourceAssertionKey}`,
+              targetMeaningKey: TaxMigrationTargetMeaningKeySchema.make(text),
+            })),
+          ),
+        ),
+      );
+
+/** Canonical meaning key of a TAX target fact, computed exactly as for a mapped candidate. */
 export const taxMigrationTargetMeaningKey = (
   family: TaxMigrationFamily,
   targetMeaning: TargetMeaning,
 ): Result.Result<typeof TaxMigrationTargetMeaningKeySchema.Type, Schema.SchemaError> =>
-  (family === 'TAX_RULE'
-    ? Schema.decodeUnknownResult(TaxRuleRevisionContentSchema)(targetMeaning).pipe(
-        Result.flatMap(Schema.encodeResult(TaxRuleTargetTextSchema)),
-      )
-    : Schema.decodeUnknownResult(RecordTaxSourceAssertionPayloadSchema)(targetMeaning).pipe(
-        Result.flatMap(Schema.encodeResult(VatRegistrationTargetTextSchema)),
-      )
-  ).pipe(Result.map((text) => TaxMigrationTargetMeaningKeySchema.make(text)));
+  canonicalTarget(family, targetMeaning).pipe(Result.map(({ targetMeaningKey }) => targetMeaningKey));
 
 const outsideLaunchScope = (targetMeaning: TargetMeaning): boolean =>
   Object.entries(launchScope).some(
     ([key, launchValue]) => targetMeaning[key] !== undefined && targetMeaning[key] !== launchValue,
   );
 
-const evaluateTaxOwned = (
-  sourceRecordRef: string,
+/** A source assertion's own source and record identity must be the record it was migrated from (#960 F11). */
+const contradictsProvenance = (
   family: TaxMigrationFamily,
   targetMeaning: TargetMeaning,
-): TaxMigrationOutcome => {
+  provenance: TaxMigrationProvenance,
+): boolean =>
+  family === 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION' &&
+  (targetMeaning['sourceRef'] !== provenance.sourceSystemRef ||
+    targetMeaning['sourceRecordRef'] !== provenance.sourceRecordRef);
+
+interface EvaluatedCandidate {
+  readonly factKey: Option.Option<string>;
+  readonly outcome: TaxMigrationOutcome;
+}
+
+const evaluateTaxOwned = (
+  provenance: TaxMigrationProvenance,
+  family: TaxMigrationFamily,
+  targetMeaning: TargetMeaning,
+): EvaluatedCandidate => {
   if (outsideLaunchScope(targetMeaning)) {
-    return TaxMigrationRejectedUnmappedSchema.make({
-      reason: 'UNSUPPORTED_BREADTH',
-      sourceRecordRef,
-      targetOwner: TAX_OWNER_CAPABILITY,
-    });
+    return {
+      factKey: Option.none(),
+      outcome: TaxMigrationRejectedUnmappedSchema.make({
+        provenance,
+        reason: 'UNSUPPORTED_BREADTH',
+        targetOwner: TAX_OWNER_CAPABILITY,
+      }),
+    };
   }
   const missing = requiredKeys[family].filter((key) => targetMeaning[key] === undefined);
   if (missing.length > 0) {
-    return TaxMigrationIncompleteSchema.make({ missing, sourceRecordRef });
+    return { factKey: Option.none(), outcome: TaxMigrationIncompleteSchema.make({ missing, provenance }) };
   }
-  return Result.match(taxMigrationTargetMeaningKey(family, targetMeaning), {
-    onFailure: (): TaxMigrationOutcome =>
-      TaxMigrationReviewRequiredSchema.make({ reason: 'TARGET_MEANING_INVALID', sourceRecordRef }),
-    onSuccess: (targetMeaningKey): TaxMigrationOutcome =>
-      TaxMigrationMappedAcceptedSchema.make({ family, sourceRecordRef, targetMeaningKey }),
+  if (contradictsProvenance(family, targetMeaning, provenance)) {
+    return {
+      factKey: Option.none(),
+      outcome: TaxMigrationReviewRequiredSchema.make({ provenance, reason: 'PROVENANCE_MISMATCH' }),
+    };
+  }
+  return Result.match(canonicalTarget(family, targetMeaning), {
+    onFailure: (): EvaluatedCandidate => ({
+      factKey: Option.none(),
+      outcome: TaxMigrationReviewRequiredSchema.make({ provenance, reason: 'TARGET_MEANING_INVALID' }),
+    }),
+    onSuccess: ({ factKey, targetMeaningKey }): EvaluatedCandidate => ({
+      factKey: Option.some(factKey),
+      outcome: TaxMigrationMappedAcceptedSchema.make({ family, provenance, targetMeaningKey }),
+    }),
   });
 };
 
-/** Outcome of one candidate on its own, before duplicate source identities are reconciled. */
-const evaluateCandidate = ({ mapping, provenance }: TaxMigrationCandidate): TaxMigrationOutcome => {
-  const { sourceRecordRef } = provenance;
-  return Match.value(mapping).pipe(
-    Match.tag('FOREIGN_OWNER', ({ targetOwner }) =>
-      TaxMigrationRejectedUnmappedSchema.make({ reason: 'FOREIGN_OWNER', sourceRecordRef, targetOwner }),
-    ),
-    Match.tag('HISTORICAL_ACCEPTED_VALUE', ({ historicalOwner }) =>
-      TaxMigrationRejectedUnmappedSchema.make({
+/** Outcome of one candidate on its own, before duplicate records and facts are reconciled. */
+const evaluateCandidate = ({ mapping, provenance }: TaxMigrationCandidate): EvaluatedCandidate =>
+  Match.value(mapping).pipe(
+    Match.tag('FOREIGN_OWNER', ({ targetOwner }) => ({
+      factKey: Option.none(),
+      outcome: TaxMigrationRejectedUnmappedSchema.make({ provenance, reason: 'FOREIGN_OWNER', targetOwner }),
+    })),
+    Match.tag('HISTORICAL_ACCEPTED_VALUE', ({ historicalOwner }) => ({
+      factKey: Option.none(),
+      outcome: TaxMigrationRejectedUnmappedSchema.make({
+        provenance,
         reason: 'HISTORICAL_ACCEPTED_VALUE',
-        sourceRecordRef,
         targetOwner: historicalOwner,
       }),
-    ),
-    Match.tag('UNESTABLISHED', () =>
-      TaxMigrationReviewRequiredSchema.make({ reason: 'MEANING_NOT_ESTABLISHED', sourceRecordRef }),
-    ),
-    Match.tag('TAX_OWNED', ({ family, targetMeaning }) => evaluateTaxOwned(sourceRecordRef, family, targetMeaning)),
+    })),
+    Match.tag('UNESTABLISHED', () => ({
+      factKey: Option.none(),
+      outcome: TaxMigrationReviewRequiredSchema.make({ provenance, reason: 'MEANING_NOT_ESTABLISHED' }),
+    })),
+    Match.tag('TAX_OWNED', ({ family, targetMeaning }) => evaluateTaxOwned(provenance, family, targetMeaning)),
     Match.exhaustive,
   );
-};
 
 const byText = (left: string, right: string) => left.localeCompare(right, 'en');
 
-/** Comparable business meaning of an outcome: the mapped target meaning, otherwise the outcome kind itself. */
+/** Full business meaning of an outcome, provenance aside: kind, reason, owner, missing meaning or target meaning. */
 const meaningOf = (outcome: TaxMigrationOutcome): string =>
   Match.value(outcome).pipe(
-    Match.tag('MAPPED_ACCEPTED', ({ targetMeaningKey }) => targetMeaningKey),
-    Match.orElse(({ _tag }) => _tag),
+    Match.tagsExhaustive({
+      CONFLICTING: () => 'CONFLICTING',
+      INCOMPLETE: ({ missing }) => `INCOMPLETE ${missing.join(',')}`,
+      MAPPED_ACCEPTED: ({ family, targetMeaningKey }) => `MAPPED_ACCEPTED ${family} ${targetMeaningKey}`,
+      REJECTED_UNMAPPED: ({ reason, targetOwner }) => `REJECTED_UNMAPPED ${reason} ${targetOwner}`,
+      REVIEW_REQUIRED: ({ reason }) => `REVIEW_REQUIRED ${reason}`,
+    }),
   );
 
-const sourceIdentity = ({ provenance }: TaxMigrationCandidate) =>
-  `${provenance.sourceSystemRef} ${provenance.sourceRecordRef}`;
+/** One source record identity: source system plus record, never the record ref alone (#960 F11). */
+const sourceKey = ({ sourceRecordRef, sourceSystemRef }: TaxMigrationSourceRecord): string =>
+  `${sourceSystemRef} ${sourceRecordRef}`;
+
+const sourceOf = ({ sourceRecordRef, sourceSystemRef }: TaxMigrationSourceRecord): TaxMigrationSourceRecord => ({
+  sourceRecordRef,
+  sourceSystemRef,
+});
+
+const provenanceKey = (provenance: TaxMigrationProvenance) => `${sourceKey(provenance)} ${provenance.datasetRef}`;
+
+interface Entry extends EvaluatedCandidate {
+  readonly groupKey: string;
+  readonly meaning: string;
+}
+
+const duplicateOf = (entry: Entry, original: TaxMigrationOutcome): TaxMigrationOutcome =>
+  TaxMigrationRejectedUnmappedSchema.make({
+    provenance: entry.outcome.provenance,
+    reason: 'DUPLICATE_SOURCE_RECORD',
+    targetOwner: Match.value(original).pipe(
+      Match.tag('REJECTED_UNMAPPED', ({ targetOwner }) => targetOwner),
+      Match.orElse(() => TAX_OWNER_CAPABILITY),
+    ),
+  });
 
 /**
- * Evaluates one NON_PRODUCTION dataset deterministically, independent of input order. One source record identity is
- * one record: identical meanings keep one outcome and reject the copies as duplicates; different meanings are
- * CONFLICTING and none is chosen by order or arrival (#960 G duplicate legacy records, F26-F27).
+ * Within each group, identical meanings keep the first outcome (in a stable order) and reject the copies as
+ * duplicates; different meanings are all CONFLICTING, naming every counterpart, and none is chosen by order.
+ */
+const reconcileGroups = (entries: readonly Entry[]): readonly Entry[] => {
+  const ordered = entries.toSorted(
+    (left, right) =>
+      byText(left.groupKey, right.groupKey) ||
+      byText(left.meaning, right.meaning) ||
+      byText(provenanceKey(left.outcome.provenance), provenanceKey(right.outcome.provenance)),
+  );
+  return ordered.map((entry) => {
+    const group = ordered.filter(({ groupKey }) => groupKey === entry.groupKey);
+    const [first] = group;
+    if (group.length === 1 || first === undefined) {
+      return entry;
+    }
+    if (new Set(group.map(({ meaning }) => meaning)).size > 1) {
+      const outcome = TaxMigrationConflictingSchema.make({
+        counterparts: group.flatMap((other) => (other === entry ? [] : [other.outcome.provenance])),
+        provenance: entry.outcome.provenance,
+      });
+      return { ...entry, factKey: Option.none(), meaning: meaningOf(outcome), outcome };
+    }
+    return first === entry ? entry : { ...entry, factKey: Option.none(), outcome: duplicateOf(entry, first.outcome) };
+  });
+};
+
+/**
+ * Evaluates one NON_PRODUCTION dataset deterministically, independent of input order (#960 G duplicate legacy
+ * records, F16, F26-F27). One source record identity is one record; and two records mapped to the same exact target
+ * fact (Tax Rule predicate and start, or source assertion identity) must agree, otherwise both are CONFLICTING.
  */
 export const evaluateTaxMigrationCandidates = (
   candidates: readonly TaxMigrationCandidate[],
 ): readonly TaxMigrationOutcome[] => {
-  const evaluated = candidates
-    .map((candidate) => {
-      const outcome = evaluateCandidate(candidate);
-      return { identity: sourceIdentity(candidate), meaning: meaningOf(outcome), outcome };
-    })
-    .toSorted((left, right) => byText(left.identity, right.identity) || byText(left.meaning, right.meaning));
-  return evaluated.map((entry) => {
-    const sameRecord = evaluated.filter(({ identity }) => identity === entry.identity);
-    if (sameRecord.length === 1) {
-      return entry.outcome;
-    }
-    if (new Set(sameRecord.map(({ meaning }) => meaning)).size > 1) {
-      return TaxMigrationConflictingSchema.make({
-        counterpartRecordRefs: sameRecord.flatMap((other) => (other === entry ? [] : [other.outcome.sourceRecordRef])),
-        sourceRecordRef: entry.outcome.sourceRecordRef,
-      });
-    }
-    return sameRecord[0] === entry
-      ? entry.outcome
-      : TaxMigrationRejectedUnmappedSchema.make({
-          reason: 'DUPLICATE_SOURCE_RECORD',
-          sourceRecordRef: entry.outcome.sourceRecordRef,
-          targetOwner: TAX_OWNER_CAPABILITY,
-        });
-  });
+  const byRecord = reconcileGroups(
+    candidates.map((candidate) => {
+      const evaluated = evaluateCandidate(candidate);
+      return { ...evaluated, groupKey: sourceKey(candidate.provenance), meaning: meaningOf(evaluated.outcome) };
+    }),
+  );
+  const factEntries = byRecord.flatMap((entry) =>
+    Option.match(entry.factKey, { onNone: () => [], onSome: (factKey) => [{ ...entry, groupKey: factKey }] }),
+  );
+  const reconciledFacts = new Map(
+    reconcileGroups(factEntries).map((entry) => [provenanceKey(entry.outcome.provenance), entry.outcome]),
+  );
+  return byRecord.map(({ outcome }) =>
+    Match.value(outcome).pipe(
+      Match.tag('MAPPED_ACCEPTED', (mapped) => reconciledFacts.get(provenanceKey(mapped.provenance)) ?? mapped),
+      Match.orElse((other) => other),
+    ),
+  );
 };
 
 /** Outcomes that still need business work; a family holding any of them is never complete (#960 F16-F18). */
-const isOpenOutcome = (outcome: TaxMigrationOutcome): boolean =>
+export const isOpenTaxMigrationOutcome = (outcome: TaxMigrationOutcome): boolean =>
   Match.value(outcome).pipe(
     Match.tags({ CONFLICTING: () => true, INCOMPLETE: () => true, REVIEW_REQUIRED: () => true }),
     Match.orElse(() => false),
@@ -198,59 +321,82 @@ export const verifyTaxMigrationCompleteness = (
   if (claim === undefined || claim.family !== family) {
     return TaxMigrationUnverifiableSchema.make({ family, rowCount });
   }
-  const observed = new Set(outcomes.map(({ sourceRecordRef }) => sourceRecordRef));
-  const expected = new Set(claim.expectedSourceRecordRefs);
-  const missingRecordRefs = [...expected].filter((ref) => !observed.has(ref)).toSorted(byText);
-  const unexpectedRecordRefs = [...observed].filter((ref) => !expected.has(ref)).toSorted(byText);
-  const openRecordRefs = outcomes
-    .flatMap((outcome) => (isOpenOutcome(outcome) ? [outcome.sourceRecordRef] : []))
-    .toSorted(byText);
-  if (missingRecordRefs.length === 0 && unexpectedRecordRefs.length === 0 && openRecordRefs.length === 0) {
+  // A record mapped into another family does not count for this family's claim (#960 F17).
+  const familyOutcomes = outcomes.filter((outcome) =>
+    Match.value(outcome).pipe(
+      Match.tag('MAPPED_ACCEPTED', (mapped) => mapped.family === family),
+      Match.orElse(() => true),
+    ),
+  );
+  const observed = new Map(familyOutcomes.map(({ provenance }) => [sourceKey(provenance), sourceOf(provenance)]));
+  const expected = new Map(claim.expectedSourceRecords.map((record) => [sourceKey(record), sourceOf(record)]));
+  const bySource = (left: TaxMigrationSourceRecord, right: TaxMigrationSourceRecord) =>
+    byText(sourceKey(left), sourceKey(right));
+  const missingSourceRecords = [...expected]
+    .flatMap(([key, record]) => (observed.has(key) ? [] : [record]))
+    .toSorted(bySource);
+  const unexpectedSourceRecords = [...observed]
+    .flatMap(([key, record]) => (expected.has(key) ? [] : [record]))
+    .toSorted(bySource);
+  const openSourceRecords = familyOutcomes
+    .flatMap((outcome) => (isOpenTaxMigrationOutcome(outcome) ? [sourceOf(outcome.provenance)] : []))
+    .toSorted(bySource);
+  if (missingSourceRecords.length === 0 && unexpectedSourceRecords.length === 0 && openSourceRecords.length === 0) {
     return TaxMigrationCompleteSchema.make({ family, rowCount });
   }
   return TaxMigrationNotCompleteSchema.make({
     family,
-    missingRecordRefs,
-    openRecordRefs,
+    missingSourceRecords,
+    openSourceRecords,
     rowCount,
-    unexpectedRecordRefs,
+    unexpectedSourceRecords,
   });
 };
 
 const mappedMeaning = (outcome: TaxMigrationOutcome): readonly (readonly [string, string])[] =>
   Match.value(outcome).pipe(
-    Match.tag('MAPPED_ACCEPTED', ({ sourceRecordRef, targetMeaningKey }) => [
-      [sourceRecordRef, targetMeaningKey] as const,
+    Match.tag('MAPPED_ACCEPTED', ({ provenance, targetMeaningKey }) => [
+      [sourceKey(provenance), targetMeaningKey] as const,
     ]),
     Match.orElse(() => []),
   );
 
 /**
  * Tax Reconciliation of mapped meaning against the TAX target: equal record counts with a different meaning are a
- * difference, never a pass (#960 F14-F15, BDD "Row counts match but semantics differ"). It only reports; it never
- * rewrites the target or committed historical facts (F31).
+ * difference, never a pass (#960 F14-F15, BDD "Row counts match but semantics differ"); a target holding several
+ * meanings for one source record is a conflict whatever the order (F16). It only reports; it never rewrites the
+ * target or committed historical facts (F31).
  */
 export const reconcileTaxMigrationTarget = (
   outcomes: readonly TaxMigrationOutcome[],
   targetFacts: readonly TaxMigrationTargetFact[],
 ): readonly TaxMigrationTargetDifference[] => {
   const mapped = new Map(outcomes.flatMap(mappedMeaning));
-  const target = new Map(
-    targetFacts.map(({ sourceRecordRef, targetMeaningKey }) => [sourceRecordRef, targetMeaningKey]),
+  const sources = new Map(
+    [...outcomes.map(({ provenance }) => provenance), ...targetFacts.map(({ source }) => source)].map((record) => [
+      sourceKey(record),
+      sourceOf(record),
+    ]),
   );
+  const held = new Map<string, Set<string>>();
+  for (const { source, targetMeaningKey } of targetFacts) {
+    const meanings = held.get(sourceKey(source)) ?? new Set<string>();
+    meanings.add(targetMeaningKey);
+    held.set(sourceKey(source), meanings);
+  }
   const differences: TaxMigrationTargetDifference[] = [];
-  for (const [sourceRecordRef, meaning] of mapped) {
-    const held = target.get(sourceRecordRef);
-    if (held === undefined) {
-      differences.push({ difference: 'MISSING_IN_TARGET', sourceRecordRef });
-    } else if (held !== meaning) {
-      differences.push({ difference: 'MEANING_DIFFERS', sourceRecordRef });
+  for (const [key, source] of sources) {
+    const expectedMeaning = mapped.get(key);
+    const heldMeanings = held.get(key);
+    if (heldMeanings !== undefined && heldMeanings.size > 1) {
+      differences.push({ difference: 'TARGET_CONFLICT', source });
+    } else if (expectedMeaning !== undefined && heldMeanings === undefined) {
+      differences.push({ difference: 'MISSING_IN_TARGET', source });
+    } else if (expectedMeaning === undefined && heldMeanings !== undefined) {
+      differences.push({ difference: 'UNEXPECTED_IN_TARGET', source });
+    } else if (expectedMeaning !== undefined && heldMeanings !== undefined && !heldMeanings.has(expectedMeaning)) {
+      differences.push({ difference: 'MEANING_DIFFERS', source });
     }
   }
-  for (const sourceRecordRef of target.keys()) {
-    if (!mapped.has(sourceRecordRef)) {
-      differences.push({ difference: 'UNEXPECTED_IN_TARGET', sourceRecordRef });
-    }
-  }
-  return differences.toSorted((left, right) => byText(left.sourceRecordRef, right.sourceRecordRef));
+  return differences.toSorted((left, right) => byText(sourceKey(left.source), sourceKey(right.source)));
 };
