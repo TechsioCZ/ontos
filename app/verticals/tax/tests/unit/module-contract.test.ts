@@ -27,6 +27,7 @@ describe('Tax module contract', () => {
       'tax-evaluation',
       'tax-fact-authority-current',
       'tax-materiality-comparison',
+      'tax-privacy-owner-coverage',
       'tax-rule-history',
       'tax-source-assertion-history',
       'tax-source-conflict-detail',

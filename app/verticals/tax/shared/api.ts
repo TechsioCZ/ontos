@@ -24,6 +24,7 @@ import { TaxCorrectionPreviewApi } from './apis/tax-correction-preview.ts';
 import { TaxEvaluationApi } from './apis/tax-evaluation.ts';
 import { TaxFactAuthorityCurrentApi } from './apis/tax-fact-authority-current.ts';
 import { TaxMaterialityComparisonApi } from './apis/tax-materiality-comparison.ts';
+import { TaxPrivacyOwnerCoverageApi } from './apis/tax-privacy-owner-coverage.ts';
 import { TaxRuleHistoryApi } from './apis/tax-rule-history.ts';
 import { TaxSourceAssertionHistoryApi } from './apis/tax-source-assertion-history.ts';
 import { TaxSourceConflictDetailApi } from './apis/tax-source-conflict-detail.ts';
@@ -71,6 +72,7 @@ export const taxApi = HttpApi.make('TaxApi')
   .addHttpApi(TaxEvaluationApi)
   .addHttpApi(TaxFactAuthorityCurrentApi)
   .addHttpApi(TaxMaterialityComparisonApi)
+  .addHttpApi(TaxPrivacyOwnerCoverageApi)
   .addHttpApi(TaxRuleHistoryApi)
   .addHttpApi(TaxSourceAssertionHistoryApi)
   .addHttpApi(TaxSourceConflictDetailApi)

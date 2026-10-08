@@ -25,6 +25,7 @@ import { taxFactAuthorityContractResourceDescriptor } from './shared/resources/t
 import { TaxFactAuthorityCurrentApi } from './shared/apis/tax-fact-authority-current.ts';
 import { taxGovernedReadPermission } from './shared/permissions/tax-governed-read.ts';
 import { TaxMaterialityComparisonApi } from './shared/apis/tax-materiality-comparison.ts';
+import { TaxPrivacyOwnerCoverageApi } from './shared/apis/tax-privacy-owner-coverage.ts';
 import { TaxRuleHistoryApi } from './shared/apis/tax-rule-history.ts';
 import { taxRuleManagePermission } from './shared/permissions/tax-rule-manage.ts';
 import { taxRuleResourceDescriptor } from './shared/resources/tax-rule.ts';
@@ -72,6 +73,7 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
       'tax-evaluation': TaxEvaluationApi,
       'tax-fact-authority-current': TaxFactAuthorityCurrentApi,
       'tax-materiality-comparison': TaxMaterialityComparisonApi,
+      'tax-privacy-owner-coverage': TaxPrivacyOwnerCoverageApi,
       'tax-rule-history': TaxRuleHistoryApi,
       'tax-source-assertion-history': TaxSourceAssertionHistoryApi,
       'tax-source-conflict-detail': TaxSourceConflictDetailApi,

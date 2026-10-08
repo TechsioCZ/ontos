@@ -11,6 +11,7 @@
     "./permissions/tax.governed.read": "./shared/permissions/tax-governed-read.ts",
     "./permissions/tax.rule.manage": "./shared/permissions/tax-rule-manage.ts",
     "./permissions/tax.source_assertion.record": "./shared/permissions/tax-source-assertion-record.ts",
+    "./privacy-owner-contract": "./shared/tax-privacy-owner-contract.ts",
     "./resources/order-tax-finalization": "./shared/resources/order-tax-finalization.ts",
     "./resources/tax-fact-authority-contract": "./shared/resources/tax-fact-authority-contract.ts",
     "./resources/tax-rule": "./shared/resources/tax-rule.ts",

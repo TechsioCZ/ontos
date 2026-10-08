@@ -46,6 +46,7 @@ import { taxCorrectionPreviewReadApiLive } from './tax-correction-preview-read-s
 import { taxEvaluationReadApiLive } from './tax-evaluation-read-server.ts';
 import { taxFactAuthorityCurrentReadApiLive } from './tax-fact-authority-current-read-server.ts';
 import { taxMaterialityComparisonReadApiLive } from './tax-materiality-comparison-read-server.ts';
+import { taxPrivacyOwnerCoverageReadApiLive } from './tax-privacy-owner-coverage-read-server.ts';
 import { taxRuleHistoryReadApiLive } from './tax-rule-history-read-server.ts';
 import { taxSourceAssertionHistoryReadApiLive } from './tax-source-assertion-history-read-server.ts';
 import { taxSourceConflictDetailReadApiLive } from './tax-source-conflict-detail-read-server.ts';
@@ -136,6 +137,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   taxEvaluationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxFactAuthorityCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxMaterialityComparisonReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  taxPrivacyOwnerCoverageReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxRuleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxSourceAssertionHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxSourceConflictDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

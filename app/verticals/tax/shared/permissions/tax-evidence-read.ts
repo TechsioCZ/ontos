@@ -13,6 +13,7 @@ export const taxEvidenceReadPermission = defineBusinessPermission({
   meaning: 'Tax Evidence Read module-scoped permission.',
   owningCapability: 'commerce.tax',
   protectedEntrypoints: [
+    'commerce.tax.api.tax-privacy-owner-coverage',
     'commerce.tax.api.tax-rule-history',
     'commerce.tax.api.tax-source-conflict-detail',
     'commerce.tax.api.tax-source-assertion-history',
