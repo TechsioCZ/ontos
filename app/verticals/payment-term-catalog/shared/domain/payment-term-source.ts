@@ -10,10 +10,11 @@ import {
 } from './payment-term.ts';
 
 const text = Schema.String.check(Schema.isTrimmed(), Schema.isMinLength(1), Schema.isMaxLength(200));
-const revision = Schema.Finite.check(
+export const PaymentTermSourceRevisionSchema = Schema.Finite.check(
   Schema.isInt(),
   Schema.isBetween({ maximum: Number.MAX_SAFE_INTEGER, minimum: 0 }),
 );
+const revision = PaymentTermSourceRevisionSchema;
 const brandedText = (brand: string) => text.pipe(Schema.brand(brand), Schema.decodeTo(text));
 export const ExternalBusinessSystemIdSchema = brandedText('ExternalBusinessSystemId');
 export const SourceRecordIdSchema = brandedText('SourceRecordId');

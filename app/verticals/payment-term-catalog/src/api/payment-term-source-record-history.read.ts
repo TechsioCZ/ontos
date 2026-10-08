@@ -22,7 +22,7 @@ import { paymentTermSourcePersistenceForScope } from '../persistence/payment-ter
 const MODULE_KEY = 'payment.term-catalog';
 
 const paymentTermSourceRecordHistoryEntrypoint = defineTenantModuleEntrypoint({
-  access: 'read',
+  access: 'historical_read',
   authorization: { kind: 'context_permission', permission: 'payment.term_catalog.read' },
   entrypointKey: 'payment.term-catalog.api.payment-term-source-record-history',
   moduleKey: MODULE_KEY,
