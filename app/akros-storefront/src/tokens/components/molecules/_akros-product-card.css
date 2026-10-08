@@ -12,6 +12,8 @@
 }
 
 .akros-product-card {
+  --border-product-card-width: var(--dimension-0);
+  --shadow-sm: 0 2px 6px rgb(0 0 0 / 20%);
   /* Close to Figma's #28a745, with AA contrast for small text on white. */
   --color-product-card-stock-fg-in-stock: #218838;
   --font-weight-badge-sm: var(--font-weight-medium);

@@ -74,7 +74,10 @@ export function ProductGrid({
 
         return (
           <article className="min-w-0" key={product.variantId ?? product.id}>
-            <ProductCard className="akros-product-card akros-catalog-product-card" layout="column">
+            <ProductCard
+              className="akros-product-card akros-catalog-product-card shadow-(--shadow-sm)"
+              layout="column"
+            >
               <div className="relative">
                 <NextLink
                   aria-label={product.name}
