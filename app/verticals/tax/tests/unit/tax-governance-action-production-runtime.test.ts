@@ -80,9 +80,9 @@ const spiceDbContextAccess = (grantedSellers: readonly string[]): ContextAccessS
 const sqlFailure = (cause: unknown) => new SqlError({ reason: new ConnectionError({ cause }) });
 
 /**
- * Composes the Action runtime exactly as `api/index.ts` does: `makeActionRuntimeLive` over the
- * same services and no `OwnerAuthorizationOverlay`. Only external I/O is scripted: PostgreSQL,
- * SpiceDB, and the Application Composition source.
+ * Uses the same `makeActionRuntimeLive` composition as `api/index.ts`, with no
+ * `OwnerAuthorizationOverlay`. PostgreSQL, SpiceDB, the Application Composition source and the
+ * Core runtime support services are scripted.
  */
 const makeProductionComposition = Effect.fn('TaxProductionRuntimeTest.make')(function* makeProductionComposition(
   grantedSellers: readonly string[],
