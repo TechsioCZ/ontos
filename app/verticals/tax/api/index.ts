@@ -37,9 +37,13 @@ import { createTaxRuleRevisionActionApiLive } from './create-tax-rule-revision-a
 import { endTaxFactAuthorityContractActionApiLive } from './end-tax-fact-authority-contract-action-server.ts';
 import { endTaxRuleRevisionActionApiLive } from './end-tax-rule-revision-action-server.ts';
 import { establishTaxFactAuthorityContractActionApiLive } from './establish-tax-fact-authority-contract-action-server.ts';
+import { recordTaxSourceAssertionActionApiLive } from './record-tax-source-assertion-action-server.ts';
 import { reviseTaxFactAuthorityContractActionApiLive } from './revise-tax-fact-authority-contract-action-server.ts';
+import { sellingLegalEntityVatRegistrationStateReadApiLive } from './selling-legal-entity-vat-registration-state-read-server.ts';
 import { taxFactAuthorityCurrentReadApiLive } from './tax-fact-authority-current-read-server.ts';
 import { taxRuleHistoryReadApiLive } from './tax-rule-history-read-server.ts';
+import { taxSourceAssertionHistoryReadApiLive } from './tax-source-assertion-history-read-server.ts';
+import { taxSourceConflictDetailReadApiLive } from './tax-source-conflict-detail-read-server.ts';
 // </generated-governed-http-handler-imports>
 
 const taxReadinessLayer = HttpApiBuilder.group(taxApi, 'foundation', (handlers) =>
@@ -118,9 +122,13 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   endTaxFactAuthorityContractActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   endTaxRuleRevisionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   establishTaxFactAuthorityContractActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  recordTaxSourceAssertionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   reviseTaxFactAuthorityContractActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
+  sellingLegalEntityVatRegistrationStateReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxFactAuthorityCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxRuleHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  taxSourceAssertionHistoryReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  taxSourceConflictDetailReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   // </generated-governed-http-handler-layers>
 ).pipe(
   // <generated-governed-http-handler-support-layers>

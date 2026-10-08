@@ -10,6 +10,7 @@ import { createTaxRuleRevisionAction } from './src/actions/create-tax-rule-revis
 import { endTaxFactAuthorityContractAction } from './src/actions/end-tax-fact-authority-contract.action.ts';
 import { endTaxRuleRevisionAction } from './src/actions/end-tax-rule-revision.action.ts';
 import { establishTaxFactAuthorityContractAction } from './src/actions/establish-tax-fact-authority-contract.action.ts';
+import { recordTaxSourceAssertionAction } from './src/actions/record-tax-source-assertion.action.ts';
 import { reviseTaxFactAuthorityContractAction } from './src/actions/revise-tax-fact-authority-contract.action.ts';
 // </generated-module-registration-imports>
 export const taxRegistration = defineVerticalRuntimeRegistration({
@@ -21,6 +22,7 @@ export const taxRegistration = defineVerticalRuntimeRegistration({
     endTaxFactAuthorityContractAction,
     endTaxRuleRevisionAction,
     establishTaxFactAuthorityContractAction,
+    recordTaxSourceAssertionAction,
     reviseTaxFactAuthorityContractAction,
     // </generated-module-registration-actions>
   ],
@@ -28,8 +30,12 @@ export const taxRegistration = defineVerticalRuntimeRegistration({
     api: {
       // <generated-module-registration-apis>
       'applicable-tax-rule-set': () => import('./src/api/applicable-tax-rule-set-client.ts'),
+      'selling-legal-entity-vat-registration-state': () =>
+        import('./src/api/selling-legal-entity-vat-registration-state-client.ts'),
       'tax-fact-authority-current': () => import('./src/api/tax-fact-authority-current-client.ts'),
       'tax-rule-history': () => import('./src/api/tax-rule-history-client.ts'),
+      'tax-source-assertion-history': () => import('./src/api/tax-source-assertion-history-client.ts'),
+      'tax-source-conflict-detail': () => import('./src/api/tax-source-conflict-detail-client.ts'),
       // </generated-module-registration-apis>
     },
     components: {

@@ -3,6 +3,8 @@ import { defineRelations, sql } from 'drizzle-orm';
 import { check, foreignKey, index, integer, jsonb, pgSchema, text, timestamp, unique, uuid } from 'drizzle-orm/pg-core';
 import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 
+import type { TaxSourceConflictDetail } from '../../shared/domain/tax-source-read-contracts.ts';
+
 /** Private TAX persistence schema. Other owners use generated TAX contracts. */
 export const TAX_SCHEMA_NAME = 'tax';
 
@@ -13,6 +15,8 @@ export const TAX_TABLE_INVENTORY = [
   'tax_rule_corrections',
   'tax_fact_authority_contracts',
   'tax_fact_authority_contract_revisions',
+  'tax_source_assertions',
+  'tax_source_conflicts',
 ] as const;
 
 export const taxSchema = pgSchema(TAX_SCHEMA_NAME);
@@ -262,6 +266,146 @@ export const taxFactAuthorityContractRevisions = taxSchema.table.withRLS(
   ],
 );
 
+const ownerReference = (name: string, column: AnyPgColumn) =>
+  check(name, sql`${column} = btrim(${column}) and length(${column}) between 1 and 300`);
+
+/**
+ * One immutable source assertion about the Selling Legal Entity VAT Registration of this seller scope. Provider
+ * identity, Source Record Reference and assertion key stay distinct (#958 F1-F8); the canonical fact subject is
+ * `{fact_family, legal_entity_id, jurisdiction}`. Source times are nullable and never derived; `recorded_at` is
+ * the OntOS receipt time (#958 F12-F16, F26). No adapter identity is stored, so a route change keeps provenance
+ * (#958 F21-F22). `eligibility` is the only stored acceptance input; the #957 acceptance outcome depends on the
+ * authority contracts and is always evaluated, never stored (#959 F25).
+ */
+export const taxSourceAssertions = taxSchema.table.withRLS(
+  'tax_source_assertions',
+  {
+    taxSourceAssertionId: uuid('tax_source_assertion_id').defaultRandom().primaryKey(),
+    ...scopeColumns(),
+    authorityContractRevisionId: uuid('authority_contract_revision_id'),
+    authorityRole: text('authority_role').notNull(),
+    deliveryRef: text('delivery_ref'),
+    eligibility: text('eligibility').notNull(),
+    factFamily: text('fact_family').notNull(),
+    issuedAt: timestamp('issued_at', { withTimezone: true }),
+    jurisdiction: text('jurisdiction').notNull(),
+    observedAt: timestamp('observed_at', { withTimezone: true }),
+    registrationMeaning: text('registration_meaning').notNull(),
+    semanticFingerprint: text('semantic_fingerprint').notNull(),
+    sourceAssertionKey: text('source_assertion_key').notNull(),
+    sourceRecordRef: text('source_record_ref').notNull(),
+    sourceRef: text('source_ref').notNull(),
+    validFrom: timestamp('valid_from', { withTimezone: true }),
+    validTo: timestamp('valid_to', { withTimezone: true }),
+    ...attribution(),
+  },
+  (table) => [
+    scopeIdentity('tax_source_assertions_scope_id_uk', table, table.taxSourceAssertionId),
+    unique('tax_source_assertions_key_uk').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.sourceRef,
+      table.sourceAssertionKey,
+    ),
+    unique('tax_source_assertions_idempotency_uk').on(table.tenantId, table.idempotencyKey),
+    index('tax_source_assertions_family_idx').on(
+      table.tenantId,
+      table.legalEntityId,
+      table.factFamily,
+      table.sourceRef,
+    ),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.authorityContractRevisionId],
+      foreignColumns: [
+        taxFactAuthorityContractRevisions.tenantId,
+        taxFactAuthorityContractRevisions.legalEntityId,
+        taxFactAuthorityContractRevisions.taxFactAuthorityContractRevisionId,
+      ],
+      name: 'tax_source_assertions_authority_fk',
+    }).onDelete('restrict'),
+    check('tax_source_assertions_family_ck', sql`${table.factFamily} = 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION'`),
+    check('tax_source_assertions_jurisdiction_ck', sql`${table.jurisdiction} = 'CZ_DOMESTIC'`),
+    check(
+      'tax_source_assertions_meaning_ck',
+      sql`${table.registrationMeaning} in ('REGISTERED', 'ENDED', 'NON_REGISTERED')`,
+    ),
+    check('tax_source_assertions_eligibility_ck', sql`${table.eligibility} in ('ELIGIBLE', 'VALIDITY_UNKNOWN')`),
+    check('tax_source_assertions_role_ck', sql`${table.authorityRole} in ('SYSTEM_OF_RECORD', 'EVIDENCE', 'NONE')`),
+    check(
+      'tax_source_assertions_validity_ck',
+      sql`${table.validFrom} is null or ${table.validTo} is null or ${table.validTo} > ${table.validFrom}`,
+    ),
+    ownerReference('tax_source_assertions_source_ck', table.sourceRef),
+    ownerReference('tax_source_assertions_record_ck', table.sourceRecordRef),
+    ownerReference('tax_source_assertions_key_ck', table.sourceAssertionKey),
+    check(
+      'tax_source_assertions_delivery_ck',
+      sql`${table.deliveryRef} is null or (${table.deliveryRef} = btrim(${table.deliveryRef}) and length(${table.deliveryRef}) between 1 and 300)`,
+    ),
+    fingerprint('tax_source_assertions_fingerprint_ck', table.semanticFingerprint),
+    trimmed('tax_source_assertions_provenance_ck', table.provenanceRef),
+    ...scopedPolicies('tax_source_assertions_scope', table),
+  ],
+);
+
+/**
+ * Append-only source conflict detections. Resolution is a later governed step, so every row stays `OPEN`. One
+ * invocation may detect several pairwise conflicts; each is unique per invocation, kind and counterpart.
+ */
+export const taxSourceConflicts = taxSchema.table.withRLS(
+  'tax_source_conflicts',
+  {
+    taxSourceConflictId: uuid('tax_source_conflict_id').defaultRandom().primaryKey(),
+    ...scopeColumns(),
+    conflictKind: text('conflict_kind').notNull(),
+    detail: jsonb('detail').$type<TaxSourceConflictDetail>().notNull(),
+    detectedAt: timestamp('detected_at', { withTimezone: true }).notNull(),
+    factFamily: text('fact_family').notNull(),
+    relatedAssertionId: uuid('related_assertion_id'),
+    status: text('status').notNull(),
+    subjectAssertionId: uuid('subject_assertion_id'),
+    ...attribution(),
+  },
+  (table) => [
+    scopeIdentity('tax_source_conflicts_scope_id_uk', table, table.taxSourceConflictId),
+    unique('tax_source_conflicts_idempotency_uk')
+      .on(table.tenantId, table.idempotencyKey, table.conflictKind, table.relatedAssertionId)
+      .nullsNotDistinct(),
+    index('tax_source_conflicts_family_idx').on(table.tenantId, table.legalEntityId, table.factFamily),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.subjectAssertionId],
+      foreignColumns: [
+        taxSourceAssertions.tenantId,
+        taxSourceAssertions.legalEntityId,
+        taxSourceAssertions.taxSourceAssertionId,
+      ],
+      name: 'tax_source_conflicts_subject_fk',
+    }).onDelete('restrict'),
+    foreignKey({
+      columns: [table.tenantId, table.legalEntityId, table.relatedAssertionId],
+      foreignColumns: [
+        taxSourceAssertions.tenantId,
+        taxSourceAssertions.legalEntityId,
+        taxSourceAssertions.taxSourceAssertionId,
+      ],
+      name: 'tax_source_conflicts_related_fk',
+    }).onDelete('restrict'),
+    check('tax_source_conflicts_family_ck', sql`${table.factFamily} = 'SELLING_LEGAL_ENTITY_VAT_REGISTRATION'`),
+    check(
+      'tax_source_conflicts_kind_ck',
+      sql`${table.conflictKind} in ('ASSERTION_INTEGRITY', 'EVIDENCE_DISAGREEMENT', 'INCOMPATIBLE_AUTHORITATIVE_ASSERTIONS', 'AUTHORITY_CONFIGURATION')`,
+    ),
+    check('tax_source_conflicts_status_ck', sql`${table.status} = 'OPEN'`),
+    check('tax_source_conflicts_detail_ck', sql`jsonb_typeof(${table.detail}) = 'object'`),
+    check(
+      'tax_source_conflicts_distinct_ck',
+      sql`${table.relatedAssertionId} is null or ${table.subjectAssertionId} is distinct from ${table.relatedAssertionId}`,
+    ),
+    trimmed('tax_source_conflicts_provenance_ck', table.provenanceRef),
+    ...scopedPolicies('tax_source_conflicts_scope', table),
+  ],
+);
+
 const databaseSchema = {
   taxFactAuthorityContractRevisions,
   taxFactAuthorityContracts,
@@ -269,6 +413,8 @@ const databaseSchema = {
   taxRuleRevisionEndFacts,
   taxRuleRevisions,
   taxRules,
+  taxSourceAssertions,
+  taxSourceConflicts,
 } as const;
 
 export const TAX_TABLES = [
@@ -278,6 +424,8 @@ export const TAX_TABLES = [
   taxRuleCorrections,
   taxFactAuthorityContracts,
   taxFactAuthorityContractRevisions,
+  taxSourceAssertions,
+  taxSourceConflicts,
 ] as const;
 
 export const taxRelations = defineRelations(databaseSchema);

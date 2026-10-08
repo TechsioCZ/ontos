@@ -38,6 +38,7 @@ const assortmentPermissionScopes = {
 const taxSellingLegalEntityPermissions: ReadonlySet<string> = new Set([
   'tax.authority_contract.manage',
   'tax.rule.manage',
+  'tax.source_assertion.record',
 ]);
 
 const requirePermissionCode = (value: string): string => {
@@ -81,7 +82,7 @@ const requireCompatibleScope = (
   }
   if (taxPermission !== (scope === 'tax_selling_legal_entity')) {
     return raiseScaffoldFailure(
-      'tax.rule.manage and tax.authority_contract.manage require tax_selling_legal_entity scope, and that scope rejects other permissions',
+      'tax.rule.manage, tax.authority_contract.manage and tax.source_assertion.record require tax_selling_legal_entity scope, and that scope rejects other permissions',
     );
   }
   if (inventoryPermission !== (scope === 'inventory_resource')) {

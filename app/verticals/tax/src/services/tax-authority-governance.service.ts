@@ -1,5 +1,5 @@
 import type { OperationalScope } from '@app/core-runtime';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import { DateTime, Effect } from 'effect';
 
 import type {
@@ -13,10 +13,12 @@ import { taxMeaningFingerprint } from './tax-governance-fingerprint.ts';
 import {
   conflict,
   isOwnerId,
+  lockTaxFactFamily,
   mutation,
   notBackdated,
   notFound,
   query,
+  sameAttribution,
   sameInstant,
   staleBasis,
   trustedInvocation,
@@ -145,22 +147,6 @@ export interface TaxAuthorityGovernancePersistence {
   ) => Effect.Effect<ReviseOutcome, PersistenceUnavailable>;
 }
 
-const sameAttribution = (
-  row: Pick<
-    ContractRow,
-    'actionInvocationId' | 'actorPrincipalId' | 'idempotencyKey' | 'legalEntityId' | 'provenanceRef' | 'reason'
-  >,
-  input: GovernedInvocation & Readonly<{ provenanceRef: string; reason: string }>,
-): boolean =>
-  [
-    row.actionInvocationId === input.actionInvocationId,
-    row.actorPrincipalId === input.actorPrincipalId,
-    row.idempotencyKey === input.actionInvocationId,
-    row.legalEntityId === input.legalEntityId,
-    row.provenanceRef === input.provenanceRef,
-    row.reason === input.reason,
-  ].every(Boolean);
-
 const toPeriod = (content: TaxFactAuthorityContent): AuthorityPeriod => ({
   authorityFrom: DateTime.toDateUtc(content.authorityFrom),
   authorityTo: content.authorityTo === undefined ? null : DateTime.toDateUtc(content.authorityTo),
@@ -180,18 +166,8 @@ export const taxAuthorityGovernancePersistenceForScope = (
   transaction: ScopedTransaction,
   scope: OperationalScope,
 ): TaxAuthorityGovernancePersistence => {
-  /**
-   * Serializes authority changes for one fact family and seller so the complete-set conflict check cannot race.
-   * Drizzle has no advisory-lock builder (party-registry precedent).
-   */
-  const lockFactFamily = (input: GovernedInvocation, factFamily: FactFamily) => {
-    const lockKey = ['tax-authority', input.tenantId, input.legalEntityId, factFamily].join(':');
-    return query(
-      transaction
-        .select({ lock: sql`pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))` })
-        .from(sql`(values (1)) as tax_authority_lock_anchor(value)`),
-    );
-  };
+  const lockFactFamily = (input: GovernedInvocation, factFamily: FactFamily) =>
+    lockTaxFactFamily(transaction, input, factFamily);
 
   /** Complete current authority set for one fact family and seller (#949 F24-F32). */
   const loadFamily = Effect.fn('taxAuthorityGovernancePersistence.loadFamily')(function* loadFamilyEffect(

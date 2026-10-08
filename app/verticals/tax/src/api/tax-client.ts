@@ -18,6 +18,7 @@ export * from './create-tax-rule-revision-action-client.ts';
 export * from './end-tax-fact-authority-contract-action-client.ts';
 export * from './end-tax-rule-revision-action-client.ts';
 export * from './establish-tax-fact-authority-contract-action-client.ts';
+export * from './record-tax-source-assertion-action-client.ts';
 export * from './revise-tax-fact-authority-contract-action-client.ts';
 // </generated-action-http-client-exports>
 

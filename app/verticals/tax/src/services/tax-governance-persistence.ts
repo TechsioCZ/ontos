@@ -1,5 +1,6 @@
 import { findPostgresFailure } from '@app/core-runtime';
 import type { OperationalScope, ReadServiceFactory } from '@app/core-runtime';
+import { sql } from 'drizzle-orm';
 import type { EffectDrizzleQueryError } from 'drizzle-orm/effect-core';
 import { DateTime, Effect, Option, Schema } from 'effect';
 
@@ -70,6 +71,8 @@ const WriteConstraintNameSchema = Schema.Literals([
   'tax_rule_revisions_rule_number_uk',
   'tax_rules_code_uk',
   'tax_rules_idempotency_uk',
+  'tax_source_assertions_idempotency_uk',
+  'tax_source_conflicts_idempotency_uk',
 ]);
 const isWriteConstraint = Schema.is(WriteConstraintNameSchema);
 
@@ -87,6 +90,8 @@ const writeConflictConstraints = {
   tax_rule_revisions_rule_number_uk: 'STALE_BASIS',
   tax_rules_code_uk: 'STABLE_CODE',
   tax_rules_idempotency_uk: 'IDEMPOTENCY_REUSED',
+  tax_source_assertions_idempotency_uk: 'IDEMPOTENCY_REUSED',
+  tax_source_conflicts_idempotency_uk: 'IDEMPOTENCY_REUSED',
 } satisfies Readonly<Record<typeof WriteConstraintNameSchema.Type, TaxGovernanceConflictKind>>;
 
 export const mutation = <Value>(
@@ -133,3 +138,40 @@ export const notBackdated = (end: Date, input: GovernedInvocation): boolean =>
 
 export const sameInstant = (left: Date | null, right: Date | null): boolean =>
   left === null || right === null ? left === right : left.getTime() === right.getTime();
+
+/** Core attribution columns every governed TAX row carries. */
+interface AttributedRow {
+  readonly actionInvocationId: string;
+  readonly actorPrincipalId: string;
+  readonly idempotencyKey: string;
+  readonly legalEntityId: string;
+  readonly provenanceRef: string;
+  readonly reason: string;
+}
+
+/** A Core-invocation replay must carry the identical attribution; anything else is idempotency reuse (#955 G). */
+export const sameAttribution = (
+  row: AttributedRow,
+  input: GovernedInvocation & Readonly<{ provenanceRef: string; reason: string }>,
+): boolean =>
+  [
+    row.actionInvocationId === input.actionInvocationId,
+    row.actorPrincipalId === input.actorPrincipalId,
+    row.idempotencyKey === input.actionInvocationId,
+    row.legalEntityId === input.legalEntityId,
+    row.provenanceRef === input.provenanceRef,
+    row.reason === input.reason,
+  ].every(Boolean);
+
+/**
+ * Serializes every governed change of one fact family and seller (authority contracts and source assertions), so
+ * complete-set checks cannot race. Drizzle has no advisory-lock builder (party-registry precedent).
+ */
+export const lockTaxFactFamily = (transaction: ScopedTransaction, input: GovernedInvocation, factFamily: string) => {
+  const lockKey = ['tax-authority', input.tenantId, input.legalEntityId, factFamily].join(':');
+  return query(
+    transaction
+      .select({ lock: sql`pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))` })
+      .from(sql`(values (1)) as tax_authority_lock_anchor(value)`),
+  );
+};

@@ -11,7 +11,9 @@ import { createTaxRuleRevisionAction } from './src/actions/create-tax-rule-revis
 import { endTaxFactAuthorityContractAction } from './src/actions/end-tax-fact-authority-contract.action.ts';
 import { endTaxRuleRevisionAction } from './src/actions/end-tax-rule-revision.action.ts';
 import { establishTaxFactAuthorityContractAction } from './src/actions/establish-tax-fact-authority-contract.action.ts';
+import { recordTaxSourceAssertionAction } from './src/actions/record-tax-source-assertion.action.ts';
 import { reviseTaxFactAuthorityContractAction } from './src/actions/revise-tax-fact-authority-contract.action.ts';
+import { SellingLegalEntityVatRegistrationStateApi } from './shared/apis/selling-legal-entity-vat-registration-state.ts';
 import { taxAuthorityContractManagePermission } from './shared/permissions/tax-authority-contract-manage.ts';
 import { taxEvidenceReadPermission } from './shared/permissions/tax-evidence-read.ts';
 import { taxFactAuthorityContractResourceDescriptor } from './shared/resources/tax-fact-authority-contract.ts';
@@ -21,6 +23,11 @@ import { TaxRuleHistoryApi } from './shared/apis/tax-rule-history.ts';
 import { taxRuleManagePermission } from './shared/permissions/tax-rule-manage.ts';
 import { taxRuleResourceDescriptor } from './shared/resources/tax-rule.ts';
 import { taxRuleRevisionResourceDescriptor } from './shared/resources/tax-rule-revision.ts';
+import { TaxSourceAssertionHistoryApi } from './shared/apis/tax-source-assertion-history.ts';
+import { taxSourceAssertionRecordPermission } from './shared/permissions/tax-source-assertion-record.ts';
+import { taxSourceAssertionResourceDescriptor } from './shared/resources/tax-source-assertion.ts';
+import { TaxSourceConflictDetailApi } from './shared/apis/tax-source-conflict-detail.ts';
+import { taxSourceConflictResourceDescriptor } from './shared/resources/tax-source-conflict.ts';
 // </generated-module-manifest-imports>
 export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
   activation: {
@@ -45,14 +52,18 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
       endTaxFactAuthorityContractAction,
       endTaxRuleRevisionAction,
       establishTaxFactAuthorityContractAction,
+      recordTaxSourceAssertionAction,
       reviseTaxFactAuthorityContractAction,
       // </generated-module-manifest-actions>
     ],
     api: {
       // <generated-module-manifest-apis>
       'applicable-tax-rule-set': ApplicableTaxRuleSetApi,
+      'selling-legal-entity-vat-registration-state': SellingLegalEntityVatRegistrationStateApi,
       'tax-fact-authority-current': TaxFactAuthorityCurrentApi,
       'tax-rule-history': TaxRuleHistoryApi,
+      'tax-source-assertion-history': TaxSourceAssertionHistoryApi,
+      'tax-source-conflict-detail': TaxSourceConflictDetailApi,
       // </generated-module-manifest-apis>
     },
     businessPermissions: [
@@ -61,6 +72,7 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
       taxEvidenceReadPermission,
       taxGovernedReadPermission,
       taxRuleManagePermission,
+      taxSourceAssertionRecordPermission,
       // </generated-module-manifest-business-permissions>
     ],
     components: {
@@ -77,6 +89,8 @@ export const taxManifest: OntosModuleManifestInput = defineOntosModuleManifest({
       taxFactAuthorityContractResourceDescriptor,
       taxRuleResourceDescriptor,
       taxRuleRevisionResourceDescriptor,
+      taxSourceAssertionResourceDescriptor,
+      taxSourceConflictResourceDescriptor,
       // </generated-module-manifest-resources>
     ],
     search: [

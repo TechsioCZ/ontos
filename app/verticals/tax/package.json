@@ -10,9 +10,12 @@
     "./permissions/tax.evidence.read": "./shared/permissions/tax-evidence-read.ts",
     "./permissions/tax.governed.read": "./shared/permissions/tax-governed-read.ts",
     "./permissions/tax.rule.manage": "./shared/permissions/tax-rule-manage.ts",
+    "./permissions/tax.source_assertion.record": "./shared/permissions/tax-source-assertion-record.ts",
     "./resources/tax-fact-authority-contract": "./shared/resources/tax-fact-authority-contract.ts",
     "./resources/tax-rule": "./shared/resources/tax-rule.ts",
-    "./resources/tax-rule-revision": "./shared/resources/tax-rule-revision.ts"
+    "./resources/tax-rule-revision": "./shared/resources/tax-rule-revision.ts",
+    "./resources/tax-source-assertion": "./shared/resources/tax-source-assertion.ts",
+    "./resources/tax-source-conflict": "./shared/resources/tax-source-conflict.ts"
   },
   "scripts": {
     "build": "modern build --deploy-target node && node ../../scripts/generate-ontos-module-contract.mts --vertical tax --target dist && ultramodern-create ultramodern public-surface --app tax --target dist && modern deploy --skip-build --deploy-target node",
