@@ -293,6 +293,19 @@ describe('Prospective Launch Tax evaluation', () => {
       );
     });
 
+    it('#938 F7 a known-negative seller is not reported while a material place is not established', () => {
+      const request = evaluationRequest({
+        places: {
+          ...evaluationRequestInput().places,
+          deliveryDestination: { _tag: 'NOT_ESTABLISHED', state: 'UNAVAILABLE' },
+        },
+      });
+
+      expect(evaluate(request, ownState({ sellerVatRegistration: 'KNOWN_ENDED_OR_NON_REGISTERED' }))).toEqual(
+        TaxDependencyUnavailableSchema.make({}),
+      );
+    });
+
     it('#931 F14 a purchase without any published line is indeterminate, not rejected', () => {
       const request = evaluationRequest({ pricing: { pricingResultRef: PRICING_RESULT_REF, publishedLines: [] } }, [
         'o1',
