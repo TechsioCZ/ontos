@@ -48,7 +48,8 @@ type CustomerSafeTaxComponent = typeof CustomerSafeTaxComponentSchema.Type;
 /**
  * Joins each Decision unit with its published Result amount by Taxable Supply Unit identity, never by array position
  * (#937 F7, #936 F28-F29). The outcome schema guarantees the Result covers exactly the Decision units, so no unit is
- * dropped (#940 F32); a unit without its published amount has no components.
+ * dropped (#940 F32); a missing published amount, impossible under the outcome schema, projects as
+ * TAX_NOT_DETERMINED.
  */
 const componentsOf = (success: TaxOutcomeSuccess): Option.Option<NonEmptyReadonlyArray<CustomerSafeTaxComponent>> => {
   const publishedByUnitId = new Map<string, CustomerSafeTaxComponent['taxAmount']>(

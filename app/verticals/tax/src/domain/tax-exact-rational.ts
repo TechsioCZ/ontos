@@ -68,6 +68,12 @@ const taxExactRationalFromCanonicalDecimal = (value: string): TaxExactRational =
   return normalize(BigInt(`${integerPart}${fractionDigits}`), 10n ** BigInt(fractionDigits.length));
 };
 
+/** Exact fraction of a schema-checked canonical decimal rate percent, e.g. `21` is 21/100, read without floats. */
+export const taxExactFractionOfPercent = (ratePercent: string): TaxExactRational => {
+  const percent = taxExactRationalFromCanonicalDecimal(ratePercent);
+  return normalize(BigInt(percent.numerator), BigInt(percent.denominator) * 100n);
+};
+
 /** Reads an arbitrary string as a canonical base-10 decimal exactly; anything else has no exact value. */
 export const taxExactRationalFromDecimal = (value: string): Option.Option<TaxExactRational> =>
   decimalPattern.test(value) ? Option.some(taxExactRationalFromCanonicalDecimal(value)) : Option.none();

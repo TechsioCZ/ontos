@@ -9,6 +9,7 @@ import {
   multiplyTaxExactRationals,
   subtractTaxExactRationals,
   sumTaxExactRationals,
+  taxExactFractionOfPercent,
   taxExactRationalFromMinorUnits,
   taxExactRationalsEqual,
 } from './tax-exact-rational.ts';
@@ -67,15 +68,6 @@ export const TaxUnitRoundingEvidenceSchema = Schema.Struct({
 );
 export type TaxUnitRoundingEvidence = typeof TaxUnitRoundingEvidenceSchema.Type;
 
-/** Exact fraction of a schema-checked positive decimal rate percent, e.g. `21` is 21/100, read without floats. */
-const exactRateFraction = ({ ratePercent }: TaxableTreatment): TaxExactRational => {
-  const [integerDigits = '0', fractionDigits = ''] = ratePercent.split('.');
-  return taxExactRationalFromMinorUnits(
-    BigInt(`${integerDigits}${fractionDigits}`),
-    100n * 10n ** BigInt(fractionDigits.length),
-  );
-};
-
 /**
  * Exact Tax contribution of one unit: its exact non-negative Taxable Basis (all components summed without any
  * rounding) times its exact positive rate, so it is non-negative (#935 F12-F19, F53; #907 F97).
@@ -92,7 +84,7 @@ export const exactTaxContribution = (
           Arr.map(({ amount }) => amount),
         ),
       ),
-      exactRateFraction(treatment),
+      taxExactFractionOfPercent(treatment.ratePercent),
     ),
   );
 
