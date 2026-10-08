@@ -793,8 +793,9 @@ describe('#960 review round 2 regressions (Fable)', () => {
 describe('#960 review round 3 regressions (Astra)', () => {
   it('never takes differing raw copies of one record for duplicates, whatever their characters (G, F16)', () => {
     const outcomes = evaluateTaxMigrationCandidates([
-      taxRule('raw', { jurisdiction: 'EU_OSS', zNote: 'x&b=y' }),
-      taxRule('raw', { jurisdiction: 'EU_OSS', zb: 'y', zNote: 'x' }),
+      // Under a `key=value&` join both serialize to `…zNote=x&zz=y`; the tuple encoding keeps them apart.
+      taxRule('raw', { jurisdiction: 'EU_OSS', zNote: 'x&zz=y' }),
+      taxRule('raw', { jurisdiction: 'EU_OSS', zNote: 'x', zz: 'y' }),
     ]);
     expect(outcomes.every((outcome) => Schema.is(TaxMigrationConflictingSchema)(outcome))).toBe(true);
   });
