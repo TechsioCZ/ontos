@@ -7,11 +7,11 @@ import {
   TaxCorrectionHistoricalInputUnresolvedSchema,
   TaxCorrectionOutOfBoundsSchema,
   TaxCorrectionFactsSchema,
+  OriginalRecordUnavailableSchema,
   calculateTaxCorrectionDelta,
 } from './tax-correction-delta.ts';
 import { TaxDecisionIdSchema } from './tax-decision.ts';
 import { BoundedIdentifierSchema } from './tax-domain-primitives.ts';
-import { TAX_HISTORICAL_INPUT_UNRESOLVED } from './tax-historical-input-outcome.ts';
 
 /**
  * Explicit declared use of Accepted Tax Terms after acceptance: a historical read, a supported return/correction, or
@@ -29,24 +29,14 @@ export const DeclaredTaxPurposeSchema = Schema.Union([
 export type DeclaredTaxPurpose = typeof DeclaredTaxPurposeSchema.Type;
 
 /**
- * One declared use of the Accepted Tax Terms handed over by their owner (Order or Billing). The terms are carried as
- * handed over and established by `acceptedTaxTermsFromHandover`, so a missing or ambiguous original record is the
- * explicit unresolved historical-input outcome rather than a rejected request (#947 F13, #948 F7, #946 F12). Owners
- * encode them with `AcceptedTaxTermsSchema`.
+ * One declared use of the Accepted Tax Terms handed over by their owner (Order or Billing), or the owner's explicit
+ * statement that it cannot establish the original record, which TAX answers with the unresolved historical-input
+ * outcome instead of a calculation (#947 F13, #948 F7, #946 F12).
  */
 export const DeclaredTaxPurposeRequestSchema = Schema.Struct({
-  acceptedTaxTerms: Schema.Unknown,
+  acceptedTaxTerms: Schema.Union([AcceptedTaxTermsSchema, OriginalRecordUnavailableSchema]),
   declaredPurpose: DeclaredTaxPurposeSchema,
 });
-
-/** Accepted Tax Terms as handed over, or none when the original record is incomplete or ambiguous. */
-export const acceptedTaxTermsFromHandover = Schema.decodeUnknownOption(AcceptedTaxTermsSchema);
-
-/** The original record cannot be established from what its owner handed over (#947 F13, #948 F7). */
-export const ORIGINAL_RECORD_INCOMPLETE: DeclaredTaxPurposeOutcome = {
-  _tag: TAX_HISTORICAL_INPUT_UNRESOLVED,
-  unresolved: { _tag: 'ORIGINAL_RECORD_INCOMPLETE' },
-};
 
 /**
  * A historical read is answered by the retained Accepted Tax Terms themselves; TAX makes no fresh Current Decision
