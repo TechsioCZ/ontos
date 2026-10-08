@@ -26,7 +26,6 @@ export const AuthoritativeOriginalAcceptedRecordSchema = Schema.Union([
   Schema.TaggedStruct('ORDER_SNAPSHOT', {}),
   Schema.TaggedStruct('BILLING_DOCUMENT', { billingDocumentRef: BoundedIdentifierSchema }),
 ]);
-export type AuthoritativeOriginalAcceptedRecord = typeof AuthoritativeOriginalAcceptedRecordSchema.Type;
 
 /**
  * Accepted Tax Terms: the immutable Tax meaning actually used by one successful Accepted handoff. They are exactly
