@@ -68,7 +68,10 @@ const strict = { onExcessProperty: 'error' } as const;
 
 /** Exact decimal text without insignificant trailing zeros: `21.00` and `21` are the same rate (#938, #960 F15). */
 const canonicalRate = (ratePercent: string): string =>
-  ratePercent.includes('.') ? ratePercent.replace(/0+$/u, '').replace(/\.$/u, '') : ratePercent;
+  ratePercent.replace(/(?<significant>\.\d*?[1-9])0+$/u, '$<significant>').replace(/\.0+$/u, '');
+
+/** Unambiguous composite key: each part is length-prefixed, so no part content can imitate a separator (#960 F11). */
+const tupleKey = (parts: readonly string[]): string => parts.map((part) => `${part.length}:${part}`).join('|');
 
 const withCanonicalRate = (targetMeaning: TargetMeaning) =>
   Object.fromEntries(
@@ -98,7 +101,12 @@ const canonicalTarget = (
         Result.flatMap((content) =>
           Schema.encodeResult(TaxRuleTargetTextSchema)(content).pipe(
             Result.map((text) => ({
-              factKey: `TAX_RULE ${content.jurisdiction} ${content.taxClassificationCode} ${DateTime.formatIso(content.effectiveFrom)}`,
+              factKey: tupleKey([
+                'TAX_RULE',
+                content.jurisdiction,
+                content.taxClassificationCode,
+                DateTime.formatIso(content.effectiveFrom),
+              ]),
               targetMeaningKey: TaxMigrationTargetMeaningKeySchema.make(text),
             })),
           ),
@@ -111,7 +119,11 @@ const canonicalTarget = (
         Result.flatMap((payload) =>
           Schema.encodeResult(VatRegistrationTargetTextSchema)(payload).pipe(
             Result.map((text) => ({
-              factKey: `SELLING_LEGAL_ENTITY_VAT_REGISTRATION ${payload.sourceRef} ${payload.sourceAssertionKey}`,
+              factKey: tupleKey([
+                'SELLING_LEGAL_ENTITY_VAT_REGISTRATION',
+                payload.sourceRef,
+                payload.sourceAssertionKey,
+              ]),
               targetMeaningKey: TaxMigrationTargetMeaningKeySchema.make(text),
             })),
           ),
@@ -143,41 +155,68 @@ const contradictsProvenance = (
 interface EvaluatedCandidate {
   readonly factKey: Option.Option<string>;
   readonly outcome: TaxMigrationOutcome;
+  /** Raw legacy content of a Tax-owned record, so differing copies are never taken for duplicates (#960 G). */
+  readonly rawMeaning: string;
 }
+
+const rawMeaningOf = (family: TaxMigrationFamily, targetMeaning: TargetMeaning): string =>
+  `${family} ${Object.entries(targetMeaning)
+    .toSorted(([left], [right]) => left.localeCompare(right, 'en'))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('&')}`;
 
 const evaluateTaxOwned = (
   provenance: TaxMigrationProvenance,
   family: TaxMigrationFamily,
   targetMeaning: TargetMeaning,
 ): EvaluatedCandidate => {
+  const rawMeaning = rawMeaningOf(family, targetMeaning);
   if (outsideLaunchScope(targetMeaning)) {
     return {
       factKey: Option.none(),
       outcome: TaxMigrationRejectedUnmappedSchema.make({
         provenance,
         reason: 'UNSUPPORTED_BREADTH',
+        sourceFamily: Option.some(family),
         targetOwner: TAX_OWNER_CAPABILITY,
       }),
+      rawMeaning,
     };
   }
   const missing = requiredKeys[family].filter((key) => targetMeaning[key] === undefined);
   if (missing.length > 0) {
-    return { factKey: Option.none(), outcome: TaxMigrationIncompleteSchema.make({ missing, provenance }) };
+    return {
+      factKey: Option.none(),
+      outcome: TaxMigrationIncompleteSchema.make({ missing, provenance, sourceFamily: Option.some(family) }),
+      rawMeaning,
+    };
   }
   if (contradictsProvenance(family, targetMeaning, provenance)) {
     return {
       factKey: Option.none(),
-      outcome: TaxMigrationReviewRequiredSchema.make({ provenance, reason: 'PROVENANCE_MISMATCH' }),
+      outcome: TaxMigrationReviewRequiredSchema.make({
+        provenance,
+        reason: 'PROVENANCE_MISMATCH',
+        sourceFamily: Option.some(family),
+      }),
+      rawMeaning,
     };
   }
   return Result.match(canonicalTarget(family, targetMeaning), {
     onFailure: (): EvaluatedCandidate => ({
       factKey: Option.none(),
-      outcome: TaxMigrationReviewRequiredSchema.make({ provenance, reason: 'TARGET_MEANING_INVALID' }),
+      outcome: TaxMigrationReviewRequiredSchema.make({
+        provenance,
+        reason: 'TARGET_MEANING_INVALID',
+        sourceFamily: Option.some(family),
+      }),
+      rawMeaning,
     }),
     onSuccess: ({ factKey, targetMeaningKey }): EvaluatedCandidate => ({
       factKey: Option.some(factKey),
+      // A mapped record is compared by its canonical meaning, so `21` and `21.00` remain duplicates.
       outcome: TaxMigrationMappedAcceptedSchema.make({ family, provenance, targetMeaningKey }),
+      rawMeaning: '',
     }),
   });
 };
@@ -187,19 +226,32 @@ const evaluateCandidate = ({ mapping, provenance }: TaxMigrationCandidate): Eval
   Match.value(mapping).pipe(
     Match.tag('FOREIGN_OWNER', ({ targetOwner }) => ({
       factKey: Option.none(),
-      outcome: TaxMigrationRejectedUnmappedSchema.make({ provenance, reason: 'FOREIGN_OWNER', targetOwner }),
+      outcome: TaxMigrationRejectedUnmappedSchema.make({
+        provenance,
+        reason: 'FOREIGN_OWNER',
+        sourceFamily: Option.none(),
+        targetOwner,
+      }),
+      rawMeaning: '',
     })),
     Match.tag('HISTORICAL_ACCEPTED_VALUE', ({ historicalOwner }) => ({
       factKey: Option.none(),
       outcome: TaxMigrationRejectedUnmappedSchema.make({
         provenance,
         reason: 'HISTORICAL_ACCEPTED_VALUE',
+        sourceFamily: Option.none(),
         targetOwner: historicalOwner,
       }),
+      rawMeaning: '',
     })),
     Match.tag('UNESTABLISHED', () => ({
       factKey: Option.none(),
-      outcome: TaxMigrationReviewRequiredSchema.make({ provenance, reason: 'MEANING_NOT_ESTABLISHED' }),
+      outcome: TaxMigrationReviewRequiredSchema.make({
+        provenance,
+        reason: 'MEANING_NOT_ESTABLISHED',
+        sourceFamily: Option.none(),
+      }),
+      rawMeaning: '',
     })),
     Match.tag('TAX_OWNED', ({ family, targetMeaning }) => evaluateTaxOwned(provenance, family, targetMeaning)),
     Match.exhaustive,
@@ -221,28 +273,52 @@ const meaningOf = (outcome: TaxMigrationOutcome): string =>
 
 /** One source record identity: source system plus record, never the record ref alone (#960 F11). */
 const sourceKey = ({ sourceRecordRef, sourceSystemRef }: TaxMigrationSourceRecord): string =>
-  `${sourceSystemRef} ${sourceRecordRef}`;
+  tupleKey([sourceSystemRef, sourceRecordRef]);
 
 const sourceOf = ({ sourceRecordRef, sourceSystemRef }: TaxMigrationSourceRecord): TaxMigrationSourceRecord => ({
   sourceRecordRef,
   sourceSystemRef,
 });
 
-const provenanceKey = (provenance: TaxMigrationProvenance) => `${sourceKey(provenance)} ${provenance.datasetRef}`;
+const provenanceKey = (provenance: TaxMigrationProvenance) =>
+  tupleKey([provenance.sourceSystemRef, provenance.sourceRecordRef, provenance.datasetRef]);
+
+/** Stable, readable presentation order by source system, record and dataset; it never picks a winner. */
+const byProvenance = (left: TaxMigrationProvenance, right: TaxMigrationProvenance): number =>
+  byText(left.sourceSystemRef, right.sourceSystemRef) ||
+  byText(left.sourceRecordRef, right.sourceRecordRef) ||
+  byText(left.datasetRef, right.datasetRef);
 
 interface Entry extends EvaluatedCandidate {
   readonly groupKey: string;
   readonly meaning: string;
 }
 
+/** Family of the source record behind an outcome; None when it is owned elsewhere or its meaning is unknown. */
+export const taxMigrationOutcomeFamily = (outcome: TaxMigrationOutcome): Option.Option<TaxMigrationFamily> =>
+  Match.value(outcome).pipe(
+    Match.tag('MAPPED_ACCEPTED', ({ family }) => Option.some(family)),
+    Match.orElse(({ sourceFamily }) => sourceFamily),
+  );
+
+/** Owner of a duplicated record when it is actually known; otherwise the copy keeps the original's open outcome. */
+const knownOwner = (original: TaxMigrationOutcome): Option.Option<string> =>
+  Match.value(original).pipe(
+    Match.tag('MAPPED_ACCEPTED', () => Option.some(TAX_OWNER_CAPABILITY)),
+    Match.tag('REJECTED_UNMAPPED', ({ targetOwner }) => Option.some(targetOwner)),
+    Match.orElse(() => Option.none()),
+  );
+
 const duplicateOf = (entry: Entry, original: TaxMigrationOutcome): TaxMigrationOutcome =>
-  TaxMigrationRejectedUnmappedSchema.make({
-    provenance: entry.outcome.provenance,
-    reason: 'DUPLICATE_SOURCE_RECORD',
-    targetOwner: Match.value(original).pipe(
-      Match.tag('REJECTED_UNMAPPED', ({ targetOwner }) => targetOwner),
-      Match.orElse(() => TAX_OWNER_CAPABILITY),
-    ),
+  Option.match(knownOwner(original), {
+    onNone: () => ({ ...original, provenance: entry.outcome.provenance }),
+    onSome: (targetOwner) =>
+      TaxMigrationRejectedUnmappedSchema.make({
+        provenance: entry.outcome.provenance,
+        reason: 'DUPLICATE_SOURCE_RECORD',
+        sourceFamily: taxMigrationOutcomeFamily(original),
+        targetOwner,
+      }),
   });
 
 /**
@@ -252,9 +328,7 @@ const duplicateOf = (entry: Entry, original: TaxMigrationOutcome): TaxMigrationO
 const reconcileGroups = (entries: readonly Entry[]): readonly Entry[] => {
   const ordered = entries.toSorted(
     (left, right) =>
-      byText(left.groupKey, right.groupKey) ||
-      byText(left.meaning, right.meaning) ||
-      byText(provenanceKey(left.outcome.provenance), provenanceKey(right.outcome.provenance)),
+      byProvenance(left.outcome.provenance, right.outcome.provenance) || byText(left.meaning, right.meaning),
   );
   return ordered.map((entry) => {
     const group = ordered.filter(({ groupKey }) => groupKey === entry.groupKey);
@@ -266,6 +340,7 @@ const reconcileGroups = (entries: readonly Entry[]): readonly Entry[] => {
       const outcome = TaxMigrationConflictingSchema.make({
         counterparts: group.flatMap((other) => (other === entry ? [] : [other.outcome.provenance])),
         provenance: entry.outcome.provenance,
+        sourceFamily: taxMigrationOutcomeFamily(entry.outcome),
       });
       return { ...entry, factKey: Option.none(), meaning: meaningOf(outcome), outcome };
     }
@@ -284,7 +359,11 @@ export const evaluateTaxMigrationCandidates = (
   const byRecord = reconcileGroups(
     candidates.map((candidate) => {
       const evaluated = evaluateCandidate(candidate);
-      return { ...evaluated, groupKey: sourceKey(candidate.provenance), meaning: meaningOf(evaluated.outcome) };
+      return {
+        ...evaluated,
+        groupKey: sourceKey(candidate.provenance),
+        meaning: `${meaningOf(evaluated.outcome)} ${evaluated.rawMeaning}`,
+      };
     }),
   );
   const factEntries = byRecord.flatMap((entry) =>
@@ -323,15 +402,12 @@ export const verifyTaxMigrationCompleteness = (
   }
   // A record mapped into another family does not count for this family's claim (#960 F17).
   const familyOutcomes = outcomes.filter((outcome) =>
-    Match.value(outcome).pipe(
-      Match.tag('MAPPED_ACCEPTED', (mapped) => mapped.family === family),
-      Match.orElse(() => true),
-    ),
+    Option.match(taxMigrationOutcomeFamily(outcome), { onNone: () => true, onSome: (own) => own === family }),
   );
   const observed = new Map(familyOutcomes.map(({ provenance }) => [sourceKey(provenance), sourceOf(provenance)]));
   const expected = new Map(claim.expectedSourceRecords.map((record) => [sourceKey(record), sourceOf(record)]));
   const bySource = (left: TaxMigrationSourceRecord, right: TaxMigrationSourceRecord) =>
-    byText(sourceKey(left), sourceKey(right));
+    byText(left.sourceSystemRef, right.sourceSystemRef) || byText(left.sourceRecordRef, right.sourceRecordRef);
   const missingSourceRecords = [...expected]
     .flatMap(([key, record]) => (observed.has(key) ? [] : [record]))
     .toSorted(bySource);
@@ -398,5 +474,9 @@ export const reconcileTaxMigrationTarget = (
       differences.push({ difference: 'MEANING_DIFFERS', source });
     }
   }
-  return differences.toSorted((left, right) => byText(sourceKey(left.source), sourceKey(right.source)));
+  return differences.toSorted(
+    (left, right) =>
+      byText(left.source.sourceSystemRef, right.source.sourceSystemRef) ||
+      byText(left.source.sourceRecordRef, right.source.sourceRecordRef),
+  );
 };
