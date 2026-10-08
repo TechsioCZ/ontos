@@ -281,13 +281,14 @@ const settledTaxStatuses: ReadonlySet<PrivacyOwnerExecutionOutcomeEncoded['statu
 
 /**
  * A settled outcome is replayed only when it is TAX's own answer to exactly this measure: same measure, decision
- * and owner scope, no claimed effect, and only this measure's targets remaining.
+ * and owner scope, no claimed effect, and exactly the remaining content TAX itself reports.
  */
 const isSettledTaxOutcomeFor = (
   outcome: PrivacyOwnerExecutionOutcomeEncoded,
   measure: PrivacyMeasureEncoded,
 ): boolean => {
-  const targets = new Set(measure.targetContentRefs);
+  // TAX's own settled outcomes keep every target remaining, except NOT_APPLICABLE, which has none.
+  const expectedRemaining = outcome.status === 'NOT_APPLICABLE' ? [] : measure.targetContentRefs;
   return (
     settledTaxStatuses.has(outcome.status) &&
     outcome.measureRef === measure.measureRef &&
@@ -295,7 +296,7 @@ const isSettledTaxOutcomeFor = (
     outcome.sourceDecisionRevision === measure.sourceDecisionRevision &&
     isSameOwnerScope(outcome.scope, measure.scope) &&
     outcome.affectedContentRefs.length === 0 &&
-    outcome.remainingContentRefs.every((contentRef) => targets.has(contentRef))
+    hasExactReferences(outcome.remainingContentRefs, expectedRemaining)
   );
 };
 

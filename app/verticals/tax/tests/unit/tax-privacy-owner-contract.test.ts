@@ -323,11 +323,16 @@ describe('#956 TAX Privacy Measure execution', () => {
       blockers: [{ blockerRef: 'privacy:legal-hold-956', contentRefs: [assertionContent], kind: 'LEGAL_HOLD' }],
     });
     expect(evaluate({ previousAttempt: { measure, outcome: blocked } })).toEqual(blocked);
+    const notApplicable = evaluate({ coverage: assess(completeObservations()) });
+    expect(
+      evaluate({ coverage: assess(completeObservations()), previousAttempt: { measure, outcome: notApplicable } }),
+    ).toEqual(notApplicable);
     const foreign = [
       { ...blocked, measureRef: 'privacy-measure:other' },
       { ...blocked, sourceDecisionRevision: 'revision-other' },
       { ...blocked, scope: { ...scope, tenantId: 'tenant-other' } },
       { ...blocked, remainingContentRefs: ['commerce.tax.tax-rule:unrelated'] },
+      { ...blocked, remainingContentRefs: [] },
     ];
     for (const outcome of foreign) {
       const retried = evaluate({ previousAttempt: { measure, outcome } });
