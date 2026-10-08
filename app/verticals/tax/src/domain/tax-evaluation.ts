@@ -21,6 +21,7 @@ import { composeTaxResult } from './tax-result.ts';
 import { LAUNCH_CZK_TAX_ROUNDING_POLICY } from './tax-rounding.ts';
 import type { TaxEvaluationTime } from './tax-time.ts';
 import { lineTaxableBasisForOccurrence } from './taxable-basis.ts';
+import { mapTaxableSupplyUnits } from './taxable-supply-unit.ts';
 import type { OccurrenceSupplyMeaning, TaxableSupplyUnit, TaxableSupplyUnitId } from './taxable-supply-unit.ts';
 
 /** Complete owner rule state for one decisive predicate as returned by the TAX applicable-rule-set read (#942 F9-F15). */
@@ -322,70 +323,72 @@ const publish = (
   return isTaxOutcomeSuccess(success) ? Result.succeed(success) : indeterminate();
 };
 
-/** Per-unit meanings and the Shipping allocation of the covered units, then the published outcome. */
-const determineUnits = (
-  request: TaxEvaluationRequest,
-  ownState: TaxEvaluationOwnState,
-  units: NonEmptyReadonlyArray<TaxableSupplyUnit>,
-  jurisdiction: TaxJurisdictionDetermination,
-  options: EvaluationOptions,
-): Evaluated<TaxOutcomeSuccess> =>
-  pipe(
-    Result.all(
-      pipe(
-        units,
-        Arr.map((unit) => unitMeaning(request, ownState, unit)),
-      ),
-    ),
-    Result.flatMap((meanings) =>
-      pipe(
-        shippingAllocationOf(request, units),
-        Result.flatMap((allocation) =>
-          publish(
-            request,
-            pipe(
-              meanings,
-              Arr.map((meaning) => decisionUnitOf(meaning, jurisdiction, allocation)),
-            ),
-            allocation,
-            options,
-          ),
-        ),
-      ),
-    ),
-  );
+type AnyEvaluated = Evaluated<unknown>;
+
+/**
+ * The reported non-success of a purchase: an unsupported requirement anywhere in it wins, because unsupported scope is
+ * decided before prerequisites, configuration and input currentness (#938 F3, F7, F16); otherwise the first failure in
+ * evaluation order. Every part is evaluated, so one unit's rule configuration never masks another unit's scope.
+ */
+const reportedFailure = (parts: readonly AnyEvaluated[]): Option.Option<TaxNonSuccessOutcome> => {
+  const failures = parts.flatMap((part) => (Result.isFailure(part) ? [part.failure] : []));
+  return Option.fromUndefinedOr(failures.find(isUnsupported) ?? failures[0]);
+};
 
 /**
  * Prospective Launch Tax evaluation of one structurally bound request over one coherent TAX own state (#942, #937,
- * #941 F6). Order: a known non-Czech place is out of scope first; then Launch coverage (currency, regime, supply
- * mapping, seller prerequisite last, #938 F7); then place currentness; then, per unit in canonical order, the
- * published line, the classification and the complete applicable rule set; then Shipping allocation. Any failure is
- * the typed non-success; success is a Decision with its Result under the Launch rounding policy (#936, #935).
+ * #941 F6). Evaluated parts, in order: Launch coverage (currency, regime, supply mapping, seller prerequisite), place
+ * jurisdiction, then per unit in canonical order the published line, the classification and the complete applicable
+ * rule set, then Shipping allocation. Any failure is the typed non-success chosen by `reportedFailure`; success is a
+ * Decision with its Result under the Launch rounding policy (#936, #935).
  */
 export const evaluateProspectiveLaunchTax = (
   request: TaxEvaluationRequest,
   ownState: TaxEvaluationOwnState,
   options: EvaluationOptions,
 ): TaxOutcome => {
-  const jurisdiction = determineTaxJurisdiction(request.places);
-  const coverage: Evaluated<NonEmptyReadonlyArray<TaxableSupplyUnit>> =
-    Result.isFailure(jurisdiction) && isUnsupported(jurisdiction.failure)
-      ? Result.fail(jurisdiction.failure)
-      : evaluateLaunchTaxCoverage({
-          currency: request.purchase.currency,
-          requiredTaxRegimes: ['ORDINARY_DOMESTIC'],
-          requiredTaxTreatments: ['TAXABLE'],
-          sellingLegalEntityVatRegistration: ownState.sellerVatRegistration,
-          supplyMeanings: pipe(
-            Arr.sort(request.purchase.purchaseDemandOccurrences, byOccurrenceId),
-            Arr.map((occurrence) => supplyMeaningOf(request, occurrence)),
-          ),
-        });
-  const evaluated = pipe(
-    Result.all({ coverage, jurisdiction }),
-    Result.flatMap(({ coverage: units, jurisdiction: determination }) =>
-      determineUnits(request, ownState, units, determination, options),
-    ),
+  const supplyMeanings = pipe(
+    Arr.sort(request.purchase.purchaseDemandOccurrences, byOccurrenceId),
+    Arr.map((occurrence) => supplyMeaningOf(request, occurrence)),
   );
+  const coverage = evaluateLaunchTaxCoverage({
+    currency: request.purchase.currency,
+    requiredTaxRegimes: ['ORDINARY_DOMESTIC'],
+    requiredTaxTreatments: ['TAXABLE'],
+    sellingLegalEntityVatRegistration: ownState.sellerVatRegistration,
+    supplyMeanings,
+  });
+  const jurisdiction = determineTaxJurisdiction(request.places);
+  const units = mapTaxableSupplyUnits(supplyMeanings);
+  const meanings: readonly Evaluated<UnitMeaning>[] = Result.isSuccess(units)
+    ? pipe(
+        units.success,
+        Arr.map((unit) => unitMeaning(request, ownState, unit)),
+      )
+    : [];
+  const allocation: Evaluated<Option.Option<ShippingAllocation>> = Result.isSuccess(units)
+    ? shippingAllocationOf(request, units.success)
+    : Result.succeed(Option.none());
+  const evaluated = Option.match(reportedFailure([coverage, jurisdiction, ...meanings, allocation]), {
+    onNone: (): Evaluated<TaxOutcomeSuccess> =>
+      pipe(
+        Result.all({ allocation, determination: jurisdiction, unitMeanings: Result.all(meanings) }),
+        Result.flatMap(({ allocation: shipping, determination, unitMeanings }) => {
+          const [first, ...rest] = unitMeanings;
+          return first === undefined
+            ? indeterminate()
+            : publish(
+                request,
+                pipe(
+                  [first, ...rest] as const,
+                  Arr.map((meaning) => decisionUnitOf(meaning, determination, shipping)),
+                ),
+                shipping,
+                options,
+              );
+        }),
+      ),
+    onSome: (failure): Evaluated<TaxOutcomeSuccess> => Result.fail(failure),
+  });
   return Result.match(evaluated, { onFailure: (outcome): TaxOutcome => outcome, onSuccess: (success) => success });
 };

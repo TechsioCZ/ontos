@@ -222,6 +222,18 @@ const evidenceDifferences = (
   return checks.flatMap(([difference, differs]) => (differs ? [difference] : []));
 };
 
+/**
+ * A compared successful outcome is visible only to its own Tenant and Selling Legal Entity, taken from the trusted
+ * Operational Scope; a non-success carries no purchase (#950 F21-F25).
+ */
+export const taxOutcomeVisibleInScope = (
+  outcome: TaxOutcome,
+  scope: Readonly<{ legalEntityId?: string | undefined; tenantId: string }>,
+): boolean =>
+  !isSuccess(outcome) ||
+  (outcome.decision.purchaseBinding.tenantId === scope.tenantId &&
+    outcome.decision.purchaseBinding.sellingLegalEntityRef === scope.legalEntityId);
+
 const hasOwnDecisionIdentity = (outcome: TaxOutcomeSuccess, fingerprint: TaxMeaningFingerprint) =>
   taxDecisionIdFor(outcome.decision, fingerprint) === outcome.decision.decisionId;
 
