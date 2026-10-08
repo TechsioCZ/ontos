@@ -38,6 +38,14 @@ export const TaxRoundingPolicySchema = Schema.Struct({
 });
 export type TaxRoundingPolicy = typeof TaxRoundingPolicySchema.Type;
 
+/** Launch CZ Tax Rounding policy revision 1: 0.01 CZK, ROUND_HALF_UP, once per Taxable Supply Unit (#935 F20-F24). */
+export const LAUNCH_CZK_TAX_ROUNDING_POLICY: TaxRoundingPolicy = {
+  currency: 'CZK',
+  mode: 'ROUND_HALF_UP',
+  precision: '0.01',
+  revision: 1,
+};
+
 const exactValueOf = (amount: TaxMonetaryAmount): TaxExactRational =>
   taxExactRationalFromMinorUnits(taxMonetaryAmountMinorUnits(amount), CZK_MINOR_UNITS_PER_MAJOR_UNIT);
 

@@ -7,10 +7,15 @@ import { BoundedIdentifierSchema, distinctBy } from './tax-domain-primitives.ts'
 import { taxNotEstablishedOutcome } from './tax-non-success-outcome.ts';
 import type { TaxNotEstablishedOutcome, TaxStateIndeterminate } from './tax-non-success-outcome.ts';
 
-/** Current owner-qualified Catalog evidence for one material Catalog fact revision (#926 F2, F6, H). */
+/**
+ * Current owner-qualified Catalog evidence for one material Catalog fact revision with the owner-issued fact kind and
+ * value a Tax-owned interpretation reads (#926 F2, F6, H).
+ */
 const CurrentCatalogTaxEvidenceSchema = Schema.TaggedStruct('CURRENT', {
   catalogFactRef: BoundedIdentifierSchema,
   catalogFactRevisionRef: BoundedIdentifierSchema,
+  factKind: BoundedIdentifierSchema,
+  factValue: BoundedIdentifierSchema,
   ownerEvidenceRef: BoundedIdentifierSchema,
 });
 export type CurrentCatalogTaxEvidence = typeof CurrentCatalogTaxEvidenceSchema.Type;
@@ -58,7 +63,26 @@ export interface TaxClassificationBasis {
   readonly materialCatalogEvidence: NonEmptyReadonlyArray<CurrentCatalogTaxEvidence>;
 }
 
-export type TaxClassificationInterpretation = (basis: TaxClassificationBasis) => TaxClassificationCode;
+/** A Tax-owned interpretation either derives one code or cannot conclude one; it never guesses (#926 F12-F13). */
+export type TaxClassificationInterpretation = (
+  basis: TaxClassificationBasis,
+) => Result.Result<TaxClassificationCode, TaxStateIndeterminate>;
+
+/** Catalog fact kind carrying the Launch Tax category (PO decision D9 default, pending on #907). */
+export const LAUNCH_TAX_CATEGORY_FACT_KIND = 'TAX_CATEGORY';
+
+/**
+ * Launch interpretation: exactly one Current `TAX_CATEGORY` fact of the exact Catalog Selection; its value is the
+ * classification code Tax Rules are governed by. None or several are indeterminate, never a default category
+ * (#926 F1, F12-F13; PO decision D9 default, pending on #907).
+ */
+export const launchTaxClassificationInterpretation: TaxClassificationInterpretation = ({ materialCatalogEvidence }) => {
+  const categories = materialCatalogEvidence.filter(({ factKind }) => factKind === LAUNCH_TAX_CATEGORY_FACT_KIND);
+  const [category] = categories;
+  return category !== undefined && categories.length === 1
+    ? Result.succeed(TaxClassificationCodeSchema.make(category.factValue))
+    : Result.fail({ _tag: 'TAX_STATE_INDETERMINATE' });
+};
 
 /** Successful Tax Classification identifying its exact Catalog Selection and material evidence (#926 H). */
 export const TaxClassificationSchema = Schema.Struct({
@@ -106,9 +130,12 @@ export const classifyCatalogSelection = (
     Result.flatMap((materialCatalogEvidence) =>
       pipe(
         requireOwnerVerifiedCompleteness(input.materialEvidenceCompleteness),
-        Result.map((completenessEvidenceRef) => {
+        Result.flatMap((completenessEvidenceRef) => {
           const basis = { catalogSelection: input.catalogSelection, materialCatalogEvidence };
-          return { ...basis, classificationCode: interpret(basis), completenessEvidenceRef };
+          return pipe(
+            interpret(basis),
+            Result.map((classificationCode) => ({ ...basis, classificationCode, completenessEvidenceRef })),
+          );
         }),
       ),
     ),

@@ -153,6 +153,19 @@ export const isSameShippingSourceRef = (left: ShippingSourceRef | undefined, rig
     : left.shippingAmountId === right.shippingAmountId && left.revision === right.revision;
 
 /**
+ * Same exact purchase/use for a Tax materiality comparison: Tenant, Selling Legal Entity, Purchasing Subject,
+ * currency and the exact occurrence set with Catalog Selection and Quantity + Unit. Candidate, Pricing Result and
+ * Shipping source revisions may differ between an approved prospective and a final evaluation; whether that change
+ * is material is the comparison's own conclusion (#943 F1, F9, F11-F12; #937 F1-F14, F59-F62).
+ */
+export const isSamePurchaseIdentity = (left: TaxPurchaseBinding, right: TaxPurchaseBinding): boolean =>
+  left.tenantId === right.tenantId &&
+  left.sellingLegalEntityRef === right.sellingLegalEntityRef &&
+  left.currency === right.currency &&
+  sameSubject(left.purchasingSubject, right.purchasingSubject) &&
+  sameOccurrenceSet(left.purchaseDemandOccurrences, right.purchaseDemandOccurrences);
+
+/**
  * True only when both bindings name the same exact purchase and the same exact source revisions. Equal totals,
  * rates or Variants never establish it (#937 F1-F10, F25, F28), array order is not identity (#937 F7), and
  * traceability-only context is not compared (#937 F38). `false` claims no materiality; equivalence across

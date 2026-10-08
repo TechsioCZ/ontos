@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'effect-rstest';
 
-import { isSameExactTaxPurchaseBinding } from '../../src/domain/purchase-binding.ts';
+import { isSameExactTaxPurchaseBinding, isSamePurchaseIdentity } from '../../src/domain/purchase-binding.ts';
 import { decodePurchaseBinding, occurrenceInput, purchaseBindingInput } from './tax-domain-fixtures.ts';
 
 describe('Exact Tax purchase binding', () => {
@@ -87,5 +87,36 @@ describe('Exact Tax purchase binding', () => {
     );
 
     expect(isSameExactTaxPurchaseBinding(storefront1, storefront2)).toBe(true);
+  });
+
+  it('#943 F9 F11-F12 the same purchase/use survives a new candidate, Pricing Result and Shipping source revision', () => {
+    const approved = decodePurchaseBinding(purchaseBindingInput(['o-1']));
+    const finalCandidate = decodePurchaseBinding(
+      purchaseBindingInput(['o-1'], {
+        pricingResultRef: { pricingResultId: 'pricing-result-2', revision: 3 },
+        purchaseCandidateRef: 'purchase-final',
+        shippingSourceRef: { revision: 2, shippingAmountId: 'shipping-1' },
+      }),
+    );
+
+    expect(isSamePurchaseIdentity(approved, finalCandidate)).toBe(true);
+    expect(isSameExactTaxPurchaseBinding(approved, finalCandidate)).toBe(false);
+  });
+
+  it('#937 F12-F20 #943 F1 changed quantity, subject or seller is not the same purchase/use', () => {
+    const original = decodePurchaseBinding(purchaseBindingInput(['o-1']));
+    const changedQuantity = decodePurchaseBinding(
+      purchaseBindingInput(['o-1'], {
+        purchaseDemandOccurrences: [{ ...occurrenceInput('o-1'), quantity: { amount: '2', unitRef: 'piece' } }],
+      }),
+    );
+    const otherSubject = decodePurchaseBinding(
+      purchaseBindingInput(['o-1'], { purchasingSubject: { _tag: 'COUNTERPARTY', counterpartyRef: 'counterparty-1' } }),
+    );
+    const otherSeller = decodePurchaseBinding(purchaseBindingInput(['o-1'], { sellingLegalEntityRef: 'seller-2' }));
+
+    expect(isSamePurchaseIdentity(original, changedQuantity)).toBe(false);
+    expect(isSamePurchaseIdentity(original, otherSubject)).toBe(false);
+    expect(isSamePurchaseIdentity(original, otherSeller)).toBe(false);
   });
 });
