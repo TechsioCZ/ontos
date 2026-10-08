@@ -35,6 +35,7 @@ export const taxRegistration = defineVerticalRuntimeRegistration({
       'final-order-tax': () => import('./src/api/final-order-tax-client.ts'),
       'selling-legal-entity-vat-registration-state': () =>
         import('./src/api/selling-legal-entity-vat-registration-state-client.ts'),
+      'tax-correction-preview': () => import('./src/api/tax-correction-preview-client.ts'),
       'tax-evaluation': () => import('./src/api/tax-evaluation-client.ts'),
       'tax-fact-authority-current': () => import('./src/api/tax-fact-authority-current-client.ts'),
       'tax-materiality-comparison': () => import('./src/api/tax-materiality-comparison-client.ts'),

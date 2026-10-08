@@ -42,6 +42,7 @@ import { finalOrderTaxReadApiLive } from './final-order-tax-read-server.ts';
 import { recordTaxSourceAssertionActionApiLive } from './record-tax-source-assertion-action-server.ts';
 import { reviseTaxFactAuthorityContractActionApiLive } from './revise-tax-fact-authority-contract-action-server.ts';
 import { sellingLegalEntityVatRegistrationStateReadApiLive } from './selling-legal-entity-vat-registration-state-read-server.ts';
+import { taxCorrectionPreviewReadApiLive } from './tax-correction-preview-read-server.ts';
 import { taxEvaluationReadApiLive } from './tax-evaluation-read-server.ts';
 import { taxFactAuthorityCurrentReadApiLive } from './tax-fact-authority-current-read-server.ts';
 import { taxMaterialityComparisonReadApiLive } from './tax-materiality-comparison-read-server.ts';
@@ -131,6 +132,7 @@ export const governedReadApiHandlersLive = GovernedReadLayer.mergeAll(
   recordTaxSourceAssertionActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   reviseTaxFactAuthorityContractActionApiLive.pipe(GovernedReadLayer.provide(governedActionRuntimeLive)),
   sellingLegalEntityVatRegistrationStateReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
+  taxCorrectionPreviewReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxEvaluationReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxFactAuthorityCurrentReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),
   taxMaterialityComparisonReadApiLive.pipe(GovernedReadLayer.provide(governedReadRuntimeLive)),

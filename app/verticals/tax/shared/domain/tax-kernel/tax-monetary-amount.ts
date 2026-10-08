@@ -43,6 +43,31 @@ export const publishedTaxAmountRoundedHalfUp = (value: NonNegativeTaxExactRation
 /** Exact CZK minor units (halere) of one published Tax amount. */
 export const taxMonetaryAmountMinorUnits = (value: TaxMonetaryAmount): bigint => BigInt(value.amount.replace('.', ''));
 
+const signedTaxAmountPattern = /^-?(?:0|[1-9]\d*)\.\d{2}$/u;
+
+/**
+ * Signed Tax difference at 0.01 CZK, e.g. a Tax Correction Delta between two published cumulative Tax states. It is
+ * a difference of published amounts, never itself rounded and never a published Tax amount (#948 F19-F20).
+ */
+export const SignedTaxMonetaryAmountSchema = Schema.Struct({
+  amount: Schema.String.check(
+    Schema.isPattern(signedTaxAmountPattern),
+    Schema.makeFilter((amount) => amount !== '-0.00' || 'A zero Tax difference has no sign'),
+  ),
+  currency: TaxCurrencySchema,
+});
+export type SignedTaxMonetaryAmount = typeof SignedTaxMonetaryAmountSchema.Type;
+
+/** Signed Tax difference of an exact signed count of CZK minor units. */
+export const signedTaxMonetaryAmountFromMinorUnits = (minorUnits: bigint): SignedTaxMonetaryAmount => {
+  const magnitude = taxMonetaryAmountFromNonNegativeMinorUnits(minorUnits < 0n ? -minorUnits : minorUnits);
+  return { amount: minorUnits < 0n ? `-${magnitude.amount}` : magnitude.amount, currency: 'CZK' };
+};
+
+/** Exact signed CZK minor units of one signed Tax difference. */
+export const signedTaxMonetaryAmountMinorUnits = (value: SignedTaxMonetaryAmount): bigint =>
+  BigInt(value.amount.replace('.', ''));
+
 /** Exact sum of published Tax amounts; no second rounding happens here (#936 F35-F37). */
 export const sumTaxMonetaryAmounts = (amounts: NonEmptyReadonlyArray<TaxMonetaryAmount>): TaxMonetaryAmount =>
   taxMonetaryAmountFromNonNegativeMinorUnits(
