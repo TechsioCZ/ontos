@@ -10,8 +10,8 @@ export default function HomePage() {
       <HomeCarousel />
 
       <section className="grid gap-4" aria-labelledby="featured-title">
-        <div className="bg-base-dark px-4 py-2 text-base-light">
-          <h2 className="m-0 text-base font-bold leading-tight" id="featured-title">
+        <div className="flex min-h-(--dimension-48) items-center bg-base-dark px-(--dimension-20) py-(--dimension-8) text-base-light">
+          <h2 className="m-0 text-md font-bold leading-(--line-height-30)" id="featured-title">
             {cs.home.featuredTitle}
           </h2>
         </div>
