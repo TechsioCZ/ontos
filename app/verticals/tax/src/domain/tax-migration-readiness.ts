@@ -77,7 +77,10 @@ export const compareShadowVatRegistration = (input: {
     evaluationTime: input.evaluationTime,
   });
   // An unresolved state on either side is not a business value, so equality would prove nothing (#960 F28-F29, F34).
-  if (unresolvedStates.has(state) || unresolvedStates.has(input.legacyState)) {
+  if (unresolvedStates.has(input.legacyState)) {
+    return TaxShadowNotComparableSchema.make({ probeRef: input.probeRef, reason: `LEGACY_${input.legacyState}` });
+  }
+  if (unresolvedStates.has(state)) {
     return TaxShadowNotComparableSchema.make({ probeRef: input.probeRef, reason });
   }
   return state === input.legacyState

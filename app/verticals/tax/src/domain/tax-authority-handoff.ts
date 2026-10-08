@@ -76,17 +76,21 @@ export const evaluateTaxAuthorityHandoff = (
           to: next === undefined ? Option.none() : Option.some(next.authorityFrom),
         });
       }
-      boundaries.push({
-        at: end,
-        fromSystemOfRecordRef: period.systemOfRecordRef,
-        toSystemOfRecordRef: next.systemOfRecordRef,
-      });
+      // Only a change of System of Record hands authority over; contiguous periods of one source do not (F23, F25).
+      if (period.systemOfRecordRef !== next.systemOfRecordRef) {
+        boundaries.push({
+          at: end,
+          fromSystemOfRecordRef: period.systemOfRecordRef,
+          toSystemOfRecordRef: next.systemOfRecordRef,
+        });
+      }
     }
   }
   // A handoff is an explicit boundary changing authority; a single unbounded authority hands nothing over (F23).
-  return boundaries.length === 0
+  const [firstBoundary, ...laterBoundaries] = boundaries;
+  return firstBoundary === undefined
     ? TaxAuthorityHandoffIndeterminateSchema.make({ reason: 'NO_AUTHORITY_BOUNDARY_DECLARED' })
-    : TaxAuthorityHandoffValidSchema.make({ boundaries });
+    : TaxAuthorityHandoffValidSchema.make({ boundaries: [firstBoundary, ...laterBoundaries] });
 };
 
 /**

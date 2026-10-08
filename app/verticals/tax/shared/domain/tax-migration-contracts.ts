@@ -60,6 +60,9 @@ export const TaxMigrationCandidateSchema = Schema.Struct({
 });
 export type TaxMigrationCandidate = typeof TaxMigrationCandidateSchema.Type;
 
+/** Family a Tax-owned source record was mapped to; None for records owned elsewhere or of unknown meaning. */
+const SourceFamilySchema = Schema.OptionFromNullOr(TaxMigrationFamilySchema);
+
 export const TaxMigrationMappedAcceptedSchema = Schema.TaggedStruct('MAPPED_ACCEPTED', {
   family: TaxMigrationFamilySchema,
   provenance: TaxMigrationProvenanceSchema,
@@ -73,19 +76,23 @@ export const TaxMigrationRejectedUnmappedSchema = Schema.TaggedStruct('REJECTED_
     'HISTORICAL_ACCEPTED_VALUE',
     'UNSUPPORTED_BREADTH',
   ]),
+  sourceFamily: SourceFamilySchema,
   targetOwner: ReferenceSchema,
 });
 export const TaxMigrationConflictingSchema = Schema.TaggedStruct('CONFLICTING', {
   counterparts: Schema.Array(TaxMigrationProvenanceSchema),
   provenance: TaxMigrationProvenanceSchema,
+  sourceFamily: SourceFamilySchema,
 });
 export const TaxMigrationIncompleteSchema = Schema.TaggedStruct('INCOMPLETE', {
   missing: Schema.Array(Schema.String),
   provenance: TaxMigrationProvenanceSchema,
+  sourceFamily: SourceFamilySchema,
 });
 export const TaxMigrationReviewRequiredSchema = Schema.TaggedStruct('REVIEW_REQUIRED', {
   provenance: TaxMigrationProvenanceSchema,
   reason: Schema.Literals(['MEANING_NOT_ESTABLISHED', 'PROVENANCE_MISMATCH', 'TARGET_MEANING_INVALID']),
+  sourceFamily: SourceFamilySchema,
 });
 
 /** Exactly the five reconciliation outcomes of #960 F16. */
@@ -160,7 +167,7 @@ export const TaxAuthorityGapSchema = Schema.TaggedStruct('AUTHORITY_GAP', {
   to: Schema.OptionFromNullOr(InstantSchema),
 });
 export const TaxAuthorityHandoffValidSchema = Schema.TaggedStruct('HANDOFF_VALID', {
-  boundaries: Schema.Array(TaxAuthorityBoundarySchema),
+  boundaries: Schema.NonEmptyArray(TaxAuthorityBoundarySchema),
 });
 export const TaxAuthorityHandoffIndeterminateSchema = Schema.TaggedStruct('INDETERMINATE', {
   reason: Schema.Literals(['AUTHORITY_BOUNDARY_UNKNOWN', 'NO_AUTHORITY_BOUNDARY_DECLARED', 'NO_AUTHORITY_CONFIGURED']),
