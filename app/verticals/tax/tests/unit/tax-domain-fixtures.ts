@@ -69,7 +69,10 @@ export const decisionUnitInput = (
   governingTaxRuleRevisionRef: { revision: 1, taxRuleId: 'cz-domestic-standard' },
   jurisdiction: {
     jurisdiction: 'CZ_DOMESTIC',
-    placeEvidenceRefs: { deliveryDestination: 'delivery-destination-evidence-1' },
+    placeEvidenceRefs: {
+      deliveryDestination: 'delivery-destination-evidence-1',
+      sellingLegalEntity: 'selling-legal-entity-evidence-1',
+    },
   },
   taxableBasisInterpretation: {
     components: [

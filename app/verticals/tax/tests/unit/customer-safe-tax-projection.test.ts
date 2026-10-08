@@ -1,4 +1,4 @@
-import { Match, Option, Schema } from 'effect';
+import { Array as Arr, Match, Option, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import {
@@ -8,6 +8,7 @@ import {
   projectCustomerSafeTax,
 } from '../../src/domain/customer-safe-tax-projection.ts';
 import type { CustomerSafeTaxProjection } from '../../src/domain/customer-safe-tax-projection.ts';
+import { TaxOutcomeSuccessSchema } from '../../src/domain/tax-outcome.ts';
 import type { TaxOutcomeSuccess } from '../../src/domain/tax-outcome.ts';
 import { composeResult, decisionUnitInput, decodeTaxDecision, taxDecisionInput } from './tax-domain-fixtures.ts';
 
@@ -90,6 +91,30 @@ describe('Customer-Safe Tax Projection', () => {
     expect(projected.purchaseTaxTotal).toEqual({ amount: '0.00', currency: 'CZK' });
     expect(projected.components.map(({ treatment }) => treatment.category)).toEqual(['TAXABLE', 'TAXABLE']);
     expect(Schema.is(CustomerSafeTaxProjectionSchema)(projection)).toBe(true);
+  });
+
+  it('#937 F7 #936 F28-F29 #940 F32 joins Result amounts to Decision units by identity, not array position', () => {
+    const decision = decodeTaxDecision(
+      taxDecisionInput(['o-1', 'o-2'], {
+        units: [decisionUnitInput('o-1', '50.00'), decisionUnitInput('o-2', '100.00', '12')],
+      }),
+    );
+    const result = composeResult(decision);
+    const inOrder: TaxOutcomeSuccess = { _tag: 'TAX_DETERMINED', decision, result };
+    const reversed: TaxOutcomeSuccess = { ...inOrder, result: { ...result, units: Arr.reverse(result.units) } };
+
+    expect(Schema.is(TaxOutcomeSuccessSchema)(reversed)).toBe(true);
+    expect(projectCustomerSafeTax(reversed, 'PER_TAXABLE_SUPPLY_UNIT')).toEqual(
+      projectCustomerSafeTax(inOrder, 'PER_TAXABLE_SUPPLY_UNIT'),
+    );
+    expect(
+      Option.getOrThrow(projectedAmount(projectCustomerSafeTax(reversed, 'PER_TAXABLE_SUPPLY_UNIT'))).components.map(
+        ({ purchaseDemandOccurrenceIds, taxAmount }) => [purchaseDemandOccurrenceIds, taxAmount.amount],
+      ),
+    ).toEqual([
+      [['o-1'], '10.50'],
+      [['o-2'], '12.00'],
+    ]);
   });
 
   it('#940 F44 the same outcome and contract version produce the same projection', () => {
