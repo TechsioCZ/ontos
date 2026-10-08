@@ -12,6 +12,6 @@ export const taxEvidenceReadPermission = defineBusinessPermission({
   key: 'tax.evidence.read',
   meaning: 'Tax Evidence Read module-scoped permission.',
   owningCapability: 'commerce.tax',
-  protectedEntrypoints: [],
+  protectedEntrypoints: ['commerce.tax.api.tax-rule-history'],
   schemaVersion: '1',
 });

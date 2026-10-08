@@ -35,6 +35,10 @@ const assortmentPermissionScopes = {
   'assortment.rule.retire': 'assortment_rule',
   'assortment.rule.revision.create': 'assortment_rule',
 } as const;
+const taxSellingLegalEntityPermissions: ReadonlySet<string> = new Set([
+  'tax.authority_contract.manage',
+  'tax.rule.manage',
+]);
 
 const requirePermissionCode = (value: string): string => {
   if (!permissionCodePattern.test(value)) {
@@ -55,8 +59,14 @@ const requireCompatibleScope = (
   const retailPermission = permission.startsWith('retail.');
   const counterpartyPermission = permission.startsWith('counterparty.');
   const assortmentPermission = permission.startsWith('assortment.');
+  const taxPermission = taxSellingLegalEntityPermissions.has(permission);
   const modulePermission =
-    !pricingPermission && !inventoryPermission && !retailPermission && !counterpartyPermission && !assortmentPermission;
+    !pricingPermission &&
+    !inventoryPermission &&
+    !retailPermission &&
+    !counterpartyPermission &&
+    !assortmentPermission &&
+    !taxPermission;
   const moduleScope = scope === 'module';
   const pricingScope = scope === 'pricing_catalog' || scope === 'price_group';
   if (
@@ -66,7 +76,12 @@ const requireCompatibleScope = (
     (!modulePermission && moduleScope)
   ) {
     return raiseScaffoldFailure(
-      'module permissions require module scope; retail.*, counterparty.*, inventory.*, pricing.price_group.*, and assortment.* require their compatible business target scope',
+      'module permissions require module scope; retail.*, counterparty.*, inventory.*, pricing.price_group.*, assortment.*, and TAX management permissions require their compatible business target scope',
+    );
+  }
+  if (taxPermission !== (scope === 'tax_selling_legal_entity')) {
+    return raiseScaffoldFailure(
+      'tax.rule.manage and tax.authority_contract.manage require tax_selling_legal_entity scope, and that scope rejects other permissions',
     );
   }
   if (inventoryPermission !== (scope === 'inventory_resource')) {
@@ -84,6 +99,9 @@ const requireCompatibleScope = (
 const requireCompatibleOwner = (vertical: OntosVerticalMetadata, permission: string): void => {
   if (permission.startsWith('inventory.') && vertical.moduleId !== 'commerce.inventory') {
     return raiseScaffoldFailure('inventory.* permissions must be owned by the commerce.inventory module');
+  }
+  if (taxSellingLegalEntityPermissions.has(permission) && vertical.moduleId !== 'commerce.tax') {
+    return raiseScaffoldFailure('TAX management permissions must be owned by the commerce.tax module');
   }
 };
 

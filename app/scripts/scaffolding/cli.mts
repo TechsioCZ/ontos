@@ -671,7 +671,7 @@ Options:
   permission: defineCommand({
     flags: ['permission', 'scope', 'vertical'],
     generator: permissionGenerator,
-    help: `Usage: pnpm scaffold:permission -- --vertical <vertical> --permission <stable.lowercase.code> --scope <module|retail_profile|counterparty|counterparty_storefront|inventory_resource|pricing_catalog|price_group|assortment_configuration|assortment_decision|assortment_rule|assortment_binding|assortment_boundary>
+    help: `Usage: pnpm scaffold:permission -- --vertical <vertical> --permission <stable.lowercase.code> --scope <module|retail_profile|counterparty|counterparty_storefront|inventory_resource|pricing_catalog|price_group|assortment_configuration|assortment_decision|assortment_rule|assortment_binding|assortment_boundary|tax_selling_legal_entity>
 
 Generate one versioned, fail-closed Permission declaration and register it in the module manifest.
 Generated Permissions start non-delegable and with no authority-group or protected-entrypoint membership.
@@ -700,10 +700,11 @@ Options:
           scope !== 'assortment_decision' &&
           scope !== 'assortment_rule' &&
           scope !== 'assortment_binding' &&
-          scope !== 'assortment_boundary'
+          scope !== 'assortment_boundary' &&
+          scope !== 'tax_selling_legal_entity'
         ) {
           return yield* failScaffolding(
-            '--scope must be module, retail_profile, counterparty, counterparty_storefront, inventory_resource, pricing_catalog, price_group, assortment_configuration, assortment_decision, assortment_rule, assortment_binding, or assortment_boundary',
+            '--scope must be module, retail_profile, counterparty, counterparty_storefront, inventory_resource, pricing_catalog, price_group, assortment_configuration, assortment_decision, assortment_rule, assortment_binding, assortment_boundary, or tax_selling_legal_entity',
           );
         }
         return {
