@@ -39,6 +39,7 @@ export const taxRegistration = defineVerticalRuntimeRegistration({
       'tax-evaluation': () => import('./src/api/tax-evaluation-client.ts'),
       'tax-fact-authority-current': () => import('./src/api/tax-fact-authority-current-client.ts'),
       'tax-materiality-comparison': () => import('./src/api/tax-materiality-comparison-client.ts'),
+      'tax-privacy-owner-coverage': () => import('./src/api/tax-privacy-owner-coverage-client.ts'),
       'tax-rule-history': () => import('./src/api/tax-rule-history-client.ts'),
       'tax-source-assertion-history': () => import('./src/api/tax-source-assertion-history-client.ts'),
       'tax-source-conflict-detail': () => import('./src/api/tax-source-conflict-detail-client.ts'),
