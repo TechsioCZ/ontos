@@ -12,6 +12,13 @@ import type { OperationContext, TaxReadiness } from '../../shared/api.ts';
 // oxlint-disable-next-line effect-native/no-scattered-browser-effect-run -- Generated compatibility surface retained for existing callers.
 export { Effect, runEffectRequest } from '@modern-js/bff-effect/effect-client';
 // <generated-action-http-client-exports>
+export * from './correct-tax-rule-revision-action-client.ts';
+export * from './create-tax-rule-action-client.ts';
+export * from './create-tax-rule-revision-action-client.ts';
+export * from './end-tax-fact-authority-contract-action-client.ts';
+export * from './end-tax-rule-revision-action-client.ts';
+export * from './establish-tax-fact-authority-contract-action-client.ts';
+export * from './revise-tax-fact-authority-contract-action-client.ts';
 // </generated-action-http-client-exports>
 
 type TaxApiGroups = typeof taxApi extends HttpApi.HttpApi<infer _ApiId, infer Groups> ? Groups : never;
