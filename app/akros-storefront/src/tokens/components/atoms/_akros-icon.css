@@ -1,0 +1,18 @@
+/* Keep the app collection separate from the UI kit's default Iconify loader. */
+@plugin "@iconify/tailwind4" {
+  prefix: "akros-icon";
+  square: true;
+  icon-sets: from-folder(akros, "./src/icons/akros");
+}
+
+@utility token-icon-akros-facebook {
+  @apply akros-icon-[akros--facebook];
+}
+
+@utility token-icon-akros-instagram {
+  @apply akros-icon-[akros--instagram];
+}
+
+@utility token-icon-akros-youtube {
+  @apply akros-icon-[akros--youtube];
+}

@@ -1,6 +1,7 @@
 @import "@techsio/ui-kit/tokens-with-tailwind";
 @import "@techsio/ui-kit/tokens/figma/akros/variables";
 @import "../tokens/_akros-typography.css";
+@import "../tokens/components/atoms/_akros-icon.css";
 @import "../tokens/components/molecules/_akros-accordion.css";
 @import "../tokens/components/molecules/_akros-breadcrumb.css";
 /* Homepage carousel color and icon-size mappings stay scoped to its wrapper. */

@@ -32,9 +32,20 @@ describe("SiteFooter", () => {
     ).toBe("/faq");
 
     expect(within(footer).getByRole("img", { name: cs.footer.heurekaBadge })).toBeTruthy();
-    expect(footer.querySelector(".icon-\\[mdi--facebook\\]")).toBeTruthy();
-    expect(footer.querySelector(".icon-\\[mdi--instagram\\]")).toBeTruthy();
-    expect(footer.querySelector(".icon-\\[mdi--youtube\\]")).toBeTruthy();
+    expect(footer.querySelector(".token-icon-akros-facebook")).toBeTruthy();
+    expect(footer.querySelector(".token-icon-akros-instagram")).toBeTruthy();
+    expect(footer.querySelector(".token-icon-akros-youtube")).toBeTruthy();
+
+    for (const [name, href] of [
+      ["Facebook", "https://fb.com"],
+      ["Instagram", "https://instagram.com"],
+      ["YouTube", "https://youtube.com"],
+    ]) {
+      const link = within(footer).getByRole("link", { name });
+      expect(link.getAttribute("href")).toBe(href);
+      expect(link.getAttribute("target")).toBe("_blank");
+      expect(link.getAttribute("rel")).toBe("noopener noreferrer");
+    }
 
     for (const assetName of [
       cs.footer.paymentCard,

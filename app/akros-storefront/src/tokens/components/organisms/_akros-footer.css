@@ -28,3 +28,8 @@
   --text-footer-sm: var(--text-xs);
   --text-footer-title-sm: var(--text-base);
 }
+
+.akros-footer__socials {
+  --color-footer-link-fg: var(--color-base-dark);
+  --color-footer-link-fg-hover: var(--color-base-dark);
+}

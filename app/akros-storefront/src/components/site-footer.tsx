@@ -76,10 +76,10 @@ const securityMethods = [
   },
 ] satisfies FooterAsset[];
 
-const socialIcons = [
-  "icon-[mdi--facebook]",
-  "icon-[mdi--instagram]",
-  "icon-[mdi--youtube]",
+const socialLinks = [
+  { href: "https://fb.com", icon: "token-icon-akros-facebook", label: "Facebook" },
+  { href: "https://instagram.com", icon: "token-icon-akros-instagram", label: "Instagram" },
+  { href: "https://youtube.com", icon: "token-icon-akros-youtube", label: "YouTube" },
 ] as const;
 
 export function SiteFooter() {
@@ -153,10 +153,16 @@ export function SiteFooter() {
           <Footer.Section className="akros-footer__section">
             <Footer.Title>{cs.footer.followUs}</Footer.Title>
             <div className="akros-footer__socials">
-              {socialIcons.map((icon) => (
-                <span className="akros-footer__social-icon" key={icon}>
-                  <Icon icon={icon} size="2xl" />
-                </span>
+              {socialLinks.map((social) => (
+                <Footer.Link
+                  aria-label={social.label}
+                  className="akros-footer__social-icon cursor-pointer"
+                  external
+                  href={social.href}
+                  key={social.href}
+                >
+                  <Icon icon={social.icon} size="2xl" />
+                </Footer.Link>
               ))}
             </div>
           </Footer.Section>

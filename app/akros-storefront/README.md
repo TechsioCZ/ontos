@@ -21,6 +21,10 @@ App component mappings live under `src/tokens/components/`; checkout-specific ov
 are scoped to `[data-akros-checkout]`. They reuse UI-kit variables for component colors,
 typography and dimensions. Page composition uses inline Tailwind utilities.
 
+Footer social icons in `src/icons/akros/` are original SVG exports from Figma node `8:3333`.
+The Iconify Tailwind plugin loads them as the local `akros` collection, used through the
+UI-kit `Icon` component. Keep their paths, view boxes and internal padding from the design.
+
 ## Prototype boundary
 
 - Catalog, editorial, account, order, delivery, and payment demo data lives under
