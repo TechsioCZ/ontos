@@ -1,7 +1,7 @@
 import { Array as Arr, Option, Result, Schema, pipe } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { sumTaxExactRationals } from '../../src/domain/tax-exact-rational.ts';
+import { sumTaxExactRationals } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import {
   ShippingAllocationBasisSchema,
   ShippingAllocationInputSchema,

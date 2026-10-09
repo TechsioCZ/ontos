@@ -1,7 +1,7 @@
 import { DateTime, Option } from 'effect';
 
-import { TaxRuleRevisionRefSchema, TaxRuleIdSchema } from './tax-decision.ts';
-import { taxExactFractionOfPercent } from './tax-exact-rational.ts';
+import { TaxRuleRevisionRefSchema, TaxRuleIdSchema } from '../../shared/domain/tax-kernel/tax-decision.ts';
+import { taxExactFractionOfPercent } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import {
   TaxRuleConflictSchema,
   TaxRuleMissingSchema,
@@ -14,8 +14,8 @@ import type {
   TaxRuleOverlap,
   TaxStateIndeterminate,
 } from './tax-non-success-outcome.ts';
-import { isWithinEffectivePeriod } from './tax-time.ts';
-import type { TaxRelevantTime } from './tax-time.ts';
+import { isWithinEffectivePeriod } from '../../shared/domain/tax-kernel/tax-time.ts';
+import type { TaxRelevantTime } from '../../shared/domain/tax-kernel/tax-time.ts';
 
 type TaxRuleRevisionRef = typeof TaxRuleRevisionRefSchema.Type;
 

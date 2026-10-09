@@ -2,7 +2,7 @@ import { DateTime, Option } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
 import { SellingLegalEntityVatRegistrationStateContractSchema } from '../../shared/domain/tax-source-read-contracts.ts';
-import { SellingLegalEntityVatRegistrationStateSchema } from '../../src/domain/selling-legal-entity-vat-registration.ts';
+import { SellingLegalEntityVatRegistrationStateSchema } from '../../shared/domain/tax-kernel/selling-legal-entity-vat-registration.ts';
 import {
   resolveSellingLegalEntityVatRegistration,
   taxSourceContradiction,

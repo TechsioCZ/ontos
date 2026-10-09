@@ -1,72 +1,26 @@
-import { Array as Arr, Schema, pipe } from 'effect';
+import { Array as Arr, pipe } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
-import type { TaxDecision, TaxDecisionUnit, TaxableBasisInterpretation } from './tax-decision.ts';
-import { RevisionSchema } from './tax-domain-primitives.ts';
+import type {
+  TaxDecision,
+  TaxDecisionUnit,
+  TaxableBasisInterpretation,
+} from '../../shared/domain/tax-kernel/tax-decision.ts';
 import {
   NonNegativeTaxExactRationalSchema,
-  TaxExactRationalSchema,
   multiplyTaxExactRationals,
   subtractTaxExactRationals,
   sumTaxExactRationals,
   taxExactFractionOfPercent,
-  taxExactRationalFromMinorUnits,
-  taxExactRationalsEqual,
-} from './tax-exact-rational.ts';
-import type { NonNegativeTaxExactRational, TaxExactRational } from './tax-exact-rational.ts';
-import {
-  CZK_MINOR_UNITS_PER_MAJOR_UNIT,
-  TaxCurrencySchema,
-  TaxMonetaryAmountSchema,
-  publishedTaxAmountRoundedHalfUp,
-  taxMonetaryAmountMinorUnits,
-} from './tax-monetary-amount.ts';
-import type { TaxMonetaryAmount } from './tax-monetary-amount.ts';
+} from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import type { NonNegativeTaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import { publishedTaxAmountRoundedHalfUp } from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
 import type { TaxableTreatment } from './tax-treatment.ts';
-import { TaxableSupplyUnitIdSchema } from './taxable-supply-unit.ts';
+import { exactValueOf } from '../../shared/domain/tax-kernel/tax-rounding.ts';
+import type { TaxRoundingPolicy, TaxUnitRoundingEvidence } from '../../shared/domain/tax-kernel/tax-rounding.ts';
 
-/**
- * Versioned Tax Rounding policy. Launch CZ publishes once per Taxable Supply Unit at 0.01 CZK with ROUND_HALF_UP,
- * an OntOS product policy separate from Pricing rounding; Accepted Tax Terms retain the revision used and another
- * currency needs its own policy (#935 F6, F20-F24, F56-F58; glossary Tax Rounding).
- */
-export const TaxRoundingPolicySchema = Schema.Struct({
-  currency: TaxCurrencySchema,
-  mode: Schema.Literal('ROUND_HALF_UP'),
-  precision: Schema.Literal('0.01'),
-  revision: RevisionSchema,
-});
-export type TaxRoundingPolicy = typeof TaxRoundingPolicySchema.Type;
-
-const exactValueOf = (amount: TaxMonetaryAmount): TaxExactRational =>
-  taxExactRationalFromMinorUnits(taxMonetaryAmountMinorUnits(amount), CZK_MINOR_UNITS_PER_MAJOR_UNIT);
-
-/**
- * Tax rounding evidence of one Taxable Supply Unit: the exact pre-round contribution, the published amount at the
- * single final boundary and `Tax rounding adjustment = published tax - exact tax`. The adjustment is Tax-owned
- * evidence only; it changes no basis, Pricing amount or other unit (#935 F25, F35-F44; #907 F106).
- */
-export const TaxUnitRoundingEvidenceSchema = Schema.Struct({
-  exactTaxContribution: NonNegativeTaxExactRationalSchema,
-  publishedTaxAmount: TaxMonetaryAmountSchema,
-  taxableSupplyUnitId: TaxableSupplyUnitIdSchema,
-  taxRoundingAdjustment: TaxExactRationalSchema,
-  taxRoundingPolicy: TaxRoundingPolicySchema,
-}).check(
-  Schema.makeFilter(
-    ({ exactTaxContribution, publishedTaxAmount }) =>
-      publishedTaxAmountRoundedHalfUp(exactTaxContribution).amount === publishedTaxAmount.amount ||
-      'The published unit Tax amount must be ROUND_HALF_UP of the exact contribution at 0.01 CZK',
-  ),
-  Schema.makeFilter(
-    ({ exactTaxContribution, publishedTaxAmount, taxRoundingAdjustment }) =>
-      taxExactRationalsEqual(
-        taxRoundingAdjustment,
-        subtractTaxExactRationals(exactValueOf(publishedTaxAmount), exactTaxContribution),
-      ) || 'The Tax rounding adjustment must equal published Tax minus exact Tax',
-  ),
-);
-export type TaxUnitRoundingEvidence = typeof TaxUnitRoundingEvidenceSchema.Type;
+export { TaxRoundingPolicySchema, TaxUnitRoundingEvidenceSchema } from '../../shared/domain/tax-kernel/tax-rounding.ts';
+export type { TaxRoundingPolicy, TaxUnitRoundingEvidence } from '../../shared/domain/tax-kernel/tax-rounding.ts';
 
 /**
  * Exact Tax contribution of one unit: its exact non-negative Taxable Basis (all components summed without any

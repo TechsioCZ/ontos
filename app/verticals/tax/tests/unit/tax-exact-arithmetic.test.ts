@@ -10,7 +10,7 @@ import {
   subtractTaxExactRationals,
   sumTaxExactRationals,
   taxExactRationalsEqual,
-} from '../../src/domain/tax-exact-rational.ts';
+} from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import { exactDecimal } from './tax-domain-fixtures.ts';
 
 const nonNegative = (value: string) => NonNegativeTaxExactRationalSchema.make(exactDecimal(value));

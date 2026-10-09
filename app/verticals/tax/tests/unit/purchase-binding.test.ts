@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'effect-rstest';
 
-import { isSameExactTaxPurchaseBinding } from '../../src/domain/purchase-binding.ts';
+import { isSameExactTaxPurchaseBinding } from '../../shared/domain/tax-kernel/purchase-binding.ts';
 import { decodePurchaseBinding, occurrenceInput, purchaseBindingInput } from './tax-domain-fixtures.ts';
 
 describe('Exact Tax purchase binding', () => {

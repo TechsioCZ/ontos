@@ -1,7 +1,7 @@
 import { Result, Schema } from 'effect';
 import { describe, expect, it } from 'effect-rstest';
 
-import { PurchaseDemandOccurrenceIdSchema } from '../../src/domain/purchase-binding.ts';
+import { PurchaseDemandOccurrenceIdSchema } from '../../shared/domain/tax-kernel/purchase-binding.ts';
 import { exactTaxContribution } from '../../src/domain/tax-rounding.ts';
 import {
   LineCommercialValueBasisSchema,

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { selectApplicableTaxRuleRevision } from '../../src/domain/tax-rule-selection.ts';
 import type { CompleteTaxRuleState, TaxRuleRevisionState } from '../../src/domain/tax-rule-selection.ts';
-import { TaxRelevantTimeSchema } from '../../src/domain/tax-time.ts';
+import { TaxRelevantTimeSchema } from '../../shared/domain/tax-kernel/tax-time.ts';
 
 const instant = (value: string) => DateTime.makeUnsafe(value);
 const taxRelevantTime = Schema.decodeUnknownSync(TaxRelevantTimeSchema);
