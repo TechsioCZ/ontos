@@ -4,6 +4,8 @@ import { describe, expect, it } from 'effect-rstest';
 
 import { readTaxMaterialityComparison } from '../../src/api/tax-materiality-comparison.read.ts';
 import { TaxDecisionIdSchema } from '../../shared/domain/tax-kernel/tax-decision.ts';
+import { NonNegativeTaxExactRationalSchema } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
+import { TaxOutcomeSuccessSchema as BoundTaxOutcomeSuccessSchema } from '../../shared/domain/tax-kernel/tax-outcome.ts';
 import {
   TaxMaterialChangeConclusionSchema,
   TaxMaterialityUnverifiableSchema,
@@ -135,6 +137,30 @@ const withAncestry = (factValue: string): TaxEvaluationRequestInput['catalog'][n
   };
 };
 
+/**
+ * A bound outcome whose first unit is internally consistent (published = HALF_UP of its exact contribution) but whose
+ * amounts no longer follow from the Decision: the published schema accepts it, only TAX's own check rejects it.
+ */
+const withUnfollowingAmounts = (genuine: TaxOutcomeSuccess): TaxOutcome => {
+  const [first, ...rest] = genuine.result.units;
+  return {
+    ...genuine,
+    result: {
+      ...genuine.result,
+      purchaseTaxTotal: { amount: '271.00', currency: 'CZK' },
+      units: [
+        {
+          ...first,
+          exactTaxContribution: NonNegativeTaxExactRationalSchema.make({ denominator: '1', numerator: '211' }),
+          publishedTaxAmount: { amount: '211.00', currency: 'CZK' },
+          taxRoundingAdjustment: { denominator: '1', numerator: '0' },
+        },
+        ...rest,
+      ],
+    },
+  };
+};
+
 describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
   const approved = evaluate();
 
@@ -246,6 +272,12 @@ describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
     );
   });
 
+  it('#936 F32 a bound outcome whose amounts do not follow from its Decision is never attested', () => {
+    const tampered = withUnfollowingAmounts(success(approved));
+
+    expect(compare(approved, tampered)).toEqual(TaxMaterialityUnverifiableSchema.make({ reason: 'NOT_DETERMINED' }));
+  });
+
   it('#943 F2 changed classification with the same rate is material', () => {
     const reclassified = evaluate(
       evaluationRequest({ catalog: [catalogEntry('o1', STANDARD_CODE), catalogEntry('o2', 'cz-reduced-books')] }),
@@ -274,6 +306,10 @@ describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
     expect(taxOutcomeVisibleInScope(approved, { ...own, tenantId: 'tenant-2' })).toBe(false);
     expect(taxOutcomeVisibleInScope(approved, { ...own, legalEntityId: 'selling-legal-entity-2' })).toBe(false);
     expect(taxOutcomeVisibleInScope(TaxRuleMissingSchema.make({}), { ...own, tenantId: 'tenant-2' })).toBe(true);
+    // Scope is checked on the published shape, so inconsistent amounts never bypass it.
+    const tampered = withUnfollowingAmounts(success(approved));
+    expect(Schema.is(BoundTaxOutcomeSuccessSchema)(tampered)).toBe(true);
+    expect(taxOutcomeVisibleInScope(tampered, { ...own, tenantId: 'tenant-2' })).toBe(false);
   });
 });
 

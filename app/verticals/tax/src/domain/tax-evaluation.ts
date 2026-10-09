@@ -101,7 +101,7 @@ export const requiredTaxClassificationCodes = (request: TaxEvaluationRequest): r
         ),
       ),
     ),
-  ].toSorted((left, right) => left.localeCompare(right, 'en'));
+  ].toSorted(Order.String);
 
 type ApplicableRule = TaxRuleSetObservation['applicable'][number];
 
@@ -254,7 +254,8 @@ const decisionUnitOf = (
 });
 
 const encodeDecision = Schema.encodeResult(TaxDecisionSchema);
-const byText = (left: string, right: string) => left.localeCompare(right, 'en');
+/** Exact code-unit order: locale collation can rank distinct identifiers as equal, so it never orders identities. */
+const byText = Order.String;
 
 /**
  * Canonical material meaning of a Decision: purchase binding without traceability-only context, Tax-Relevant Time,

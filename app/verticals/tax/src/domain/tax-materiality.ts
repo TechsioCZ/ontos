@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Order, Schema } from 'effect';
 import type { NonEmptyReadonlyArray } from 'effect/Array';
 
 import {
@@ -26,6 +26,7 @@ import { taxExactFractionOfPercent } from '../../shared/domain/tax-kernel/tax-ex
 import type { TaxExactRational } from '../../shared/domain/tax-kernel/tax-exact-rational.ts';
 import { TaxOutcomeSuccessSchema } from './tax-outcome.ts';
 import type { TaxOutcome, TaxOutcomeSuccess } from './tax-outcome.ts';
+import { TaxOutcomeSuccessSchema as BoundTaxOutcomeSuccessSchema } from '../../shared/domain/tax-kernel/tax-outcome.ts';
 import { LineCommercialValueBasisSchema } from '../../shared/domain/tax-kernel/taxable-basis.ts';
 
 type LineCommercialValueBasis = typeof LineCommercialValueBasisSchema.Type;
@@ -65,10 +66,13 @@ export const isSamePurchaseIdentity = (left: TaxPurchaseBinding, right: TaxPurch
 };
 
 const isSuccess = Schema.is(TaxOutcomeSuccessSchema);
+/** Published binding-only shape: scope is checked on every determined outcome, consistent or not. */
+const isDetermined = Schema.is(BoundTaxOutcomeSuccessSchema);
 const isLine = Schema.is(LineCommercialValueBasisSchema);
 const isShipping = Schema.is(ShippingAllocationBasisSchema);
 const exactText = ({ denominator, numerator }: TaxExactRational) => `${numerator}/${denominator}`;
-const byText = (left: string, right: string) => left.localeCompare(right, 'en');
+/** Exact code-unit order: locale collation can rank distinct identifiers as equal, so it never orders identities. */
+const byText = Order.String;
 
 /**
  * Unambiguous text of a tuple of opaque owner identifiers: each part is length-prefixed, so any content (separators,
@@ -222,7 +226,7 @@ export const taxOutcomeVisibleInScope = (
   outcome: TaxOutcome,
   scope: Readonly<{ legalEntityId?: string | undefined; tenantId: string }>,
 ): boolean =>
-  !isSuccess(outcome) ||
+  !isDetermined(outcome) ||
   (outcome.decision.purchaseBinding.tenantId === scope.tenantId &&
     outcome.decision.purchaseBinding.sellingLegalEntityRef === scope.legalEntityId);
 
