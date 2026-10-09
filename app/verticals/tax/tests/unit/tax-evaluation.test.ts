@@ -172,6 +172,27 @@ describe('Prospective Launch Tax evaluation', () => {
       expect(success(evaluate(evaluationRequest(), ownState(), later)).decision.decisionId).toBe(expected);
     });
 
+    it('#937 F7 identifiers that collate equal in a locale still order by exact value', () => {
+      // One composed and one decomposed é: distinct identifiers that locale collation ranks as equal.
+      const ids = ['o-\u00E9', 'o-e\u0301'] as const;
+      const base = evaluationRequestInput({}, ids);
+      const reversed = evaluationRequest(
+        {
+          catalog: [catalogEntry(ids[1], REDUCED_CODE), catalogEntry(ids[0], STANDARD_CODE)],
+          pricing: {
+            pricingResultRef: PRICING_RESULT_REF,
+            publishedLines: [pricingLine(ids[1], '500.00'), pricingLine(ids[0], '1000.00')],
+          },
+          purchase: purchaseBindingInput([ids[1], ids[0]]),
+        },
+        ids,
+      );
+
+      expect(success(evaluate(reversed)).decision.decisionId).toBe(
+        success(evaluate(evaluationRequest(base, ids))).decision.decisionId,
+      );
+    });
+
     it('#937 F33 a different Tax-Relevant Time is a different Decision binding', () => {
       const atOtherTime = evaluationRequest({ taxRelevantTime: '2026-10-08T09:00:00.000Z' });
 
