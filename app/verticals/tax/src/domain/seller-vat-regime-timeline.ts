@@ -10,18 +10,10 @@ import { RevisionSchema } from '../../shared/domain/tax-kernel/tax-domain-primit
 
 export {
   SELLER_NOT_VAT_PAYER_LEGAL_BASIS,
-  SellerNotVatPayerLegalBasisSchema,
-  SellerVatRegimeDeclarationProvenanceSchema,
-  SellerVatRegimeDeclarationRevisionRefSchema,
   SellerVatRegimeDeclaredSchema,
-  SellerVatRegimeNotDeclaredStateSchema,
-  SellerVatRegimeSchema,
-  SellerVatRegimeSelectionSchema,
 } from '../../shared/domain/tax-kernel/seller-vat-regime.ts';
 export type {
-  SellerNotVatPayerLegalBasis,
   SellerVatRegime,
-  SellerVatRegimeDeclarationProvenance,
   SellerVatRegimeDeclarationRevisionRef,
   SellerVatRegimeSelection,
 } from '../../shared/domain/tax-kernel/seller-vat-regime.ts';

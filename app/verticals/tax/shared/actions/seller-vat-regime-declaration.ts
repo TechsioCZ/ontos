@@ -58,4 +58,3 @@ export const SellerVatRegimeDeclarationMigrationContentSchema = Schema.Struct({
   reason: Schema.optionalKey(ReasonSchema),
   regime: SellerVatRegimeSchema,
 });
-export type SellerVatRegimeDeclarationMigrationContent = typeof SellerVatRegimeDeclarationMigrationContentSchema.Type;

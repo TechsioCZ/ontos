@@ -21,8 +21,6 @@ export const TaxableTreatmentSchema = Schema.TaggedStruct('TAXABLE', {
   ratePercent: TaxRatePercentSchema,
 });
 
-export type TaxableTreatment = typeof TaxableTreatmentSchema.Type;
-
 /**
  * Seller-is-non-payer treatment: the seller's declared VAT Regime is NON_PAYER, so the supply carries no VAT line.
  * This is not ZERO_RATE, EXEMPTION or NOT_APPLICABLE; it is a distinct meaning keyed to the seller's regime, not to
@@ -30,10 +28,8 @@ export type TaxableTreatment = typeof TaxableTreatmentSchema.Type;
  */
 export const SellerNotVatPayerTreatmentSchema = Schema.TaggedStruct('SELLER_NOT_VAT_PAYER', {});
 
-export type SellerNotVatPayerTreatment = typeof SellerNotVatPayerTreatmentSchema.Type;
-
 /** Every Tax Decision unit treatment: taxable with a rate, or seller-is-non-payer (Unit 10 A2). */
-export const TaxDecisionTreatmentSchema = Schema.Union([TaxableTreatmentSchema, SellerNotVatPayerTreatmentSchema]);
+const TaxDecisionTreatmentSchema = Schema.Union([TaxableTreatmentSchema, SellerNotVatPayerTreatmentSchema]);
 
 export type TaxDecisionTreatment = typeof TaxDecisionTreatmentSchema.Type;
 

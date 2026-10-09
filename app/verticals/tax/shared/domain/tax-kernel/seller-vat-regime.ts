@@ -20,11 +20,9 @@ export const SellerVatRegimeDeclaredSchema = Schema.TaggedStruct('DECLARED', {
   declarationRevisionRef: SellerVatRegimeDeclarationRevisionRefSchema,
   regime: SellerVatRegimeSchema,
 });
-export type SellerVatRegimeDeclared = typeof SellerVatRegimeDeclaredSchema.Type;
 
 /** Nothing was ever declared for the seller. */
 export const SellerVatRegimeNotDeclaredStateSchema = Schema.TaggedStruct('NOT_DECLARED', {});
-export type SellerVatRegimeNotDeclaredState = typeof SellerVatRegimeNotDeclaredStateSchema.Type;
 
 /**
  * The seller's declared state at one instant: either a declared regime at an exact revision, or nothing ever
@@ -50,4 +48,3 @@ export const SellerNotVatPayerLegalBasisSchema = Schema.Struct({
   reference: Schema.Literal(SELLER_NOT_VAT_PAYER_LEGAL_BASIS.reference),
   revision: Schema.Literal(SELLER_NOT_VAT_PAYER_LEGAL_BASIS.revision),
 });
-export type SellerNotVatPayerLegalBasis = typeof SellerNotVatPayerLegalBasisSchema.Type;
