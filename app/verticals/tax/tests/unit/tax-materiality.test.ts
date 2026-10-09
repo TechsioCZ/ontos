@@ -112,6 +112,29 @@ const catalogWith = (catalogFactRef: string, completeness: string): TaxEvaluatio
   };
 };
 
+/** Catalog evidence with the category fact plus a non-category fact of the given value under fixed references. */
+const withAncestry = (factValue: string): TaxEvaluationRequestInput['catalog'][number] => {
+  const entry = catalogWith('o1:tax-category', 'x');
+  const [category] = entry.classificationInput.materialCatalogEvidence;
+  return {
+    ...entry,
+    classificationInput: {
+      ...entry.classificationInput,
+      materialCatalogEvidence: [
+        category,
+        {
+          _tag: 'CURRENT',
+          catalogFactRef: 'o1:ancestry',
+          catalogFactRevisionRef: 'r1',
+          factKind: 'CATEGORY_ANCESTRY',
+          factValue,
+          ownerEvidenceRef: 'owner-2',
+        },
+      ],
+    },
+  };
+};
+
 describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
   const approved = evaluate();
 
@@ -167,6 +190,20 @@ describe('TAX-owned materiality of exact old/new Tax meanings (#943)', () => {
     // Joined with '|', completeness `x` + fact `a|b` and completeness `x|a` + fact `b` would look identical.
     const previous = evaluate(evaluationRequest({ catalog: [catalogWith('a|b', 'x')] }, ['o1']));
     const current = evaluate(evaluationRequest({ catalog: [catalogWith('b', 'x|a')] }, ['o1']));
+
+    expect(attestedDifferences(compare(previous, current))).toEqual(Option.some(['CATALOG_EVIDENCE']));
+  });
+
+  it('#943 F7 identifiers with lone surrogates are compared without failing', () => {
+    const previous = evaluate(evaluationRequest({ catalog: [catalogWith('fact-\uD800', 'x')] }, ['o1']));
+    const current = evaluate(evaluationRequest({ catalog: [catalogWith('fact-\uDC00', 'x')] }, ['o1']));
+
+    expect(attestedDifferences(compare(previous, current))).toEqual(Option.some(['CATALOG_EVIDENCE']));
+  });
+
+  it('#943 F7 a changed fact kind or value under the same references is an evidence difference', () => {
+    const previous = evaluate(evaluationRequest({ catalog: [withAncestry('food')] }, ['o1']));
+    const current = evaluate(evaluationRequest({ catalog: [withAncestry('drinks')] }, ['o1']));
 
     expect(attestedDifferences(compare(previous, current))).toEqual(Option.some(['CATALOG_EVIDENCE']));
   });
