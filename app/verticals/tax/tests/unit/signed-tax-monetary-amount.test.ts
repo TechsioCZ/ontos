@@ -5,7 +5,7 @@ import {
   SignedTaxMonetaryAmountSchema,
   signedTaxMonetaryAmountFromMinorUnits,
   signedTaxMonetaryAmountMinorUnits,
-} from '../../src/domain/tax-monetary-amount.ts';
+} from '../../shared/domain/tax-kernel/tax-monetary-amount.ts';
 
 const isSigned = Schema.is(SignedTaxMonetaryAmountSchema);
 

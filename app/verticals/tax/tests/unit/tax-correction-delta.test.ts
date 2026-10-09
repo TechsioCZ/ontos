@@ -17,7 +17,7 @@ import type {
   TaxCorrectionOutcome,
   TaxCorrectionUnitRequest,
 } from '../../src/domain/tax-correction-delta.ts';
-import { TAX_HISTORICAL_INPUT_UNRESOLVED } from '../../src/domain/tax-historical-input-outcome.ts';
+import { TAX_HISTORICAL_INPUT_UNRESOLVED } from '../../shared/domain/tax-kernel/tax-historical-input-outcome.ts';
 import { TaxNonSuccessOutcomeSchema } from '../../src/domain/tax-non-success-outcome.ts';
 import { acceptedTaxTerms, acceptedTaxTermsInput, unitIdOf } from './tax-correction-fixtures.ts';
 import type { OriginalUnitInput } from './tax-correction-fixtures.ts';
@@ -28,7 +28,7 @@ const decodeState = Schema.decodeUnknownSync(CumulativeUnitTaxStateSchema);
 const isDelta = Schema.is(TaxCorrectionDeltaSchema);
 const isUnresolved = Schema.is(TaxCorrectionHistoricalInputUnresolvedSchema);
 const isOutOfBounds = Schema.is(TaxCorrectionOutOfBoundsSchema);
-const isUnresolvedUnits = Schema.is(TaxCorrectionHistoricalInputUnresolvedSchema.fields.unresolved.members[1]);
+const isUnresolvedUnits = Schema.is(TaxCorrectionHistoricalInputUnresolvedSchema.fields.unresolved.members[2]);
 
 const minorUnits = (amount: string) => BigInt(amount.replace('.', ''));
 const sumOfDeltas = (steps: readonly { readonly taxCorrectionDelta: { readonly amount: string } }[]) =>

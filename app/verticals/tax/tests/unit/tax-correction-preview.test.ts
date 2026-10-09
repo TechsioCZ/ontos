@@ -132,6 +132,19 @@ describe('Tax correction preview read', () => {
     }),
   );
 
+  it.effect('#946 F12 #947 F13 a record whose Tax Result does not follow from its Decision is unresolved input', () =>
+    Effect.gen(function* answersInconsistentRecord() {
+      const inconsistent = acceptedTaxTermsInput(
+        [{ lineValue: '899.90', occurrenceId: 'o-1', quantity: '10' }],
+        [{ lineValue: '999.90', occurrenceId: 'o-1', quantity: '10' }],
+      );
+      const result = yield* preview({ acceptedTaxTerms: inconsistent, declaredPurpose: { _tag: 'HISTORICAL_READ' } });
+
+      expect(Schema.is(TaxCorrectionHistoricalInputUnresolvedSchema)(result)).toBe(true);
+      expect(encodeResponse(result)).toMatchObject({ unresolved: { _tag: 'ORIGINAL_RECORD_INCONSISTENT' } });
+    }),
+  );
+
   it('#946 F8-F9 a malformed or inconsistent handover is a contract violation, not a guessed baseline', () => {
     const { finalTax, ...withoutFinalTax } = terms;
     for (const malformed of [
