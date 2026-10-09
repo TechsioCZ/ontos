@@ -101,7 +101,8 @@ const handoffBlockers = (handoff: TaxAuthorityHandoffEvaluation): readonly Block
 
 const completenessBlockers = (evidence: TaxMigrationFamilyEvidence): readonly Blocker[] =>
   Match.value(evidence.completeness).pipe(
-    Match.tag('COMPLETE', () => []),
+    // Completeness evidence counts only for the family it encloses.
+    Match.tag('COMPLETE', ({ family }) => (family === evidence.family ? [] : ['COMPLETENESS_NOT_VERIFIED' as const])),
     Match.orElse(() => ['COMPLETENESS_NOT_VERIFIED' as const]),
   );
 

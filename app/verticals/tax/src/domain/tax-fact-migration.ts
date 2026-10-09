@@ -262,7 +262,17 @@ const evaluateCandidate = ({ mapping, provenance }: TaxMigrationCandidate): Eval
     Match.exhaustive,
   );
 
-const byText = (left: string, right: string) => left.localeCompare(right, 'en');
+/** Readable English collation with a code-point tie-break, so distinct references never compare equal. */
+const byText = (left: string, right: string) => {
+  const collated = left.localeCompare(right, 'en');
+  if (collated !== 0) {
+    return collated;
+  }
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+};
 
 /** Full business meaning of an outcome, provenance aside: kind, reason, owner, missing meaning or target meaning. */
 const meaningOf = (outcome: TaxMigrationOutcome): string =>
@@ -406,8 +416,13 @@ export const verifyTaxMigrationCompleteness = (
     return TaxMigrationUnverifiableSchema.make({ family, rowCount });
   }
   // A record mapped into another family does not count for this family's claim (#960 F17).
+  // A record of another family, or one resolved as owned elsewhere, is not part of this family's claim; a record of
+  // unknown family that is still open could be, so it stays visible (#960 F3, F17).
   const familyOutcomes = outcomes.filter((outcome) =>
-    Option.match(taxMigrationOutcomeFamily(outcome), { onNone: () => true, onSome: (own) => own === family }),
+    Option.match(taxMigrationOutcomeFamily(outcome), {
+      onNone: () => isOpenTaxMigrationOutcome(outcome),
+      onSome: (own) => own === family,
+    }),
   );
   const observed = new Map(familyOutcomes.map(({ provenance }) => [sourceKey(provenance), sourceOf(provenance)]));
   const expected = new Map(claim.expectedSourceRecords.map((record) => [sourceKey(record), sourceOf(record)]));

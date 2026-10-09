@@ -12,7 +12,7 @@ import type {
   TaxAuthorityHandoffEvaluation,
   TaxMigrationAssertionPlacement,
 } from '../../shared/domain/tax-migration-contracts.ts';
-import { authoritiesCoveringInstant, periodCoversInstant } from './selling-legal-entity-vat-registration-resolution.ts';
+import { authoritiesCoveringInstant } from './selling-legal-entity-vat-registration-resolution.ts';
 import type { TaxSourceAuthorityPeriod } from './selling-legal-entity-vat-registration-resolution.ts';
 
 /**
@@ -113,18 +113,17 @@ export const placeTaxMigrationAssertion = (input: {
   if (authorityThen.systemOfRecordRef !== input.sourceRef) {
     return { placement: 'NOT_FROM_SYSTEM_OF_RECORD', systemOfRecordRef };
   }
-  // Current placement needs exactly one System of Record at the evaluation instant too (#960 F21-F22, F27).
-  const authoritiesNow = authoritiesCoveringInstant(input.periods, input.evaluationInstant);
-  if (authoritiesNow.length > 1) {
+  // Placement needs exactly one System of Record at the evaluation instant too: a gap or an overlap there is never
+  // guessed (#960 F21-F22, F27-F29). The assertion stays Current while that same source is still the authority.
+  const [authorityNow, ...competingNow] = authoritiesCoveringInstant(input.periods, input.evaluationInstant);
+  if (authorityNow === undefined || competingNow.length > 0) {
     return { placement: 'NO_SINGLE_AUTHORITY', systemOfRecordRef: Option.none() };
   }
-  const stillCurrent = periodCoversInstant(
-    Option.some(authorityThen.authorityFrom),
-    authorityThen.authorityTo,
-    input.evaluationInstant,
-  );
   return {
-    placement: stillCurrent ? 'CURRENT_UNDER_ITS_AUTHORITY' : 'HISTORICAL_OR_RECONCILIATION_ONLY',
+    placement:
+      authorityNow.systemOfRecordRef === authorityThen.systemOfRecordRef
+        ? 'CURRENT_UNDER_ITS_AUTHORITY'
+        : 'HISTORICAL_OR_RECONCILIATION_ONLY',
     systemOfRecordRef,
   };
 };
